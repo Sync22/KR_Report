@@ -11,6 +11,10 @@ $runScript = Join-Path $PSScriptRoot "run_web_view.ps1"
 $healthUrl = "http://${HostAddress}:${Port}/health"
 
 Set-Location -LiteralPath $projectRoot
+$srcPath = Join-Path $projectRoot "src"
+if (Test-Path -LiteralPath $srcPath) {
+    $env:PYTHONPATH = if ($env:PYTHONPATH) { "$srcPath$([IO.Path]::PathSeparator)$env:PYTHONPATH" } else { $srcPath }
+}
 $env:PYTHONIOENCODING = "utf-8"
 
 Write-Output "Restarting read-only web-view"

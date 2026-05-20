@@ -11,6 +11,10 @@ param(
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $projectRoot
+$srcPath = Join-Path $projectRoot "src"
+if (Test-Path -LiteralPath $srcPath) {
+    $env:PYTHONPATH = if ($env:PYTHONPATH) { "$srcPath$([IO.Path]::PathSeparator)$env:PYTHONPATH" } else { $srcPath }
+}
 $env:PYTHONIOENCODING = "utf-8"
 
 try {

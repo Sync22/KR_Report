@@ -343,6 +343,27 @@ def test_run_web_view_requires_explicit_non_loopback_override() -> None:
     assert "127.0.0.1:8780" in script
 
 
+def test_python_entrypoint_wrappers_bootstrap_src_pythonpath() -> None:
+    script_names = [
+        "run_web_view.ps1",
+        "restart_web_view.ps1",
+        "run_scheduled_poll.ps1",
+        "run_scheduled_notify.ps1",
+        "run_scheduled_krx_daily_backfill.ps1",
+        "run_scheduled_krx_mentioned_flow_backfill.ps1",
+        "run_process_telegram_commands.ps1",
+        "run_krx_flow_login_reminder.ps1",
+        "run_scheduled_shutdown.ps1",
+        "verify_external_web_view_readiness.ps1",
+        "verify_cloudflare_web_view_tunnel.ps1",
+    ]
+
+    for script_name in script_names:
+        script = (PROJECT_ROOT / "scripts" / script_name).read_text(encoding="utf-8")
+        assert 'Join-Path $projectRoot "src"' in script, script_name
+        assert "$env:PYTHONPATH" in script, script_name
+
+
 def test_verify_mini_pc_readiness_runs_core_checks() -> None:
     script = (PROJECT_ROOT / "scripts" / "verify_mini_pc_readiness.ps1").read_text(encoding="utf-8")
 
