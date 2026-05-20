@@ -1,0 +1,123 @@
+# Data Quality Checklist
+
+## Purpose
+
+This checklist prevents future changes from mixing raw source values, aggregate values, and presentation values.
+Use it before changing parser, summary, Telegram, admin-gui, or web-view behavior.
+
+## Core Rule
+
+Missing or non-actionable source values are not data points.
+
+They can be preserved for detail review, but they must not distort aggregate calculations, rankings, ranges, or representative labels.
+
+## Product-Intent Rule
+
+Data quality is not the same as product usefulness.
+
+For user-facing work, first decide whether the value helps a daily briefing, notable-stock view, market mood summary, or rotation reference. If it only explains pipeline correctness, keep it in `admin-gui`, CLI output, tests, or docs instead of adding it to the shared `web-view`.
+
+| Product Layer | Allowed User Wording | Keep Out Of User Surface |
+| --- | --- | --- |
+| Rough daily briefing | `오늘의 관찰 후보`, `우선 확인`, `관찰 우선순위`, `관심도 높은 흐름`, `왜 눈에 띄는지`, `시장 분위기`, `눈에 띄는`, `확인 후보`, `수급 참고`, `확인 포인트` | `매수 추천`, `매도 추천`, `점수`, `등급`, `진입가`, `청산가`, `익절가`, `목표 수익률`, `확신도`, `매수 기회`, `전략 제안` |
+| Evidence drilldown | Compact source-backed reasons and missing-state labels | Full validation chains, scheduler state, raw manifests, debug-only flags |
+| Admin/operator | Raw process state and diagnostics when useful | Secrets, tokens, uncontrolled external exposure |
+
+User-facing visual summaries such as sector/theme breadth bars, top-2 observation candidates, and rotation ETF/stock reference slots are allowed only when the underlying values are stored facts. Missing category mappings, ETF snapshots, KRX rows, or flow rows must be shown as `부족한 정보` or equivalent empty-state text, not converted into negative evidence or hidden success.
+
+## Required Boundary Check
+
+| Boundary | Rule | Example |
+| --- | --- | --- |
+| Raw/source value | Preserve enough detail to explain the source row. | A report with no target price still appears in stock detail. |
+| Parsed/storage value | Store missing numeric values as `NULL`, not `0`. | KRX `N/A`, `NA`, `NULL`, `NONE`, `-`, and blank numeric fields become `None`. |
+| Aggregate value | Exclude missing values from calculations. | Target price range uses only parsed numeric target prices. |
+| Representative label | Exclude missing labels from representative voting. | Dominant opinion ignores `N/A`; use `N/A` only when no valid opinion exists. |
+| Display value | Show missing values clearly without pretending they are data. | Telegram/web detail shows `목표가 -` and `의견 없음`. |
+
+## Source Access Boundary
+
+| Source type | Rule | Example |
+| --- | --- | --- |
+| Official/approved API | Prefer this path when the needed field is available. | KRX Open API daily stock/ETF/index snapshots. |
+| Screen-backed source | Use only when the approved API does not expose the needed data. | KRX Data Marketplace `[12009]` investor flow. |
+| Screen condition | Preserve and store source conditions that change output values. | Query type, date range, stock code, share unit, money unit. |
+| Source label | Store source identity separately from product display labels. | `krx_open_api` vs `krx_data_market`. |
+| Fallback source | Keep fallback data clearly marked and do not mix it with primary source rows. | Naver internal trend API used only for comparison/fallback. |
+
+## Pre-Implementation Checklist
+
+Before implementing a data or display change, verify:
+
+| Check | Required Question |
+| --- | --- |
+| Source semantics | Is this a real value, a missing marker, or a source-specific placeholder? |
+| Parser behavior | Does the parser normalize known missing markers before DB write? |
+| DB meaning | Does `NULL` mean unknown/missing, and is `0` reserved for a real zero? |
+| Aggregation | Are missing values excluded from min/max/count/ranking/mode unless explicitly intended? |
+| Detail visibility | Can the operator or user still see that a source row had missing data? |
+| Duplicate display | Is the same semantic value repeated in summary and detail, or should one layer link/drill down instead? |
+| Surface boundary | Is this value safe for Telegram/web-view, or should it stay in admin/operator diagnostics? |
+| Source access | Is this value from an official API, a screen-backed source, or a fallback source? |
+| Source condition | Are units, date range, query type, and market filters captured with the row? |
+| Test coverage | Is there at least one regression test for missing/duplicate/edge source values? |
+
+## Identity And Date Checklist
+
+| Item | Rule | Risk If Ignored |
+| --- | --- | --- |
+| Report identity | Use `source_id` or `identity_key` for dedupe. Do not dedupe by visible stock/title/broker strings. | Missed reports or duplicate reports when display text drifts. |
+| Display identity | Display labels such as stock name, broker name, and category name are user-facing labels, not durable keys. | Future grouping may silently merge unrelated source rows. |
+| Business date | Use `business_date` for archive, summary, Telegram, and web-view grouping. | Reports can be bucketed by poll time instead of market date. |
+| Published time | Use `published_at` as source report time, not as the archival grouping key. | Late-night/holiday reports can land in the wrong summary. |
+| Collected time | Use `collected_at` only for operational timing and retry/debug context. | Operational timing can leak into product-level date logic. |
+
+## Duplicate And Grouping Checklist
+
+| Item | Rule |
+| --- | --- |
+| Same-broker repeated reports | Summary display may collapse broker names as `broker_name(count)`, but detail views must keep report-level rows. |
+| Same-broker target price | Same-broker representative target price uses the maximum parsed numeric value. Missing target values do not participate. |
+| Same-broker opinion | Same-broker representative opinion uses the latest report, but `N/A` is not allowed to dominate valid opinions. |
+| `broker_display` | Treat as display-only derived text. Do not parse it later as canonical broker data. |
+| Sector/theme dedupe | Visible category-name dedupe is presentation-level. Do not treat it as canonical taxonomy history. |
+| Summary/detail split | Summary rows explain the aggregate. Detail rows explain the underlying source reports. Do not make one replace the other. |
+
+## Current Missing-Value Policy
+
+| Field Type | Storage / Aggregate | Display |
+| --- | --- | --- |
+| Report target price missing | `target_price_value = NULL`; excluded from target range | `목표가 -` in detail/search |
+| Report opinion missing | `opinion_normalized = N/A`; excluded from dominant opinion vote | `의견 없음` |
+| KRX numeric missing | `NULL`; excluded from numeric interpretation | `-` or empty-state text |
+| Naver report missing marker | Normalize known source placeholders before aggregation when parser sees them | Preserve missing state in detail/search output |
+| Stock identity missing | Do not use as a reliable grouping key | Exclude row or mark as 확인필요 in operator-only diagnostics |
+| Sector/theme missing | Do not infer a category | Show mapping limitation or omit from category rollup |
+
+## Summary vs Detail Rule
+
+| Surface | Behavior |
+| --- | --- |
+| Daily/Intraday summary | Show only aggregate values that survive missing-value filtering. |
+| Stock detail / stock search | Show each source report, including missing target/opinion as `목표가 -` and `의견 없음`. |
+| Admin/operator diagnostics | May show raw/failure context when useful, but must avoid secrets and keep source labels clear. |
+| User web-view | Show observation values, missing states, and observation-candidate recommendations; do not show public numeric scores, investment grades, trading calls, or inferred certainty. |
+
+## Agent Review Checklist
+
+When using subagents for parser, summary, notification, web-view, or DB work, include this instruction:
+
+```text
+Check docs/codex/data-quality-checklist.md before proposing or implementing changes.
+Verify raw/source, parsed/storage, aggregate, and display semantics separately.
+Call out any N/A/NULL/duplicate-display risk explicitly.
+```
+
+## Required Test Pattern
+
+New changes touching data interpretation should include at least one of:
+
+- parser test with `N/A`, `NA`, `NULL`, `NONE`, `-`, or blank input
+- summary test where missing target/opinion does not affect range or dominant label
+- formatter/web-view test where detail still exposes missing fields as `목표가 -` / `의견 없음`
+- duplicate-display test or explicit assertion that summary/detail roles are separated

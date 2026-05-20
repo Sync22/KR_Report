@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stock-monitor"
+version = "0.1.0"
+description = "Personal MVP for monitoring Naver stock research reports."
+requires-python = ">=3.10"
+dependencies = [
+    "playwright>=1.54,<2.0",
+    "tzdata>=2025.2",
+]
+
+[project.scripts]
+stock-monitor = "stock_monitor.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]

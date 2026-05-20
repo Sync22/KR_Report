@@ -1,0 +1,97 @@
+# Local editor / Codex state
+.codex/
+.codegraph/
+.vscode/
+.idea/
+*.code-workspace
+
+# Python / test artifacts
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+src/*.egg-info/
+build/
+dist/
+
+# Local secrets
+.env
+.env.*
+*.env
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+
+# Runtime data and generated local artifacts
+data/**
+!data/
+!data/operator_memos.md
+!data/naver_fixtures/
+!data/naver_fixtures/*.json
+!data/rotation_overlay_coordinates.json
+!data/rotation_image_aliases.json
+!data/rotation_etf_candidates.json
+!data/krx_samples/
+data/krx_samples/**
+!data/krx_samples/README.md
+!data/krx_samples/templates/
+!data/krx_samples/templates/*.json
+!data/operator_photo_inbox/
+data/operator_photo_inbox/**
+!data/operator_photo_inbox/README.md
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.zip
+*.7z
+*_snapshot/
+snapshots/
+Stock_Moniter_migration_*.zip
+Stock_Moniter_migration_*.zip.sha256
+
+# Browser/test reports
+error_logs/
+output/
+playwright-report/
+test-results/
+_tmp_webview/
+
+# Local handoff/sync scratch artifacts
+handoff/mini_pc_changes/*.zip
+handoff/mini_pc_changes/*_snapshot/
+handoff/mini_pc_changes/origin_main_snapshot/
+handoff/mini_pc_changes/README.md
+handoff/mini_pc_changes/documentation-index.md
+handoff/mini_pc_changes/mini-pc-restore-change-log-*.md
+
+# Superseded local copies after docs/codex role reorganization.
+# Canonical homes are under docs/codex/plans, docs/codex/contracts, or docs/codex/details/krx.
+docs/codex/backtest-observation-plan.md
+docs/codex/candidate-evidence-contract.md
+docs/codex/candidate-evidence-plan.md
+docs/codex/etf-flow-source-study.md
+docs/codex/krx-api-field-validation.md
+docs/codex/krx-flow-execution-stages.md
+docs/codex/krx-flow-sample-capture-runbook.md
+docs/codex/krx-investor-flow-schema.md
+docs/codex/krx-investor-flow-source-plan.md
+docs/codex/scoring-draft-plan.md
+docs/codex/target-price-progress-plan.md
+docs/codex/telegram-briefing-plan.md
+
+# Experimental local environments
+scripts/experimental/.venv-botasaurus/
+scripts/experimental/.venv-kronos/
+scripts/experimental/.hf-kronos/
+scripts/experimental/.codegraph/
+scripts/experimental/codex_home_probe/
+scripts/experimental/node_tooling/
