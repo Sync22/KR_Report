@@ -288,6 +288,21 @@ def parse_telegram_command(text: str) -> tuple[str | None, str | None]:
         return "help", None
 
     if not normalized.startswith("/"):
+        bare_command, _, bare_remainder = normalized.partition(" ")
+        bare_command = bare_command.lower()
+        argument = bare_remainder.strip() or None
+        if bare_command in PROGRESS_COMMAND_NAMES:
+            return "progress_request", argument
+        if bare_command in CHECK_COMMAND_NAMES:
+            return "check", argument
+        if bare_command in STATUS_COMMAND_NAMES:
+            return "operator_status", None
+        if bare_command in TODAY_RUN_COMMAND_NAMES:
+            return "today_status", None
+        if bare_command in SCHEDULE_STATUS_COMMAND_NAMES:
+            return "schedule_status", None
+        if bare_command in WEB_VIEW_URL_COMMAND_NAMES:
+            return "webview_url", None
         return None, None
 
     if command_name in LOOKUP_COMMAND_NAMES:

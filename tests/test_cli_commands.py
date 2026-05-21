@@ -10762,6 +10762,157 @@ def test_read_only_status_commands_do_not_mutate_operator_controls(tmp_path) -> 
     assert repository.list_operator_controls() == []
 
 
+def test_status_command_explains_scheduler_access_denied_and_recent_poll_failure(tmp_path, monkeypatch) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+
+    monkeypatch.setattr(
+        cli_module,
+        "build_operator_status_snapshot",
+        lambda *_args, **_kwargs: {
+            "health": {
+                "level": "fail",
+                "summary": "7 health check(s) need attention",
+                "failing_checks": ["scheduler.poll.access_denied"],
+            },
+            "reports_by_date": [{"business_date": "2026-05-20", "count": 20}],
+            "summaries_by_date": [{"business_date": "2026-05-20", "count": 20}],
+            "db_path_exists": True,
+            "live_observation": {
+                "scheduler_metadata_status": "access_denied",
+                "components": {
+                    "poll": {
+                        "evidence_status": "observed",
+                        "last_event": {
+                            "event_time": "2026-05-21T16:00:06+09:00",
+                            "component": "scheduled-poll",
+                            "status": "failed",
+                            "detail": "Playwright is not installed.",
+                        },
+                    }
+                },
+            },
+            "recent_events": [
+                {
+                    "event_time": "2026-05-21T16:00:06+09:00",
+                    "component": "scheduled-poll",
+                    "status": "failed",
+                    "detail": "Playwright is not installed.",
+                }
+            ],
+        },
+    )
+
+    message = cli_module._build_read_only_status_command_response(
+        config,
+        repository,
+        command="operator_status",
+        now=datetime(2026, 5, 21, 19, 40, 0),
+    )
+
+    assert "건강 상태: fail" in message
+    assert "스케줄러 메타데이터 접근 거부" in message
+    assert "최근 실패: scheduled-poll" in message
+    assert "Playwright is not installed" in message
+
+
+def test_progress_request_health_check_returns_immediate_diagnosis_without_queue(tmp_path, monkeypatch) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+
+    monkeypatch.setattr(
+        cli_module,
+        "build_operator_status_snapshot",
+        lambda *_args, **_kwargs: {
+            "health": {
+                "level": "fail",
+                "summary": "7 health check(s) need attention",
+                "failing_checks": ["scheduler.poll.access_denied"],
+            },
+            "reports_by_date": [{"business_date": "2026-05-20", "count": 20}],
+            "summaries_by_date": [{"business_date": "2026-05-20", "count": 20}],
+            "live_observation": {
+                "scheduler_metadata_status": "access_denied",
+                "components": {
+                    "poll": {
+                        "evidence_status": "observed",
+                        "last_event": {
+                            "event_time": "2026-05-21T16:00:06+09:00",
+                            "component": "scheduled-poll",
+                            "status": "failed",
+                            "detail": "Playwright is not installed.",
+                        },
+                    }
+                },
+            },
+            "recent_events": [
+                {
+                    "event_time": "2026-05-21T16:00:06+09:00",
+                    "component": "scheduled-poll",
+                    "status": "failed",
+                    "detail": "Playwright is not installed.",
+                }
+            ],
+        },
+    )
+
+    message = cli_module._build_progress_request_command_response(
+        config,
+        repository=repository,
+        request_text="건강상태 체크해서 왜 돌지않고있는지 리턴",
+        now=datetime(2026, 5, 21, 19, 40, 0),
+        update_id=123,
+        state=TelegramControlState(),
+    )
+
+    assert "진행 진단" in message
+    assert "오늘 리포트" in message
+    assert "Playwright is not installed" in message
+    assert not (tmp_path / "data" / "operator_progress_requests.jsonl").exists()
+
+
+def test_progress_request_auto_runs_manual_poll_with_compact_result(tmp_path, monkeypatch) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    state = TelegramControlState()
+    calls = []
+
+    def fake_run(config_arg, repository_arg, *, now, limit):
+        calls.append((config_arg, repository_arg, now, limit))
+        return {
+            "title": "오늘 리포트 수집",
+            "summary": "신규 2건 / 중복 3건 / 최신요약 2026-05-21 2개",
+            "elapsed_seconds": 1.234,
+            "status": "completed",
+        }
+
+    monkeypatch.setattr(cli_module, "_run_progress_manual_poll_recovery", fake_run, raising=False)
+
+    message = cli_module._build_progress_request_command_response(
+        config,
+        repository=repository,
+        request_text="오늘 리포트 수집해줘",
+        now=datetime(2026, 5, 21, 21, 45, 0),
+        update_id=124,
+        state=state,
+    )
+
+    assert len(calls) == 1
+    assert calls[0][3] == 200
+    assert "진행 완료" in message
+    assert "작업: 오늘 리포트 수집" in message
+    assert "소요: 1.2초" in message
+    assert "결과: 신규 2건 / 중복 3건 / 최신요약 2026-05-21 2개" in message
+    assert state.has_applied_progress_update(124)
+    assert not (tmp_path / "data" / "operator_progress_requests.jsonl").exists()
+
+
 def test_category_catalog_cli_add_list_disable(tmp_path, capsys) -> None:
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     config.ensure_runtime_dirs()

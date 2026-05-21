@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 import getpass
 import hashlib
 import hmac
@@ -27003,6 +27003,7 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
             state.clear_pending_stock_selection()
             response_text = _build_progress_request_command_response(
                 config,
+                repository=repository,
                 request_text=argument,
                 now=now,
                 update_id=update_id,
@@ -27817,7 +27818,7 @@ def _build_help_command_response(*, title: str = "명령어 안내") -> str:
             "/메모 웹뷰에 섹터별 정리 추가 : 아이디어 메모 저장",
             "/한줄 2026-05-18 : 장초반/점심/장 마감 전 한줄 코멘트",
             "/사진 설명 : 다음 사진 또는 함께 보낸 사진을 로컬 인박스에 저장",
-            "/진행 작업내용 : Codex 작업 요청을 로컬 큐에 저장",
+            "/진행 오늘 리포트 수집 : 허용된 운영 작업은 즉시 실행, 나머지는 로컬 큐에 저장",
             "/체크 로그인 : KRX 원격 로그인 처리 완료 접수",
             "/종목코드 삼성전자 : 종목명으로 코드 후보 찾기",
             "/종목검색 삼성전자 : 후보 선택 후 최근 15일 리포트 요약 보기",
@@ -27870,6 +27871,7 @@ def _build_memo_command_response(
 def _build_progress_request_command_response(
     config: RuntimeConfig,
     *,
+    repository: StockMonitorRepository | None = None,
     request_text: str | None,
     now: datetime,
     update_id: int | None = None,
@@ -27885,6 +27887,30 @@ def _build_progress_request_command_response(
                 "요청은 작업 큐에 저장되고, 완료 보고는 Codex가 처리 후 다시 보냅니다.",
             ]
         )
+
+    auto_action = _progress_auto_action_key(normalized_text)
+    if repository is not None and auto_action is not None:
+        if update_id is not None and state is not None and state.has_applied_progress_update(update_id):
+            return _format_progress_auto_run_response(
+                ProgressAutoRunResult(
+                    title=_progress_auto_action_title(auto_action),
+                    summary="이미 처리된 요청입니다.",
+                    elapsed_seconds=0.0,
+                    status="completed",
+                )
+            )
+        result = _run_progress_auto_action(
+            config,
+            repository,
+            action_key=auto_action,
+            now=now,
+        )
+        if update_id is not None and state is not None and result.status.lower() not in {"failed", "error"}:
+            state.mark_progress_update_applied(update_id)
+        return _format_progress_auto_run_response(result)
+
+    if repository is not None and _is_health_progress_request(normalized_text):
+        return _build_progress_health_diagnosis_response(config, repository, now=now)
 
     task_id = f"P{update_id}" if update_id is not None else f"P{now.strftime('%Y%m%d%H%M%S')}"
     if update_id is not None and state is not None and state.has_applied_progress_update(update_id):
@@ -27917,6 +27943,366 @@ def _build_progress_request_command_response(
             "- 완료 후 작업 요약과 완료도를 다시 보냅니다.",
         ]
     )
+
+
+@dataclass(frozen=True)
+class ProgressAutoRunResult:
+    title: str
+    summary: str
+    elapsed_seconds: float
+    status: str = "completed"
+
+
+_PROGRESS_AUTO_ACTION_TITLES = {
+    "manual_poll": "오늘 리포트 수집",
+    "ops_readiness": "운영 점검",
+    "db_verify": "DB 검증",
+    "web_view_check": "웹뷰 확인",
+    "operator_task_next": "해야 할 일 확인",
+}
+
+
+def _progress_auto_action_key(text: str) -> str | None:
+    compact = text.replace(" ", "").replace("_", "").replace("-", "").lower()
+    if any(
+        marker in compact
+        for marker in (
+            "오늘리포트수집",
+            "리포트수집",
+            "누락리포트복구",
+            "manualpoll",
+            "poll",
+        )
+    ):
+        return "manual_poll"
+    if any(marker in compact for marker in ("운영점검", "운영상태점검", "opsreadiness", "readiness", "준비상태")):
+        return "ops_readiness"
+    if any(marker in compact for marker in ("db검증", "디비검증", "dbverify")):
+        return "db_verify"
+    if any(marker in compact for marker in ("웹뷰확인", "웹뷰점검", "webviewcheck", "webview")):
+        return "web_view_check"
+    if any(marker in compact for marker in ("해야할일", "작업확인", "tasknext", "operatortasknext")):
+        return "operator_task_next"
+    return None
+
+
+def _progress_auto_action_title(action_key: str) -> str:
+    return _PROGRESS_AUTO_ACTION_TITLES.get(action_key, "진행 작업")
+
+
+def _normalize_progress_auto_run_result(
+    value: ProgressAutoRunResult | dict[str, object],
+    *,
+    fallback_title: str,
+    fallback_elapsed_seconds: float,
+) -> ProgressAutoRunResult:
+    if isinstance(value, ProgressAutoRunResult):
+        return value
+    return ProgressAutoRunResult(
+        title=str(value.get("title") or fallback_title),
+        summary=str(value.get("summary") or "-"),
+        elapsed_seconds=float(value.get("elapsed_seconds") or fallback_elapsed_seconds),
+        status=str(value.get("status") or "completed"),
+    )
+
+
+def _run_progress_auto_action(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    action_key: str,
+    now: datetime,
+) -> ProgressAutoRunResult:
+    title = _progress_auto_action_title(action_key)
+    started = time.perf_counter()
+    try:
+        if action_key == "manual_poll":
+            result = _run_progress_manual_poll_recovery(config, repository, now=now, limit=200)
+        elif action_key == "ops_readiness":
+            result = _run_progress_ops_readiness(config, repository)
+        elif action_key == "db_verify":
+            result = _run_progress_db_verify(repository)
+        elif action_key == "web_view_check":
+            result = _run_progress_web_view_check(config, repository)
+        elif action_key == "operator_task_next":
+            result = _run_progress_operator_task_next(config)
+        else:
+            return ProgressAutoRunResult(
+                title=title,
+                summary="허용된 자동 작업이 아닙니다. 작업 큐에 남겨 Codex가 확인해야 합니다.",
+                elapsed_seconds=time.perf_counter() - started,
+                status="blocked",
+            )
+        return _normalize_progress_auto_run_result(
+            result,
+            fallback_title=title,
+            fallback_elapsed_seconds=time.perf_counter() - started,
+        )
+    except Exception as exc:
+        return ProgressAutoRunResult(
+            title=title,
+            summary=f"실패: {_compact_telegram_detail(exc, limit=120)}",
+            elapsed_seconds=time.perf_counter() - started,
+            status="failed",
+        )
+
+
+def _format_progress_auto_run_response(result: ProgressAutoRunResult) -> str:
+    status = result.status.lower()
+    if status in {"failed", "error"}:
+        header = "진행 실패"
+    elif status in {"blocked", "skipped"}:
+        header = "진행 보류"
+    else:
+        header = "진행 완료"
+    return "\n".join(
+        [
+            header,
+            f"작업: {result.title}",
+            f"소요: {max(0.0, result.elapsed_seconds):.1f}초",
+            f"결과: {result.summary}",
+        ]
+    )
+
+
+def _run_progress_manual_poll_recovery(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    now: datetime,
+    limit: int,
+) -> ProgressAutoRunResult:
+    started = time.perf_counter()
+    repository.initialize()
+    reports, _inspection = fetch_reports(config, limit=limit, headless=True)
+    if not reports:
+        return ProgressAutoRunResult(
+            title="오늘 리포트 수집",
+            summary="파싱된 리포트가 없어 저장하지 않았습니다.",
+            elapsed_seconds=time.perf_counter() - started,
+            status="blocked",
+        )
+
+    insert_result = repository.insert_reports(reports, queue_intraday_alerts=False)
+    repository.record_operation_event(
+        _operation_event(
+            config,
+            component="poll",
+            event_type="manual-poll",
+            status="success",
+            detail=(
+                "source=telegram-progress; "
+                f"attempted={insert_result.attempted}; inserted={insert_result.inserted}; intraday_batches=0"
+            ),
+        )
+    )
+    rebuilt = []
+    for business_date in sorted({report.business_date for report in reports}):
+        summaries = repository.rebuild_daily_summaries(business_date)
+        rebuilt.append((business_date, len(summaries)))
+    latest_rebuilt = rebuilt[-1] if rebuilt else (now.date(), 0)
+    duplicate_count = insert_result.attempted - insert_result.inserted
+    return ProgressAutoRunResult(
+        title="오늘 리포트 수집",
+        summary=(
+            f"신규 {insert_result.inserted}건 / 중복 {duplicate_count}건 / "
+            f"최신요약 {latest_rebuilt[0].isoformat()} {latest_rebuilt[1]}개"
+        ),
+        elapsed_seconds=time.perf_counter() - started,
+    )
+
+
+def _run_progress_ops_readiness(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+) -> ProgressAutoRunResult:
+    started = time.perf_counter()
+    payload = _build_ops_readiness_payload(
+        config,
+        repository,
+        recent_business_days=4,
+        stock_limit=20,
+        api_perf_log_path=None,
+    )
+    qa = payload.get("web_view_value_qa") if isinstance(payload.get("web_view_value_qa"), dict) else {}
+    summary = (
+        f"ready={str(payload.get('ready')).lower()} / "
+        f"web-view issue {qa.get('issue_count', 0)} warning {qa.get('warning_count', 0)}"
+    )
+    return ProgressAutoRunResult(
+        title="운영 점검",
+        summary=summary,
+        elapsed_seconds=time.perf_counter() - started,
+        status="completed" if payload.get("ready") else "blocked",
+    )
+
+
+def _run_progress_db_verify(repository: StockMonitorRepository) -> ProgressAutoRunResult:
+    started = time.perf_counter()
+    payload = _build_db_verify_payload(repository)
+    ready = _db_verify_payload_ready(payload)
+    summary = (
+        f"integrity={payload.get('integrity_check')} / "
+        f"pending_migrations={len(payload.get('pending_migrations') or [])} / "
+        f"flow_issues={payload.get('investor_flow_quality_issue_total')}"
+    )
+    return ProgressAutoRunResult(
+        title="DB 검증",
+        summary=summary,
+        elapsed_seconds=time.perf_counter() - started,
+        status="completed" if ready else "blocked",
+    )
+
+
+def _run_progress_web_view_check(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+) -> ProgressAutoRunResult:
+    started = time.perf_counter()
+    payload = _build_web_view_startup_fallback_status(config, repository)
+    health = payload.get("health_check") if isinstance(payload.get("health_check"), dict) else {}
+    summary = (
+        f"ready={str(payload.get('ready')).lower()} / "
+        f"health={health.get('status', '-')} / "
+        f"blocking={payload.get('blocking_item') or '-'}"
+    )
+    return ProgressAutoRunResult(
+        title="웹뷰 확인",
+        summary=summary,
+        elapsed_seconds=time.perf_counter() - started,
+        status="completed" if int(payload.get("issue_count") or 0) == 0 else "blocked",
+    )
+
+
+def _run_progress_operator_task_next(config: RuntimeConfig) -> ProgressAutoRunResult:
+    started = time.perf_counter()
+    payload = _build_operator_task_next_snapshot(_operator_task_queue_path(config), include_completed=False)
+    task = payload.get("next_task") if isinstance(payload.get("next_task"), dict) else None
+    summary = f"pending={payload.get('pending_count', 0)}"
+    if task:
+        summary = f"{summary} / next={task.get('task_id') or '-'}"
+    return ProgressAutoRunResult(
+        title="해야 할 일 확인",
+        summary=summary,
+        elapsed_seconds=time.perf_counter() - started,
+    )
+
+
+def _is_health_progress_request(text: str) -> bool:
+    compact = text.replace(" ", "").lower()
+    markers = (
+        "건강상태",
+        "상태체크",
+        "왜돌",
+        "왜안",
+        "안돌",
+        "돌지않",
+        "오늘리포트",
+        "리포트안",
+        "healthcheck",
+        "why",
+    )
+    return any(marker in compact for marker in markers)
+
+
+def _build_progress_health_diagnosis_response(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    now: datetime,
+) -> str:
+    try:
+        snapshot = build_operator_status_snapshot(config, repository, limit=5, now=now)
+    except Exception as exc:
+        return "\n".join(["진행 진단", "", f"상태 조회 실패: {exc}"])
+
+    health = snapshot.get("health", {}) if isinstance(snapshot.get("health"), dict) else {}
+    reports = snapshot.get("reports_by_date", []) if isinstance(snapshot.get("reports_by_date"), list) else []
+    summaries = snapshot.get("summaries_by_date", []) if isinstance(snapshot.get("summaries_by_date"), list) else []
+    latest_report = reports[0] if reports else None
+    latest_summary = summaries[0] if summaries else None
+    today_report = next(
+        (item for item in reports if isinstance(item, dict) and item.get("business_date") == now.date().isoformat()),
+        None,
+    )
+    today_count = int(today_report.get("count") or 0) if isinstance(today_report, dict) else 0
+
+    lines = [
+        "진행 진단",
+        "",
+        f"기준: {now.strftime('%Y-%m-%d %H:%M')}",
+        f"건강 상태: {health.get('level', 'unknown')}",
+    ]
+    if health.get("summary"):
+        lines.append(f"요약: {health.get('summary')}")
+    if _scheduler_metadata_access_denied(snapshot):
+        lines.append("해석: 스케줄러 메타데이터 접근 거부가 health fail에 포함됐습니다.")
+        lines.append("실제 실행 여부는 아래 최근 이벤트와 live observation을 같이 봐야 합니다.")
+    lines.extend(
+        [
+            f"오늘 리포트: {now.date().isoformat()} / {today_count}건",
+            f"리포트 최신: {_compact_count_by_date(latest_report)}",
+            f"요약 최신: {_compact_count_by_date(latest_summary)}",
+        ]
+    )
+
+    failure = _latest_failed_status_event(snapshot)
+    if failure:
+        component = str(failure.get("component") or "-")
+        event_time = str(failure.get("event_time") or "-")
+        detail = _compact_telegram_detail(failure.get("detail") or failure.get("detail_display") or "-")
+        lines.extend(["", f"최근 실패: {component} / {event_time}", detail])
+        if "playwright is not installed" in detail.lower():
+            lines.append("우선 원인: scheduled poll 실행 Python 환경에 Playwright가 없습니다.")
+            lines.append("조치: 해당 Python에 Playwright/Chromium 설치 후 poll 재확인.")
+
+    recovery_actions = snapshot.get("recovery_actions") if isinstance(snapshot.get("recovery_actions"), list) else []
+    if recovery_actions:
+        first = recovery_actions[0]
+        if isinstance(first, dict) and first.get("detail"):
+            lines.extend(["", f"다음 조치: {_compact_telegram_detail(first.get('detail'))}"])
+    return "\n".join(lines)
+
+
+def _scheduler_metadata_access_denied(snapshot: dict[str, object]) -> bool:
+    live_observation = snapshot.get("live_observation")
+    if isinstance(live_observation, dict) and live_observation.get("scheduler_metadata_status") == "access_denied":
+        return True
+    scheduler_tasks = snapshot.get("scheduler_tasks")
+    if not isinstance(scheduler_tasks, list):
+        return False
+    for task in scheduler_tasks:
+        if isinstance(task, dict) and task.get("status_class") == "access_denied":
+            return True
+    return False
+
+
+def _latest_failed_status_event(snapshot: dict[str, object]) -> dict[str, object] | None:
+    recent_events = snapshot.get("recent_events") if isinstance(snapshot.get("recent_events"), list) else []
+    for event in recent_events:
+        if isinstance(event, dict) and str(event.get("status") or "").lower() == "failed":
+            return event
+    live_observation = snapshot.get("live_observation")
+    if not isinstance(live_observation, dict):
+        return None
+    components = live_observation.get("components")
+    if not isinstance(components, dict):
+        return None
+    for key in ("poll", "notify", "krx_daily_backfill", "telegram_command_loop"):
+        component = components.get(key)
+        if not isinstance(component, dict):
+            continue
+        event = component.get("last_event")
+        if isinstance(event, dict) and str(event.get("status") or "").lower() == "failed":
+            return event
+    return None
+
+
+def _compact_telegram_detail(value: object, *, limit: int = 180) -> str:
+    text = " ".join(str(value or "-").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1]}…"
 
 
 def _build_check_command_response(
@@ -28026,16 +28412,29 @@ def _build_read_only_status_command_response(
     summaries = snapshot.get("summaries_by_date", [])
     latest_report = reports[0] if reports else None
     latest_summary = summaries[0] if summaries else None
-    return "\n".join(
+    lines = [
+        "상태 안내",
+        "",
+        f"건강 상태: {health.get('level', 'unknown')}",
+    ]
+    if health.get("summary"):
+        lines.append(f"요약: {health.get('summary')}")
+    if _scheduler_metadata_access_denied(snapshot):
+        lines.append("주의: 스케줄러 메타데이터 접근 거부가 포함됐습니다.")
+        lines.append("등록 실패가 아니라 조회 권한 문제일 수 있어 최근 실행 이벤트를 같이 확인하세요.")
+    failure = _latest_failed_status_event(snapshot)
+    if failure:
+        component = str(failure.get("component") or "-")
+        detail = _compact_telegram_detail(failure.get("detail") or failure.get("detail_display") or "-")
+        lines.append(f"최근 실패: {component} / {detail}")
+    lines.extend(
         [
-            "상태 안내",
-            "",
-            f"건강 상태: {health.get('level', 'unknown')}",
             f"리포트 최신: {_compact_count_by_date(latest_report)}",
             f"요약 최신: {_compact_count_by_date(latest_summary)}",
             f"DB 존재: {snapshot.get('db_path_exists')}",
         ]
     )
+    return "\n".join(lines)
 
 
 def _compact_count_by_date(item: object) -> str:

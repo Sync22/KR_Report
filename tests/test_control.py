@@ -103,6 +103,7 @@ def test_parse_telegram_command_supports_text_slash_and_selection_inputs() -> No
     assert parse_telegram_command("/사진 리포트 예시") == ("photo", "리포트 예시")
     assert parse_telegram_command("/진행 KRX OpenAPI 상태 확인") == ("progress_request", "KRX OpenAPI 상태 확인")
     assert parse_telegram_command("/progress web-view QA") == ("progress_request", "web-view QA")
+    assert parse_telegram_command("진행 건강상태 체크") == ("progress_request", "건강상태 체크")
     assert parse_telegram_command("/종목검색 017670") == ("stock_lookup", "017670")
     assert parse_telegram_command("/종목코드 SK텔레콤") == ("stock_code_lookup", "SK텔레콤")
     assert parse_telegram_command("2") == ("selection", "2")
