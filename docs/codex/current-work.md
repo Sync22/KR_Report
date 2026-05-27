@@ -24,6 +24,7 @@ As of `2026-05-15`, the product direction is reset around practical daily use ra
 | Memo intent matters | Treat an operator memo as complete only when the original user-facing intent is satisfied. A backend foundation or partial data path is `기반 완료`, not necessarily `의도 완료`. |
 | User surface is compressed | The friend-facing `web-view` should show daily briefing, notable categories/stocks, market reference, and evidence drilldown. Raw tables, repeated defensive disclaimers, operating explanations, and debugging context belong in `admin-gui` or docs. |
 | Observation curation is allowed | This project can recommend observation targets through `오늘의 관찰 후보`, `우선 확인`, `관찰 우선순위`, `관심도 높은 흐름`, and `왜 눈에 띄는지`. Keep public numeric scores, investment grades, and trading-call wording such as `매수 추천`, `매도 추천`, `진입가`, `청산가`, `익절가`, `목표 수익률`, and `확신도` blocked. |
+| Broker/API work is separated | Do not force KIS or any other broker integration to fill intraday gaps. The active future broker direction is Toss Securities Open API, but until usable local docs/permissions/keys are verified it belongs only in a separate lab/staging lane such as `broker-lab`, `execution-lab`, or `toss-openapi-lab`. |
 | Iterate from daily collection | Show rough observations from stored data first, then decide what is mature enough to refine after several market days. |
 | Add closing-market context | A separate `16:00`-around `오늘의 시장 분위기` Telegram briefing is now a valid next product direction, using stored same-day reports, KRX market reference, and available investor-flow context. |
 
@@ -211,6 +212,7 @@ Closeout gate evidence (`2026-05-17 10:23 KST`): `next-phase-readiness` now expo
 | --- | --- |
 | `admin-gui` | Control-capable, local/operator-only. Do not expose publicly. |
 | `web-view` | GET-only/read-only, friend-facing candidate. Default API loads are stored-data based. The manual same-day `Naver 장중 참고` turnover overlap check is allowed as display-only live reference. No scheduler, shutdown, `.env`, DB path, Telegram token, settings, or admin audit exposure. |
+| Broker/API lab | Future Toss Securities Open API or other broker work starts outside production as documentation/permission review, sandbox/test-key check, and read-only quote/account/balance probes. No live trading hookup, broker secrets, production DB writes, scheduler/Telegram integration, admin-gui linkage, or public web-view linkage by default. |
 | Reports | Naver source of truth. |
 | Price/volume/turnover/ETF/index | KRX Open API source of truth. |
 | Investor flow | KRX Data Marketplace source; stored read-only context. Automatic collection is limited to anchor-date mentioned stocks through `StockMonitor-KrxMentionedFlowBackfill`; broad scheduled ingest remains disabled. |

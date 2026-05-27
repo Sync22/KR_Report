@@ -5114,7 +5114,7 @@ def _build_same_day_report_status(
         current_date is None or business_date != current_date or not is_business_day(current_date, holiday_overrides)
     ):
         can_overlap = False
-        reason = "장중 Naver 거래대금 확인은 오늘 영업일에만 사용할 수 있습니다."
+        reason = "오늘 정규장 시간에만 확인 할 수 있습니다."
     elif summary_stock_count <= 0:
         can_overlap = False
         reason = "당일 리포트 요약이 없어 거래대금 교집합을 만들 수 없습니다."
@@ -5250,11 +5250,7 @@ def _build_market_commentary_practice_snapshot(
             "time": "09:15",
             "label": "장초반",
             "reference_date": opening_reference_date.isoformat() if opening_reference_date else None,
-            "comment": (
-                f"09:15에는 전일 리포트 기준 {opening_label} 2종목만 먼저 확인합니다."
-                if opening_reference_date is not None
-                else "09:15에는 전일 리포트 기준이 없어 저장된 시장 폭만 먼저 확인합니다."
-            ),
+            "comment": "",
             "opinion": "당일 리포트가 쌓이기 전에는 전일 후보와 지수 참고를 분리해서 봅니다.",
             "details": (
                 [
@@ -5300,8 +5296,8 @@ def _build_market_commentary_practice_snapshot(
             "time": "15:15",
             "label": "장 마감 전",
             "reference_date": resolved_date.isoformat(),
-            "comment": "15:15에는 수급 전환이 반복되는 종목만 마감 전 확인합니다.",
-            "opinion": "수급 전환이 반복되는 종목만 종목 탭에서 한 번 더 확인합니다.",
+            "comment": "수급 전환이 반복되는 종목만 종목 탭에서 한 번 더 확인합니다.",
+            "opinion": "",
             "details": flow_details[:3]
             or intraday_market_top_details[:3]
             or intraday_quote_details[:3]
@@ -12037,8 +12033,13 @@ def _run_candidate_evidence_readiness(
         "qa_issue_date_count": len(qa_issue_dates),
         "qa_warning_date_count": sum(1 for row in date_rows if row["qa_warning_count"]),
         "observation_priority_counts": _sum_count_maps(date_rows, "observation_priority_counts"),
+        "visible_observation_priority_counts": _sum_count_maps(date_rows, "visible_observation_priority_counts"),
         "why_notable_counts": _sum_count_maps(date_rows, "why_notable_counts"),
+        "visible_why_notable_counts": _sum_count_maps(date_rows, "visible_why_notable_counts"),
         "missing_information_counts": _sum_count_maps(date_rows, "missing_information_counts"),
+        "visible_missing_information_counts": _sum_count_maps(date_rows, "visible_missing_information_counts"),
+        "internal_candidate_signal_counts": _sum_count_maps(date_rows, "internal_candidate_signal_counts"),
+        "internal_missing_information_counts": _sum_count_maps(date_rows, "internal_missing_information_counts"),
         "interpretation_blocked": True,
         "interpretation_block_reasons": [
             "candidate evidence is for visible review only",
@@ -12059,8 +12060,9 @@ def _run_candidate_evidence_readiness(
     print(f"- review ready: {payload['review_ready_count']}/{payload['inspected_date_count']}")
     print(f"- QA issue dates: {payload['qa_issue_date_count']}")
     print(f"- observation priority: {_format_count_map(payload['observation_priority_counts'])}")
-    print(f"- why notable: {_format_count_map(payload['why_notable_counts'])}")
-    print(f"- missing information: {_format_count_map(payload['missing_information_counts'])}")
+    print(f"- visible why notable: {_format_count_map(payload['visible_why_notable_counts'])}")
+    print(f"- visible missing information: {_format_count_map(payload['visible_missing_information_counts'])}")
+    print(f"- internal candidate signals: {_format_count_map(payload['internal_candidate_signal_counts'])}")
     print("- interpretation: blocked for score/recommendation")
     if block_reasons:
         print("- review block reasons:")
@@ -12091,6 +12093,7 @@ def _build_candidate_evidence_readiness_date(
         repository,
         business_date=business_date,
         limit=limit,
+        include_internal=True,
     )
     rows = list(snapshot.get("rows") or [])
     issues: list[dict] = []
@@ -12108,6 +12111,10 @@ def _build_candidate_evidence_readiness_date(
     observation_priority_counts: Counter[str] = Counter(
         str(row.get("observation_priority")) for row in rows if str(row.get("observation_priority") or "").strip()
     )
+    why_notable_counts = _count_web_view_candidate_list_values(rows, "why_notable")
+    missing_information_counts = _count_web_view_candidate_list_values(rows, "missing_information")
+    internal_candidate_signal_counts = _count_web_view_candidate_list_values(rows, "internal_candidate_signals")
+    internal_missing_information_counts = _count_web_view_candidate_list_values(rows, "internal_missing_information")
     return {
         "business_date": business_date.isoformat(),
         "eligible_summary_count": len(summaries),
@@ -12129,8 +12136,13 @@ def _build_candidate_evidence_readiness_date(
             1 for row in rows if (row.get("rank_reference") or {}).get("foreign_top_rank") is not None
         ),
         "observation_priority_counts": dict(sorted(observation_priority_counts.items())),
-        "why_notable_counts": _count_web_view_candidate_list_values(rows, "why_notable"),
-        "missing_information_counts": _count_web_view_candidate_list_values(rows, "missing_information"),
+        "visible_observation_priority_counts": dict(sorted(observation_priority_counts.items())),
+        "why_notable_counts": why_notable_counts,
+        "visible_why_notable_counts": why_notable_counts,
+        "missing_information_counts": missing_information_counts,
+        "visible_missing_information_counts": missing_information_counts,
+        "internal_candidate_signal_counts": internal_candidate_signal_counts,
+        "internal_missing_information_counts": internal_missing_information_counts,
         "quality_flag_counts": dict(sorted(quality_flag_counts.items())),
         "qa_issue_count": len(issues),
         "qa_warning_count": len(warnings),
@@ -12147,6 +12159,8 @@ def _build_candidate_evidence_readiness_date(
                 "observation_priority": row.get("observation_priority"),
                 "why_notable": row.get("why_notable") or [],
                 "missing_information": row.get("missing_information") or [],
+                "internal_candidate_signals": row.get("internal_candidate_signals") or [],
+                "internal_missing_information": row.get("internal_missing_information") or [],
                 "target_validation_available": (row.get("target_price_progress") or {}).get("validation_available"),
                 "stock_flow_available": (row.get("stock_flow_reference") or {}).get("available"),
                 "foreign_top_rank": (row.get("rank_reference") or {}).get("foreign_top_rank"),
@@ -16148,10 +16162,11 @@ def _collect_web_view_browser_render_smoke_issues(
                                 """
                             )
                         )
+                        candidate_panel_visible = page.locator("#candidate-evidence-rows").is_visible()
+                        intraday_overlap_panel = page.locator("#intraday-market-top-overlap").is_visible()
                         page.locator('[data-view-tab="watch"]').click(timeout=timeout_ms)
                         page.wait_for_timeout(250)
-                        watch_panel_visible = page.locator("#candidate-evidence-rows").is_visible()
-                        intraday_overlap_panel = page.locator("#intraday-market-top-overlap").is_visible()
+                        watch_panel_visible = page.locator("#stock-context-card").is_visible()
                         viewport_result = {
                             "name": spec["name"],
                             "width": spec["width"],
@@ -16159,7 +16174,7 @@ def _collect_web_view_browser_render_smoke_issues(
                             "tab_count": tab_count,
                             "search_input": bool(search_count),
                             "intraday_button": intraday_button_visible,
-                            "candidate_panel": bool(candidate_count),
+                            "candidate_panel": bool(candidate_count) and candidate_panel_visible,
                             "intraday_overlap_panel": intraday_overlap_panel,
                             "watch_panel_clickable": watch_panel_visible,
                             "horizontal_overflow_px": horizontal_overflow_px,
@@ -16203,7 +16218,7 @@ def _collect_web_view_browser_render_smoke_issues(
                                 {
                                     "code": "watch_tab_not_clickable",
                                     "path": f"viewport[{spec['name']}].watch_tab",
-                                    "message": "watch tab did not expose candidate evidence panel",
+                                    "message": "watch tab did not expose selected-stock detail panel",
                                 }
                             )
                         if not intraday_overlap_panel:
@@ -16211,7 +16226,7 @@ def _collect_web_view_browser_render_smoke_issues(
                                 {
                                     "code": "missing_intraday_overlap_panel",
                                     "path": f"viewport[{spec['name']}].intraday_overlap",
-                                    "message": "watch tab did not expose Naver intraday overlap panel",
+                                    "message": "main tab did not expose Naver intraday overlap panel",
                                 }
                             )
                         if horizontal_overflow_px > 8:
@@ -19122,7 +19137,7 @@ def _render_web_view_html() -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Stock Monitor 리포트 뷰</title>
+  <title>KR-Stock Daily Report</title>
   <style>
     :root {
       --bg: #f7f5ef;
@@ -19220,13 +19235,24 @@ def _render_web_view_html() -> str:
     .ghost-button { border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; background: #fffaf1; color: var(--muted); font-size: 12px; font-weight: 800; cursor: pointer; }
     .ghost-button[hidden] { display: none; }
     .brief { display: grid; gap: 6px; margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+    .brief:empty { display: none; }
     .daily-briefing { display: grid; gap: 12px; }
     .briefing-line { margin: 0; color: var(--ink); font-size: 16px; font-weight: 900; letter-spacing: -.02em; }
-    .briefing-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .briefing-market-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, .9fr); gap: 12px; align-items: start; }
+    .briefing-reference-card { display: grid; gap: 0; border: 1px solid var(--line); border-radius: 8px; background: #fffaf1; overflow: hidden; }
+    .briefing-reference-head { display: flex; justify-content: space-between; gap: 8px; align-items: start; padding: 12px 12px 4px; }
+    .briefing-reference-head b { color: var(--ink); font-size: 15px; font-weight: 900; }
+    .briefing-reference-head span { color: var(--muted); font-size: 11px; font-weight: 800; text-align: right; }
+    .briefing-reference-section { display: grid; gap: 5px; padding: 10px 12px 12px; }
+    .briefing-reference-divider { border-top: 1px solid rgba(199,190,176,.95); margin: 0 12px; }
     .briefing-box { border: 1px solid var(--line); border-radius: 16px; padding: 12px; background: #fffaf1; }
+    .briefing-reference-card .briefing-box { border: 0; border-radius: 0; padding: 12px; background: transparent; }
+    .briefing-reference-card .briefing-box b { color: var(--accent); font-size: 12px; }
+    .briefing-reference-card .briefing-box strong { color: var(--ink); font-size: 14px; font-weight: 700; line-height: 1.5; }
     .briefing-box b { display: block; margin-bottom: 5px; color: var(--muted); font-size: 12px; }
     .briefing-box strong { display: block; color: var(--ink); font-size: 18px; line-height: 1.35; }
     .briefing-box span { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .briefing-box span:empty { display: none; }
     .briefing-card-lines { display: grid; gap: 4px; margin: 0; color: var(--ink); font-size: 15px; line-height: 1.35; }
     .briefing-card-line { display: block; overflow-wrap: anywhere; }
     .briefing-card-line em { color: var(--accent); font-style: normal; font-size: 12px; font-weight: 900; margin-right: 5px; }
@@ -19236,6 +19262,8 @@ def _render_web_view_html() -> str:
     .briefing-flow-row b { margin: 0; color: var(--ink); font-size: 13px; }
     .briefing-flow-row span { margin: 0; color: var(--ink); font-size: 12px; }
     .briefing-flow-row small { color: var(--muted); font-size: 11px; line-height: 1.35; }
+    .briefing-reference-card .briefing-flow-row b { color: var(--ink); font-size: 13px; font-weight: 800; }
+    .briefing-reference-card .briefing-flow-row span { color: var(--ink); font-size: 12px; font-weight: 600; }
     .briefing-chips { display: flex; flex-wrap: wrap; gap: 8px; }
     .briefing-chip { border: 1px solid var(--line); border-radius: 999px; padding: 7px 10px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 800; }
     .briefing-comments { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
@@ -19245,6 +19273,10 @@ def _render_web_view_html() -> str:
     .briefing-comment-opinion { display: block; margin-top: 5px; color: var(--ink); font-size: 11px; font-weight: 800; }
     .briefing-detail-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 6px; align-items: start; }
     .briefing-detail-row em { color: var(--accent); font-style: normal; font-weight: 900; }
+    .briefing-detail-flow { display: grid; gap: 2px; border-top: 1px solid rgba(222,216,204,.8); padding-top: 5px; }
+    .briefing-detail-flow:first-child { border-top: 0; padding-top: 0; }
+    .briefing-detail-flow b { margin: 0; color: var(--accent); font-size: 11px; }
+    .briefing-detail-flow span { display: block; color: var(--ink); }
     .briefing-live-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
     .briefing-live-status { margin: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
     .live-source-pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 3px 8px; background: #e9f4ff; color: #1769aa; font-size: 11px; font-weight: 900; }
@@ -19255,14 +19287,15 @@ def _render_web_view_html() -> str:
     .intraday-overlap-chip span { margin-left: 5px; color: var(--muted); font-size: 11px; font-weight: 700; }
     .briefing-mood-card { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #fffaf1; }
     .briefing-mood-head { display: flex; justify-content: space-between; gap: 8px; align-items: start; }
-    .briefing-mood-head b { color: var(--ink); font-size: 15px; }
+    .briefing-mood-head b { color: var(--ink); font-size: 15px; font-weight: 900; }
     .briefing-mood-head span { color: var(--muted); font-size: 11px; font-weight: 800; text-align: right; }
     .briefing-mood-headline { margin: 0; color: var(--ink); font-size: 14px; font-weight: 900; line-height: 1.4; }
-    .briefing-mood-sections { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+    .briefing-mood-sections { display: grid; grid-template-columns: 1fr; gap: 8px; }
     .briefing-mood-section { display: grid; gap: 5px; border-top: 1px solid var(--line); padding-top: 8px; color: var(--ink); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
     .briefing-mood-section b { color: var(--accent); font-size: 12px; }
     .briefing-mood-section span { display: block; color: var(--ink); }
     .briefing-mood-gaps { display: flex; flex-wrap: wrap; gap: 6px; }
+    .briefing-mood-gaps:empty { display: none; }
     .briefing-mood-gap { border: 1px solid rgba(222,216,204,.95); border-radius: 999px; padding: 5px 8px; background: #fbf4e6; color: var(--muted); font-size: 11px; font-weight: 800; }
     .briefing-mini-label { margin: 2px 0 -4px; color: var(--muted); font-size: 12px; font-weight: 900; }
     .briefing-check-points { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
@@ -19289,13 +19322,15 @@ def _render_web_view_html() -> str:
     .sector-breadth-list { display: grid; gap: 9px; }
     .sector-breadth-row { display: grid; gap: 4px; border-top: 1px solid var(--line); padding-top: 8px; }
     .sector-breadth-row:first-child { border-top: 0; padding-top: 0; }
-    .sector-breadth-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; color: var(--ink); font-size: 12px; }
+    .sector-breadth-head { display: grid; gap: 2px; color: var(--ink); font-size: 12px; }
+    .sector-breadth-label { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: keep-all; }
     .sector-breadth-meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
     .sector-breadth-track { height: 8px; overflow: hidden; border-radius: 999px; background: rgba(222,216,204,.8); }
     .sector-breadth-bar { display: block; height: 100%; min-width: 6px; border-radius: 999px; background: linear-gradient(90deg, var(--accent), #83a86f); }
     .scroll-panel { max-height: 420px; overflow: auto; padding-right: 4px; scrollbar-width: thin; }
     .scroll-panel.tall { max-height: 560px; }
     .scroll-panel.stock-summary-panel { max-height: 430px; }
+    .scroll-panel.candidate-evidence-panel { max-height: 620px; }
     .scroll-panel.compact { max-height: 300px; }
     .stock-focus-card { min-height: 720px; }
     .stock-focus-card .section-header { align-items: flex-start; flex-direction: column; }
@@ -19311,14 +19346,34 @@ def _render_web_view_html() -> str:
     .candidate-list { display: grid; gap: 10px; }
     .top-two-candidates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 4px; }
     .top-two-card { border: 1px solid var(--line); border-radius: 16px; padding: 12px; background: #fff; color: inherit; cursor: pointer; text-align: left; font: inherit; }
-    .top-two-card b { display: block; margin-bottom: 5px; color: var(--accent); font-size: 13px; }
+    .top-two-card b { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 5px; color: var(--accent); font-size: 13px; }
+    .top-two-card .status-pill { font-size: 11px; padding: 2px 7px; }
     .top-two-card span { display: block; color: var(--muted); font-size: 12px; line-height: 1.45; }
     .candidate-card { border: 1px solid var(--line); border-radius: 18px; padding: 14px; background: #fffaf1; cursor: pointer; }
     .candidate-card:hover { border-color: var(--accent); box-shadow: inset 4px 0 0 var(--accent); }
-    .candidate-card h3 { margin: 0 0 8px; font-size: 16px; }
-    .candidate-evidence-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-    .candidate-evidence-grid span { border: 1px solid rgba(222,216,204,.8); border-radius: 12px; padding: 8px; color: var(--muted); font-size: 12px; }
-    .candidate-evidence-grid b { display: block; color: var(--ink); font-size: 13px; }
+    .candidate-card h3 { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 8px; font-size: 16px; }
+    .candidate-title-stock { display: inline-grid; gap: 1px; line-height: 1.16; }
+    .candidate-stock-name { display: block; color: var(--ink); font-size: 18px; font-weight: 900; }
+    .candidate-stock-code { display: block; color: var(--muted); font-size: 12px; font-weight: 800; }
+    .candidate-title-separator { width: 1px; align-self: stretch; min-height: 32px; margin: 0 4px; background: rgba(199,190,176,.95); }
+    .candidate-card .status-pill { font-size: 12px; padding: 2px 8px; }
+    .candidate-market-inline { display: inline-grid; gap: 1px; color: var(--muted); font-size: 12px; font-weight: 800; line-height: 1.2; }
+    .candidate-market-inline span { display: block; }
+    .candidate-market-inline span:first-child { color: var(--ink); font-size: 18px; font-weight: 900; }
+    .candidate-evidence-grid { display: grid; grid-template-columns: minmax(120px, .72fr) minmax(0, 1.14fr) minmax(0, 1.14fr); gap: 8px; }
+    .candidate-evidence-grid > span { border: 1px solid rgba(222,216,204,.8); border-radius: 12px; padding: 8px; color: var(--muted); font-size: 12px; }
+    .candidate-evidence-grid > span > b { display: block; color: var(--ink); font-size: 13px; }
+    .candidate-info-grid { display: grid; gap: 8px 12px; margin-top: 6px; color: var(--ink); font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
+    .candidate-info-grid > span { display: block; min-width: 0; }
+    .candidate-info-grid b { display: block; color: var(--ink); font-size: 12px; margin-bottom: 2px; }
+    .candidate-info-grid em { display: block; color: var(--muted); font-style: normal; }
+    .candidate-target-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .candidate-flow-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .candidate-quality-grid { display: grid; grid-template-columns: minmax(120px, .72fr) minmax(0, 1.14fr) minmax(0, 1.14fr); gap: 8px; margin: 8px 0 10px; }
+    .candidate-quality-grid .quality-line { display: block; margin-top: 0; min-width: 0; }
+    .candidate-quality-grid .quality-line:first-child { grid-column: span 2; }
+    .candidate-quality-grid .quality-line b { display: block; border-bottom: 1px solid rgba(222,216,204,.8); padding-bottom: 5px; margin-bottom: 6px; color: var(--ink); }
+    .candidate-quality-grid .quality-chip { margin: 0 6px 5px 0; vertical-align: top; }
     .candidate-metric-list, .target-trail-list { display: grid; gap: 5px; margin-top: 5px; }
     .candidate-metric-line { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 8px; align-items: baseline; }
     .candidate-metric-key { color: var(--muted); font-size: 11px; font-weight: 800; }
@@ -19385,6 +19440,9 @@ def _render_web_view_html() -> str:
     .compact-details:not([open]) > summary::after { content: "펼치기"; }
     .quality-line { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
     .quality-chip { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 4px 9px; background: #fffaf1; color: var(--muted); font-size: 12px; }
+    .quality-chip.quality-chip--why { border-color: rgba(37,99,80,.28); background: #e9f4ec; color: var(--accent); }
+    .quality-chip.quality-chip--missing { border-color: rgba(178,93,38,.28); background: #fff0df; color: #9b4a1c; }
+    .quality-chip.quality-chip-overflow { border-color: rgba(99,111,106,.24); background: #f3f1ea; color: var(--muted); font-weight: 800; }
     .rotation-wrap { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: #fffaf1; }
     .rotation-wrap img { display: block; width: 100%; height: auto; }
     .rotation-wrap svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
@@ -19408,6 +19466,8 @@ def _render_web_view_html() -> str:
       .top-two-candidates { grid-template-columns: 1fr; }
       .rotation-evidence { grid-template-columns: 1fr; }
       .candidate-evidence-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .candidate-quality-grid { grid-template-columns: 1fr; }
+      .candidate-quality-grid .quality-line:first-child { grid-column: auto; }
       .stock-focus-card { min-height: auto; }
       table { display: block; overflow-x: auto; white-space: nowrap; }
     }
@@ -19422,10 +19482,12 @@ def _render_web_view_html() -> str:
       table.mobile-card-table tr.active-selection { border-color: var(--accent); box-shadow: inset 4px 0 0 var(--accent); }
       table.mobile-card-table td { border: 0; padding: 6px 0; }
       table.mobile-card-table td::before { content: attr(data-label); display: block; margin-bottom: 2px; color: var(--muted); font-size: 11px; font-weight: 700; }
-      .briefing-grid { grid-template-columns: 1fr; }
+      .briefing-market-row { grid-template-columns: 1fr; }
       .briefing-mood-sections { grid-template-columns: 1fr; }
       .briefing-comments { grid-template-columns: 1fr; }
       .observation-summary-grid { grid-template-columns: 1fr; }
+      .candidate-evidence-grid { grid-template-columns: 1fr; }
+      .candidate-target-grid, .candidate-flow-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
   </style>
 </head>
@@ -19433,8 +19495,8 @@ def _render_web_view_html() -> str:
   <main>
     <header class="hero">
       <div class="hero-copy">
-        <h1>리포트 뷰</h1>
-        <p class="sub">날짜별 리포트와 시장 참고</p>
+        <h1>KR-Stock</h1>
+        <p class="sub">Daily Report</p>
       </div>
       <div class="hero-tools">
         <nav class="top-tabs" aria-label="상단 탭">
@@ -19474,39 +19536,56 @@ def _render_web_view_html() -> str:
           <span class="live-source-pill">Naver 장중 참고</span>
           <p class="briefing-live-status" id="intraday-market-top-status">날짜를 선택하면 장중 거래대금 교집합을 확인할 수 있습니다.</p>
         </div>
-        <div class="briefing-comments" id="briefing-one-line-comments"></div>
         <p class="briefing-mini-label">리포트 간략 정리</p>
         <p class="briefing-line" id="daily-briefing-headline">날짜를 선택하면 읽을 흐름을 압축해서 보여줍니다.</p>
-        <div class="briefing-mood-card" id="briefing-mood-card">
-          <div class="briefing-mood-head">
-            <b id="briefing-mood-title">국장 시장 분위기</b>
-            <span id="briefing-mood-reference">저장 데이터 기준</span>
-          </div>
-          <p class="briefing-mood-headline" id="briefing-mood-headline">저장 데이터 기준 시장 분위기를 준비 중입니다.</p>
-          <div class="briefing-mood-sections" id="briefing-mood-sections"></div>
-          <div class="briefing-mood-gaps" id="briefing-mood-gaps"></div>
-        </div>
-        <div class="briefing-grid">
-          <div class="briefing-box">
-            <b>지수 참고</b>
-            <strong id="briefing-market-index">-</strong>
-            <span id="briefing-market-index-sub">KRX 저장값 기준</span>
-          </div>
-          <div class="briefing-box">
-            <b>거래대금 참고</b>
-            <strong id="briefing-turnover">-</strong>
-            <span id="briefing-turnover-sub">KRX 저장값 기준</span>
-          </div>
-          <div class="briefing-box">
-            <b>수급 참고</b>
-            <strong id="briefing-investor-flow">-</strong>
-            <span id="briefing-investor-flow-sub">저장된 수급 기준</span>
-          </div>
-        </div>
         <p class="briefing-mini-label">한줄평</p>
         <ul class="briefing-check-points" id="briefing-check-points"><li>확인 포인트가 있으면 여기에 표시됩니다.</li></ul>
         <p class="briefing-mini-label">확인 종목</p>
         <div class="briefing-chips" id="briefing-watch-chips"><span class="muted">후보가 있으면 여기에 표시됩니다.</span></div>
+        <div class="briefing-comments" id="briefing-one-line-comments"></div>
+        <div class="briefing-market-row">
+          <div class="briefing-mood-card" id="briefing-mood-card">
+            <div class="briefing-mood-head">
+              <b id="briefing-mood-title">국장 시장 분위기</b>
+              <span id="briefing-mood-reference">저장 데이터 기준</span>
+            </div>
+            <p class="briefing-mood-headline" id="briefing-mood-headline">저장 데이터 기준 시장 분위기를 준비 중입니다.</p>
+            <div class="briefing-mood-sections" id="briefing-mood-sections"></div>
+            <div class="briefing-mood-gaps" id="briefing-mood-gaps"></div>
+          </div>
+          <div class="briefing-reference-card">
+            <div class="briefing-reference-head">
+              <b id="briefing-reference-title">시장 참고</b>
+              <span>저장 데이터 기준</span>
+            </div>
+            <div class="briefing-box briefing-reference-section">
+              <b id="briefing-turnover-title">거래대금 참고</b>
+              <strong id="briefing-turnover">-</strong>
+              <span id="briefing-turnover-sub"></span>
+            </div>
+            <div class="briefing-reference-divider" aria-hidden="true"></div>
+            <div class="briefing-box briefing-reference-section">
+              <b id="briefing-investor-flow-title">수급 참고</b>
+              <strong id="briefing-investor-flow">-</strong>
+              <span id="briefing-investor-flow-sub"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card span-12" id="candidate-evidence-card" data-view-panel="main">
+        <div class="section-header">
+          <h2>오늘의 관찰 후보 <span class="muted" id="candidate-evidence-date"></span></h2>
+          <span class="status-pill">우선 확인</span>
+        </div>
+        <p class="brief" id="candidate-evidence-notice"></p>
+        <div id="intraday-market-top-overlap" class="intraday-overlap-panel">
+          <div class="intraday-overlap-meta">Naver 장중 참고 대기</div>
+          <span class="muted">장중 거래대금 확인 후 리포트 언급과 겹친 종목이 여기에 표시됩니다.</span>
+        </div>
+        <div class="scroll-panel stock-summary-panel candidate-evidence-panel">
+          <div id="candidate-evidence-rows" class="candidate-list"><span class="muted">날짜를 선택하세요.</span></div>
+        </div>
       </div>
 
       <div class="card span-12" data-view-panel="main">
@@ -19520,20 +19599,24 @@ def _render_web_view_html() -> str:
         </div>
       </div>
 
-      <div class="card span-12" data-view-panel="watch" hidden>
+      <div class="card span-7 focus-card stock-focus-card" id="stock-context-card" data-view-panel="watch" tabindex="-1" hidden>
         <div class="section-header">
-          <h2>오늘의 관찰 후보 <span class="muted" id="candidate-evidence-date"></span></h2>
-          <span class="status-pill">우선 확인</span>
+          <h2>선택 종목</h2>
         </div>
-        <p class="brief" id="candidate-evidence-notice">날짜를 선택하면 왜 눈에 띄는지와 부족한 정보를 함께 보여줍니다.</p>
-        <div id="intraday-market-top-overlap" class="intraday-overlap-panel">
-          <div class="intraday-overlap-meta">Naver 장중 참고 대기</div>
-          <span class="muted">장중 거래대금 확인 후 리포트 언급과 겹친 종목이 여기에 표시됩니다.</span>
+        <div id="stock-context" class="detail-list scroll-panel stock-context-panel"><span class="muted">종목 행을 선택하면 KRX 참고와 수급 정보를 불러옵니다.</span></div>
+      </div>
+
+      <div class="card span-5 focus-card stock-focus-card" id="stock-detail-card" data-view-panel="watch" tabindex="-1" hidden>
+        <div class="section-header">
+          <h2>선택 종목 리포트 <span class="muted" id="detail-title"></span></h2>
+          <label class="toggle-switch"><input id="report-no-opinion-toggle" type="checkbox"> 의견없음 제외</label>
         </div>
-        <div class="scroll-panel stock-summary-panel">
-          <div id="candidate-evidence-rows" class="candidate-list"><span class="muted">날짜를 선택하세요.</span></div>
-        </div>
-        <div class="section-header compact-heading">
+        <p class="brief" id="report-filter-status">종목 행을 선택하세요.</p>
+        <div id="stock-detail" class="detail-list scroll-panel stock-report-panel"><span class="muted">종목 행을 선택하세요.</span></div>
+      </div>
+
+      <div class="card span-12" id="backtest-observation-card" data-view-panel="watch" hidden>
+        <div class="section-header">
           <h2>리포트 후 흐름 <span class="muted" id="backtest-observation-date"></span></h2>
           <div class="summary-actions">
             <span class="status-pill">저장 기준</span>
@@ -19584,22 +19667,6 @@ def _render_web_view_html() -> str:
             <tbody id="stock-rows"><tr><td colspan="6" class="muted">날짜를 선택하세요.</td></tr></tbody>
           </table>
         </div>
-      </div>
-
-      <div class="card span-7 focus-card stock-focus-card" id="stock-context-card" data-view-panel="main" tabindex="-1">
-        <div class="section-header">
-          <h2>선택 종목</h2>
-        </div>
-        <div id="stock-context" class="detail-list scroll-panel stock-context-panel"><span class="muted">종목 행을 선택하면 KRX 참고와 수급 정보를 불러옵니다.</span></div>
-      </div>
-
-      <div class="card span-5 focus-card stock-focus-card" id="stock-detail-card" data-view-panel="main" tabindex="-1">
-        <div class="section-header">
-          <h2>선택 종목 리포트 <span class="muted" id="detail-title"></span></h2>
-          <label class="toggle-switch"><input id="report-no-opinion-toggle" type="checkbox"> 의견없음 제외</label>
-        </div>
-        <p class="brief" id="report-filter-status">종목 행을 선택하세요.</p>
-        <div id="stock-detail" class="detail-list scroll-panel stock-report-panel"><span class="muted">종목 행을 선택하세요.</span></div>
       </div>
 
       <div class="card span-12 focus-card" id="category-detail-card" data-view-panel="main" tabindex="-1">
@@ -19953,6 +20020,7 @@ def _render_web_view_html() -> str:
         document.getElementById("stock-search-input").value = `${picked.stock_name || "-"} ${picked.stock_code || ""}`.trim();
         updateStockSearchStatus(`${picked.stock_name || "-"} ${picked.stock_code || ""}`.trim() + " 선택");
       }
+      setViewTab("watch");
       loadStockDetail(selectedDate, stockCode, { scrollToDetail: true, userSelected: true }).then(() => {
         syncCategoryFromStock(picked);
       }).catch((error) => {
@@ -20026,7 +20094,9 @@ def _render_web_view_html() -> str:
 
     function renderLazyTabError(tabName, error) {
       const message = `<span class="muted">오류: ${esc(error)}</span>`;
-      if (tabName === "watch") {
+      if (tabName === "main") {
+        document.getElementById("candidate-evidence-rows").innerHTML = message;
+      } else if (tabName === "watch") {
         document.getElementById("candidate-evidence-rows").innerHTML = message;
         document.getElementById("backtest-observation-rows").innerHTML = `<tr><td colspan="5" class="muted">오류: ${esc(error)}</td></tr>`;
       } else if (tabName === "market") {
@@ -20050,7 +20120,9 @@ def _render_web_view_html() -> str:
 
     async function loadTabDataForActiveView(date) {
       if (!date) return;
-      if (activeViewTab === "watch") {
+      if (activeViewTab === "main") {
+        await loadCandidateEvidence(date);
+      } else if (activeViewTab === "watch") {
         await loadCandidateEvidence(date);
         if (backtestObservationLoadedDate !== date) {
           await loadBacktestObservation(date);
@@ -20111,7 +20183,7 @@ def _render_web_view_html() -> str:
       renderDailyBriefing(data);
       renderObservationSummary(data.observation_summary);
       document.getElementById("candidate-evidence-date").textContent = `(${date})`;
-      document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">관찰 탭을 열면 오늘의 관찰 후보를 불러옵니다.</span>';
+      document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">오늘의 관찰 후보를 불러오는 중입니다.</span>';
       document.getElementById("backtest-observation-date").textContent = `(${date})`;
       document.getElementById("backtest-observation-rows").innerHTML = '<tr><td colspan="5" class="muted">관찰 탭을 열면 리포트 후 흐름을 불러옵니다.</td></tr>';
       document.getElementById("backtest-observation-show-more").hidden = true;
@@ -20167,23 +20239,21 @@ def _render_web_view_html() -> str:
       const multiCount = Number(mood.multi_report_stock_count || 0);
       const candidateCount = candidates.length;
       const notableStocks = Array.isArray(briefing.notable_stocks) ? briefing.notable_stocks : candidates;
-      const indexPair = briefing.index_summary
-        ? briefingIndexPair(briefing.index_summary)
-        : briefingLinePair(briefing.market_reference_lines, "지수 저장값 없음", "KRX 저장값 기준");
       const turnoverPair = briefing.turnover_summary
         ? briefingTurnoverPair(briefing.turnover_summary)
-        : briefingLinePair(briefing.turnover_reference_lines, "거래대금 저장값 없음", "KRX 저장값 기준");
+        : briefingLinePair(briefing.turnover_reference_lines, "거래대금 저장값 없음", "");
       const flowPair = briefing.flow_summary
         ? briefingFlowPair(briefing.flow_summary, briefing.flow_reference_lines)
-        : briefingLinePair(briefing.flow_reference_lines, "수급 저장값 없음", "저장된 수급 기준");
+        : briefingLinePair(briefing.flow_reference_lines, "수급 저장값 없음", "");
       document.getElementById("daily-briefing-date").textContent = data?.business_date ? `(${data.business_date})` : "";
       document.getElementById("daily-briefing-headline").textContent = reportCount > 0
         ? `리포트 ${number(reportCount)}건이 ${number(stockCount)}개 종목에 모였습니다.`
         : "선택 날짜에 저장된 리포트 요약이 없습니다.";
-      document.getElementById("briefing-market-index").textContent = indexPair.value;
-      document.getElementById("briefing-market-index-sub").textContent = indexPair.label;
+      document.getElementById("briefing-reference-title").textContent = briefingReferenceTitle(turnoverPair, flowPair);
+      document.getElementById("briefing-turnover-title").textContent = turnoverPair.title || "거래대금 참고";
       setBriefingPairValue("briefing-turnover", turnoverPair);
       document.getElementById("briefing-turnover-sub").textContent = turnoverPair.label;
+      document.getElementById("briefing-investor-flow-title").textContent = flowPair.title || "수급 참고";
       setBriefingPairValue("briefing-investor-flow", flowPair);
       document.getElementById("briefing-investor-flow-sub").textContent = flowPair.label;
       document.getElementById("briefing-watch-chips").innerHTML = notableStocks.length
@@ -20222,12 +20292,13 @@ def _render_web_view_html() -> str:
             const detailNode = details.length
               ? `<small>${details.map(renderBriefingDetailLine).join("")}</small>`
               : "";
+            const comment = item.comment ? `<span>${esc(item.comment)}</span>` : "";
             const opinion = item.opinion ? `<span class="briefing-comment-opinion">${esc(item.opinion)}</span>` : "";
             const label = item.time ? `${item.label || "-"} / ${item.time}` : (item.label || "-");
             return `
             <div class="briefing-comment">
               <b>${esc(label)}</b>
-              <span>${esc(item.comment || "저장 데이터 없음")}</span>
+              ${comment}
               ${opinion}
               ${detailNode}
             </div>
@@ -20304,7 +20375,7 @@ def _render_web_view_html() -> str:
       const statusNode = document.getElementById("intraday-market-top-status");
       const currentStatus = currentDailyData?.market_commentary?.same_day_report_status || {};
       if (currentStatus.can_overlap_intraday_market_top === false) {
-        if (statusNode) statusNode.textContent = currentStatus.reason || "장중 Naver 거래대금 확인은 오늘 영업일에만 사용할 수 있습니다.";
+        if (statusNode) statusNode.textContent = currentStatus.reason || "오늘 정규장 시간에만 확인 할 수 있습니다.";
         return;
       }
       const now = Date.now();
@@ -20371,7 +20442,7 @@ def _render_web_view_html() -> str:
       const gaps = Array.isArray(card?.source_gaps) ? card.source_gaps.slice(0, 3) : [];
       gapsNode.innerHTML = gaps.length
         ? gaps.map((item) => `<span class="briefing-mood-gap">${esc(item.message || item.code || "확인 필요")}</span>`).join("")
-        : '<span class="briefing-mood-gap">저장 데이터 기준 수동 검토 후보</span>';
+        : "";
     }
 
     function renderBriefingDetailLine(line) {
@@ -20382,7 +20453,19 @@ def _render_web_view_html() -> str:
         const value = text.slice(separatorIndex + 1).trim();
         return `<span class="briefing-detail-row"><em>${esc(label)}</em><span>${esc(value)}</span></span>`;
       }
+      const flowRow = parseBriefingStockFlowLine(text);
+      if (flowRow && (flowRow.flows.length || flowRow.turns.length)) {
+        return renderBriefingDetailFlowRow(flowRow);
+      }
       return `<span class="briefing-detail-row"><em>참고</em><span>${esc(text)}</span></span>`;
+    }
+
+    function renderBriefingDetailFlowRow(row) {
+      return `<span class="briefing-detail-flow">
+        <b>${esc(row.stockName || "-")}</b>
+        ${row.flows.map((line) => `<span>${esc(line)}</span>`).join("")}
+        ${row.turns.map((line) => `<span>${esc(line)}</span>`).join("")}
+      </span>`;
     }
 
     function renderObservationSummary(summary) {
@@ -20396,7 +20479,12 @@ def _render_web_view_html() -> str:
       ].slice(0, 4);
       blocks.push({
         label: "시장 분위기",
-        items: [{ display: mood.display || "저장된 리포트 요약이 없습니다.", breadth_items: sectorItems }],
+        items: [{
+          display: mood.display || "저장된 리포트 요약이 없습니다.",
+          lines: Array.isArray(mood.lines) ? mood.lines : [],
+          observation_line: mood.observation_line || "",
+          breadth_items: sectorItems
+        }],
         variant: "mood"
       });
       blocks.push({
@@ -20437,7 +20525,7 @@ def _render_web_view_html() -> str:
       return `<div class="sector-breadth-list">${picked.map((item) => {
         const label = item.display || `${item.category_label || ""} ${item.category_display_name || item.display_name || "-"}`;
         const width = Math.max(6, Math.min(100, Number(item.bar_width_percent || 0)));
-        const meta = `${number(item.report_count)}건 · ${number(item.stock_count)}종목 · 비중 ${percent(item.share_percent)}`;
+        const meta = `비중 ${percent(item.share_percent)}`;
         const categoryType = item.category_type || "";
         const publicCategoryId = item.public_category_id || "";
         const displayName = item.display_name || item.category_display_name || "";
@@ -20445,7 +20533,7 @@ def _render_web_view_html() -> str:
           ? `<button class="observation-link" type="button" data-public-category-id="${esc(publicCategoryId)}" data-category-type="${esc(categoryType)}" data-category-display-name="${esc(displayName)}">${esc(label)}</button>`
           : esc(label);
         return `<div class="sector-breadth-row">
-          <div class="sector-breadth-head"><span>${labelNode}</span><span class="sector-breadth-meta">${esc(meta)}</span></div>
+          <div class="sector-breadth-head"><span class="sector-breadth-label">${labelNode}</span><span class="sector-breadth-meta">${esc(meta)}</span></div>
           <div class="sector-breadth-track" aria-hidden="true"><span class="sector-breadth-bar" style="width: ${width}%"></span></div>
         </div>`;
       }).join("")}</div>`;
@@ -20471,10 +20559,19 @@ def _render_web_view_html() -> str:
 
     function renderObservationMoodItem(item) {
       const breadthItems = Array.isArray(item.breadth_items) ? item.breadth_items : [];
+      const lines = Array.isArray(item.lines) && item.lines.length
+        ? item.lines
+        : [item.display || "저장된 리포트 요약이 없습니다."];
+      const body = breadthItems.length
+        ? renderSectorBreadthBars(breadthItems)
+        : lines.map((line) => `<span class="observation-item-line">${esc(line)}</span>`).join("");
+      const observationLine = item.observation_line ? `<span class="observation-item-line">${esc(item.observation_line)}</span>` : "";
+      const breadthLabel = breadthItems.length ? `<span class="observation-item-line muted">시장 폭 상위 흐름</span>` : "";
       return `<li>
         <span class="observation-item-lines">
-          <span class="observation-item-line">${esc(item.display || "저장된 리포트 요약이 없습니다.")}</span>
-          ${breadthItems.length ? `<span class="observation-item-line muted">시장 폭 상위 흐름</span>${renderSectorBreadthBars(breadthItems)}` : ""}
+          ${observationLine}
+          ${breadthLabel}
+          ${body}
         </span>
       </li>`;
     }
@@ -20621,15 +20718,13 @@ def _render_web_view_html() -> str:
         : ` · ${summary.reference_date}`;
     }
 
-    function briefingIndexPair(summary) {
-      const indices = Array.isArray(summary?.indices) ? summary.indices : [];
-      if (!summary?.available || !indices.length) {
-        return { value: "지수 저장값 없음", label: "KRX 저장값 기준" };
-      }
-      return {
-        value: indices.map((item) => `${item.index_series || item.index_name || "-"} ${number(item.close_index)} ${percent(item.change_percent)}`).join(" / "),
-        label: `지수 참고${briefingDateSuffix(summary)}`,
-      };
+    function briefingReferenceTitle(...pairs) {
+      const dated = pairs.find((pair) => pair?.referenceDate);
+      return dated ? `시장 참고 (${dated.referenceDate})` : "시장 참고";
+    }
+
+    function briefingPairTitle(base, summary) {
+      return base;
     }
 
     function briefingTurnoverPair(summary) {
@@ -20651,7 +20746,9 @@ def _render_web_view_html() -> str:
       return {
         value: rows.length ? rows.map((item) => `${item.market}: ${item.value}`).join(" · ") : "거래대금 저장값 없음",
         html,
-        label: rows.length ? `거래대금 참고${briefingDateSuffix(summary)}` : "KRX 저장값 기준",
+        title: briefingPairTitle("거래대금 참고", summary),
+        label: "",
+        referenceDate: summary?.reference_date || "",
       };
     }
 
@@ -20659,11 +20756,12 @@ def _render_web_view_html() -> str:
       const items = Array.isArray(summary?.items) ? summary.items : [];
       const parts = items.map((item) => `${esc(item.investor_label || "-")} ${esc(item.direction_label || "-")}`).filter(Boolean);
       if (!parts.length) {
-        return briefingFlowLinePair(reserveLines, "수급 저장값 없음", "저장된 수급 기준");
+        return { ...briefingFlowLinePair(reserveLines, "수급 저장값 없음", ""), label: "" };
       }
       return {
         value: parts.length ? parts.join(" / ") : "수급 저장값 없음",
-        label: parts.length ? `수급 참고${briefingDateSuffix(summary)}` : "저장된 수급 기준",
+        label: "",
+        referenceDate: summary?.reference_date || "",
       };
     }
 
@@ -20994,7 +21092,7 @@ def _render_web_view_html() -> str:
 
     function renderCandidateEvidence(evidence) {
       document.getElementById("candidate-evidence-date").textContent = evidence?.business_date ? `(${evidence.business_date})` : "";
-      document.getElementById("candidate-evidence-notice").textContent = displayNotice(evidence?.notice || "저장된 리포트, KRX, 수급 참고값 기준입니다.");
+      document.getElementById("candidate-evidence-notice").textContent = "";
       const rows = evidence?.rows || [];
       if (!rows.length) {
         document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">눈에 띄는 종목 데이터가 없습니다.</span>';
@@ -21003,29 +21101,32 @@ def _render_web_view_html() -> str:
       document.getElementById("candidate-evidence-rows").innerHTML = renderTopTwoReviewCandidates(rows) + rows.map((item) => {
         const report = item.report_summary || {};
         const targetMetrics = candidateTargetMetrics(report, item.target_price_progress);
-        const market = item.market_reference
-          ? `${price(item.market_reference.close_price)} · ${percent(item.market_reference.change_percent)} · ${compactTurnover(item.market_reference.turnover)}`
-          : "KRX 없음";
+        const market = candidateMarketInline(item.market_reference);
+        const turnover = item.market_reference?.turnover
+          ? compactTurnover(item.market_reference.turnover)
+          : "";
         const rank = item.rank_reference?.foreign_top_rank
           ? `외국인 순매수 ${number(item.rank_reference.foreign_top_rank)}위`
           : "순매수 상위 없음";
-        const whyNotable = Array.isArray(item.why_notable) ? item.why_notable.filter(Boolean) : [];
+        const flowLine = evidenceFlowLabel(item.stock_flow_reference);
+        const whyNotable = candidateWhyDisplayItems(item.why_notable);
         const missingInformation = Array.isArray(item.missing_information) ? item.missing_information.filter(Boolean) : [];
         const whyLine = whyNotable.length
-          ? whyNotable.map((reason) => `<span class="quality-chip">${esc(reason)}</span>`).join("")
+          ? renderQualityChips(whyNotable, "quality-chip--why")
           : '<span class="muted">근거 보강 필요</span>';
         const missingLine = missingInformation.length
-          ? missingInformation.map((info) => `<span class="quality-chip">${esc(info)}</span>`).join("")
+          ? renderQualityChips(missingInformation, "quality-chip--missing")
           : '<span class="muted">핵심 저장 정보 있음</span>';
         return `<article class="candidate-card" data-stock-code="${esc(item.stock_code || "")}">
-          <h3>${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "확인 후보")}</span></h3>
-          <div class="quality-line"><b>왜 눈에 띄는지</b>${whyLine}</div>
-          <div class="quality-line"><b>부족한 정보</b>${missingLine}</div>
+          <h3><span class="candidate-title-stock"><span class="candidate-stock-name">${esc(item.stock_name || "-")}</span><span class="candidate-stock-code">${esc(item.stock_code || "")}</span></span><span class="candidate-title-separator" aria-hidden="true"></span>${market} <span class="status-pill">${esc(item.observation_priority || "확인 후보")}</span></h3>
+          <div class="candidate-quality-grid">
+            <div class="quality-line"><b>왜 눈에 띄는지</b>${whyLine}</div>
+            <div class="quality-line"><b>부족한 정보</b>${missingLine}</div>
+          </div>
           <div class="candidate-evidence-grid">
-            <span><b>리포트</b>${number(report.report_count)}건 · 증권사 ${number(report.broker_count)}곳</span>
+            <span><b>리포트</b>${number(report.report_count)}건</span>
             <span><b>목표가/지표</b>${targetMetrics}</span>
-            <span><b>KRX</b>${market}</span>
-            <span><b>수급/순위</b>${esc(evidenceFlowLabel(item.stock_flow_reference))}<br>${esc(rank)}</span>
+            <span><b>수급/순위</b>${candidateFlowMetrics(rank, turnover, flowLine)}</span>
           </div>
         </article>`;
       }).join("");
@@ -21035,14 +21136,15 @@ def _render_web_view_html() -> str:
       const picked = (Array.isArray(rows) ? rows : []).slice(0, 2);
       if (!picked.length) return "";
       return `<section class="top-two-candidates" aria-label="우선 확인 2개">${picked.map((item, index) => {
-        const why = Array.isArray(item.why_notable) && item.why_notable.length
-          ? item.why_notable.slice(0, 3).join(" · ")
+        const whyItems = candidateWhyDisplayItems(item.why_notable);
+        const why = whyItems.length
+          ? whyItems.slice(0, 3).join(" · ")
           : "근거 보강 필요";
         const missing = Array.isArray(item.missing_information) && item.missing_information.length
           ? `부족한 정보: ${item.missing_information.slice(0, 3).join(" · ")}`
           : "핵심 저장 정보 있음";
         return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
-          <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span></b>
+          <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span></b>
           <span>왜 눈에 띄는지: ${esc(why)}</span>
           <span>${esc(missing)}</span>
         </button>`;
@@ -21074,34 +21176,67 @@ def _render_web_view_html() -> str:
     }
 
     function candidateTargetMetrics(report, progress) {
-      const rows = [
-        candidateMetricLine("목표가", esc(moneyRange(report.target_price_min, report.target_price_max))),
-        candidateMetricLine("의견", esc(opinion(report.dominant_opinion)))
+      const pieces = [
+        ["목표가", moneyRange(report.target_price_min, report.target_price_max)]
       ];
       if (!progress || !progress.available) {
-        rows.push(candidateMetricLine("괴리율", esc(progress?.notice || "계산 불가"), true));
-        rows.push(candidateMetricLine("진행률", "-", true));
+        pieces.push(["괴리", progress?.notice || "계산 불가"]);
+        pieces.push(["진행", "-"]);
       } else {
-        rows.push(candidateMetricLine(
-          "괴리율",
+        pieces.push(
           progress.gap_available
-            ? esc(metricRange(progress.target_gap_min_percent, progress.target_gap_max_percent))
-            : "-",
-          !progress.gap_available
-        ));
-        rows.push(candidateMetricLine(
-          "진행률",
+            ? ["괴리", metricRange(progress.target_gap_min_percent, progress.target_gap_max_percent)]
+            : ["괴리", "-"]
+        );
+        pieces.push(
           progress.progress_available
-            ? `하단 ${esc(metricPercent(progress.progress_to_min_percent))} · 상단 ${esc(metricPercent(progress.progress_to_max_percent))}`
-            : "-",
-          !progress.progress_available
-        ));
-        if (progress.baseline_date) rows.push(candidateMetricLine("기준일", esc(progress.baseline_date), true));
-        if (progress.validation_available) {
-          rows.push(candidateMetricLine("도달 참고", targetValidationSummary(progress), true));
-        }
+            ? ["진행", metricRange(progress.progress_to_min_percent, progress.progress_to_max_percent)]
+            : ["진행", "-"]
+        );
       }
-        return `<div class="candidate-metric-list">${rows.join("")}</div>`;
+      return `<span class="candidate-info-grid candidate-target-grid">${pieces.map(([label, value]) => `<span><b>${esc(label)}</b><em>${esc(value)}</em></span>`).join("")}</span>`;
+    }
+
+    const QUALITY_CHIP_VISIBLE_LIMIT = 6;
+
+    function candidateWhyDisplayItems(items) {
+      const values = Array.isArray(items) ? items.filter(Boolean) : [];
+      return values;
+    }
+
+    function renderQualityChips(items, toneClass) {
+      const values = Array.isArray(items) ? items.filter(Boolean) : [];
+      const visible = values.slice(0, QUALITY_CHIP_VISIBLE_LIMIT);
+      const overflowCount = Math.max(0, values.length - visible.length);
+      const chips = visible.map((item) => `<span class="quality-chip ${esc(toneClass)}">${esc(item)}</span>`);
+      if (overflowCount > 0) {
+        chips.push(`<span class="quality-chip quality-chip-overflow">+${number(overflowCount)}</span>`);
+      }
+      return chips.join("");
+    }
+
+    function candidateFlowMetrics(rank, turnover, flowLine) {
+      const pieces = [
+        ["외국인/기관", flowLine || "-"],
+        ["거래대금", turnover || "-"],
+        ["순매수", rank || "순매수 상위 없음"]
+      ];
+      return `<span class="candidate-info-grid candidate-flow-grid">${pieces.map(([label, value]) => {
+        const displayValue = label === "외국인/기관" ? flowValue(value) : esc(value);
+        return `<span><b>${esc(label)}</b><em>${displayValue}</em></span>`;
+      }).join("")}</span>`;
+    }
+
+    function flowValue(value) {
+      return esc(value || "-").replace(/\\s*·\\s*/g, "<br>");
+    }
+
+    function candidateMarketInline(reference) {
+      if (!reference) {
+        return '<span class="candidate-market-inline"><span>-</span><span>KRX 없음</span></span>';
+      }
+      const market = reference.market || "KRX";
+      return `<span class="candidate-market-inline"><span>${esc(price(reference.close_price))}</span><span>${esc(percent(reference.change_percent))} · ${esc(market)}</span></span>`;
     }
 
     function renderObservationEvidenceNotes(notes) {
@@ -21606,7 +21741,7 @@ def _render_web_view_html() -> str:
     document.addEventListener("click", (event) => {
       const target = event.target.closest("[data-stock-code]");
       if (!target || !selectedDate || !target.dataset.stockCode) return;
-      if (target.closest(".candidate-card") || target.closest(".top-two-card") || target.closest(".intraday-overlap-chip")) setViewTab("main");
+      setViewTab("watch");
       const stockItem = (currentDailyData?.stocks || []).find((item) => item.stock_code === target.dataset.stockCode);
       loadStockDetail(selectedDate, target.dataset.stockCode, { scrollToDetail: true, userSelected: true }).then(() => {
         syncCategoryFromStock(stockItem);
@@ -22390,12 +22525,14 @@ def _web_view_time_slot_market_mood_card(
         stock_count=len(summaries),
         index_summary=index_summary,
         flow_items=flow_items,
-        check_points=check_points,
     )
-    card_check_points = list(check_points[:3])
+    card_check_points = [
+        point
+        for point in check_points
+        if point and not _web_view_time_slot_market_mood_is_index_direction_point(point)
+    ][:3]
     if not index_summary.get("exact_date_available"):
         card_check_points.append("지수와 등락률은 최신 저장 KRX 기준일을 함께 확인")
-    card_check_points.append("점심/마감 전 장중 등락률은 별도 intraday 소스 확정 전까지 표시하지 않음")
     return {
         "source": "stored_report_krx_market_mood_card",
         "read_only": True,
@@ -22468,30 +22605,14 @@ def _web_view_time_slot_market_mood_source_gaps(
     turnover_summary: dict,
     flow_summary: dict,
 ) -> list[dict[str, str]]:
-    gaps: list[dict[str, str]] = [
-        {
-            "code": "intraday_index_quote_source_not_configured",
-            "message": "점심/마감 전 장중 KOSPI/KOSDAQ 값은 아직 검증된 intraday 소스가 없습니다.",
-        },
-        {
-            "code": "intraday_stock_quote_source_not_configured",
-            "message": "예시 사진식 종목 등락률은 아직 검증된 intraday 종목 시세 소스가 없습니다.",
-        },
-    ]
+    gaps: list[dict[str, str]] = []
     for key, summary in (
         ("index", index_summary),
         ("turnover", turnover_summary),
         ("flow", flow_summary),
     ):
         reference_date = summary.get("reference_date") if isinstance(summary, dict) else None
-        if not reference_date or not summary.get("available"):
-            gaps.append(
-                {
-                    "code": f"{key}_stored_reference_missing",
-                    "message": f"{key} 저장 참고값이 없어 해당 섹션은 비어 있을 수 있습니다.",
-                }
-            )
-        elif reference_date != business_date.isoformat():
+        if reference_date and summary.get("available") and reference_date != business_date.isoformat():
             gaps.append(
                 {
                     "code": f"{key}_stored_reference_fallback",
@@ -22528,7 +22649,6 @@ def _web_view_time_slot_market_mood_core_points(
     stock_count: int,
     index_summary: dict,
     flow_items: list[str],
-    check_points: list[str],
 ) -> list[str]:
     points = [f"리포트 {report_count}건 / {stock_count}종목 기준으로 압축"]
     index_items = index_summary.get("indices") if isinstance(index_summary, dict) else []
@@ -22543,12 +22663,16 @@ def _web_view_time_slot_market_mood_core_points(
             points.append("지수 참고: " + " / ".join(directions))
     if flow_items:
         points.append("수급 참고: " + " / ".join(flow_items[:3]))
-    for point in check_points:
-        if point and point not in points and "세부 근거" not in point:
-            points.append(point)
-        if len(points) >= 4:
-            break
     return points[:4]
+
+
+def _web_view_time_slot_market_mood_is_index_direction_point(point: str) -> bool:
+    normalized = point.replace(" ", "")
+    return (
+        ("KOSPI" in point or "코스피" in point or "코스피" in normalized)
+        and ("KOSDAQ" in point or "코스닥" in point or "코스닥" in normalized)
+        and ("흐름" in point or "하락" in point or "상승" in point)
+    )
 
 
 def _web_view_market_reference_lines_from_indices(
@@ -22776,14 +22900,16 @@ def _build_web_view_observation_summary(
     )
     breadth_items = sector_items + theme_items
     breadth_fragments = [
-        f"{item['category_label']} {item['category_display_name']} {item['report_count']}건/{item['stock_count']}종목"
+        item["display"]
         for item in breadth_items[:3]
     ]
-    breadth_phrase = (
+    breadth_line = (
         "리포트가 몰린 쪽은 " + ", ".join(breadth_fragments) + "입니다."
         if breadth_fragments
         else "업종/테마 분류는 저장 데이터 기준으로 정리 중입니다."
     )
+    summary_line = f"리포트 {report_count}건이 {len(summaries)}종목에 모였습니다."
+    observation_line = f"반복 언급 {multi_report_count}종목, 수급 참고가 붙은 관찰 종목은 {len(flow_items)}개입니다."
     return {
         "source": "stored_report_krx_observation_summary",
         "read_only": True,
@@ -22797,10 +22923,9 @@ def _build_web_view_observation_summary(
             "report_count": report_count,
             "stock_count": len(summaries),
             "multi_report_stock_count": multi_report_count,
-            "display": (
-                f"리포트 {report_count}건이 {len(summaries)}종목에 모였습니다. {breadth_phrase} "
-                f"반복 언급 {multi_report_count}종목, 수급 참고가 붙은 관찰 종목은 {len(flow_items)}개입니다."
-            ),
+            "display": summary_line,
+            "lines": [summary_line, breadth_line, observation_line],
+            "observation_line": observation_line,
         },
         "report_concentration": {
             "label": "리포트 집중",
@@ -23399,6 +23524,9 @@ def _web_view_category_breadth_item(
     category_display_name = _web_view_category_display_name(item.display_name, category_type=item.category_type)
     share_percent = round((item.report_count / total_report_count) * 100, 1) if total_report_count > 0 else 0.0
     bar_width_percent = round((item.report_count / max_report_count) * 100, 1) if max_report_count > 0 else 0.0
+    display_parts = [category_display_name, f"리포트 {item.report_count}건"]
+    if not (item.report_count == 1 and item.stock_count == 1):
+        display_parts.append(f"{item.stock_count}종목")
     return {
         "category_label": category_label,
         "category_type": item.category_type,
@@ -23411,7 +23539,7 @@ def _web_view_category_breadth_item(
         "bar_width_percent": bar_width_percent,
         "snapshot_date": item.snapshot_date.isoformat() if item.snapshot_date else None,
         "mapping_source": item.mapping_source,
-        "display": f"{category_label} {category_display_name} · 리포트 {item.report_count}건 · {item.stock_count}종목",
+        "display": " · ".join(display_parts),
     }
 
 
@@ -24137,6 +24265,7 @@ def build_web_view_candidate_evidence_snapshot(
     business_date: date,
     limit: int = 5,
     now: datetime | None = None,
+    include_internal: bool = False,
 ) -> dict:
     current = now or datetime.now(ZoneInfo(config.timezone))
     summaries = [summary for summary in repository.list_daily_summaries(business_date) if summary.stock_code]
@@ -24279,6 +24408,8 @@ def build_web_view_candidate_evidence_snapshot(
                 },
                 "quality_flags": quality_flags,
                 "evidence_notes": notes,
+                "_internal_candidate_signals": candidate_profile["internal_candidate_signals"],
+                "_internal_missing_information": candidate_profile["internal_missing_information"],
                 "_sort_density": candidate_profile["sort_density"],
                 "_sort_signal": candidate_profile["sort_signal"],
             }
@@ -24294,10 +24425,24 @@ def build_web_view_candidate_evidence_snapshot(
         ),
         reverse=True,
     )
-    picked_rows = [
-        {key: value for key, value in row.items() if key not in {"_sort_density", "_sort_signal"}}
-        for row in rows[:limit]
-    ]
+    picked_rows: list[dict[str, object]] = []
+    internal_keys = {"_internal_candidate_signals", "_internal_missing_information", "_sort_density", "_sort_signal"}
+    for row in rows[:limit]:
+        item = {key: value for key, value in row.items() if key not in internal_keys}
+        if include_internal:
+            item["internal_candidate_signals"] = row.get("_internal_candidate_signals") or []
+            item["internal_missing_information"] = row.get("_internal_missing_information") or []
+        else:
+            report_summary = dict(item.get("report_summary") or {})
+            item["report_summary"] = {
+                "report_count": report_summary.get("report_count"),
+                "target_price_min": report_summary.get("target_price_min"),
+                "target_price_max": report_summary.get("target_price_max"),
+            }
+            item.pop("quality_flags", None)
+            item.pop("evidence_notes", None)
+            item.pop("opinion_summary", None)
+        picked_rows.append(item)
     return {
         "now": current.isoformat(),
         "timezone": config.timezone,
@@ -24333,53 +24478,67 @@ def _web_view_observation_candidate_profile(
     price_volume_reference: dict,
 ) -> dict[str, object]:
     reasons: list[str] = []
+    internal_signals: list[str] = []
     if summary.mention_count >= 2:
         reasons.append("리포트 집중")
+        internal_signals.append("리포트 집중")
     elif summary.mention_count > 0:
-        reasons.append("리포트 언급")
+        internal_signals.append("리포트 언급")
     if broker_count >= 2:
-        reasons.append("브로커 폭")
+        internal_signals.append("브로커 폭")
     if target_range.get("available"):
-        reasons.append("목표가 범위")
+        internal_signals.append("목표가 범위")
     if target_revision.get("available"):
         direction_label = str(target_revision.get("direction_label") or "").strip()
-        reasons.append(f"목표가 {direction_label}" if direction_label else "목표가 변화")
+        revision_label = f"목표가 {direction_label}" if direction_label else "목표가 변화"
+        reasons.append(revision_label)
+        internal_signals.append(revision_label)
     if market_reference is not None and market_reference.turnover is not None:
-        reasons.append("거래대금 참고")
+        internal_signals.append("거래대금 참고")
     if stock_flow_rows:
-        reasons.append("종목별 수급")
+        internal_signals.append("종목별 수급")
     if _web_view_flow_reference_has_persistence(flow_window_reference):
+        internal_signals.append("수급 전환 지속")
         reasons.append("수급 전환 지속")
     if price_volume_reference.get("available"):
-        reasons.append("가격/거래량 위치")
+        internal_signals.append("가격/거래량 위치")
     if rank_reference is not None:
+        internal_signals.append("외국인 순매수 상위")
         reasons.append("외국인 순매수 상위")
 
     missing: list[str] = []
+    internal_missing: list[str] = []
     if market_reference is None:
-        missing.append("당일 KRX")
+        missing.append("당일 KRX 없음")
+        internal_missing.append("당일 KRX 없음")
     if not stock_flow_rows:
-        missing.append("종목 수급")
+        missing.append("종목 수급 데이터 없음")
+        internal_missing.append("종목 수급 데이터 없음")
     if not target_range.get("available"):
-        missing.append("목표가")
+        missing.append("목표가 정보 없음")
+        internal_missing.append("목표가 정보 없음")
     if not summary.dominant_opinion or summary.dominant_opinion == "N/A":
-        missing.append("투자의견")
+        missing.append("투자의견 정보 없음")
+        internal_missing.append("투자의견 정보 없음")
     if rank_reference is None:
-        missing.append("외국인 순매수 상위")
+        internal_missing.append("외국인 순매수 상위 미포함")
     if not price_volume_reference.get("available"):
-        missing.append("가격/거래량 위치")
+        internal_missing.append("가격/거래량 위치 없음")
 
     sort_density = len(reasons)
-    sort_signal = sort_density
+    priority_signal = 0
     if rank_reference is not None:
-        sort_signal += 3
-    if summary.mention_count == 2:
-        sort_signal += 2
-    elif summary.mention_count == 3:
-        sort_signal += 1
-    if sort_density >= 4:
+        priority_signal += 3
+    if _web_view_flow_reference_has_persistence(flow_window_reference):
+        priority_signal += 2
+    if target_revision.get("available"):
+        priority_signal += 1
+    if summary.mention_count >= 2:
+        priority_signal += 1
+    sort_signal = priority_signal
+    if priority_signal >= 3:
         priority = "우선 확인"
-    elif sort_density >= 2:
+    elif priority_signal >= 1:
         priority = "확인 후보"
     else:
         priority = "정보 보강"
@@ -24387,6 +24546,8 @@ def _web_view_observation_candidate_profile(
         "observation_priority": priority,
         "why_notable": reasons,
         "missing_information": missing,
+        "internal_candidate_signals": internal_signals,
+        "internal_missing_information": internal_missing,
         "sort_density": sort_density,
         "sort_signal": sort_signal,
     }

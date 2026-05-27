@@ -30,6 +30,7 @@ This is a permission and API boundary, not just a visual layout boundary.
 - `web-view` must not implement `POST`, `PUT`, `PATCH`, or `DELETE` data routes. The only allowed POST exception is `/auth/login` for the optional entry-code gate.
 - `web-view` must be implemented with a separate handler/router and a separate read-only DTO contract.
 - Shared DB/repository code is allowed. Shared HTTP control handlers are not allowed.
+- Broker or execution API work, including future Toss Securities Open API evaluation, must not be connected to `web-view`, `admin-gui`, Telegram, scheduler, or production DB writes by default. It belongs in a separate lab/staging lane until docs, permissions, sandbox/test keys, and read-only probes are verified.
 - External sharing candidates are limited to Tailscale for owner-only remote operation and Cloudflare Tunnel for a future friend-facing read-only `web-view` URL.
 - Direct router port forwarding is not a preferred exposure model for this project.
 - Browser-assisted source validation that depends on login state should use the connected Chrome extension session first. The Codex in-app browser is acceptable for local UI checks, but it must not be treated as equivalent to the operator's authenticated Chrome session.
@@ -116,6 +117,8 @@ Source ownership and Korean display naming are fixed in [data-source-policy.md](
 | Selected-date KRX | Missing selected-date KRX data must remain missing; do not silently fall back to the latest snapshot. |
 
 The first `web-view` should prefer clarity over trading interpretation. It can say what was observed, but should avoid unsupported scoring.
+
+Future real-time or broker-origin data must be labeled and reviewed as a separate source lane before it appears on the shared page. Until then, `web-view` copy should treat KRX/report/flow values as stored references and avoid implying live quote freshness.
 
 ## Web-View API Contract
 

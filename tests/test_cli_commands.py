@@ -2712,7 +2712,7 @@ def test_market_briefing_readiness_reports_preview_and_manual_review_gate(tmp_pa
     assert mood_card["scoring"] is False
     assert mood_card["recommendation"] is False
     assert "삼성전자" in mood_card["headline"]
-    assert payload["dates"][0]["time_slot_mood_source_gap_count"] >= 2
+    assert payload["dates"][0]["time_slot_mood_source_gap_count"] == 0
 
 
 def test_next_phase_readiness_summarizes_read_only_blockers(tmp_path, capsys) -> None:
@@ -3584,7 +3584,13 @@ def test_candidate_evidence_readiness_reports_visible_review_coverage(tmp_path, 
     assert payload["dates"][0]["stock_flow_available_count"] == 1
     assert payload["dates"][0]["foreign_rank_available_count"] == 1
     assert payload["observation_priority_counts"] == {"우선 확인": 1}
+    assert payload["visible_observation_priority_counts"] == {"우선 확인": 1}
     assert payload["why_notable_counts"] == {
+        "리포트 집중": 1,
+        "외국인 순매수 상위": 1,
+    }
+    assert payload["visible_why_notable_counts"] == payload["why_notable_counts"]
+    assert payload["internal_candidate_signal_counts"] == {
         "가격/거래량 위치": 1,
         "거래대금 참고": 1,
         "리포트 집중": 1,
@@ -3594,8 +3600,16 @@ def test_candidate_evidence_readiness_reports_visible_review_coverage(tmp_path, 
         "종목별 수급": 1,
     }
     assert payload["missing_information_counts"] == {}
+    assert payload["visible_missing_information_counts"] == {}
+    assert payload["internal_missing_information_counts"] == {}
     assert payload["dates"][0]["observation_priority_counts"] == {"우선 확인": 1}
+    assert payload["dates"][0]["visible_observation_priority_counts"] == {"우선 확인": 1}
     assert payload["dates"][0]["why_notable_counts"] == {
+        "리포트 집중": 1,
+        "외국인 순매수 상위": 1,
+    }
+    assert payload["dates"][0]["visible_why_notable_counts"] == payload["dates"][0]["why_notable_counts"]
+    assert payload["dates"][0]["internal_candidate_signal_counts"] == {
         "가격/거래량 위치": 1,
         "거래대금 참고": 1,
         "리포트 집중": 1,
@@ -3605,10 +3619,16 @@ def test_candidate_evidence_readiness_reports_visible_review_coverage(tmp_path, 
         "종목별 수급": 1,
     }
     assert payload["dates"][0]["missing_information_counts"] == {}
+    assert payload["dates"][0]["visible_missing_information_counts"] == {}
+    assert payload["dates"][0]["internal_missing_information_counts"] == {}
     assert payload["dates"][0]["qa_issue_count"] == 0
     assert payload["dates"][0]["top_rows"][0]["stock_code"] == "005930"
     assert payload["dates"][0]["top_rows"][0]["observation_priority"] == "우선 확인"
     assert payload["dates"][0]["top_rows"][0]["why_notable"] == [
+        "리포트 집중",
+        "외국인 순매수 상위",
+    ]
+    assert payload["dates"][0]["top_rows"][0]["internal_candidate_signals"] == [
         "리포트 집중",
         "브로커 폭",
         "목표가 범위",
@@ -3618,6 +3638,7 @@ def test_candidate_evidence_readiness_reports_visible_review_coverage(tmp_path, 
         "외국인 순매수 상위",
     ]
     assert payload["dates"][0]["top_rows"][0]["missing_information"] == []
+    assert payload["dates"][0]["top_rows"][0]["internal_missing_information"] == []
 
 
 def test_market_briefing_message_qa_blocks_decision_and_raw_missing_copy() -> None:
@@ -10318,7 +10339,7 @@ def test_market_commentary_practice_uses_stored_reports_and_indices(tmp_path) ->
     assert payload["business_date"] == "2026-05-18"
     assert [item["phase"] for item in payload["comments"]] == ["opening", "midday", "preclose"]
     assert all("매수" not in item["comment"] and "매도" not in item["comment"] for item in payload["comments"])
-    assert "전일 리포트 기준이 없어" in payload["comments"][0]["comment"]
+    assert payload["comments"][0]["comment"] == ""
     assert "테스트전자 리포트 집중" in payload["comments"][1]["comment"]
     assert "KOSPI +0.45%" in payload["market_reference"]
 

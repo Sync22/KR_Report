@@ -73,10 +73,11 @@ def test_web_view_main_layout_first_pass_static_markup() -> None:
 
     assert '<section class="card span-12 date-picker-card" aria-label="날짜 선택">' in html
     assert "<h2>날짜 선택</h2>" not in html
-    assert html.index('id="briefing-one-line-comments"') < html.index('class="briefing-grid"')
-    assert html.index('id="briefing-mood-card"') < html.index('class="briefing-grid"')
-    assert html.index('class="briefing-grid"') < html.index('id="briefing-check-points"')
+    assert html.index('id="daily-briefing-headline"') < html.index('id="briefing-check-points"')
     assert html.index('id="briefing-check-points"') < html.index('id="briefing-watch-chips"')
+    assert html.index('id="briefing-watch-chips"') < html.index('id="briefing-one-line-comments"')
+    assert html.index('id="briefing-one-line-comments"') < html.index('id="briefing-mood-card"')
+    assert html.index('id="briefing-mood-card"') < html.index('class="briefing-reference-card"')
     assert "확인 종목" in html
     assert "국장 시장 분위기" in html
     assert 'id="selection-status"' not in html
@@ -86,6 +87,9 @@ def test_web_view_main_layout_first_pass_static_markup() -> None:
     assert "업종/테마 상세" in html
     assert "renderObservationBlock" in html
     assert "renderObservationMoodItem" in html
+    assert "const breadthLabel = breadthItems.length ? `<span class=\"observation-item-line muted\">시장 폭 상위 흐름</span>` : \"\";" in html
+    assert html.index("${observationLine}") < html.index("${breadthLabel}")
+    assert "item.observation_line" in html
     assert "renderObservationReportItem" in html
     assert "renderObservationFlowItem" in html
     assert "renderObservationPriceItem" in html
@@ -252,12 +256,14 @@ def test_web_view_observation_summary_market_mood_is_sentence_like(tmp_path) -> 
         limit=3,
     )
 
-    display = payload["market_mood"]["display"]
-    assert "반도체" in display
-    assert "리포트 5건" in display
-    assert "반복 언급 2종목" in display
-    assert "수급 참고" in display
-    assert payload["sector_breadth"]["sectors"][0]["display"].startswith("업종 반도체")
+    assert payload["market_mood"]["display"] == "리포트 5건이 2종목에 모였습니다."
+    assert payload["market_mood"]["lines"] == [
+        "리포트 5건이 2종목에 모였습니다.",
+        "리포트가 몰린 쪽은 반도체 · 리포트 5건 · 2종목입니다.",
+        "반복 언급 2종목, 수급 참고가 붙은 관찰 종목은 0개입니다.",
+    ]
+    assert payload["market_mood"]["observation_line"] == "반복 언급 2종목, 수급 참고가 붙은 관찰 종목은 0개입니다."
+    assert payload["sector_breadth"]["sectors"][0]["display"] == "반도체 · 리포트 5건 · 2종목"
     assert payload["sector_breadth"]["sectors"][0]["share_percent"] == 100.0
     assert payload["sector_breadth"]["sectors"][0]["bar_width_percent"] == 100.0
 
@@ -332,6 +338,9 @@ def test_web_view_observation_summary_scales_sector_theme_breadth_bars(tmp_path)
     sector_bars = payload["sector_breadth"]["sectors"]
     theme_bars = payload["sector_breadth"]["themes"]
     assert [item["category_display_name"] for item in sector_bars] == ["반도체", "우주항공과국방"]
+    assert sector_bars[1]["display"] == "우주항공과국방 · 리포트 1건"
+    assert "1종목" not in sector_bars[1]["display"]
+    assert not sector_bars[1]["display"].startswith("업종 ")
     assert sector_bars[0]["bar_width_percent"] == 100.0
     assert sector_bars[0]["share_percent"] == 75.0
     assert sector_bars[1]["bar_width_percent"] == 33.3
@@ -854,8 +863,8 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
     assert "삼성전자" in mood_card["headline"]
     assert [section["label"] for section in mood_card["sections"]] == ["지수", "주요 종목", "핵심 포인트", "확인 포인트"]
     assert mood_card["sections"][0]["available"] is False
-    assert any("intraday" in item["code"] for item in mood_card["source_gaps"])
-    assert any(item["code"] == "index_stored_reference_missing" for item in mood_card["source_gaps"])
+    assert not any("intraday" in item["code"] for item in mood_card["source_gaps"])
+    assert not any(item["code"] == "index_stored_reference_missing" for item in mood_card["source_gaps"])
     assert "목표가 참고 100,000원~110,000원" in mood_card["sections"][1]["items"][0]
     assert "{'min'" not in json.dumps(mood_card, ensure_ascii=False)
     assert snapshot["market_commentary"]["read_only"] is True
@@ -872,8 +881,9 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
     assert [item["time"] for item in snapshot["market_commentary"]["comments"]] == ["09:15", "12:00", "15:15"]
     opening_comment = snapshot["market_commentary"]["comments"][0]
     assert opening_comment["reference_date"] == "2026-05-07"
-    assert "전일후보A" in opening_comment["comment"]
-    assert "전일후보B" in opening_comment["comment"]
+    assert opening_comment["comment"] == ""
+    assert "전일후보A" in " ".join(opening_comment["details"])
+    assert "전일후보B" in " ".join(opening_comment["details"])
     assert all(item["details"] for item in snapshot["market_commentary"]["comments"])
     assert "periodic_data_needs" not in snapshot
     assert snapshot["sectors"][0]["sector_name"] == "반도체"
@@ -888,6 +898,41 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
     assert "scheduler_tasks" not in snapshot
     assert "db_path" not in snapshot
     _assert_public_safe_payload(snapshot)
+
+
+def test_web_view_time_slot_mood_card_deduplicates_index_check_points() -> None:
+    card = cli_module._web_view_time_slot_market_mood_card(
+        date(2026, 5, 15),
+        summaries=[],
+        index_summary={
+            "available": True,
+            "reference_date": "2026-05-15",
+            "exact_date_available": True,
+            "indices": [
+                {"index_name": "코스피", "close_index": 7493.18, "change_percent": -6.12},
+                {"index_name": "코스닥", "close_index": 1129.82, "change_percent": -5.14},
+            ],
+        },
+        turnover_summary={},
+        flow_summary={},
+        notable_stocks=[],
+        check_points=[
+            "KOSPI 하락, KOSDAQ 하락 흐름",
+            "아래 종목/관찰 탭에서 세부 근거 확인",
+        ],
+    )
+
+    sections = {section["key"]: section for section in card["sections"]}
+    assert sections["core_points"]["items"] == [
+        "리포트 0건 / 0종목 기준으로 압축",
+        "지수 참고: 코스피 하락 / 코스닥 하락",
+    ]
+    assert sections["check_points"]["items"] == ["아래 종목/관찰 탭에서 세부 근거 확인"]
+    assert not any(
+        "점심/마감 전 장중 등락률" in item
+        for section in card["sections"]
+        for item in section.get("items", [])
+    )
 
 
 def test_web_view_daily_snapshot_default_does_not_fetch_intraday_market_top(tmp_path, monkeypatch) -> None:
@@ -918,7 +963,12 @@ def test_web_view_daily_snapshot_default_does_not_fetch_intraday_market_top(tmp_
 
     monkeypatch.setattr(cli_module, "fetch_market_top_stocks", fail_market_top)
 
-    snapshot = cli_module.build_web_view_daily_snapshot(config, repository, business_date=business_date)
+    snapshot = cli_module.build_web_view_daily_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        now=now,
+    )
 
     assert snapshot["market_commentary"]["live_fetch"] is False
     assert snapshot["market_commentary"]["intraday_market_top_reference"]["live_fetch"] is False
@@ -932,13 +982,19 @@ def test_web_view_daily_snapshot_reports_no_same_day_summary_for_intraday_overla
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
     repository.initialize()
     business_date = date(2026, 5, 20)
+    now = datetime(2026, 5, 20, 9, 30, 0)
 
     def fail_market_top(*_args, **_kwargs):
         raise AssertionError("no report summary should not need Naver market top fetch unless explicitly requested")
 
     monkeypatch.setattr(cli_module, "fetch_market_top_stocks", fail_market_top)
 
-    snapshot = cli_module.build_web_view_daily_snapshot(config, repository, business_date=business_date)
+    snapshot = cli_module.build_web_view_daily_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        now=now,
+    )
 
     status = snapshot["market_commentary"]["same_day_report_status"]
     assert status["business_date"] == "2026-05-20"
@@ -1036,7 +1092,7 @@ def test_web_view_daily_snapshot_blocks_intraday_market_top_for_archive_dates(tm
     status = snapshot["market_commentary"]["same_day_report_status"]
     reference = snapshot["market_commentary"]["intraday_market_top_reference"]
     assert status["can_overlap_intraday_market_top"] is False
-    assert status["reason"] == "장중 Naver 거래대금 확인은 오늘 영업일에만 사용할 수 있습니다."
+    assert status["reason"] == "오늘 정규장 시간에만 확인 할 수 있습니다."
     assert reference["live_fetch"] is False
     assert reference["empty_reason"] == status["reason"]
 
@@ -1435,6 +1491,17 @@ def test_web_view_candidate_evidence_prioritizes_backtest_supported_observation_
     assert snapshot["recommendation"] is False
     assert [row["stock_code"] for row in snapshot["rows"]] == ["000002", "000004"]
     assert snapshot["rows"][0]["why_notable"][-1] == "외국인 순매수 상위"
+    assert "거래대금 참고" not in snapshot["rows"][0]["why_notable"]
+    assert "목표가 범위" not in snapshot["rows"][0]["why_notable"]
+    assert "브로커 폭" not in snapshot["rows"][0]["why_notable"]
+    assert "internal_candidate_signals" not in snapshot["rows"][0]
+    assert "internal_missing_information" not in snapshot["rows"][0]
+    assert "quality_flags" not in snapshot["rows"][0]
+    assert "evidence_notes" not in snapshot["rows"][0]
+    assert "opinion_summary" not in snapshot["rows"][0]
+    assert "broker_count" not in snapshot["rows"][0]["report_summary"]
+    assert "broker_display" not in snapshot["rows"][0]["report_summary"]
+    assert "dominant_opinion" not in snapshot["rows"][0]["report_summary"]
     assert "수급 전환 지속" in snapshot["rows"][1]["why_notable"]
 
 
@@ -2853,8 +2920,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
         server.server_close()
         thread.join(timeout=5)
 
-    assert "<h1>리포트 뷰</h1>" in html
-    assert "날짜별 리포트와 시장 참고" in html
+    assert "<h1>KR-Stock</h1>" in html
+    assert "Daily Report" in html
     assert 'data-view-tab="main"' in html
     assert 'data-view-tab="watch"' in html
     assert 'data-view-tab="market"' in html
@@ -2877,8 +2944,17 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "관찰 근거" in html
     assert "candidate-evidence-rows" in html
     assert "backtest-observation-rows" in html
+    assert 'id="candidate-evidence-card" data-view-panel="main"' in html
+    assert 'id="candidate-evidence-card" data-view-panel="watch"' not in html
+    assert "candidate-evidence-panel" in html
+    assert 'id="backtest-observation-card" data-view-panel="watch"' in html
+    assert html.index('id="candidate-evidence-card"') < html.index('id="observation-summary-date"')
+    assert html.index('id="candidate-evidence-card"') < html.index('id="backtest-observation-card"')
+    assert html.index('id="candidate-evidence-rows"') < html.index('id="backtest-observation-card"')
+    assert html.index('id="candidate-evidence-card"') < html.index('id="stock-rows"')
     assert "renderCandidateEvidence(data.candidate_evidence)" not in html
     assert "loadCandidateEvidence(date)" in html
+    assert 'if (activeViewTab === "main") {\n        await loadCandidateEvidence(date);' in html
     load_daily_body = html.split("async function loadDaily(date)", 1)[1].split("function renderDailyBriefing", 1)[0]
     assert "loadBacktestObservation(date)" not in load_daily_body
     assert "loadEtfTrend(date)" not in load_daily_body
@@ -2902,6 +2978,52 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "최대 진행" in html
     assert "도달 " in html
     assert "candidateTargetMetrics(report, item.target_price_progress)" in html
+    assert "candidateFlowMetrics(rank, turnover, flowLine)" in html
+    assert "candidateMarketInline(item.market_reference)" in html
+    assert "candidate-info-grid" in html
+    assert "candidate-title-stock" in html
+    assert "candidate-stock-name" in html
+    assert "candidate-stock-code" in html
+    assert "candidate-title-separator" in html
+    assert ".candidate-title-separator { width: 1px; align-self: stretch;" in html
+    assert "candidate-quality-grid" in html
+    assert "quality-chip--why" in html
+    assert "quality-chip--missing" in html
+    assert ".candidate-quality-grid { display: grid; grid-template-columns: minmax(120px, .72fr) minmax(0, 1.14fr) minmax(0, 1.14fr);" in html
+    assert ".candidate-quality-grid .quality-line:first-child { grid-column: span 2;" in html
+    assert "renderQualityChips(whyNotable, \"quality-chip--why\")" in html
+    assert "renderQualityChips(missingInformation, \"quality-chip--missing\")" in html
+    assert "candidateWhyDisplayItems(item.why_notable)" in html
+    assert "return values;" in html
+    assert 'item !== "브로커 폭"' not in html
+    assert "quality-chip-overflow" in html
+    assert "QUALITY_CHIP_VISIBLE_LIMIT = 6" in html
+    assert ".quality-chip.quality-chip--why" in html
+    assert ".candidate-quality-grid .quality-line { display: block;" in html
+    assert ".candidate-quality-grid .quality-chip { margin: 0 6px 5px 0;" in html
+    assert "border-bottom: 1px solid rgba(222,216,204,.8)" in html
+    assert "candidate-target-grid" in html
+    assert "candidate-market-inline" in html
+    assert ".candidate-market-inline span:first-child" in html
+    assert "font-size: 18px; font-weight: 900;" in html
+    assert "candidate-flow-grid" in html
+    assert ".candidate-evidence-grid { display: grid; grid-template-columns: minmax(120px, .72fr) minmax(0, 1.14fr) minmax(0, 1.14fr);" in html
+    assert ".candidate-target-grid { grid-template-columns: repeat(3, minmax(0, 1fr));" in html
+    assert ".candidate-target-grid, .candidate-flow-grid { grid-template-columns: repeat(2, minmax(0, 1fr));" in html
+    assert ".candidate-evidence-grid { grid-template-columns: 1fr; }" in html
+    assert '["의견", opinion(report.dominant_opinion)]' not in html
+    assert "증권사 ${number(report.broker_count)}곳" not in html
+    assert "<b>KRX</b>" not in html
+    assert "renderTopTwoReviewCandidates(rows) + rows.map" in html
+    assert '<p class="brief" id="candidate-evidence-notice"></p>' in html
+    assert 'document.getElementById("candidate-evidence-notice").textContent = "";' in html
+    assert "${market} <span class=\"status-pill\"" in html
+    assert '["순매수", rank || "순매수 상위 없음"]' in html
+    assert '["외국인/기관", flowLine || "-"]' in html
+    assert '["거래대금", turnover || "-"]' in html
+    assert 'replace(/\\s*·\\s*/g, "<br>")' in html
+    assert 'item.observation_priority || "우선 확인"' in html
+    assert "compactTurnover(item.market_reference.turnover)" in html
     assert "목표가/지표" in html
     assert "괴리/진행 계산 불가" in html
     assert "확인 후보" in html
@@ -2937,11 +3059,26 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "오늘 읽을 요약" in html
     assert "daily-briefing-headline" in html
     assert "briefing-report-flow" not in html
-    assert "briefing-market-index" in html
     assert "briefing-turnover" in html
     assert "briefing-investor-flow" in html
+    assert "briefing-market-index" not in html
+    assert "briefing-market-index-title" not in html
+    assert "briefing-turnover-title" in html
+    assert "시장 참고" in html
+    assert "briefing-reference-head" in html
+    assert "briefing-reference-title" in html
+    assert "briefingReferenceTitle" in html
+    assert "briefingIndexPair" not in html
+    assert "briefing-box span:empty" in html
+    assert "briefingPairTitle" in html
+    assert 'label: ""' in html
+    assert "briefing-investor-flow-sub" in html
+    assert "briefing-market-row" in html
+    assert "briefing-reference-card" in html
+    assert "briefing-reference-divider" in html
     assert "briefing-card-lines" in html
     assert "briefing-flow-lines" in html
+    assert "briefing-detail-flow" in html
     assert "renderBriefingDetailLine" in html
     assert "09:15" in html
     assert "12:00" in html
@@ -2995,15 +3132,22 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "const quantity = (value, unit = \"주\")" in html
     assert "active-selection" in html
     assert "stock-context-card" in html
+    assert 'id="stock-context-card" data-view-panel="watch"' in html
+    assert 'id="stock-context-card" data-view-panel="main"' not in html
     assert "card span-7 focus-card stock-focus-card" in html
     assert "stock-context-panel" in html
     assert "stock-context" in html
     assert "선택 종목</h2>" in html
     assert "선택 종목 상태" not in html
     assert "stock-detail-card" in html
+    assert 'id="stock-detail-card" data-view-panel="watch"' in html
+    assert 'id="stock-detail-card" data-view-panel="main"' not in html
     assert "card span-5 focus-card stock-focus-card" in html
     assert "stock-report-panel" in html
     assert "category-detail-card" in html
+    assert html.index('id="candidate-evidence-card"') < html.index('id="stock-context-card"')
+    assert html.index('id="stock-detail-card"') < html.index('id="backtest-observation-card"')
+    assert 'setViewTab("watch");' in html
     assert "scrollIntoView" in html
     assert "market-notice" in html
     assert "mobile-card-table" in html
@@ -3138,6 +3282,14 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "관찰 후보 근거" not in candidate_evidence_payload["notice"]
     assert "rows" in candidate_evidence_payload
     assert "candidates" not in candidate_evidence_payload
+    assert all("internal_candidate_signals" not in row for row in candidate_evidence_payload["rows"])
+    assert all("internal_missing_information" not in row for row in candidate_evidence_payload["rows"])
+    assert all("quality_flags" not in row for row in candidate_evidence_payload["rows"])
+    assert all("evidence_notes" not in row for row in candidate_evidence_payload["rows"])
+    assert all("opinion_summary" not in row for row in candidate_evidence_payload["rows"])
+    assert all("broker_count" not in (row.get("report_summary") or {}) for row in candidate_evidence_payload["rows"])
+    assert all("broker_display" not in (row.get("report_summary") or {}) for row in candidate_evidence_payload["rows"])
+    assert all("dominant_opinion" not in (row.get("report_summary") or {}) for row in candidate_evidence_payload["rows"])
     assert backtest_observation_payload["surface"] == "web-view"
     assert backtest_observation_payload["read_only"] is True
     assert backtest_observation_payload["live_fetch"] is False

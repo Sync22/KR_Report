@@ -84,8 +84,18 @@ Per-stock row:
 | `stock_flow_reference.amount_unit` | Stored amount unit | stock flow | preserve source unit |
 | `stock_flow_reference.volume_unit` | Stored volume unit | stock flow | preserve source unit |
 | `rank_reference.foreign_top_rank` | `[12010]` foreign rank if present | top-net-buy table | nullable |
+| `why_notable` | Public display labels for differentiating why the row is visible | derived display projection | exclude always-on coverage facts that are already in evidence boxes |
+| `missing_information` | Public display labels for true missing information | derived display projection | do not use `not in top list` as a missing-data label |
 | `quality_flags` | Missing/fallback markers | derived | required |
 | `evidence_notes` | Flat fact labels only | derived | no score text |
+
+Internal sort and operator diagnostics are separate from public labels.
+
+- `why_notable` and `missing_information` are public-visible display vocabulary for `web-view`.
+- Sort-only signals such as broker breadth, target-range availability, turnover availability, and price/volume position must not be exposed by relying on frontend filtering.
+- Operator/readiness commands may inspect internal candidate signals, but those counts must be named separately from visible label counts.
+- `candidate-evidence-readiness` should report visible label counts and internal signal counts separately so operator review and friend-facing cards do not use different hidden vocabularies.
+- The public `/api/candidate-evidence` projection should stay thinner than the internal review row. Public rows keep display-ready labels and evidence boxes, but must not expose `quality_flags`, `evidence_notes`, `opinion_summary`, `report_summary.broker_count`, `report_summary.broker_display`, or `report_summary.dominant_opinion`. Those fields may remain available only when the builder is called for operator/readiness review with internal diagnostics enabled.
 
 ## Exact Repository Fields To Use
 

@@ -47,6 +47,7 @@ These files remain useful as detailed history or implementation notes, but they 
 | `plans/*` | `current-work.md`, `next-phase.md`, and `execution-roadmap.md` |
 | `plans/observation-candidate-recommendation-goal-prompt.md` | Goal prompt for the next `오늘의 관찰 후보` implementation pass; keep the product boundary in `current-work.md`, `next-phase.md`, and `surface-contract.md`. |
 | `history/mini-pc-restore-change-log-2026-05-16.md` | `mini-pc-migration-handoff.md`, `current-work.md`, and `krx-market-data-runbook.md` for ongoing policy; keep this file as the source-sync record for the mini PC restore session. |
+| `history/web-view-stored-evidence-hardening-2026-05-27.md` | Handoff note for the dev-branch stored-evidence `web-view` hardening pass; use `current-work.md`, `next-phase.md`, `surface-contract.md`, and `contracts/candidate-evidence-contract.md` for ongoing policy. |
 | Older web-view/P2 planning notes | `execution-roadmap.md`, `next-phase.md`, and `surface-contract.md` |
 | `../DOCS_ROLE_REORG_REVIEW_PROMPT.md`, `../DOCS_ROLE_REORG_REVIEW_2026-05-17.md` | Docs role reorganization prompt/review; use before any approved `docs/` path move. |
 

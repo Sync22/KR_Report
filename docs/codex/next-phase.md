@@ -18,6 +18,7 @@ Recent review found that several memo ideas were implemented as safe data founda
 | Separate intent completion from foundation completion | A table, DTO, or DB path is not enough to mark a memo done if the intended screen or briefing is still missing. |
 | Compress the shared page | Friend-facing `web-view` should not expose the full validation pipeline or repeated defensive disclaimers. Keep raw evidence, risk wording, and operational details in admin/docs. |
 | Separate trading advice from observation curation | This project does not provide `매수 추천`, `매도 추천`, `진입가`, `청산가`, `익절가`, `목표 수익률`, `확신도`, or `투자등급`, but it can recommend what to observe first. `오늘의 관찰 후보`, `우선 확인`, `관찰 우선순위`, `관심도 높은 흐름`, `왜 눈에 띄는지`, `확인 후보`, `시장 분위기`, `수급 참고`, and `과열 참고` are valid product language. |
+| Keep broker/API work outside production | Do not add KIS, Toss Securities Open API, or any broker route to close current intraday gaps. Future Toss work should start only as a separated `broker-lab`/`execution-lab`/`toss-openapi-lab` path, beginning with docs and permission review, then read-only quote/account/balance probes. |
 | Add closing-market briefing track | The next product axis includes a rough `16:00` market mood Telegram summary based on same-day reports, KRX market data, and available flow. |
 
 | Area | Baseline |
@@ -285,6 +286,7 @@ Latest-day retry note (`2026-05-17 08:17 KST`, updated `2026-05-19 01:25 KST`): 
 | Broad KRX Data Marketplace scheduled ingest | Needs separate approval after more validation. The narrow `[12009]` anchor-day mentioned-stock 31-day backfill lane is the only approved automatic path. |
 | Public numeric score, investment grade, or buy/sell signal | Candidate evidence can order observation targets, but it is not mature enough for investment decision output. |
 | Public admin GUI exposure | Control surface risk is too high. |
+| Production broker/API integration | The current closeout should improve stored-data observation quality, not connect KIS/Toss or any broker to production, Telegram, scheduler, admin-gui, public web-view, or DB write paths. |
 | Docker migration | Windows direct execution remains simpler for N100. |
 | US market expansion | Domestic operation and sharing path should stabilize first. |
 
