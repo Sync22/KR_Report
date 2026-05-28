@@ -95,7 +95,7 @@ Internal sort and operator diagnostics are separate from public labels.
 - Sort-only signals such as broker breadth, target-range availability, turnover availability, and price/volume position must not be exposed by relying on frontend filtering.
 - Operator/readiness commands may inspect internal candidate signals, but those counts must be named separately from visible label counts.
 - `candidate-evidence-readiness` should report visible label counts and internal signal counts separately so operator review and friend-facing cards do not use different hidden vocabularies.
-- The public `/api/candidate-evidence` projection should stay thinner than the internal review row. Public rows keep display-ready labels and evidence boxes, but must not expose `quality_flags`, `evidence_notes`, `opinion_summary`, `report_summary.broker_count`, `report_summary.broker_display`, or `report_summary.dominant_opinion`. Those fields may remain available only when the builder is called for operator/readiness review with internal diagnostics enabled.
+- The public `/api/candidate-evidence` projection should stay thinner than the internal review row. Public rows keep display-ready labels and evidence boxes, but must not expose `quality_flags`, `evidence_notes`, `opinion_summary`, `report_summary.broker_count`, `report_summary.broker_display`, `report_summary.dominant_opinion`, or internal sort vocabulary such as broker breadth in public policy copy. Those fields may remain available only when the builder is called for operator/readiness review with internal diagnostics enabled.
 
 ## Exact Repository Fields To Use
 
@@ -188,8 +188,8 @@ Do not convert rank presence into a score.
 | --- | --- |
 | Missing stock code excludes the row. | A candidate-evidence row without stable KRX join keys is not safe. |
 | Missing target/opinion must not improve a row. | Preserve detail visibility, but do not add positive notes for missing values. |
-| Missing exact-date KRX stock row is a flag, not a latest-date fallback. | Keep `market_reference` nullable and add `missing_krx_stock_snapshot`. |
-| Missing `[12009]` flow is a flag, not neutral evidence. | Add `missing_stock_flow` or `partial_stock_flow`. |
+| Missing exact-date KRX stock row is a flag, not a latest-date fallback. | Keep `market_reference` nullable, add `missing_krx_stock_snapshot`, and use public wording such as `선택일 KRX 저장값 없음`. |
+| Missing `[12009]` flow is a flag, not neutral evidence. | Add `missing_stock_flow` or `partial_stock_flow`, and use public wording such as `종목 수급 저장값 없음`. |
 | Category fallback must stay outside stock evidence for CE-1. | Per-stock dated category lookup is not yet implemented; do not silently attach current sector names. |
 | `candidate_score` and `candidate_reasons` are ignored. | They are operator/source-validation fields, not public evidence. |
 

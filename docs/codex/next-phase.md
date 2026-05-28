@@ -97,6 +97,8 @@ Pre-09:00 refresh (`2026-05-20 08:36 KST`): read-only readiness commands were re
 | Exclusion rules | Apply valid stock code, missing target/opinion, insufficient flow coverage, and fallback category labels. | Bad/missing values do not improve a row. |
 | Web-view preview | Review visible `오늘의 관찰 후보`, `눈에 띄는 종목`, and `리포트 후 흐름` rows across several dates. | The page recommends observation targets, not trades. |
 | Observation compression | First pass implemented: show practical `오늘의 관찰 후보` / `우선 확인` / `확인 후보` rows first, including a top-2 `우선 확인` shortlist, with `왜 눈에 띄는지` and `부족한 정보` chips. | Useful candidates are not buried behind validation-only fields. |
+| Report context discipline | Treat Naver reports as a necessary context layer for attention/explanation, not as a strong standalone predictor. | Stronger observation wording must be supported by KRX/flow/price-position evidence and should stay below trading recommendation or public score language. |
+| Future intraday probe boundary | If a stable broker/API or quote source becomes available, start with a read-only lab probe for only the top-2 `우선 확인` candidates at a coarse cadence such as 5 minutes. | Request load, source permission, failure behavior, and public wording are reviewed before any `web-view`, Telegram, scheduler, or DB-write integration. |
 | Target-price progress | Stored-data-only target gap/progress metrics are attached to `candidate_evidence`. | First max-progress and target-hit D+ validation fields are exposed as read-only `도달 참고`; multi-date interpretation review still waits. |
 | Backtest observation | `관찰` tab shows read-only post-report reaction rows and initial multi-date QA is complete. | Broader feature availability audit is required before scoring experiments. |
 | Telegram briefing | Scheduled morning summary temporarily defaults to `briefing`. | Several real phone-screen deliveries are reviewed before making the format permanent. |
@@ -299,6 +301,9 @@ Latest-day retry note (`2026-05-17 08:17 KST`, updated `2026-05-19 01:25 KST`): 
 5. Build non-operational enhancement metrics first: report concentration, `[12009]` flow windows, price/volume position, sector breadth, and display-ready observation summary blocks.
 6. Run feature availability and reaction-distribution audits before any scoring prototype.
 7. Review the first hit-days/max-progress validation fields across several stored dates before any stronger interpretation is discussed.
-8. Start Cycle image label alias mapping for rotation ETF/stock preview.
-9. Prepare mini PC/external sharing only after the user page is stable.
+8. Keep report-based conclusions framed by the current 52-week/1-year market regime; use 3-year data as an offline validation baseline, not as a reason to overrule recent market structure.
+9. If the source burden is acceptable, evaluate a read-only 5-minute probe only for the top-2 `우선 확인` candidates before discussing broader intraday coverage.
+10. Treat time-slot priority (`09:15`, `12:00`, `15:15`) as a future stage that requires stable intraday quote/turnover/index APIs before stronger same-day ordering claims.
+11. Start Cycle image label alias mapping for rotation ETF/stock preview.
+12. Prepare mini PC/external sharing only after the user page is stable.
 

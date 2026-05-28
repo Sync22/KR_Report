@@ -1489,6 +1489,10 @@ def test_web_view_candidate_evidence_prioritizes_backtest_supported_observation_
 
     assert snapshot["scoring"] is False
     assert snapshot["recommendation"] is False
+    assert "브로커 폭" not in snapshot["display_policy"]
+    assert "확인용으로 묶어 보여줍니다" in snapshot["display_policy"]
+    assert "추천" not in snapshot["display_policy"]
+    assert "실시간 시세가 아닙니다" in snapshot["notice"]
     assert [row["stock_code"] for row in snapshot["rows"]] == ["000002", "000004"]
     assert snapshot["rows"][0]["why_notable"][-1] == "외국인 순매수 상위"
     assert "거래대금 참고" not in snapshot["rows"][0]["why_notable"]
@@ -1503,6 +1507,57 @@ def test_web_view_candidate_evidence_prioritizes_backtest_supported_observation_
     assert "broker_display" not in snapshot["rows"][0]["report_summary"]
     assert "dominant_opinion" not in snapshot["rows"][0]["report_summary"]
     assert "수급 전환 지속" in snapshot["rows"][1]["why_notable"]
+
+
+def test_web_view_candidate_evidence_public_missing_labels_are_stored_reference_based(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 8)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="저장값대기",
+                stock_code="000001",
+                title="저장 근거 점검",
+                broker_name="테스트증권",
+                published_at=datetime(2026, 5, 8, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 5, 8, 9, 5, 0),
+                target_price_value=100_000,
+                opinion_normalized="buy",
+                source_id="candidate-missing-stored-reference",
+                identity_key="candidate-missing-stored-reference",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    public_snapshot = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=1,
+    )
+    internal_snapshot = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=1,
+        include_internal=True,
+    )
+
+    assert public_snapshot["rows"][0]["missing_information"] == [
+        "선택일 KRX 저장값 없음",
+        "종목 수급 저장값 없음",
+    ]
+    assert "quality_flags" not in public_snapshot["rows"][0]
+    assert internal_snapshot["rows"][0]["internal_missing_information"][:2] == [
+        "당일 KRX 없음",
+        "종목 수급 데이터 없음",
+    ]
 
 
 def test_web_view_daily_category_contract_uses_snapshot_availability_without_rollups(tmp_path, monkeypatch) -> None:

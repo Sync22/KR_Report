@@ -24454,8 +24454,8 @@ def build_web_view_candidate_evidence_snapshot(
         "live_fetch": False,
         "scoring": False,
         "recommendation": False,
-        "display_policy": "관찰 우선순위는 리포트 집중, 브로커 폭, 목표가, 수급, 거래대금, 가격 위치 근거를 묶어 정렬합니다.",
-        "notice": "오늘의 관찰 후보는 저장된 리포트/KRX/수급 참고값을 압축해 보여주는 확인용 데이터입니다.",
+        "display_policy": "관찰 후보는 저장된 리포트와 KRX/수급 참고값을 확인용으로 묶어 보여줍니다.",
+        "notice": "오늘의 관찰 후보는 저장된 리포트/KRX/[12009] 수급 참고값 기준입니다. 실시간 시세가 아닙니다.",
         "market_flow_context": [_web_view_market_investor_flow_item(item) for item in sorted(
             market_flow_rows,
             key=lambda row: (_web_view_market_sort_key(row.market), _web_view_investor_sort_key(row.investor_type)),
@@ -24509,10 +24509,10 @@ def _web_view_observation_candidate_profile(
     missing: list[str] = []
     internal_missing: list[str] = []
     if market_reference is None:
-        missing.append("당일 KRX 없음")
+        missing.append("선택일 KRX 저장값 없음")
         internal_missing.append("당일 KRX 없음")
     if not stock_flow_rows:
-        missing.append("종목 수급 데이터 없음")
+        missing.append("종목 수급 저장값 없음")
         internal_missing.append("종목 수급 데이터 없음")
     if not target_range.get("available"):
         missing.append("목표가 정보 없음")
