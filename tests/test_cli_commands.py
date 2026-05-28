@@ -3587,7 +3587,7 @@ def test_candidate_evidence_readiness_reports_visible_review_coverage(tmp_path, 
     assert payload["visible_observation_priority_counts"] == {"우선 확인": 1}
     assert payload["why_notable_counts"] == {
         "리포트 집중": 1,
-        "외국인 순매수 상위": 1,
+        "외국인 순매수 상위 참고": 1,
     }
     assert payload["visible_why_notable_counts"] == payload["why_notable_counts"]
     assert payload["internal_candidate_signal_counts"] == {
@@ -3606,7 +3606,7 @@ def test_candidate_evidence_readiness_reports_visible_review_coverage(tmp_path, 
     assert payload["dates"][0]["visible_observation_priority_counts"] == {"우선 확인": 1}
     assert payload["dates"][0]["why_notable_counts"] == {
         "리포트 집중": 1,
-        "외국인 순매수 상위": 1,
+        "외국인 순매수 상위 참고": 1,
     }
     assert payload["dates"][0]["visible_why_notable_counts"] == payload["dates"][0]["why_notable_counts"]
     assert payload["dates"][0]["internal_candidate_signal_counts"] == {
@@ -3626,7 +3626,7 @@ def test_candidate_evidence_readiness_reports_visible_review_coverage(tmp_path, 
     assert payload["dates"][0]["top_rows"][0]["observation_priority"] == "우선 확인"
     assert payload["dates"][0]["top_rows"][0]["why_notable"] == [
         "리포트 집중",
-        "외국인 순매수 상위",
+        "외국인 순매수 상위 참고",
     ]
     assert payload["dates"][0]["top_rows"][0]["internal_candidate_signals"] == [
         "리포트 집중",

@@ -1494,7 +1494,7 @@ def test_web_view_candidate_evidence_prioritizes_backtest_supported_observation_
     assert "추천" not in snapshot["display_policy"]
     assert "실시간 시세가 아닙니다" in snapshot["notice"]
     assert [row["stock_code"] for row in snapshot["rows"]] == ["000002", "000004"]
-    assert snapshot["rows"][0]["why_notable"][-1] == "외국인 순매수 상위"
+    assert snapshot["rows"][0]["why_notable"][-1] == "외국인 순매수 상위 참고"
     assert "거래대금 참고" not in snapshot["rows"][0]["why_notable"]
     assert "목표가 범위" not in snapshot["rows"][0]["why_notable"]
     assert "브로커 폭" not in snapshot["rows"][0]["why_notable"]
@@ -1558,6 +1558,82 @@ def test_web_view_candidate_evidence_public_missing_labels_are_stored_reference_
         "당일 KRX 없음",
         "종목 수급 데이터 없음",
     ]
+
+
+def test_web_view_candidate_evidence_rank_reason_stays_reference_when_stock_flow_is_missing(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 8)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="랭크참고",
+                stock_code="000001",
+                title="외국인 순매수 상위 참고",
+                broker_name="테스트증권",
+                published_at=datetime(2026, 5, 8, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 5, 8, 9, 5, 0),
+                target_price_value=100_000,
+                opinion_normalized="buy",
+                source_id="candidate-rank-reference",
+                identity_key="candidate-rank-reference",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="000001",
+                stock_name="랭크참고",
+                market="KOSPI",
+                close_price=80_000,
+                change_percent=1.2,
+                volume=10_000,
+                turnover=100_000_000,
+                fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+            )
+        ]
+    )
+    repository.upsert_investor_net_buy_top_daily(
+        [
+            InvestorNetBuyTopDaily(
+                business_date=business_date,
+                market="STK",
+                investor_type="foreign",
+                rank=3,
+                stock_code="000001",
+                stock_name="랭크참고",
+                net_buy_amount=1_000,
+                fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+            )
+        ]
+    )
+
+    public_snapshot = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=1,
+    )
+    internal_snapshot = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=1,
+        include_internal=True,
+    )
+
+    row = public_snapshot["rows"][0]
+    assert "외국인 순매수 상위 참고" in row["why_notable"]
+    assert "외국인 순매수 상위" not in row["why_notable"]
+    assert row["missing_information"] == ["종목 수급 저장값 없음"]
+    assert "외국인 순매수 상위" in internal_snapshot["rows"][0]["internal_candidate_signals"]
 
 
 def test_web_view_daily_category_contract_uses_snapshot_availability_without_rollups(tmp_path, monkeypatch) -> None:

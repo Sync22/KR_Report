@@ -181,6 +181,7 @@ This should stay in the top-level `market_flow_context`, not be repeated into ev
 
 CE-1 should expose only rank presence for the current stock.
 Do not convert rank presence into a score.
+Public rank wording should stay reference-framed, such as `외국인 순매수 상위 참고`, because it is stored `[12010]` context and may coexist with missing stock-level `[12009]` flow.
 
 ## CE-1 Exclusion And Quality Rules
 

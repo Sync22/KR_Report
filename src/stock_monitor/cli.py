@@ -24504,7 +24504,7 @@ def _web_view_observation_candidate_profile(
         internal_signals.append("가격/거래량 위치")
     if rank_reference is not None:
         internal_signals.append("외국인 순매수 상위")
-        reasons.append("외국인 순매수 상위")
+        reasons.append("외국인 순매수 상위 참고")
 
     missing: list[str] = []
     internal_missing: list[str] = []
