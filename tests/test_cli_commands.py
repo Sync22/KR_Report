@@ -2736,8 +2736,11 @@ def test_market_briefing_readiness_reports_preview_and_manual_review_gate(tmp_pa
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 0
     assert payload["read_only"] is True
+    assert payload["live_fetch"] is False
     assert payload["sends_telegram"] is False
     assert payload["registers_scheduler"] is False
+    assert payload["scoring"] is False
+    assert payload["recommendation"] is False
     assert payload["recent_report_dates"] == 3
     assert payload["requested_min_manual_reviews"] == 1
     assert payload["enforced_min_manual_reviews"] == 3

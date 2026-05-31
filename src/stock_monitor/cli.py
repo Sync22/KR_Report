@@ -12413,8 +12413,11 @@ def _run_market_briefing_readiness(
     payload = {
         "surface": "operator-cli",
         "read_only": True,
+        "live_fetch": False,
         "sends_telegram": False,
         "registers_scheduler": False,
+        "scoring": False,
+        "recommendation": False,
         "recent_business_days": recent_business_days,
         "recent_report_dates": recent_business_days,
         "limit": limit,
@@ -12447,8 +12450,11 @@ def _run_market_briefing_readiness(
 
     print("Market briefing readiness")
     print("- read_only: true")
+    print("- live_fetch: false")
     print("- sends_telegram: false")
     print("- registers_scheduler: false")
+    print("- scoring: false")
+    print("- recommendation: false")
     print(f"- inspected dates: {payload['inspected_date_count']}")
     print(f"- preview ready: {payload['preview_ready_count']}/{payload['inspected_date_count']}")
     print(f"- manual Telegram review sends: {payload['manual_review_send_count']}/{enforced_min_manual_reviews}")
