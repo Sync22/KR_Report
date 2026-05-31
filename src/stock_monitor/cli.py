@@ -276,6 +276,7 @@ KRX_DAILY_BACKFILL_MIN_ROWS = {
 KRX_BACKFILL_DEFAULT_MAX_DATES = 5
 KRX_BACKFILL_SAFE_MAX_DATES = 5
 KRX_BACKFILL_DEFAULT_SLEEP_SECONDS = 3.0
+KRX_OPENAPI_DAILY_PUBLICATION_TIME = datetime_time(hour=8, minute=0)
 KRX_FLOW_VALUE_TYPES = {"volume": "1", "amount": "2"}
 KRX_FLOW_SIDES = {"sell": "1", "buy": "2", "net-buy": "3"}
 SCHEDULED_KRX_MENTIONED_FLOW_EARLIEST_TIME = datetime_time(hour=15, minute=30)
@@ -11440,7 +11441,8 @@ def _build_krx_baseline_analysis(
     to_date: date | None,
     max_missing_dates: int,
 ) -> dict:
-    current_date = to_date or datetime.now(ZoneInfo(config.timezone)).date()
+    current = datetime.now(ZoneInfo(config.timezone))
+    current_date = to_date or _latest_publishable_krx_openapi_date(current, config.holiday_overrides)
     start_date = current_date - timedelta(days=lookback_days - 1)
     business_dates = [
         current_date - timedelta(days=offset)
@@ -11550,6 +11552,18 @@ def _build_krx_baseline_analysis(
         ],
         "notes": notes,
     }
+
+
+def _latest_publishable_krx_openapi_date(current: datetime, holiday_overrides: set[date]) -> date:
+    candidate = previous_business_day(current.date(), holiday_overrides)
+    publication_date = next_business_day(candidate, holiday_overrides)
+    if (
+        current.date() < publication_date
+        or current.date() == publication_date
+        and current.time() < KRX_OPENAPI_DAILY_PUBLICATION_TIME
+    ):
+        candidate = previous_business_day(candidate, holiday_overrides)
+    return candidate
 
 
 def _recent_krx_backfill_observations(
