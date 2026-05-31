@@ -15844,12 +15844,21 @@ def _external_web_view_forbidden_public_json_keys(body: bytes) -> list[str]:
         "db_path",
         "env_run_suppressed_dates",
         "health",
+        "internal_candidate_signals",
+        "internal_missing_information",
         "operator_controls",
         "operation_profile",
+        "quality_flags",
         "recent_admin_audit_logs",
         "safe_settings",
         "scheduler_tasks",
         "worker_states",
+        "_internal_candidate_signals",
+        "_internal_missing_information",
+        "_sort_density",
+        "_sort_signal",
+        "five_business_day_broker_count",
+        "previous_broker_count",
     }
     found: set[str] = set()
 
@@ -16066,6 +16075,15 @@ def _collect_web_view_browser_api_smoke_issues(
                     "code": "candidate_api_invalid_json",
                     "path": candidate_path,
                     "message": str(exc),
+                }
+            )
+        forbidden_keys = _external_web_view_forbidden_public_json_keys(candidate_body)
+        if forbidden_keys:
+            issues.append(
+                {
+                    "code": "candidate_json_exposes_operator_keys",
+                    "path": candidate_path,
+                    "message": f"candidate evidence JSON exposed forbidden keys: {', '.join(forbidden_keys)}",
                 }
             )
 
@@ -23262,14 +23280,18 @@ def _web_view_report_concentration_item(
     )
     intensity_display = _format_report_intensity_display(intensity)
     target_revision_display = _format_target_revision_display(target_revision)
+    public_intensity = dict(intensity)
+    public_intensity.pop("five_business_day_broker_count", None)
+    public_target_revision = dict(target_revision)
+    public_target_revision.pop("previous_broker_count", None)
     return {
         "stock_name": summary.stock_name,
         "stock_code": summary.stock_code,
         "mention_count": summary.mention_count,
         "broker_count": broker_count,
         "broker_display": summary.broker_display,
-        "report_intensity": intensity,
-        "target_price_revision": target_revision,
+        "report_intensity": public_intensity,
+        "target_price_revision": public_target_revision,
         "target_price_display": _web_view_target_price_range(summary),
         "display": (
             f"{summary.stock_name} / 리포트 {summary.mention_count}건"
@@ -24658,6 +24680,15 @@ def build_web_view_candidate_evidence_snapshot(
             flow_window_reference=flow_window_reference,
             price_volume_reference=price_volume_reference,
         )
+        evidence_layers = _web_view_candidate_evidence_layers(
+            primary=candidate_profile["why_notable"],
+            support=_web_view_candidate_support_evidence(
+                market_reference=market_reference,
+                price_volume_reference=price_volume_reference,
+                rank_reference=rank_reference,
+            ),
+            gap=candidate_profile["missing_information"],
+        )
         rows.append(
             {
                 "business_date": summary.business_date.isoformat(),
@@ -24666,6 +24697,7 @@ def build_web_view_candidate_evidence_snapshot(
                 "observation_priority": candidate_profile["observation_priority"],
                 "why_notable": candidate_profile["why_notable"],
                 "missing_information": candidate_profile["missing_information"],
+                "evidence_layers": evidence_layers,
                 "report_summary": {
                     "report_count": summary.mention_count,
                     "broker_count": broker_count,
@@ -24714,8 +24746,10 @@ def build_web_view_candidate_evidence_snapshot(
     )
     picked_rows: list[dict[str, object]] = []
     internal_keys = {"_internal_candidate_signals", "_internal_missing_information", "_sort_density", "_sort_signal"}
-    for row in rows[:limit]:
+    for index, row in enumerate(rows[:limit]):
         item = {key: value for key, value in row.items() if key not in internal_keys}
+        if index < 2:
+            item["intraday_reference"] = _web_view_candidate_intraday_reference_placeholder()
         if include_internal:
             item["internal_candidate_signals"] = row.get("_internal_candidate_signals") or []
             item["internal_missing_information"] = row.get("_internal_missing_information") or []
@@ -24729,6 +24763,12 @@ def build_web_view_candidate_evidence_snapshot(
             item.pop("quality_flags", None)
             item.pop("evidence_notes", None)
             item.pop("opinion_summary", None)
+            report_intensity = dict(item.get("report_intensity") or {})
+            report_intensity.pop("five_business_day_broker_count", None)
+            item["report_intensity"] = report_intensity
+            target_price_revision = dict(item.get("target_price_revision") or {})
+            target_price_revision.pop("previous_broker_count", None)
+            item["target_price_revision"] = target_price_revision
         picked_rows.append(item)
     return {
         "now": current.isoformat(),
@@ -24741,14 +24781,78 @@ def build_web_view_candidate_evidence_snapshot(
         "live_fetch": False,
         "scoring": False,
         "recommendation": False,
-        "display_policy": "관찰 우선순위는 리포트 집중, 브로커 폭, 목표가, 수급, 거래대금, 가격 위치 근거를 묶어 정렬합니다.",
-        "notice": "오늘의 관찰 후보는 저장된 리포트/KRX/수급 참고값을 압축해 보여주는 확인용 데이터입니다.",
+        "display_policy": "관찰 후보는 저장된 리포트와 KRX/수급 참고값을 확인용으로 묶어 보여줍니다.",
+        "notice": "오늘의 관찰 후보는 저장된 리포트/KRX/[12009] 수급 참고값 기준입니다. 실시간 시세가 아닙니다.",
         "market_flow_context": [_web_view_market_investor_flow_item(item) for item in sorted(
             market_flow_rows,
             key=lambda row: (_web_view_market_sort_key(row.market), _web_view_investor_sort_key(row.investor_type)),
         )],
         "rows": picked_rows,
     }
+
+
+def _web_view_candidate_intraday_reference_placeholder() -> dict[str, object]:
+    return {
+        "available": False,
+        "source_configured": False,
+        "read_only": True,
+        "live_fetch": False,
+        "scope": "top_2_priority_candidates",
+        "cadence_minutes": 5,
+        "reference_time": None,
+        "price": None,
+        "change_percent": None,
+        "turnover": None,
+        "affects_ordering": False,
+        "notice": "장중 실시간 참고 소스가 아직 확정되지 않았습니다.",
+    }
+
+
+def _web_view_candidate_evidence_layers(
+    *,
+    primary: object,
+    support: object,
+    gap: object,
+) -> dict[str, list[str]]:
+    return {
+        "primary": _public_label_list(primary),
+        "support": _public_label_list(support),
+        "gap": _public_label_list(gap),
+    }
+
+
+def _public_label_list(values: object) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    labels: list[str] = []
+    for value in values:
+        label = str(value or "").strip()
+        if label and label not in labels:
+            labels.append(label)
+    return labels
+
+
+def _web_view_candidate_support_evidence(
+    *,
+    market_reference: StockMarketDailySnapshot | None,
+    price_volume_reference: dict,
+    rank_reference: InvestorNetBuyTopDaily | None,
+) -> list[str]:
+    labels: list[str] = []
+    if market_reference is not None and market_reference.close_price is not None:
+        labels.append("KRX 가격 참고")
+    if market_reference is not None and market_reference.turnover is not None:
+        labels.append("거래대금 참고")
+    if price_volume_reference.get("available"):
+        if price_volume_reference.get("close_position_52w_percent") is not None:
+            labels.append("52주 위치 참고")
+        if price_volume_reference.get("volume_multiple_20d") is not None:
+            labels.append("거래량 위치 참고")
+        if not any(label in labels for label in ("52주 위치 참고", "거래량 위치 참고")):
+            labels.append("가격 위치 참고")
+    if rank_reference is not None:
+        labels.append("외국인 순매수 상위 참고")
+    return labels
 
 
 def _web_view_observation_candidate_profile(
@@ -24782,24 +24886,26 @@ def _web_view_observation_candidate_profile(
         internal_signals.append(revision_label)
     if market_reference is not None and market_reference.turnover is not None:
         internal_signals.append("거래대금 참고")
-    if stock_flow_rows:
+    has_stock_flow = bool(stock_flow_rows)
+    has_flow_persistence = _web_view_flow_reference_has_persistence(flow_window_reference)
+    if has_stock_flow:
         internal_signals.append("종목별 수급")
-    if _web_view_flow_reference_has_persistence(flow_window_reference):
+    if has_flow_persistence:
         internal_signals.append("수급 전환 지속")
-        reasons.append("수급 전환 지속")
+        if has_stock_flow:
+            reasons.append("수급 전환 지속")
     if price_volume_reference.get("available"):
         internal_signals.append("가격/거래량 위치")
     if rank_reference is not None:
         internal_signals.append("외국인 순매수 상위")
-        reasons.append("외국인 순매수 상위")
 
     missing: list[str] = []
     internal_missing: list[str] = []
     if market_reference is None:
-        missing.append("당일 KRX 없음")
+        missing.append("선택일 KRX 저장값 없음")
         internal_missing.append("당일 KRX 없음")
     if not stock_flow_rows:
-        missing.append("종목 수급 데이터 없음")
+        missing.append("종목 수급 저장값 없음")
         internal_missing.append("종목 수급 데이터 없음")
     if not target_range.get("available"):
         missing.append("목표가 정보 없음")
@@ -24814,15 +24920,15 @@ def _web_view_observation_candidate_profile(
 
     sort_density = len(reasons)
     priority_signal = 0
-    if rank_reference is not None:
-        priority_signal += 3
-    if _web_view_flow_reference_has_persistence(flow_window_reference):
+    if has_flow_persistence and has_stock_flow:
         priority_signal += 2
     if target_revision.get("available"):
         priority_signal += 1
     if summary.mention_count >= 2:
         priority_signal += 1
     sort_signal = priority_signal
+    if has_stock_flow and any(label != "리포트 집중" for label in reasons):
+        sort_signal += 2
     if priority_signal >= 3:
         priority = "우선 확인"
     elif priority_signal >= 1:
