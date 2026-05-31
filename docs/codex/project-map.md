@@ -62,8 +62,7 @@ Current files:
 
 Current directories:
 
-- `.codex/`
-- `.codex/agents/`
+- `.codex/` (local Codex metadata; project-local `.codex/agents/` is intentionally absent)
 - `src/`
 - `src/stock_monitor/`
 - `tests/`
@@ -116,6 +115,7 @@ What does not exist yet:
 - broad/all-stock KRX Data Marketplace scheduled investor-flow ingest enablement
 - KIS investor-flow ingest implementation
 - public trading recommendation, numeric score, investment grade, or buy/sell signal
+- a separately reviewed operator-only decision-support or execution-lab lane for trading decisions after stable real-time data and safety gates
 
 ## Recommended Near-Term Layout
 

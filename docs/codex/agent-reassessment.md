@@ -1,5 +1,7 @@
 # Agent Reassessment
 
+2026-05-29 decision: keep project-local `.codex/agents/` absent. The role names below remain useful ownership vocabulary, but the default execution layer is now global agents/skills plus CodeGraph. Do not recreate or bulk-restore the old local TOML agent set unless repeated Stock Monitor work proves one exact missing role.
+
 ## Current work axes
 
 | Axis | Current state | Primary local evidence |
@@ -12,6 +14,7 @@
 | KRX investor flow | Data Marketplace validation/import/display paths exist, but scheduled ingest is disabled. | `current-work.md`, `krx-market-data-runbook.md` |
 | Category/taxonomy | 업종/테마 are a separate taxonomy layer with category snapshots and fallback debt. | `current-work.md`, `data-source-policy.md` |
 | Candidate evidence | Read-only evidence rows can support observation-candidate recommendation; no public numeric scoring or trading recommendation. | `candidate-evidence-plan.md`, `next-phase.md` |
+| Future operator decision lane | Not built. Possible only after stable real-time data, source freshness, failure behavior, permission, and order-safety gates are proven. | `current-work.md`, `next-phase.md`, `surface-contract.md` |
 | External sharing | Optional entry-code gate exists; Cloudflare/Tailscale not configured. | `current-work.md`, `surface-contract.md` |
 
 ## Next-phase axes
@@ -21,13 +24,14 @@
 | Operational closeout | Scheduler/worker/delivery/DB health observation across market days. | `debugger`, `cli-developer`, `reviewer`, `test-engineer` |
 | User web-view closeout | Stock search bar, mobile QA, display cleanup, public-safe regression. | `web-ui-engineer`, `test-engineer`, `security-hardening` |
 | Candidate evidence foundation | Read-only DTO combining report/KRX/flow/category facts without score. | `market-data-engineer`, `sql-pro`, `web-ui-engineer`, `reviewer` |
+| Future operator-only decision support | Boundary design only after real-time source proof. | `market-data-engineer`, `security-hardening`, `reviewer`, `sql-pro`, `test-engineer` |
 | Rotation / ETF candidate preview | Cycle image alias mapping, 업종-to-ETF candidates, preview only. | `market-data-engineer`, `web-ui-engineer`, `admin-ui-engineer` |
 | Category snapshot cleanup | Reduce fallback dates through explicit source-date refresh and safe DB workflow. | `market-data-engineer`, `sql-pro`, `backend-developer`, `test-engineer` |
 | Mini PC / external sharing prep | Access gate, Cloudflare/Tailscale boundary, operation profile, no public admin. | `security-hardening`, `documentation-engineer`, `cli-developer`, `reviewer` |
 
-## Keep
+## Role Vocabulary To Keep
 
-| Agent | Keep reason | Use when |
+| Role | Keep reason | Use when |
 | --- | --- | --- |
 | `backend-developer` | Still needed for production behavior across fetch, parse, store, summarize, notify. | End-to-end backend behavior changes after the boundary is known. |
 | `python-pro` | Still useful for Python runtime contracts, parsing, typing, and implementation seams. | Runtime/typing/parser bugs or Python module refactors. |
@@ -52,22 +56,22 @@ No new local agent is required immediately.
 | `deployment-engineer` | Do not add now. | Mini PC and Cloudflare/Tailscale are still preparation work. `security-hardening`, `cli-developer`, and `documentation-engineer` cover the current scope. |
 | `data-visualization-engineer` | Do not add now. | Rotation overlay and web-view visuals are covered by `web-ui-engineer`; calibration can use `admin-ui-engineer`. |
 
-## Merge or remove
+## Merge or restore
 
-No existing local agent should be removed now.
+No project-local agent should be restored now.
 
 | Agents | Assessment | Action |
 | --- | --- | --- |
-| `backend-developer` / `python-pro` | Overlap exists around implementation, but boundary is manageable: backend owns product behavior, python-pro owns runtime/module contracts. | Keep both; choose one primary per task. |
-| `admin-ui-engineer` / `web-ui-engineer` | Intentional split. Admin is control-capable; web-view is public-safe read-only. | Keep both; do not merge. |
-| `market-data-engineer` / `sql-pro` | Overlap on schema planning, but market-data owns source semantics and sql-pro owns DB correctness. | Keep both; use sql-pro as review/contract specialist. |
-| `reviewer` / `test-engineer` | Overlap on risk, but reviewer finds issues and test-engineer codifies regressions. | Keep both. |
-| `documentation-engineer` / `reviewer` | Overlap on correctness, but documentation-engineer owns doc drift while reviewer owns behavioral risk. | Keep both. |
-| `security-hardening` / `reviewer` | Overlap on risk review, but security-hardening is specifically exposure/public-surface focused. | Keep both due to access gate and future sharing. |
+| `backend-developer` / `python-pro` | Overlap exists around implementation, but boundary is manageable: backend owns product behavior, python-pro owns runtime/module contracts. | Keep both as routing vocabulary; choose one primary per task. |
+| `admin-ui-engineer` / `web-ui-engineer` | Intentional split. Admin is control-capable; web-view is public-safe read-only. | Keep both as routing vocabulary; do not merge the surfaces. |
+| `market-data-engineer` / `sql-pro` | Overlap on schema planning, but market-data owns source semantics and sql-pro owns DB correctness. | Keep both as routing vocabulary; use sql-pro as review/contract specialist. |
+| `reviewer` / `test-engineer` | Overlap on risk, but reviewer finds issues and test-engineer codifies regressions. | Keep both as routing vocabulary. |
+| `documentation-engineer` / `reviewer` | Overlap on correctness, but documentation-engineer owns doc drift while reviewer owns behavioral risk. | Keep both as routing vocabulary. |
+| `security-hardening` / `reviewer` | Overlap on risk review, but security-hardening is specifically exposure/public-surface focused. | Keep both as routing vocabulary due to access gate and future sharing. |
 
 ## Why
 
-The current local agent set is broad but justified by the project shape.
+The old local agent set was broad but the role boundaries are justified by the project shape.
 
 The project is no longer only a scraper. It now has independent operating axes:
 
@@ -85,11 +89,11 @@ The main risk is not missing an agent. The main risk is assigning the wrong agen
 
 - Do not let `web-ui-engineer` add control behavior to `web-view`.
 - Do not let `admin-ui-engineer` turn admin into a friend-facing surface.
-- Do not let `market-data-engineer` move from evidence to public numeric scoring or trading recommendation without reviewer approval. Observation-candidate recommendation remains a web-view/product copy boundary.
+- Do not let `market-data-engineer` move from evidence to public numeric scoring or public trading recommendation without reviewer approval. Observation-candidate recommendation remains a web-view/product copy boundary. Future trading-decision support, if pursued, is operator-only and needs a separate execution-lab/source-safety contract.
 - Do not let `backend-developer` make DB-shape changes without sql/repository review.
 - Do not let `security-hardening` become broad enterprise-auth work; keep it focused on local exposure risk.
 
-When work is multi-step, cross-module, high-risk, or needs separate review, use these boundaries to split investigation, implementation, and review across the appropriate local subagents. Do not spawn agents for small, low-risk, single-surface edits.
+When work is multi-step, cross-module, high-risk, or needs separate review, use these boundaries with the global layer and CodeGraph to split investigation, implementation, and review. Do not spawn agents for small, low-risk, single-surface edits.
 
 ## Skills versus agents
 
@@ -98,7 +102,7 @@ This project now has two installed project-specific global skills:
 - `botasaurus-stock-monitor`
 - `kronos-market-forecast`
 
-They are useful, but they are not replacements for local agents.
+They are useful, but they are not replacements for repository ownership review.
 
 | Capability | Skill fit | Agent fit | Decision |
 | --- | --- | --- | --- |
@@ -108,7 +112,7 @@ They are useful, but they are not replacements for local agents.
 | Stored OHLCV forecasting experiment | `kronos-market-forecast` is appropriate for research-only stored KRX OHLCV experiments. | `market-data-engineer`, `reviewer`, `test-engineer` judge whether results are meaningful. | Keep Kronos output offline and hidden. |
 | Web-view visual verification | `browser-use:browser` is appropriate for local UI inspection when it can access the page. | `web-ui-engineer`, `security-hardening` implement and review public-safe UI behavior. | Browser verifies; agents own changes. |
 | Telegram/scheduler/SQLite safety | No project skill should handle this. | `cli-developer`, `debugger`, `sql-pro`, `test-engineer`, `reviewer` | Keep in local code/review workflow. |
-| Public numeric score / trading recommendation | No skill should directly produce product behavior. | `reviewer`, `market-data-engineer`, `sql-pro` must approve data/holdout policy first. | Still blocked from public surfaces; observation-candidate recommendation is allowed separately. |
+| Public numeric score / trading recommendation | No skill should directly produce product behavior. | `reviewer`, `market-data-engineer`, `sql-pro` must approve data/holdout policy first. | Still blocked from public surfaces; observation-candidate recommendation is allowed separately. Future operator-only decision support is a separate lane, not a skill shortcut. |
 
 The reason this comparison was not previously prominent is that the data targets overlapped: both skills and agents can touch "market data" in a broad sense. The actual boundary is narrower:
 

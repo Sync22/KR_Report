@@ -30,7 +30,9 @@ This is a permission and API boundary, not just a visual layout boundary.
 - `web-view` must not implement `POST`, `PUT`, `PATCH`, or `DELETE` data routes. The only allowed POST exception is `/auth/login` for the optional entry-code gate.
 - `web-view` must be implemented with a separate handler/router and a separate read-only DTO contract.
 - Shared DB/repository code is allowed. Shared HTTP control handlers are not allowed.
-- Broker or execution API work, including future Toss Securities Open API evaluation, must not be connected to `web-view`, `admin-gui`, Telegram, scheduler, or production DB writes by default. It belongs in a separate lab/staging lane until docs, permissions, sandbox/test keys, and read-only probes are verified.
+- Broker or execution API work, including future Toss Securities Open API evaluation, must not be connected to `admin-gui`, Telegram, scheduler, production DB writes, broker secrets, or order routing by default. It belongs in a separate lab/staging lane until docs, permissions, sandbox/test keys, and read-only probes are verified.
+- A verified real-time quote/turnover/index lane may later feed `web-view` observation priority and top-2 `우선 확인` ordering. This is observation-candidate recommendation, not trading execution.
+- The current public `web-view` trading-wording ban is not a permanent denial of the product's long-term direction. Trading-decision support belongs in a future operator-only decision-support lane after stable real-time data, permissions, failure handling, and execution safety are proven.
 - External sharing candidates are limited to Tailscale for owner-only remote operation and Cloudflare Tunnel for a future friend-facing read-only `web-view` URL.
 - Direct router port forwarding is not a preferred exposure model for this project.
 - Browser-assisted source validation that depends on login state should use the connected Chrome extension session first. The Codex in-app browser is acceptable for local UI checks, but it must not be treated as equivalent to the operator's authenticated Chrome session.
@@ -59,6 +61,8 @@ This is a permission and API boundary, not just a visual layout boundary.
 
 - recent business-date archive
 - daily report overview
+- top-tab task split: `메인` for today priority, `관찰` for candidate evidence and report-after-flow, `종목` for selected-stock detail, `시장` for stored market/flow references, and `순환매` for category/theme/ETF rotation context
+- intraday overlap checks stay in the `메인` priority flow while the `관찰` tab remains the full candidate-evidence surface; do not duplicate the top-2 priority cards as a separate watch-tab preface
 - stock-level daily summary rows
 - stock-level report detail
 - sector rollup with dated snapshot policy
@@ -69,6 +73,7 @@ This is a permission and API boundary, not just a visual layout boundary.
 - later source-backed flow reference views
 - stored-sample investor-flow trend views
 - stored ETF trend views
+- future approved read-only intraday reference for top-2 observation candidates
 
 `web-view` should not show raw operational internals unless they are intentionally converted into simple public freshness labels.
 
@@ -116,9 +121,13 @@ Source ownership and Korean display naming are fixed in [data-source-policy.md](
 | Missing category mapping | Internal placeholders such as `N/A` may remain in raw DTO fields, but user-facing labels must render as `업종 미확인` or `테마 미확인`. |
 | Selected-date KRX | Missing selected-date KRX data must remain missing; do not silently fall back to the latest snapshot. |
 
-The first `web-view` should prefer clarity over trading interpretation. It can say what was observed, but should avoid unsupported scoring.
+The first `web-view` should prefer clarity over trading interpretation. It can say what was observed and recommend what to check first, but should avoid unsupported scoring.
 
-Future real-time or broker-origin data must be labeled and reviewed as a separate source lane before it appears on the shared page. Until then, `web-view` copy should treat KRX/report/flow values as stored references and avoid implying live quote freshness.
+Future real-time or broker-origin data must be labeled and reviewed as a separate source lane before it affects the shared page. Until then, `web-view` copy should treat KRX/report/flow values as stored references and avoid implying live quote freshness.
+
+When that future lane is approved, `read-only` still means no DB write, no Telegram/scheduler automation, no admin control path, no broker secret exposure, and no order routing. It does not mean the intraday reference is forbidden from changing `우선 확인`, `관찰 우선순위`, or main-card emphasis.
+
+If a later phase evaluates trading decisions, keep it out of the public `web-view` contract. It should be an operator-only decision-support or execution-lab surface with its own permission, audit, source freshness, failure, and order-safety contract.
 
 ## Web-View API Contract
 
@@ -143,6 +152,8 @@ Daily DTOs may include a public contract block with read-only/source-scope/tradi
 
 Investor-flow DTOs must clearly mark that they are stored sample/read-only data, do not trigger live KRX fetches from the user page, and do not provide public numeric scoring or trading recommendations.
 
+If a future `intraday_reference` DTO is enabled, it must expose source/freshness state clearly. A disabled placeholder may use `affects_ordering=false`; an approved source may use ordering influence only for observation priority, never for public score, buy/sell wording, broker execution, or order routing.
+
 ## Future Access Gate Checklist
 
 Before any Cloudflare Tunnel URL is shared, confirm this checklist:
@@ -155,7 +166,7 @@ Before any Cloudflare Tunnel URL is shared, confirm this checklist:
 | Admin separation | `admin-gui`, `/api/status`, scheduler/operator/settings POST routes, shutdown controls, `.env`, DB files, and Telegram secrets are not exposed. |
 | Access gate | Prefer Cloudflare Access or another simple allow-list before wider sharing. |
 | Access cookie | App entry-code cookies are `HttpOnly`, `SameSite=Lax`, and become `Secure` when the request arrives through an HTTPS proxy such as Cloudflare Tunnel. |
-| Public copy | The page may recommend observation targets, but must state or imply that values are stored-data references rather than real-time trading recommendations. |
+| Public copy | The page may recommend observation targets. Stored values must be labeled as stored references; approved real-time values must be labeled with source/freshness and may affect observation priority only, not trading recommendations. |
 | Rollback | Tunnel can be disabled without changing local scheduler or DB state. |
 
 ## Forbidden In Web-View
@@ -258,5 +269,5 @@ Cloudflare Tunnel rule:
 - Historical sector/theme responses use dated snapshots when available and label the latest stored category classification only when no prior snapshot exists.
 - Selected-date daily pages must not silently fall back to the latest KRX snapshot when that date has no KRX data.
 - Missing category placeholders such as internal `N/A` must use public labels in the user page.
-- `web-view-browser-smoke` must pass before treating mobile/browser review as locally clean: desktop/mobile render without major horizontal overflow, observation tab opens, stock search exists, write methods stay blocked, and `/api/status` remains unavailable.
+- `web-view-browser-smoke` must pass before treating mobile/browser review as locally clean: desktop/tablet/large-mobile/mobile render without major horizontal overflow, the exact top-tab order is `메인`/`관찰`/`종목`/`시장`/`순환매`, each non-main tab opens its representative panel, stock search exists, write methods stay blocked, and `/api/status` remains unavailable.
 - `external-web-view-smoke --record-success` must pass against the final Cloudflare/Tailscale URL before the URL is shared. If the access-code or Cloudflare Access gate blocks unauthenticated user data routes with `401`/`403` or a recognizable Cloudflare Access HTML/login page, that is acceptable; `/api/status` and admin scheduler/operator/settings POST routes must never return a public admin/control payload.

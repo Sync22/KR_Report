@@ -34,6 +34,17 @@ Out of scope for CE-1:
 - trading-recommendation wording
 - public numeric score, investment grade, or weight fields
 
+Future intraday boundary:
+
+- A future real-time or broker-origin probe must start outside this DTO as a lab/staging read-only lane.
+- The first candidate scope is only the top-2 `우선 확인` candidates, at a coarse cadence such as 5 minutes only after source burden is reviewed.
+- Read-only means no production DB writes, no Telegram/scheduler automation, no `admin-gui` control path, no broker secrets, and no order routing. It does not mean the signal is display-only forever.
+- After a source is approved, verified intraday price/turnover/index references are allowed to affect observation priority, top-2 `우선 확인` ordering, and main-card emphasis as observation-candidate recommendation signals.
+- Those signals must still stay below trading advice: no public numeric score, investment grade, buy/sell instruction, entry/exit, target return, conviction, broker execution, or order-routing wording.
+- This restriction is for the public CE-1/web-view contract. It does not reject a future operator-only decision-support or execution-lab lane after real-time source stability and safety gates are proven.
+- Stored CE-1 wording must therefore keep KRX/report/flow values labeled as stored references, not live/current intraday facts.
+- The public `web-view` may show a disabled top-2 `장중 참고` slot before a source is approved. While disabled it must use `source_configured=false`, `live_fetch=false`, and `affects_ordering=false`; those values describe current source absence, not the future ordering policy.
+
 ## First Implementable DTO
 
 CE-1 is a read-only snapshot builder, not a new table.
@@ -86,6 +97,10 @@ Per-stock row:
 | `rank_reference.foreign_top_rank` | `[12010]` foreign rank if present | top-net-buy table | nullable |
 | `why_notable` | Public display labels for differentiating why the row is visible | derived display projection | exclude always-on coverage facts that are already in evidence boxes |
 | `missing_information` | Public display labels for true missing information | derived display projection | do not use `not in top list` as a missing-data label |
+| `evidence_layers.primary` | Short public reasons copied from `why_notable` | derived display projection | report, target-revision, and `[12009]` flow-persistence reasons only; no internal sort vocabulary |
+| `evidence_layers.support` | Stored context that supports the reasons | KRX/price-volume/rank derived display projection | KRX price, turnover, 52-week position, volume-position labels, and `[12010]` rank-reference labels only when stored evidence exists |
+| `evidence_layers.gap` | Missing public evidence copied from `missing_information` | derived display projection | missing context, not negative evidence |
+| `intraday_reference` | Top-2-only future real-time reference slot | disabled source placeholder now; approved intraday source later | disabled placeholders use `source_configured=false`, `live_fetch=false`, `affects_ordering=false`; approved sources may set `affects_ordering=true` only for observation priority/display ordering, never trading execution |
 | `quality_flags` | Missing/fallback markers | derived | required |
 | `evidence_notes` | Flat fact labels only | derived | no score text |
 
@@ -93,9 +108,21 @@ Internal sort and operator diagnostics are separate from public labels.
 
 - `why_notable` and `missing_information` are public-visible display vocabulary for `web-view`.
 - Sort-only signals such as broker breadth, target-range availability, turnover availability, and price/volume position must not be exposed by relying on frontend filtering.
+- Every candidate signal must be classified as `rank-driving evidence`, `context-only support`, or `gap-only missing context` before it is added to the DTO.
+- `rank-driving evidence` is limited to report focus, stored report target revision, and exact-date `[12009]` flow-persistence evidence.
+- `context-only support` includes stored KRX price/turnover, 52-week position, volume position, target range/opinion details, and `[12010]` rank reference.
+- `gap-only missing context` includes selected-date KRX missing, selected-date `[12009]` stock flow missing, and target/opinion/price-volume context missing.
+- Context-only and gap-only signals must not change public row ordering, `observation_priority`, or top-2 composition by themselves.
+- `[12010]` rank presence is a reference-level support signal only. It may appear publicly as a cautious rank-reference label in `evidence_layers.support`, but it must not appear in `why_notable` or `evidence_layers.primary`, and it must not dominate candidates that have composite stored evidence.
+- Flow-persistence wording is public-primary evidence only when selected-date `[12009]` stock flow exists. Without stock-level flow rows, persistence remains internal/readiness context and the public card should show the flow gap as missing context.
+- Exact-date `[12009]` stock flow plus a public non-report reason such as target revision is stronger observation evidence than `[12010]` rank presence without stock-level flow.
+- `missing_stock_flow_reference` is an evidence gap, not negative evidence about the stock.
 - Operator/readiness commands may inspect internal candidate signals, but those counts must be named separately from visible label counts.
+- No hidden factor may determine public inclusion or ordering unless a public-safe rank-driving label for the same factor is visible on the row.
 - `candidate-evidence-readiness` should report visible label counts and internal signal counts separately so operator review and friend-facing cards do not use different hidden vocabularies.
-- The public `/api/candidate-evidence` projection should stay thinner than the internal review row. Public rows keep display-ready labels and evidence boxes, but must not expose `quality_flags`, `evidence_notes`, `opinion_summary`, `report_summary.broker_count`, `report_summary.broker_display`, or `report_summary.dominant_opinion`. Those fields may remain available only when the builder is called for operator/readiness review with internal diagnostics enabled.
+- `candidate-evidence-readiness` may also report operator-only `explanation_quality` diagnostics such as `report_only_candidate`, `missing_krx_reference`, `missing_stock_flow_reference`, `rank_without_stock_flow`, `missing_price_volume_context`, `missing_52w_position`, and `composite_evidence`. These diagnostics are for audit/readiness only and must not appear in the public `/api/candidate-evidence` response.
+- `candidate-evidence-readiness` may also summarize top-2-only maturity through operator-only fields such as `top_candidate_explanation_quality_counts`, `top_candidate_support_counts`, `top_candidate_gap_counts`, `top_candidate_next_evidence_gap_counts`, `top_candidate_review_reason_counts`, `top_candidate_review_priority_counts`, `top_candidate_review_date_count`, and per-date `top_candidate_maturity`. These fields identify which recent dates need stored-evidence backfill or review; they are not public DTO fields.
+- The public `/api/candidate-evidence` projection should stay thinner than the internal review row. Public rows keep display-ready labels and evidence boxes, but must not expose `quality_flags`, `evidence_notes`, `opinion_summary`, `report_summary.broker_count`, `report_summary.broker_display`, `report_summary.dominant_opinion`, `report_intensity.five_business_day_broker_count`, `target_price_revision.previous_broker_count`, or internal sort vocabulary such as broker breadth in public policy copy. Those fields may remain available only when the builder is called for operator/readiness review with internal diagnostics enabled.
 
 ## Exact Repository Fields To Use
 
@@ -181,6 +208,8 @@ This should stay in the top-level `market_flow_context`, not be repeated into ev
 
 CE-1 should expose only rank presence for the current stock.
 Do not convert rank presence into a score.
+Public rank wording should stay reference-framed, such as `외국인 순매수 상위 참고`, because it is stored `[12010]` context and may coexist with missing stock-level `[12009]` flow.
+The label belongs in `evidence_layers.support`, not `why_notable` or `evidence_layers.primary`, and it must not drive public ordering by itself.
 
 ## CE-1 Exclusion And Quality Rules
 

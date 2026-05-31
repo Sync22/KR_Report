@@ -16,6 +16,8 @@ The current product direction is no longer "add every available data layer to th
 | Memo intent over implementation inventory | Mark an item complete only when the operator's intended user-facing outcome is met; backend scaffolding alone is partial. |
 | Compressed user page | Move raw tables, operational reasoning, and debug evidence out of the shared page unless they directly explain the selected daily summary. |
 | Observation curation allowed | `오늘의 관찰 후보`, `우선 확인`, `관찰 우선순위`, `관심도 높은 흐름`, `왜 눈에 띄는지`, `눈에 띄는`, `확인 후보`, `시장 분위기`, and `수급 참고` are allowed; public numeric scores, investment grades, and trading-call wording remain blocked. |
+| Real-time strengthens observation, not trading | A future approved intraday source may change `우선 확인` ordering and main-card emphasis. `read-only` blocks DB writes, Telegram/scheduler automation, broker secrets, and order routing; it does not mean observation priority must ignore the source. |
+| Long-term decision lane is separate | The current public surface blocks trading-decision wording, but the long-term path may include operator-only decision support and execution-lab after stable real-time data, permissions, failure handling, and order-safety gates are proven. |
 | Daily iteration | Use each market day's collected data to decide what is mature enough to refine. Do not wait for a perfect model before showing useful reference output. |
 | Closing-market summary | Add a future `16:00`-around `오늘의 시장 분위기` briefing track, separate from the next-morning previous-day report briefing. |
 
@@ -39,9 +41,9 @@ The current product direction is no longer "add every available data layer to th
 
 ## Progress Snapshot
 
-Snapshot date: `2026-05-17`
+Snapshot date: `2026-05-29`
 
-These percentages are planning estimates, not formal release metrics. They combine local project state with reviewer, backend, and CLI subagent assessments.
+These percentages are planning estimates, not formal release metrics. They combine local project state with read-only readiness audits. Historical mini-PC closeout evidence remains useful trace evidence, but the current planning baseline is the main-PC `2026-05-29` readiness state.
 
 ## Current Completion Rebaseline
 
@@ -49,29 +51,28 @@ This is the current decision baseline for planning. It intentionally separates t
 
 | Scope | Completion | Meaning |
 | --- | ---: | --- |
-| Current domestic MVP on the mini PC, excluding broad public sharing and US market expansion | 96-97% | Telegram, scheduler, DB, admin-gui, user web-view, KRX Open API baseline, KRX Data Marketplace read-only flow references, parser drift fixtures, read-only observation/backtest foundations, mini PC restore, access-code gate, mini-PC scheduler registration, external web-view local gate, Cloudflare provider smoke for `https://report.kr-stock.site`, latest KRX Open API row availability, and manual Telegram review sends are implemented. Remaining work is mostly live market-day observation, operator phone-readability acceptance, and watching the web-view Startup shortcut across logon/reboot. |
+| Current domestic MVP on the main PC, excluding broad public sharing and US market expansion | 85-90% | Code, DB, admin-gui, user `web-view`, KRX/Data Marketplace read-only references, parser drift fixtures, and observation/backtest foundations are usable, but the current PC is not closeout-ready. The `2026-05-29` read-only audit blocks on manual market-briefing review sends `0/3`, `phone_review_accepted=false`, KRX Open API daily snapshots missing for 6 publishable business dates starting `2026-05-28`, real scheduled-run evidence missing for `2026-05-29`, missing `web-view` Startup shortcut, and unrecorded external provider smoke. |
 | Current domestic MVP, including public trading recommendation or scored investment decisions | 75-80% | Read-only observation and hidden/internal scoring-draft CLIs exist, but public numeric score, investment grade, Telegram trading alert, and buy/sell wording remain blocked until longer holdout validation is convincing. This is separate from observation-candidate recommendation. |
 
 | Axis | Current Completion | Next Increase Condition |
 | --- | ---: | --- |
-| 리포트 수집/요약/Telegram | 92% | Several more real market-day briefing deliveries, parser drift fixture samples, and timeout-after-send trace review. |
-| Scheduler / 운영 안정성 | 94% | Elevated/local Task Scheduler metadata is available, and elevated `verify_task_scheduler_registration.ps1` now reconfirms the six default mini-PC tasks: `StockMonitor-KrxDailyBackfill`, `StockMonitor-Notify`, `StockMonitor-Poll`, `StockMonitor-KrxMentionedFlowBackfill`, `StockMonitor-TelegramCommands`, and `StockMonitor-WebViewHourlyRestart`. The hourly restart task keeps the `127.0.0.1:8780` Cloudflare web-view target fresh; `StockMonitor-Shutdown` is absent as intended. The verifier distinguishes Task Scheduler metadata access-denied from genuinely missing task registration. Continue observing stale/missed-run and Telegram worker heartbeat behavior across more market days. |
+| 리포트 수집/요약/Telegram | 80-85% | Stored previews are usable and market-briefing previews are public-safe for 5/5 recent dates, but the current main-PC manual review gate remains `0/3` and `phone_review_accepted=false`. |
+| Scheduler / 운영 안정성 | 75-80% | Historical mini-PC scheduler verification is trace evidence only. On the current main PC, `market-day-observation --date 2026-05-29 --json` is incomplete and all expected scheduled-run evidence is missing after verify times. |
 | DB / schema / backup / verification | 97% | Keep `db-verify`, backup, restore-smoke, cleanup guard, and KRX backfill discipline green after future bulk data changes. Read-only diagnostics now check current schema without running the schema initializer when the DB already exists, reducing avoidable SQLite write-lock contention during parallel health checks. `db-restore-smoke` now records a local operation event, and `next-phase-readiness.db_safety` blocks completion when the latest backup is missing, lacks a matching successful restore-smoke, or `db-verify` has failing checks. |
-| 사용자용 web-view | 93% | Direction reset is underway: the top daily briefing is now aligned with report flow, KRX index, turnover, 수급 참고, notable-stock chips, and short check points, while opinion-derived buy/sell signals are kept out of candidate/briefing reasons. The daily DTO now carries structured `market_briefing` blocks so the UI uses explicit index/turnover/flow/notable-stock/check-point fields instead of parsing display lines. The `2026-05-15` sector snapshot now uses verified Naver upjong rows for key active sectors instead of pure latest-mapping fallback, the local external-sharing gate passes value QA plus browser/mobile smoke with issue count `0`, and the Cloudflare provider smoke for `https://report.kr-stock.site` passes with issue count `0`. Remaining work is date-by-date visual review, evidence compression, and logon/reboot observation of the loopback web-view runtime. |
+| 사용자용 web-view | 90-93% | Direction reset is underway and the five-tab GET-only user surface is the current target. Historical mini-PC provider smoke remains trace evidence; on the current main PC, external provider smoke is not recorded and the Startup shortcut is missing, so local fallback health is not proven. |
 | admin-gui | 85% | Validate controls in live operation and refine status/log/settings UX without exposing admin externally. DB backup/verify reminders, readable recent-event summaries, and read-only recovery guidance are now visible in the operator status surface. |
-| KRX / 수급 / ETF | 91% | Open API daily snapshots are current through `2026-05-15`; expand investor-flow coverage only through guarded/manual or separately approved scheduled ingest. |
-| 관찰 후보 추천 / 백테스트 / 점수화 초안 | 84% | Build `오늘의 관찰 후보` ordering from stored evidence; the public `관찰` tab now has a top-2 `우선 확인` block, while reaction windows stay read-only and public numeric scores, investment grades, and trading calls remain blocked. |
+| KRX / 수급 / ETF | 88-91% | Open API daily snapshots are stored through `2026-05-19`, but the `2026-05-29` baseline reports 6 missing publishable daily snapshot dates starting `2026-05-28`. Expand investor-flow coverage only through guarded/manual or separately approved scheduled ingest. |
+| 관찰 후보 추천 / 백테스트 / 점수화 초안 | 84% | Build `오늘의 관찰 후보` ordering from stored evidence; the public `관찰` tab now has a top-2 `우선 확인` block, while reaction windows stay read-only and public numeric scores, investment grades, and trading calls remain blocked. Future approved intraday references may affect observation ordering; later trading-decision support must be operator-only and separately gated. |
 | Documentation / roadmap consistency | 90% | Keep this roadmap, `current-work`, `next-phase`, source policy, and changelog synchronized whenever implementation moves. |
 
-Current `next-phase-readiness` audit (`2026-05-17`):
+Current `next-phase-readiness` audit (`2026-05-29`):
 
 | Check | Current Evidence |
 | --- | --- |
-| Overall practical completion | Personal always-on operation is about `97%`; external `web-view` sharing readiness is about `97%` after Cloudflare provider smoke for `https://report.kr-stock.site`; the current observation-curation closeout is about `96-97%`. Public numeric scoring and trading recommendations are separate non-goals, not blockers for `오늘의 관찰 후보`. |
-| Full regression suite | Latest `2026-05-17` local run passed with `557 passed`; no code-level regression blocker is currently known. |
-| Local mini-PC readiness gate | `2026-05-17 09:50 KST` local run passed with mini-PC profile and access-code required, pytest/restore-smoke skipped because they were already verified, and operator-status skipped only because the current non-elevated shell cannot read Task Scheduler metadata. |
-| Market-day observation usability | `market-day-observation` now reports `next_due_check` and per-task `verify_after_at` timestamps; for `2026-05-18`, the first due check is `StockMonitor-TelegramCommands` at `08:05` KST. `verify_market_day_observation.ps1 -Date YYYY-MM-DD` now wraps operator health, scheduler registration, market-day observation, `db-verify`, and `next-phase-readiness` so the operator can rerun the closeout evidence flow from elevated local PowerShell. |
-| Continuation verification | `2026-05-17 10:12 KST` checks reconfirmed the then-open blockers: operator phone readability acceptance, real `2026-05-18` market-day observation, and final external `web-view` provider/final URL setup. The provider smoke blocker was later closed at `2026-05-17 17:46 KST`; remaining blockers are phone readability acceptance, real market-day observation, and post-logon/reboot observation of the web-view Startup fallback. |
+| Overall practical completion | Current main-PC domestic MVP remains about `85-90%` excluding broad public sharing and US expansion. Public numeric scoring and trading recommendations are separate non-goals, not blockers for `오늘의 관찰 후보`. |
+| Read-only audit scope | `next-phase-readiness`, `market-briefing-readiness`, `krx-baseline-analysis`, `web-view-startup-fallback-check`, and `market-day-observation` were run without DB writes, Telegram sends, scheduler registration, public scoring, or recommendation output. |
+| Market-day observation usability | `market-day-observation --date 2026-05-29 --json` reports `status=incomplete` and `observed_enough_for_scheduler=false`; TelegramCommands, KRX daily backfill, Notify, Poll, and KRX mentioned-flow backfill evidence are all missing after verify times. |
+| Continuation verification | `2026-05-29` checks reconfirm active blockers: manual market-briefing sends `0/3`, phone review not accepted, KRX daily snapshots missing from `2026-05-28` backward for 6 business dates, missing real scheduled-run evidence, missing Startup shortcut, and unrecorded external provider smoke. |
 | Elevated scheduler health recheck | `2026-05-17 17:02 KST` elevated local `verify_task_scheduler_registration.ps1` and `operator-status --json --health-exit` passed. The five default mini-PC tasks are registered/enabled/`Ready` for `2026-05-18`, `operator-status.health.level=ok`, and `StockMonitor-Shutdown` remains absent. The remaining scheduler closeout item is real market-day observation after the tasks become due. |
 | Cloudflare pre-provider local gate | `2026-05-17 17:11 KST` `access-code status`, `external-web-view-sharing-plan --json`, and `verify_external_web_view_readiness.ps1` reconfirmed that the only allowed tunnel target is `web-view` on `http://127.0.0.1:8780`, access-code is enabled, mini-PC profile is active, latest backup exists, value QA issue count is `0`, browser/mobile smoke issue count is `0`, `POST /api/daily/2026-05-15` returns `405`, and `/api/status` returns `404`. Provider binding and final HTTPS URL smoke were later completed for `https://report.kr-stock.site`. |
 | Cloudflare provider smoke | `2026-05-17 17:46 KST` final smoke for `https://report.kr-stock.site` passed and recorded an `external-web-view/provider-smoke` success event. The unrestricted network run reported issue count `0`, `/health` `200`, unauthenticated user routes `401`, user-data write `405`, and scheduler/operator/settings control POST routes `405`; `next-phase-readiness.external_web_view_provider_smoke.ready=true`. |
@@ -82,11 +83,11 @@ Current `next-phase-readiness` audit (`2026-05-17`):
 | Observation reaction | Internal-only `observation_reaction` covers `2026-01-02`~`2026-05-15` with 493 `mention_count >= 2` candidates; completed windows are D+1 486/493, D+5 427/493, D+10 344/493, and D+20 296/493. It is not public-surface-ready for numeric scoring and does not produce public numeric scoring or trading-recommendation output. |
 | Candidate evidence | Recent 5 report dates are review-ready `5/5`; QA issue dates `0` |
 | Closing-market briefing | Preview-ready `5/5`; manual Telegram review sends recorded `3/3`; schedule gate remains closed until `market_briefing_phone_review_accepted=true` is set after operator readability acceptance |
-| KRX latest-day baseline | `2026-05-15` daily Open API rows are now stored; `krx-baseline-analysis` reports `missing_daily_snapshots=0` |
+| KRX latest-day baseline | Stock/ETF/index Open API rows are stored through `2026-05-19`; `krx-baseline-analysis --json` reports `missing_daily_snapshots.missing_business_dates=6`, starting with `2026-05-28`, and each listed date is missing all six daily endpoints. |
 | Market holiday coverage | Built-in/configured coverage currently runs through `2026-12-31`; no renewal blocker is active yet, but `next-phase-readiness` will surface one from October 2026 if future KRX closure dates are not configured. |
-| Completion blockers | Real market-day scheduler observation, operator acceptance of the recorded Telegram phone review messages, and post-logon/reboot observation that the `web-view` Startup shortcut keeps the Cloudflare target available |
+| Completion blockers | Manual Telegram review sends `0/3`, phone review not accepted, KRX Open API daily snapshots missing for latest publishable dates, real market-day scheduler observation missing, external provider smoke unrecorded on this PC, and current-user `web-view` Startup shortcut missing. |
 
-The manual Telegram phone review send gate has an explicit safe path: run `market-briefing-readiness --recent-report-dates 5` and use the printed `market-briefing --date YYYY-MM-DD --limit 5 --send` commands only for dates that are preview-ready and public-safe. On `2026-05-17`, manual sends were recorded for `2026-05-15`, `2026-05-14`, and `2026-05-13`, populating the `telegram_market_briefing` delivery log with `source=manual`; the remaining step is operator readability acceptance through `operator-settings set market_briefing_phone_review_accepted true --reason phone_readability_accepted --confirm` before scheduling.
+The manual Telegram phone review send gate has an explicit safe path: run `market-briefing-readiness --recent-report-dates 5` and use the printed `market-briefing --date YYYY-MM-DD --limit 5 --send` commands only for dates that are preview-ready and public-safe. On the current main PC, the `2026-05-29` read-only audit reports manual sends `0/3`; the mini-PC `2026-05-17` sends remain historical trace evidence only and do not close this PC's scheduling gate.
 
 | Area | Progress | Current Meaning | Next Increase Condition |
 | --- | ---: | --- | --- |
@@ -125,12 +126,13 @@ Current broad estimate:
 
 | Layer | Progress | Interpretation |
 | --- | ---: | --- |
-| Current domestic MVP aggregate | 96-97% | Includes the completed mini-PC restore path, access-code enablement, scheduler registration, local external-sharing gate, Cloudflare provider smoke for the read-only web-view URL, Telegram/admin/web-view/KRX/backtest-observation foundations, hidden/internal scoring-draft CLIs, and strengthened parser/dedupe/scoring guardrail regression coverage. Excludes broad public sharing, US market expansion, and public-facing scoring. |
+| Current main-PC domestic MVP aggregate | 85-90% | Current `2026-05-29` readiness baseline. Code, DB, Telegram/admin/web-view/KRX/backtest-observation foundations, hidden/internal scoring-draft CLIs, and strengthened guardrail coverage are usable, but closeout is blocked by manual market-briefing sends `0/3`, missing scheduled-run evidence, KRX daily snapshot gaps from `2026-05-28`, missing Startup shortcut, and unrecorded provider smoke. Excludes broad public sharing, US market expansion, and public-facing scoring. |
+| Historical mini-PC closeout trace | 96-97% | Historical mini-PC restore/access-code/scheduler/provider-smoke/manual-send evidence remains useful trace context only. It does not close the active main-PC readiness gates. |
 | Current domestic MVP with public scoring/recommendation expectation | 75-80% | Public score, grade, recommendation, Telegram candidate alert, and buy/sell wording remain blocked. Internal observation and hidden scoring-draft commands exist, but holdout stability is not enough for public use. |
-| Personal Telegram MVP | 92% | Usable for live validation with fragment resume, filtered paging, briefing format, early/late notify guard, production/test separation, worker heartbeat checklist, and timeout trace in place. |
+| Personal Telegram MVP | 80-85% | Usable for live validation with fragment resume, filtered paging, briefing format, early/late notify guard, production/test separation, worker heartbeat checklist, and timeout trace in place; current main-PC market-briefing phone review remains blocked at `0/3`. |
 | Local operator console | 82% | Useful now; safe settings and operation profile are editable in `admin-gui`, audit logging exists, and TelegramCommands restart recovery is available. |
-| 사용자용 웹뷰 | 93% | Separate GET-only shell and broad DTO/API coverage exist, display-value QA passes, browser/mobile smoke passes, the local external-sharing gate is ready, and the Cloudflare provider smoke for `https://report.kr-stock.site` passes. The remaining gap is continued visible screen quality review and logon/reboot observation of the local web-view runtime. |
-| Data expansion layer | 90% | Stock/ETF/index Open API baseline is current through `2026-05-15` and investor-flow read-only plumbing exists. The remaining gap is separately approved policy for any broader Data Marketplace lane. |
+| 사용자용 웹뷰 | 90-93% | Separate GET-only shell and broad DTO/API coverage exist. Historical mini-PC provider smoke remains trace evidence, but the current main-PC provider smoke is unrecorded and the current-user Startup shortcut is missing. |
+| Data expansion layer | 88-91% | Stock/ETF/index Open API baseline is stored through `2026-05-19`, but the current readiness baseline reports 6 missing publishable KRX daily snapshot dates starting `2026-05-28`. Investor-flow read-only plumbing exists; broader Data Marketplace lanes remain blocked without separate approval. |
 
 ## 2026-05-09 100% Target Board
 
@@ -156,7 +158,7 @@ Documentation consolidation result:
 | Agent usage | [agent-guide.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/agent-guide.md) |
 | 순환매 SVG overlay | [rotation-overlay-plan.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/rotation-overlay-plan.md) |
 
-Current-stage 100% excludes broad public sharing and US market expansion. The mini-PC restore itself is complete, and Cloudflare provider smoke for the read-only `web-view` has passed; the remaining mini-PC work is real market-day observation, operator phone-readability acceptance for the recorded Telegram review sends, and logon/reboot observation of the local web-view runtime.
+Current-stage 100% excludes broad public sharing and US market expansion. The mini-PC restore and historical Cloudflare provider smoke are trace evidence only. For the current main-PC closeout, the remaining work is KRX daily snapshot catch-up, real market-day scheduled-run evidence, manual market-briefing phone review sends and acceptance, `web-view` Startup fallback configuration/observation, and external provider smoke while keeping `admin-gui` private.
 
 Today-priority items:
 
@@ -170,7 +172,7 @@ Today-priority items:
 | Done / optional | KRX Data Marketplace session reminder CLI/scheduler | `krx-flow-login-reminder` sends a Telegram reminder about 5 minutes before planned flow work, skips on business-day/no-run/late-run guards, and `StockMonitor-KrxFlowLoginReminder` is registered separately from collection. Normal operation now uses the narrow `StockMonitor-KrxMentionedFlowBackfill` path, so keep the reminder task disabled unless a manual validation day needs it. |
 | Done | Safe settings + audit model | DB/CLI and first admin-gui controls are implemented for low-risk settings. |
 | Done | Operation profile | `desktop-validation`, `mini-pc`, and `manual-only` behavior is implemented and audited through safe settings; the mini PC is set to `mini-pc`. |
-| Done / provider-smoked | Cloudflare Tunnel preparation | Domain purchase, local validation, access-code gate, provider binding, and final shared-URL smoke for `https://report.kr-stock.site` are done. Keep the provider pointed only to `web-view`; never expose `admin-gui`. |
+| Done / trace, current-PC open | Cloudflare Tunnel preparation | Domain purchase, local validation, access-code gate, provider binding, and final shared-URL smoke for `https://report.kr-stock.site` are historical mini-PC trace evidence. On the current main PC, provider smoke is not recorded. Keep any provider pointed only to `web-view`; never expose `admin-gui`. |
 | Done / P2-watch | Theme snapshot / ETF read-only expansion | Schema/CLI/API first pass is implemented; scheduled KRX Data Marketplace ingest remains design-only. |
 | Deferred | Scoring, recommendations, flow-based interest alerts | Defer until enough source-backed history exists. |
 
@@ -191,14 +193,14 @@ Top risks:
 | Theme 505 / domestic theme grouping | [O] | `refresh-theme` first pass stores theme memberships. |
 | Exclude single-report / no-target-price output | [O] | Notification filtering has been handled as an output policy. |
 | Local admin program | [O] | Basic local admin surface exists. |
-| N100 mini PC migration | [O] / watch | Restore, `.env` creation, access-code enablement, scheduler registration, local readiness gates, and Cloudflare provider smoke are complete on the mini PC. The `web-view` Startup fallback is configured and locally healthy; continue real market-day observation and record `web-view-startup-fallback-check --record-success --json` after logon/reboot. |
+| N100 mini PC migration | [O] / trace | Restore, `.env` creation, access-code enablement, scheduler registration, local readiness gates, and Cloudflare provider smoke were completed on the mini PC and remain historical trace evidence. They do not close the current main-PC Startup fallback, provider smoke, or scheduled-run observation gates. |
 | Admin/shared page split | [O] | Separate GET-only `web-view` first pass exists and does not expose admin status/control APIs. |
-| External access candidates | [O] / watch | Keep the candidate set narrow: Tailscale for owner-only remote operation if still needed, Cloudflare Tunnel for friend-facing read-only `web-view` sharing. Cloudflare provider smoke for `https://report.kr-stock.site` passes; keep access-code/allow-list controls enabled and keep `admin-gui` private. |
+| External access candidates | [O] / watch | Keep the candidate set narrow: Tailscale for owner-only remote operation if still needed, Cloudflare Tunnel for friend-facing read-only `web-view` sharing. Historical mini-PC Cloudflare provider smoke for `https://report.kr-stock.site` is retained as trace evidence; the current main-PC provider smoke is not recorded. Keep access-code/allow-list controls enabled and keep `admin-gui` private. |
 | Theme v2 / dated theme history | [O] / watch | Stored theme rollups are now surfaced in the same market-width bars and category drilldown as sectors. Broader theme catalog/history coverage remains a data-quality watch item, not a missing V1 surface. |
 | Rotation / flow tracking foundation | [O] | The `순환매` tab connects image aliases, report category evidence, stock candidates, ETF candidates, and missing information in user-facing cards without broad ingest or trading-call wording. |
 | 순환매 SVG overlay | [O] / watch | Overlay, active aliases, evidence-backed highlights, and separated stock/ETF reference slots are visible. Continue optional alias/ETF coverage expansion through audits. |
 | ETF tracking | [O] | Source study, KRX intake templates, snapshot tables, manual ingest, stored query paths, admin display, and `web-view` ETF trend exist; keep ETF data separate from company reports. |
-| KRX historical snapshots | [O] | Prefer recent stock/ETF/index daily snapshot backfill over old report backfill. `2024-11-08` through `2026-05-15` are stored for daily stock/ETF/index endpoints. Use for trend/reference context only, not scoring. |
+| KRX historical snapshots | [O] / blocker | Prefer recent stock/ETF/index daily snapshot backfill over old report backfill. `2024-11-08` through `2026-05-19` are stored for daily stock/ETF/index endpoints, but `2026-05-29` readiness reports 6 missing publishable daily snapshot dates starting `2026-05-28`. Use for trend/reference context only, not scoring. |
 | Candidate evidence / next-day candidates | [O] / watch | The computed DTO/API and visible `관찰` tab expose non-numeric `observation_priority`, `왜 눈에 띄는지`, `부족한 정보`, and a top-2 `우선 확인` shortlist. Continue market-day review, but public numeric scoring is a non-goal rather than a blocker. |
 | Backtest observation / report reaction | [O] / watch | [backtest-observation-plan.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/plans/backtest-observation-plan.md) defines the read-only path. BO-1~BO-7 calculations/API/UI/initial QA exist; broader QA continues. |
 | Scoring draft | [△] | [scoring-draft-plan.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/plans/scoring-draft-plan.md) records a draft-only path. SD-1~SD-5 audit/draft/prototype CLIs exist, including train/apply separation, feature pruning, holdout validation, and rolling holdout sweep; public numeric scoring, investment grades, trading recommendations, and Telegram trading alerts remain blocked. |
@@ -245,7 +247,7 @@ External access candidates are intentionally limited for now:
 | Candidate | Intended use | Status |
 | --- | --- | --- |
 | Tailscale | Owner-only remote access to the mini PC and local services. | Planning candidate; useful for personal remote operation, but less convenient for friends because they need onboarding. |
-| Cloudflare Tunnel | Friend-facing URL candidate for the read-only `web-view` only. | Provider smoke passed for `https://report.kr-stock.site`; keep it mapped only to `127.0.0.1:8780` and do not share `admin-gui`. |
+| Cloudflare Tunnel | Friend-facing URL candidate for the read-only `web-view` only. | Historical provider smoke passed for `https://report.kr-stock.site`, but current main-PC provider smoke is not recorded. Keep any provider mapped only to `127.0.0.1:8780` or the chosen `web-view` loopback port and do not share `admin-gui`. |
 
 Avoid direct router port forwarding for this project unless a later security review explicitly changes the posture.
 
@@ -501,15 +503,14 @@ Near-term display direction:
 
 Do not start ETF/flow scoring before source quality and enough history exist. ETF/flow source study can start after the operational health outputs behave correctly in live runs.
 
-Next practical sequence, updated after the 18-month Open API baseline completion:
+Next practical sequence, updated after the `2026-05-29` main-PC readiness refresh:
 
-1. Keep daily KRX Open API backfill healthy through the `08:10` scheduler path after the official next-business-day `08:00` publication window, and re-run `krx-baseline-analysis` after cleanup or large data changes.
-2. Review SD-5 holdout output only where D+N reaction rows are available; keep public scoring blocked.
-3. Polish the friend-facing `web-view` observation tab so it shows evidence reasons, not a score.
-4. Reduce category snapshot fallback by filling source-date 업종/테마 snapshots where practical.
-5. Add 순환매 overlay calibration only after the JSON coordinate map proves useful.
-
-Operational live validation remains important, but it is now treated as a parallel observation track rather than the next feature-build order.
+1. Re-run read-only readiness after any operator action and keep this roadmap/current-work/next-phase synchronized with the actual main-PC gate state.
+2. Close KRX daily snapshot gaps through the guarded backfill path only after the usual DB verification/backup discipline; do not use same-day probes as intraday data.
+3. Close the market-briefing phone-review gate through deliberate manual Telegram sends only when the operator explicitly approves sends.
+4. Verify real market-day scheduled-run evidence from an elevated/local shell without changing scheduler registration.
+5. Configure and observe only the GET-only `web-view` Startup fallback and external provider smoke; keep `admin-gui` private.
+6. Continue candidate evidence and web-view polish as observation curation only; keep public scoring, investment grades, trading calls, broker execution, and order routing blocked.
 
 ## Testing Gates
 

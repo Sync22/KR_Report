@@ -15,7 +15,7 @@ They can be preserved for detail review, but they must not distort aggregate cal
 
 Data quality is not the same as product usefulness.
 
-For user-facing work, first decide whether the value helps a daily briefing, notable-stock view, market mood summary, or rotation reference. If it only explains pipeline correctness, keep it in `admin-gui`, CLI output, tests, or docs instead of adding it to the shared `web-view`.
+For user-facing work, first decide whether the value helps a daily briefing, notable-stock view, market mood summary, rotation reference, or observation-priority decision. If it only explains pipeline correctness, keep it in `admin-gui`, CLI output, tests, or docs instead of adding it to the shared `web-view`.
 
 | Product Layer | Allowed User Wording | Keep Out Of User Surface |
 | --- | --- | --- |
@@ -24,6 +24,10 @@ For user-facing work, first decide whether the value helps a daily briefing, not
 | Admin/operator | Raw process state and diagnostics when useful | Secrets, tokens, uncontrolled external exposure |
 
 User-facing visual summaries such as sector/theme breadth bars, top-2 observation candidates, and rotation ETF/stock reference slots are allowed only when the underlying values are stored facts. Missing category mappings, ETF snapshots, KRX rows, or flow rows must be shown as `부족한 정보` or equivalent empty-state text, not converted into negative evidence or hidden success.
+
+Observation recommendation is allowed. Do not weaken it into vague copy when the evidence supports a clear `우선 확인` ordering. The blocked boundary is trading advice, public numeric scoring, broker execution, or automated strategy wording. If a future approved real-time source is added, its values may strengthen or weaken observation priority, but the source/freshness and read-only limits must be explicit.
+
+Do not describe the current public wording limits as a permanent product ceiling. They are public-surface limits for the stored-data/current-readiness phase. If stable real-time data later supports trading-decision review, that belongs in an operator-only decision-support or execution-lab lane with separate quality, audit, permission, and safety rules.
 
 ## Required Boundary Check
 
@@ -40,6 +44,7 @@ User-facing visual summaries such as sector/theme breadth bars, top-2 observatio
 | Source type | Rule | Example |
 | --- | --- | --- |
 | Official/approved API | Prefer this path when the needed field is available. | KRX Open API daily stock/ETF/index snapshots. |
+| Approved real-time reference | Keep in a separate read-only lane until source burden, permissions, freshness, and failure behavior are verified. | Future Toss Securities Open API quote/turnover reference for top-2 `우선 확인`. |
 | Screen-backed source | Use only when the approved API does not expose the needed data. | KRX Data Marketplace `[12009]` investor flow. |
 | Screen condition | Preserve and store source conditions that change output values. | Query type, date range, stock code, share unit, money unit. |
 | Source label | Store source identity separately from product display labels. | `krx_open_api` vs `krx_data_market`. |
@@ -58,6 +63,8 @@ Before implementing a data or display change, verify:
 | Detail visibility | Can the operator or user still see that a source row had missing data? |
 | Duplicate display | Is the same semantic value repeated in summary and detail, or should one layer link/drill down instead? |
 | Surface boundary | Is this value safe for Telegram/web-view, or should it stay in admin/operator diagnostics? |
+| Recommendation boundary | Does this value justify observation priority, or is it drifting into trading advice, public score, or broker execution? |
+| Future decision boundary | Is this still public observation copy, or is it a separately approved operator-only decision-support/execution-lab feature? |
 | Source access | Is this value from an official API, a screen-backed source, or a fallback source? |
 | Source condition | Are units, date range, query type, and market filters captured with the row? |
 | Test coverage | Is there at least one regression test for missing/duplicate/edge source values? |
