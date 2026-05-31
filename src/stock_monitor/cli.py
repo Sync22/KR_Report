@@ -12869,6 +12869,10 @@ def _build_next_phase_readiness(
         "completion_gates": completion_gates,
         "completion_ready": not completion_blockers,
         "non_code_dependencies": non_code_dependencies,
+        "development_environment": _build_development_environment_readiness(
+            next_commands=next_commands,
+            completion_blockers=completion_blockers,
+        ),
         "next_commands": next_commands,
         "notice": "Aggregate next-phase readiness audit only; no live fetch, Telegram send, scheduler registration, scoring, or recommendation is produced.",
     }
@@ -12958,6 +12962,70 @@ def _next_phase_completion_blockers(blocking_items: list[str], non_code_dependen
             continue
         blockers.append(dependency)
     return blockers
+
+
+def _build_development_environment_readiness(
+    *,
+    next_commands: list[str],
+    completion_blockers: list[str],
+) -> dict[str, object]:
+    dev_safe_commands: list[str] = []
+    operator_or_live_commands: list[str] = []
+    for command in next_commands:
+        if _next_phase_command_needs_operator_context(command):
+            operator_or_live_commands.append(command)
+        else:
+            dev_safe_commands.append(command)
+
+    live_ops_blockers = [
+        blocker
+        for blocker in completion_blockers
+        if _next_phase_blocker_needs_live_or_operator_action(blocker)
+    ]
+    return {
+        "mode": "development",
+        "read_only": True,
+        "interpretation": (
+            "This workspace is treated as a development environment. Live data, DB writes, "
+            "Telegram sends, scheduler changes, Startup shortcut changes, and external "
+            "provider smoke stay deferred unless the operator explicitly approves them or "
+            "they are required for implementation validation."
+        ),
+        "dev_safe_next_commands": dev_safe_commands,
+        "operator_or_live_next_commands": operator_or_live_commands,
+        "live_ops_blockers_deferred": live_ops_blockers,
+    }
+
+
+def _next_phase_command_needs_operator_context(command: str) -> bool:
+    operator_markers = (
+        "--send",
+        "operator-settings set",
+        "operator-status --json --health-exit",
+        "verify_next_phase_closeout.ps1",
+        "verify_market_day_observation.ps1",
+        "verify_task_scheduler_registration.ps1",
+        "create_web_view_startup_shortcut.ps1",
+        "verify_external_web_view_readiness.ps1",
+        "verify_cloudflare_web_view_tunnel.ps1",
+        "external-web-view-smoke",
+        "krx-openapi-availability-probe",
+        "krx-backfill-missing",
+    )
+    return any(marker in command for marker in operator_markers)
+
+
+def _next_phase_blocker_needs_live_or_operator_action(blocker: str) -> bool:
+    live_or_operator_prefixes = (
+        "manual Telegram review sends",
+        "KRX Open API daily snapshot still missing",
+        "web-view Startup fallback",
+        "real market-day scheduled-run observation",
+        "external web-view tunnel/provider setup",
+        "operator phone-readability acceptance",
+        "market holiday coverage needs",
+    )
+    return blocker.startswith(live_or_operator_prefixes)
 
 
 def _latest_external_web_view_provider_smoke(
