@@ -3672,11 +3672,10 @@ def test_candidate_evidence_readiness_reports_visible_review_coverage(tmp_path, 
     assert payload["dates"][0]["market_reference_available_count"] == 1
     assert payload["dates"][0]["stock_flow_available_count"] == 1
     assert payload["dates"][0]["foreign_rank_available_count"] == 1
-    assert payload["observation_priority_counts"] == {"우선 확인": 1}
-    assert payload["visible_observation_priority_counts"] == {"우선 확인": 1}
+    assert payload["observation_priority_counts"] == {"확인 후보": 1}
+    assert payload["visible_observation_priority_counts"] == {"확인 후보": 1}
     assert payload["why_notable_counts"] == {
         "리포트 집중": 1,
-        "외국인 순매수 상위": 1,
     }
     assert payload["visible_why_notable_counts"] == payload["why_notable_counts"]
     assert payload["internal_candidate_signal_counts"] == {
@@ -3691,11 +3690,32 @@ def test_candidate_evidence_readiness_reports_visible_review_coverage(tmp_path, 
     assert payload["missing_information_counts"] == {}
     assert payload["visible_missing_information_counts"] == {}
     assert payload["internal_missing_information_counts"] == {}
-    assert payload["dates"][0]["observation_priority_counts"] == {"우선 확인": 1}
-    assert payload["dates"][0]["visible_observation_priority_counts"] == {"우선 확인": 1}
+    assert payload["explanation_quality_counts"] == {
+        "missing_52w_position": 1,
+        "report_only_candidate": 1,
+    }
+    assert payload["top_candidate_explanation_quality_counts"] == {
+        "missing_52w_position": 1,
+        "report_only_candidate": 1,
+    }
+    assert payload["top_candidate_gap_counts"] == {}
+    assert payload["top_candidate_next_evidence_gap_counts"] == {}
+    assert payload["top_candidate_support_counts"] == {
+        "KRX 가격 참고": 1,
+        "거래대금 참고": 1,
+        "거래량 위치 참고": 1,
+        "외국인 순매수 상위 참고": 1,
+    }
+    assert payload["top_candidate_review_reason_counts"] == {
+        "top_report_only_candidate": 1,
+        "top_weak_support": 1,
+    }
+    assert payload["top_candidate_review_priority_counts"] == {"report_context_review": 1}
+    assert payload["top_candidate_review_date_count"] == 1
+    assert payload["dates"][0]["observation_priority_counts"] == {"확인 후보": 1}
+    assert payload["dates"][0]["visible_observation_priority_counts"] == {"확인 후보": 1}
     assert payload["dates"][0]["why_notable_counts"] == {
         "리포트 집중": 1,
-        "외국인 순매수 상위": 1,
     }
     assert payload["dates"][0]["visible_why_notable_counts"] == payload["dates"][0]["why_notable_counts"]
     assert payload["dates"][0]["internal_candidate_signal_counts"] == {
@@ -3710,12 +3730,40 @@ def test_candidate_evidence_readiness_reports_visible_review_coverage(tmp_path, 
     assert payload["dates"][0]["missing_information_counts"] == {}
     assert payload["dates"][0]["visible_missing_information_counts"] == {}
     assert payload["dates"][0]["internal_missing_information_counts"] == {}
+    assert payload["dates"][0]["explanation_quality_counts"] == {
+        "missing_52w_position": 1,
+        "report_only_candidate": 1,
+    }
+    assert payload["dates"][0]["top_candidate_maturity"] == {
+        "candidate_count": 1,
+        "composite_evidence_count": 0,
+        "weak_support_count": 1,
+        "report_only_count": 1,
+        "rank_without_stock_flow_count": 0,
+        "missing_stock_flow_count": 0,
+        "missing_krx_count": 0,
+        "missing_price_volume_context_count": 0,
+        "missing_52w_position_count": 1,
+        "support_counts": {
+            "KRX 가격 참고": 1,
+            "거래대금 참고": 1,
+            "거래량 위치 참고": 1,
+            "외국인 순매수 상위 참고": 1,
+        },
+        "gap_counts": {},
+        "next_evidence_gap": None,
+        "review_needed": True,
+        "review_priority": "report_context_review",
+        "review_reasons": [
+            "top_report_only_candidate",
+            "top_weak_support",
+        ],
+    }
     assert payload["dates"][0]["qa_issue_count"] == 0
     assert payload["dates"][0]["top_rows"][0]["stock_code"] == "005930"
-    assert payload["dates"][0]["top_rows"][0]["observation_priority"] == "우선 확인"
+    assert payload["dates"][0]["top_rows"][0]["observation_priority"] == "확인 후보"
     assert payload["dates"][0]["top_rows"][0]["why_notable"] == [
         "리포트 집중",
-        "외국인 순매수 상위",
     ]
     assert payload["dates"][0]["top_rows"][0]["internal_candidate_signals"] == [
         "리포트 집중",
@@ -3728,6 +3776,159 @@ def test_candidate_evidence_readiness_reports_visible_review_coverage(tmp_path, 
     ]
     assert payload["dates"][0]["top_rows"][0]["missing_information"] == []
     assert payload["dates"][0]["top_rows"][0]["internal_missing_information"] == []
+    assert payload["dates"][0]["top_rows"][0]["evidence_layers"]["primary"] == [
+        "리포트 집중",
+    ]
+    assert payload["dates"][0]["top_rows"][0]["explanation_quality"] == [
+        "report_only_candidate",
+        "missing_52w_position",
+    ]
+
+
+def test_candidate_evidence_readiness_reports_explanation_quality_gaps(tmp_path, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 14)
+    fetched_at = datetime(2026, 5, 14, 16, 0, 0)
+
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name="리포트만",
+                title=f"리포트만 점검 {index}",
+                broker_name=f"증권사{index}",
+                published_at=datetime(2026, 5, 14, 9 + index, 0, 0),
+                collected_at=fetched_at,
+                stock_code="000111",
+                target_price_raw="100000",
+                target_price_value=100_000,
+                opinion_raw="매수",
+                opinion_normalized="buy",
+                source_id=f"candidate-report-only-{index}",
+                identity_key=f"candidate-report-only-{index}",
+            )
+            for index in range(2)
+        ]
+        + [
+            Report(
+                business_date=business_date,
+                stock_name="랭크참고",
+                title="랭크 참고 점검",
+                broker_name="테스트증권",
+                published_at=datetime(2026, 5, 14, 10, 0, 0),
+                collected_at=fetched_at,
+                stock_code="000222",
+                target_price_raw="80000",
+                target_price_value=80_000,
+                opinion_raw="매수",
+                opinion_normalized="buy",
+                source_id="candidate-rank-without-flow",
+                identity_key="candidate-rank-without-flow",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="000222",
+                stock_name="랭크참고",
+                market="KOSPI",
+                close_price=70_000,
+                change_percent=1.2,
+                volume=1000,
+                turnover=2_300_000_000_000,
+                fetched_at=fetched_at,
+            )
+        ]
+    )
+    repository.upsert_investor_net_buy_top_daily(
+        [
+            InvestorNetBuyTopDaily(
+                business_date=business_date,
+                market="STK",
+                investor_type="foreign",
+                rank=2,
+                stock_code="000222",
+                stock_name="랭크참고",
+                fetched_at=fetched_at,
+                net_buy_volume=500,
+            )
+        ]
+    )
+
+    exit_code = cli_module._run_candidate_evidence_readiness(
+        config,
+        repository,
+        recent_business_days=3,
+        limit=5,
+        as_json=True,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["explanation_quality_counts"] == {
+        "missing_krx_reference": 1,
+        "missing_price_volume_context": 1,
+        "missing_stock_flow_reference": 2,
+        "missing_52w_position": 1,
+        "rank_without_stock_flow": 1,
+        "report_only_candidate": 1,
+    }
+    assert payload["top_candidate_explanation_quality_counts"] == payload["explanation_quality_counts"]
+    assert payload["top_candidate_gap_counts"] == {
+        "선택일 KRX 저장값 없음": 1,
+        "종목 수급 저장값 없음": 2,
+    }
+    assert payload["top_candidate_next_evidence_gap_counts"] == {
+        "종목 수급 저장값 없음": 1,
+    }
+    assert payload["top_candidate_review_reason_counts"] == {
+        "top_missing_krx_reference": 1,
+        "top_missing_price_volume_context": 1,
+        "top_missing_stock_flow_reference": 1,
+        "top_rank_without_stock_flow": 1,
+        "top_report_only_candidate": 1,
+        "top_weak_support": 1,
+    }
+    assert payload["top_candidate_review_priority_counts"] == {"flow_backfill": 1}
+    assert payload["top_candidate_review_date_count"] == 1
+    assert payload["dates"][0]["explanation_quality_counts"] == payload["explanation_quality_counts"]
+    assert payload["dates"][0]["top_candidate_maturity"]["candidate_count"] == 2
+    assert payload["dates"][0]["top_candidate_maturity"]["composite_evidence_count"] == 0
+    assert payload["dates"][0]["top_candidate_maturity"]["weak_support_count"] == 2
+    assert payload["dates"][0]["top_candidate_maturity"]["report_only_count"] == 1
+    assert payload["dates"][0]["top_candidate_maturity"]["rank_without_stock_flow_count"] == 1
+    assert payload["dates"][0]["top_candidate_maturity"]["missing_stock_flow_count"] == 2
+    assert payload["dates"][0]["top_candidate_maturity"]["missing_krx_count"] == 1
+    assert payload["dates"][0]["top_candidate_maturity"]["missing_price_volume_context_count"] == 1
+    assert payload["dates"][0]["top_candidate_maturity"]["missing_52w_position_count"] == 1
+    assert payload["dates"][0]["top_candidate_maturity"]["review_needed"] is True
+    assert payload["dates"][0]["top_candidate_maturity"]["next_evidence_gap"] == "종목 수급 저장값 없음"
+    assert payload["dates"][0]["top_candidate_maturity"]["review_priority"] == "flow_backfill"
+    assert payload["dates"][0]["top_candidate_maturity"]["review_reasons"] == [
+        "top_missing_krx_reference",
+        "top_missing_price_volume_context",
+        "top_missing_stock_flow_reference",
+        "top_rank_without_stock_flow",
+        "top_report_only_candidate",
+        "top_weak_support",
+    ]
+    top_by_code = {row["stock_code"]: row for row in payload["dates"][0]["top_rows"]}
+    assert top_by_code["000111"]["explanation_quality"] == [
+        "report_only_candidate",
+        "missing_krx_reference",
+        "missing_stock_flow_reference",
+        "missing_price_volume_context",
+    ]
+    assert top_by_code["000222"]["explanation_quality"] == [
+        "missing_stock_flow_reference",
+        "rank_without_stock_flow",
+        "missing_52w_position",
+    ]
 
 
 def test_market_briefing_message_qa_blocks_decision_and_raw_missing_copy() -> None:
