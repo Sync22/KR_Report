@@ -1180,6 +1180,8 @@ def test_web_view_daily_snapshot_can_include_explicit_intraday_market_top_refere
     reference = snapshot["market_commentary"]["intraday_market_top_reference"]
     assert reference["live_fetch"] is True
     assert reference["items"][0]["stock_code"] == "000001"
+    assert reference["items"][0]["market_status"] == "OPEN"
+    assert reference["items"][0]["trade_time"] == "2026-05-20T12:01:00"
     assert reference["empty_reason"] is None
     assert snapshot["market_commentary"]["same_day_report_status"]["can_overlap_intraday_market_top"] is True
     assert "Naver 거래대금 상위 기준" in snapshot["market_commentary"]["comments"][1]["comment"]
