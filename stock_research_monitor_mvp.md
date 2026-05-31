@@ -18,7 +18,11 @@ SQLite에 저장한 뒤 Telegram, 관리자 화면, 사용자용 웹뷰로 읽�
 - 관찰탭 기반 read-only 백테스트/후보 근거 검토
 - 저장 데이터 기반 관찰 후보 추천, 우선 확인, 관심도 높은 흐름 정렬
 
-이 프로젝트는 매매 추천을 하지 않지만 관찰 대상을 추천한다. 사용자-facing 기능은 `오늘의 관찰 후보`, `우선 확인`, `관심도 높은 흐름`, `왜 눈에 띄는지`처럼 저장 데이터 근거를 정렬해 보여줄 수 있다. 금지되는 것은 `매수 추천`, `매도 추천`, `진입가`, `청산가`, `익절가`, `목표 수익률`, `확신도`, `투자등급`, `오를 종목` 단정 같은 투자 의사결정 문구다.
+현재 public/user-facing 기능은 매매 추천을 하지 않지만 관찰 대상을 추천한다. 사용자-facing 기능은 `오늘의 관찰 후보`, `우선 확인`, `관심도 높은 흐름`, `왜 눈에 띄는지`처럼 저장 데이터 근거를 정렬해 보여줄 수 있다. 금지되는 것은 현재 public `web-view`나 Telegram에 `매수 추천`, `매도 추천`, `진입가`, `청산가`, `익절가`, `목표 수익률`, `확신도`, `투자등급`, `오를 종목` 단정 같은 투자 의사결정 문구를 내보내는 것이다.
+
+실시간 데이터가 나중에 안정적으로 붙으면 그것도 같은 기준을 따른다. 실시간 값은 매매 실행 신호가 아니라 `우선 확인`, `관찰 우선순위`, 메인 카드 강조를 더 강하게 만드는 관찰 추천 입력이다. `read-only`는 DB write, Telegram/scheduler 자동화, broker secret, 주문 실행 금지를 뜻하며, 검증된 실시간 참고값이 관찰 순서에 영향을 주지 말아야 한다는 뜻이 아니다.
+
+장기 목표는 실시간 확인이 가능해졌을 때 관찰 추천을 operator-only decision-support lane과 broker/execution-lab까지 단계적으로 끌어올리는 것이다. 즉, 현재 public surface의 매매 문구 제한은 영구적인 제품 목표 부정이 아니라, 아직 검증된 실시간 source, 권한, 실패 처리, 책임 경계, 실행 안전장치가 없기 때문에 적용하는 현재 단계 제한이다.
 
 ## 대상 데이터 소스
 
@@ -28,6 +32,7 @@ SQLite에 저장한 뒤 Telegram, 관리자 화면, 사용자용 웹뷰로 읽�
 | 주가/거래량/거래대금 | KRX Open API | 선택일 기준 시장 참고값, 웹뷰 현재가/거래량/ETF/지수 표시 |
 | ETF/지수 | KRX Open API | ETF 흐름, 주요 지수, 시장 참고 카드 |
 | 투자자 수급 | KRX Data Marketplace `[12008]`, `[12009]`, `[12010]` | 시장/종목/순매수 상위 수급 참고 |
+| 향후 실시간 참고 | Toss Securities Open API 등 별도 lab/staging lane | 검증 후 top-2 `우선 확인` 장중 관찰 순서 조정. 매매 실행/주문 연결 아님 |
 | 업종/테마 | 별도 taxonomy/cache/snapshot layer | 화면 분류와 순환매 참고. KRX 공식 taxonomy로 부르지 않는다. |
 
 리포트 원본은 Naver가 소유하고, 가격/거래대금/ETF/지수는 KRX가 소유한다.
@@ -92,7 +97,7 @@ KRX 일별 snapshot은 stock/ETF/index reference layer로 저장한다.
 - `[12009]`: 개별종목 투자자별 거래실적
 - `[12010]`: 투자자별 순매수 상위종목
 - 저장된 값만 웹뷰에 표시
-- 실시간 호출, 매매 추천, 공개 숫자 점수화, Telegram 매매 후보 알림과 연결하지 않음
+- 현재 public `web-view`에서는 실시간 호출, 매매 추천, 공개 숫자 점수화, Telegram 매매 후보 알림과 연결하지 않음
 
 ## 집계 및 표시 요구사항
 
@@ -163,6 +168,8 @@ Telegram은 개인 운영용 알림과 명령 처리 채널이다.
 `web-view`는 별도 GET-only/read-only 사용자 화면이다.
 `admin-gui`의 read-only mode가 아니라 독립 surface로 유지한다.
 
+`web-view`의 목적은 저장 근거와 검증된 참고값을 바탕으로 무엇을 먼저 볼지 추천하는 것이다. 현재는 stored-data 기반이지만, 향후 승인된 실시간 source가 붙으면 top-2 `우선 확인`과 메인 노출 강도에 반영할 수 있다. 현재 public `web-view`에서 금지되는 것은 매매 판단/주문 실행이지 관찰 우선순위 추천이 아니다. 매매 판단으로 확장하는 작업은 public `web-view`가 아니라 별도 operator-only decision-support 또는 execution-lab에서 다룬다.
+
 노출 가능:
 
 - 날짜 선택
@@ -188,7 +195,7 @@ Telegram은 개인 운영용 알림과 명령 처리 채널이다.
 
 ## 관찰/백테스트/관찰 후보 추천/점수화 경계
 
-현재 관찰탭은 read-only evidence surface이며, 저장 데이터 기반 관찰 후보 추천과 우선 확인 정렬을 제공할 수 있다.
+현재 관찰탭은 read-only evidence surface이며, 저장 데이터 기반 관찰 후보 추천과 우선 확인 정렬을 제공할 수 있다. 이 제한은 현재 public surface 기준이다. 실시간 source가 검증된 뒤에는 operator-only lane에서 매매 판단 후보까지 검토할 수 있지만, public `web-view`에 바로 매매 문구나 주문 기능을 노출하지 않는다.
 
 허용:
 
@@ -221,7 +228,7 @@ Telegram은 개인 운영용 알림과 명령 처리 채널이다.
 - Telegram 매매 후보 알림
 - public scored investment ranking
 
-내부 scoring draft CLI는 research-only이며 public surface와 연결하지 않는다.
+내부 scoring draft CLI는 research-only이며 public surface와 연결하지 않는다. 장기적으로 매매 판단까지 가려면 scoring draft가 아니라 별도 operator-only decision-support lane, source freshness 검증, 실패 처리, broker/execution-lab 안전장치가 먼저 필요하다.
 
 ## 데이터 품질 규칙
 

@@ -95,7 +95,8 @@ Working-tree note:
 | `cli.py` concentration | The file owns CLI dispatch, scheduler guards, admin server, web-view server, DTO builders, KRX orchestration, smoke checks, and rendered HTML/JS. That makes ownership and impact analysis harder. | `cli-developer`, `web-ui-engineer`, `security-hardening` |
 | CodeGraph coverage gap | The review found CodeGraph did not include `src/stock_monitor/cli.py`, which is the most important cross-boundary file. Impact checks may be incomplete until indexing is corrected. | `debugger`, `documentation-engineer` |
 | Summary uniqueness under stock-name drift | Summary rebuild groups code-first, but `daily_stock_summaries` uniqueness includes `stock_name`. A stock name or representative-name change could leave migration/rebuild edge cases worth testing. | `sql-pro`, `python-pro` |
-| Naver live reference exception | `web-view` allows the manual same-day `intraday_market_top` / Naver `priceTop` reference. This is documented as display-only, but it is the main live-source exception in the friend-facing surface. | `market-data-engineer`, `security-hardening`, `web-ui-engineer` |
+| Naver live reference exception | `web-view` allows the manual same-day `intraday_market_top` / Naver `priceTop` reference. This current exception is display/reference-only because it is not an approved stable real-time lane. Future approved intraday sources are different: they may affect observation priority after source-burden, freshness, and failure behavior review. | `market-data-engineer`, `security-hardening`, `web-ui-engineer` |
+| Public limit mistaken as final product goal | Current public surfaces block trading-decision wording, but the longer-term direction may include operator-only decision support or execution-lab once real-time source and safety gates are proven. Treating the current wording guard as permanent would undercut the intended path. | `reviewer`, `security-hardening`, `market-data-engineer` |
 | Free-text operation event details | `operation_events.detail` is useful for operators but should remain admin-only or be converted into public labels before any web-view exposure. | `security-hardening`, `reviewer` |
 | Dirty working tree baseline | Many files were already modified during the review. Any later conclusion should distinguish current local changes from a clean committed baseline. | `reviewer`, `documentation-engineer` |
 
@@ -143,6 +144,8 @@ Working-tree note:
 | KRX Open API | KRX owns stock/ETF/index daily reference values. | Ensure same-day `not_published` remains normal and does not trigger same-day probe automation or silent latest-date fallback. |
 | KRX Data Marketplace | Stored investor-flow samples and narrow `[12009]` mentioned-stock automation only. | Ensure `[12008]`, `[12010]`, market-wide, and all-stock broad scheduled ingest remain blocked without separate approval. |
 | Naver `priceTop` | Manual same-day display-only web-view reference. | Ensure no DB writes, Telegram sends, scheduler changes, KRX replacement, or scoring are tied to this route. |
+| Future approved intraday source | Separate read-only lab/staging lane before public use. | If approved, it may affect top-2 `우선 확인` ordering and main-card emphasis, but must not create DB writes, Telegram/scheduler automation, broker execution, public score, or trading-call wording. |
+| Future operator decision/execution lane | Separate from public `web-view` and Telegram. | It may evaluate trading-decision support only after stable real-time data, permission, audit, failure handling, and order-safety gates are defined. |
 | Category taxonomy | 업종/테마 is a separate taxonomy layer, not official KRX taxonomy. | Ensure historical dates do not silently receive future/current category snapshots. |
 
 ## Performance Candidates
@@ -161,7 +164,8 @@ Working-tree note:
 | --- | --- | --- |
 | Refresh or repair CodeGraph indexing | Ensure `cli.py` and `web_perf.py` are indexed before future impact analysis. | `debugger` or `documentation-engineer` |
 | `cli.py` responsibility map | Split the file logically by command group, route handler, DTO builder, and operational guard without editing yet. | `cli-developer` |
-| Web-view public DTO audit | Confirm all public routes exclude admin/operator/secrets and blocked public wording. | `security-hardening` + `web-ui-engineer` |
+| Web-view public DTO audit | Confirm all public routes exclude admin/operator/secrets and blocked public wording, while preserving clear observation recommendation language where evidence supports `우선 확인`. | `security-hardening` + `web-ui-engineer` |
+| Operator decision-support boundary | Define where future trading-decision review could live without leaking into public `web-view` or automatic execution. | `market-data-engineer` + `security-hardening` + `reviewer` |
 | Summary identity/rebuild audit | Test stock-code-first grouping, representative name drift, code-missing rows, and `daily_stock_summaries` uniqueness. | `sql-pro` + `python-pro` |
 | Scheduler wrapper audit | Check scripts against Python-side guards and main-PC vs mini-PC operation profile expectations. | `cli-developer` + `debugger` |
 | KRX source boundary audit | Confirm same-day KRX Open API behavior, mentioned-stock `[12009]` limits, and manual Naver `priceTop` display-only behavior. | `market-data-engineer` |

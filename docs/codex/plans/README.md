@@ -16,3 +16,4 @@ Plans here should stay aligned with the observation-candidate boundary:
 - no buy/sell signal
 - no entry, exit, take-profit, or conviction wording
 - observation-candidate recommendation is allowed when expressed as `오늘의 관찰 후보`, `우선 확인`, `관찰 우선순위`, or `왜 눈에 띄는지`
+- do not treat the public wording ban as a permanent product ceiling; future trading-decision support belongs only in a separately approved operator-only decision-support/execution-lab plan after stable real-time data and safety gates

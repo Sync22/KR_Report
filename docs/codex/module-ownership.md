@@ -21,6 +21,8 @@ The project is small enough that one developer can still edit across modules, bu
 | KRX Data Marketplace flow | `market-data-engineer` | `debugger`, `sql-pro`, `test-engineer` | `[12008]`, `[12009]`, `[12010]` request validation, sample capture, import, scheduled-ingest design. |
 | Category/taxonomy | `market-data-engineer` | `sql-pro`, `web-ui-engineer` | 업종/테마 source rules, category snapshots, fallback handling, display naming. |
 | Candidate evidence | `market-data-engineer` | `sql-pro`, `web-ui-engineer`, `reviewer` | Read-only candidate evidence DTO, evidence separation, exclusion rules, no-scoring boundary. |
+| Future intraday observation reference | `market-data-engineer` | `web-ui-engineer`, `security-hardening`, `reviewer`, `test-engineer` | Lab/staging read-only quote/turnover/index source review, top-2 `우선 확인` priority impact, freshness/failure behavior, no broker execution. |
+| Future operator decision/execution lane | `market-data-engineer` + `security-hardening` | `reviewer`, `sql-pro`, `test-engineer`, `cli-developer` | Only after stable real-time source proof. Operator-only decision support and execution-lab safety; never collapse into public `web-view`. |
 | Rotation overlay | `web-ui-engineer` | `market-data-engineer`, `admin-ui-engineer` | Cycle image overlay, alias mapping, coordinate map, future calibration UI. |
 | Access gate / public-safe boundary | `security-hardening` | `web-ui-engineer`, `admin-ui-engineer`, `reviewer` | Entry-code gate, GET-only regression, admin/web-view separation, external-sharing safety checks. |
 | External sharing / mini PC | `documentation-engineer` | `reviewer`, `cli-developer` | Handoff docs, access gate, Cloudflare/Tailscale boundary, operation profile notes. |
@@ -48,6 +50,8 @@ The project is small enough that one developer can still edit across modules, bu
 | Reports vs KRX data | Do not store market data in report tables or overwrite report facts with market facts. |
 | Category labels vs KRX market data | Do not call current 업종/테마 labels KRX-owned taxonomy unless verified. |
 | Candidate evidence vs scoring | Evidence rows and observation-candidate recommendation can be built now; public numeric scoring and trading recommendation require later policy approval. |
+| Real-time reference vs execution | Future intraday data may affect observation priority after approval, but must stay separate from broker secrets, order routing, production DB writes, and Telegram/scheduler automation until separately approved. |
+| Public observation vs operator decision | Public `web-view` can recommend what to observe. Trading-decision support, if pursued later, is operator-only and requires a separate source/audit/safety contract. |
 | Flow samples vs scheduled ingest | Manual/sample/import path exists. The only automatic flow path is the narrow anchor-date mentioned-stock `[12009]` 31-day backfill; broad scheduled ingest remains disabled until separate approval. |
 | Access gate vs real auth | Entry-code gate is a lightweight layer, not enterprise authentication. |
 
@@ -57,6 +61,7 @@ Pause and ask for user approval before:
 
 - destructive DB migration, broad deletion, or real VACUUM without explicit confirmation
 - enabling scheduled KRX Data Marketplace ingest
+- connecting a real-time/broker source to production writes, Telegram, scheduler, admin controls, broker secrets, or order routing
 - exposing `admin-gui` beyond loopback/private owner access
 - adding trading recommendation, public numeric score, investment grade, or buy/sell wording
 - silently copying today's category mapping backward into historical dates

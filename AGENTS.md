@@ -152,3 +152,54 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
 - validation performed
 - residual risk
 - blocked or still-unverified items
+
+## Global Agent Layer Rule 2026-05-29
+
+Use the global Codex agent/skill layer before considering project-local agents.
+
+Current decision:
+
+- Keep `C:\Users\MING\Codex\02.Stock_Moniter\.codex\agents` absent.
+- Do not recreate or bulk-restore the old local agent set.
+- Use global agents/skills plus CodeGraph first.
+- Restore a project-local agent only after repeated Stock Monitor work proves a specific gap.
+- If a restore is needed, restore only the one exact role from `C:\Users\MING\Codex\_lab\_shared\backups\agent-skill-reset-2026-05-29`.
+
+Global mapping:
+
+- Python / backend review: global `python-reviewer`, `code-reviewer`, CodeGraph
+- DB / schema / migration review: global `database-reviewer`, `database-migrations`
+- security / public-surface review: global `security-reviewer`, `security-review`, `security-scan`
+- validation: global `verification-loop`, `e2e-testing`, `eval-harness`, `qa`
+- documentation: global `doc-updater`, `docs-researcher`, `handoff`
+- triage/debugging: global `diagnose`, `silent-failure-hunter`, `code-explorer`
+
+Stock Monitor-specific rule:
+
+- Preserve the `admin-gui` vs GET-only `web-view` boundary.
+- Do not add public numeric scores, investment grades, trading calls, broker execution, or order-routing behavior.
+- Do not connect lab/source probes to production DB writes, Telegram, scheduler, admin-gui, or web-view.
+- SchemaSpy remains lab-only / repeatable-lab candidate after jars are staged.
+- QuantDinger remains hold.
+- OpenAlgo remains future-lab only.
+- If any old role is restored later, `market-data-engineer` is the first likely candidate, but only after repeated KRX/Data Marketplace/source-semantics work proves the global layer is insufficient.
+
+Reference:
+
+- `C:\Users\MING\Codex\_lab\_shared\results\post-global-layer-project-survey-2026-05-29.md`
+
+## Superpowers Rule 2026-05-29
+
+Superpowers may be used as a planning and execution aid.
+
+It must not override:
+
+- this project `AGENTS.md`
+- `docs/codex` project rules
+- CodeGraph-first tracing when ownership is unclear
+- admin-gui vs GET-only web-view boundary
+- no public numeric score / trading-call / broker-execution boundary
+- lab / global / project-local / production boundaries
+- the no-bulk-restore project-local agent policy
+
+Use Superpowers to improve task planning and execution discipline, not to reintroduce stale local-agent routing or bypass production safety gates.

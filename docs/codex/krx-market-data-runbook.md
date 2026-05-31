@@ -13,6 +13,7 @@ Use this before touching KRX Open API snapshots, KRX Data Marketplace investor-f
 | Research reports | Naver Stock research pages | Report collection, summaries, Telegram, web-view reports. |
 | Stock, ETF, index daily price/volume/turnover | KRX Open API | Stored read-only market reference and trend context. |
 | Investor flow `[12008]`, `[12009]`, `[12010]` | KRX Data Marketplace | Stored sample/read-only flow reference. |
+| Future intraday quote/turnover/index | Toss Securities Open API, KIS, or another approved source | Separate lab/staging lane first; may later affect top-2 observation priority after approval. |
 | 업종/테마 | Naver taxonomy for now | Category rollups and dated snapshots; do not call this KRX-owned taxonomy yet. |
 
 Display naming follows [data-source-policy.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/data-source-policy.md).
@@ -35,6 +36,7 @@ Display naming follows [data-source-policy.md](/C:/Users/MING/Codex/02.Stock_Mon
 | KRX Open API morning fill | Working path added | KRX Open API daily rows are officially available at the next Korean business day `08:00` KST. `scheduled-krx-daily-backfill` runs after that window and targets previous-business-day or earlier missing rows; do not fetch same-day rows. |
 | KRX Open API availability probe | Manual evidence path added | `krx-openapi-availability-probe` records endpoint availability in `operation_events` only. It does not write snapshot tables or register scheduler tasks. The former same-day hourly follow-up automation was deleted on `2026-05-20` after the official next-business-day `08:00` publication rule was confirmed. |
 | Stock/ETF/index reference tables | Working | Keep as market reference, not scoring. |
+| Future intraday observation reference | Not implemented | A verified real-time source may later strengthen or lower `우선 확인` ordering and main-card emphasis. `read-only` blocks writes, automation, secrets, and orders; it does not block observation-priority impact. |
 | KRX Data Marketplace raw login check | Working | Prefer `.env` raw login checks over browser automation. |
 | `[12008]` market investor flow | Sample/import path exists | Stored read-only reference only. |
 | `[12009]` stock investor flow | Mention-stock scheduled path added | At `16:00`, collect only anchor-day report-mentioned stocks over the recent 31-day window; skip already stored rows. Broad all-stock ingest remains forbidden. For migration catch-up, anchor to the latest report-mentioned business date. |
@@ -53,13 +55,14 @@ The current KRX Open API lane is daily snapshot oriented. Do not assume it can p
 Verified source notes as of `2026-05-18`:
 
 - KRX's own data-receipt guidance says private investors who want real-time or delayed market quote data should use securities firms, data vendors, terminals, or portal sites, while professional redistribution requires a Koscom market-data contract. This makes KRX Open API unsuitable as the default 5-minute intraday index source for this toy `web-view`.
-- Korea Investment Securities Open API is a candidate source because its official sample repository includes REST/WebSocket examples and authentication for domestic stock quote data. Treat it as a future separate source lane: credentials, rate limits, index TR coverage, storage schema, and display-only boundaries must be reviewed before any scheduler or live polling is added.
+- Korea Investment Securities Open API is a candidate source because its official sample repository includes REST/WebSocket examples and authentication for domestic stock quote data. Treat it as a future separate source lane: credentials, rate limits, index TR coverage, storage schema, and observation-priority boundaries must be reviewed before any scheduler or live polling is added.
 - Until a source lane is approved, `지수 참고` in `web-view` should continue to show stored KRX daily index values and clearly label them as stored data. The separate manual Naver `priceTop` overlap check is only a same-day stock turnover reference, not an intraday KRX index lane.
 
 Implementation guard:
 
 - A future intraday poller may target a 5-minute display cadence only after the source is approved and documented here.
-- The intraday index lane must not widen KRX Data Marketplace investor-flow automation, must not expose credentials, and must not create public trading signals.
+- The intraday index lane may affect observation priority only after approval. It must not widen KRX Data Marketplace investor-flow automation, expose credentials, write production DB rows by default, trigger Telegram/scheduler automation, or create public trading signals.
+- If real-time evidence later becomes strong enough for trading-decision review, treat that as a separate operator-only decision-support/execution-lab step, not as a public `web-view` wording change or automatic order path.
 
 ## Operating Commands
 
