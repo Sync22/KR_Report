@@ -36,6 +36,15 @@ PUBLIC_FORBIDDEN_KEYS = {
     "worker_states",
     "health",
     "db_path",
+    "quality_flags",
+    "internal_candidate_signals",
+    "internal_missing_information",
+    "_internal_candidate_signals",
+    "_internal_missing_information",
+    "_sort_density",
+    "_sort_signal",
+    "five_business_day_broker_count",
+    "previous_broker_count",
     "operation_profile",
     "daily_summary_min_mention_count",
     "daily_summary_require_target_price",
@@ -906,6 +915,9 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
     assert "리포트 2건" in snapshot["watch_candidates"][0]["reason"]
     assert "매수 의견" not in snapshot["watch_candidates"][0]["reason"]
     assert "candidate_evidence" not in snapshot
+    concentration_item = snapshot["observation_summary"]["report_concentration"]["items"][0]
+    assert "five_business_day_broker_count" not in concentration_item["report_intensity"]
+    assert "previous_broker_count" not in concentration_item["target_price_revision"]
     assert "scheduler_tasks" not in snapshot
     assert "db_path" not in snapshot
     _assert_public_safe_payload(snapshot)
@@ -1500,24 +1512,56 @@ def test_web_view_candidate_evidence_prioritizes_backtest_supported_observation_
 
     assert snapshot["scoring"] is False
     assert snapshot["recommendation"] is False
+    assert "브로커 폭" not in json.dumps(snapshot, ensure_ascii=False)
     assert "브로커 폭" not in snapshot["display_policy"]
     assert "확인용으로 묶어 보여줍니다" in snapshot["display_policy"]
     assert "추천" not in snapshot["display_policy"]
     assert "실시간 시세가 아닙니다" in snapshot["notice"]
-    assert [row["stock_code"] for row in snapshot["rows"]] == ["000002", "000004"]
-    assert snapshot["rows"][0]["why_notable"][-1] == "외국인 순매수 상위 참고"
+    assert [row["stock_code"] for row in snapshot["rows"]] == ["000004", "000002"]
+    assert snapshot["rows"][0]["why_notable"] == ["리포트 집중", "수급 전환 지속"]
+    assert snapshot["rows"][1]["why_notable"] == ["리포트 집중"]
+    assert "외국인 순매수 상위 참고" in snapshot["rows"][1]["evidence_layers"]["support"]
+    assert snapshot["rows"][0]["intraday_reference"] == {
+        "available": False,
+        "source_configured": False,
+        "read_only": True,
+        "live_fetch": False,
+        "scope": "top_2_priority_candidates",
+        "cadence_minutes": 5,
+        "reference_time": None,
+        "price": None,
+        "change_percent": None,
+        "turnover": None,
+        "affects_ordering": False,
+        "notice": "장중 실시간 참고 소스가 아직 확정되지 않았습니다.",
+    }
+    assert snapshot["rows"][1]["intraday_reference"]["affects_ordering"] is False
     assert "거래대금 참고" not in snapshot["rows"][0]["why_notable"]
     assert "목표가 범위" not in snapshot["rows"][0]["why_notable"]
     assert "브로커 폭" not in snapshot["rows"][0]["why_notable"]
+    assert snapshot["rows"][0]["evidence_layers"]["primary"] == snapshot["rows"][0]["why_notable"]
+    assert snapshot["rows"][0]["evidence_layers"]["support"] == [
+        "KRX 가격 참고",
+        "거래대금 참고",
+        "거래량 위치 참고",
+    ]
+    assert snapshot["rows"][0]["evidence_layers"]["gap"] == []
     assert "internal_candidate_signals" not in snapshot["rows"][0]
     assert "internal_missing_information" not in snapshot["rows"][0]
+    assert "explanation_quality" not in snapshot["rows"][0]
+    assert "top_candidate_maturity" not in snapshot
+    assert "top_candidate_explanation_quality_counts" not in snapshot
+    assert "top_candidate_review_priority_counts" not in snapshot
+    assert "top_candidate_next_evidence_gap_counts" not in snapshot
     assert "quality_flags" not in snapshot["rows"][0]
     assert "evidence_notes" not in snapshot["rows"][0]
     assert "opinion_summary" not in snapshot["rows"][0]
     assert "broker_count" not in snapshot["rows"][0]["report_summary"]
     assert "broker_display" not in snapshot["rows"][0]["report_summary"]
     assert "dominant_opinion" not in snapshot["rows"][0]["report_summary"]
-    assert "수급 전환 지속" in snapshot["rows"][1]["why_notable"]
+    assert "five_business_day_broker_count" not in snapshot["rows"][0]["report_intensity"]
+    assert "previous_broker_count" not in snapshot["rows"][0]["target_price_revision"]
+    assert "외국인 순매수 상위 참고" not in snapshot["rows"][1]["why_notable"]
 
 
 def test_web_view_candidate_evidence_public_missing_labels_are_stored_reference_based(tmp_path, monkeypatch) -> None:
@@ -1564,6 +1608,9 @@ def test_web_view_candidate_evidence_public_missing_labels_are_stored_reference_
         "선택일 KRX 저장값 없음",
         "종목 수급 저장값 없음",
     ]
+    assert public_snapshot["rows"][0]["evidence_layers"]["primary"] == []
+    assert public_snapshot["rows"][0]["evidence_layers"]["support"] == []
+    assert public_snapshot["rows"][0]["evidence_layers"]["gap"] == public_snapshot["rows"][0]["missing_information"]
     assert "quality_flags" not in public_snapshot["rows"][0]
     assert internal_snapshot["rows"][0]["internal_missing_information"][:2] == [
         "당일 KRX 없음",
@@ -1641,10 +1688,313 @@ def test_web_view_candidate_evidence_rank_reason_stays_reference_when_stock_flow
     )
 
     row = public_snapshot["rows"][0]
-    assert "외국인 순매수 상위 참고" in row["why_notable"]
+    assert "외국인 순매수 상위 참고" not in row["why_notable"]
     assert "외국인 순매수 상위" not in row["why_notable"]
     assert row["missing_information"] == ["종목 수급 저장값 없음"]
+    assert row["evidence_layers"]["primary"] == []
+    assert row["evidence_layers"]["support"] == [
+        "KRX 가격 참고",
+        "거래대금 참고",
+        "거래량 위치 참고",
+        "외국인 순매수 상위 참고",
+    ]
+    assert row["evidence_layers"]["gap"] == row["missing_information"]
     assert "외국인 순매수 상위" in internal_snapshot["rows"][0]["internal_candidate_signals"]
+
+
+def test_web_view_candidate_evidence_rank_reference_does_not_drive_public_order(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 8)
+    fetched_at = datetime(2026, 5, 8, 16, 0, 0)
+
+    def report(stock_code: str, stock_name: str) -> Report:
+        return Report(
+            stock_name=stock_name,
+            stock_code=stock_code,
+            title=f"{stock_name} 점검",
+            broker_name="테스트증권",
+            published_at=datetime(2026, 5, 8, 9, 0, 0),
+            business_date=business_date,
+            collected_at=fetched_at,
+            target_price_value=100_000,
+            opinion_normalized="buy",
+            source_id=f"rank-context-only-{stock_code}",
+            identity_key=f"rank-context-only-{stock_code}",
+        )
+
+    repository.insert_reports([report("000001", "RankReference"), report("000999", "PlainReference")])
+    repository.rebuild_daily_summaries(business_date)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code=code,
+                stock_name=name,
+                market="KOSPI",
+                close_price=80_000,
+                change_percent=1.2,
+                volume=10_000,
+                turnover=100_000_000,
+                fetched_at=fetched_at,
+            )
+            for code, name in (("000001", "RankReference"), ("000999", "PlainReference"))
+        ]
+    )
+    repository.upsert_investor_net_buy_top_daily(
+        [
+            InvestorNetBuyTopDaily(
+                business_date=business_date,
+                market="STK",
+                investor_type="foreign",
+                rank=1,
+                stock_code="000001",
+                stock_name="RankReference",
+                net_buy_amount=1_000,
+                fetched_at=fetched_at,
+            )
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=2,
+    )
+
+    assert [row["stock_code"] for row in snapshot["rows"]] == ["000999", "000001"]
+    assert snapshot["rows"][1]["why_notable"] == []
+    assert "외국인 순매수 상위 참고" in snapshot["rows"][1]["evidence_layers"]["support"]
+
+
+def test_web_view_candidate_evidence_prefers_composite_flow_over_rank_without_stock_flow(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 8)
+    fetched_at = datetime(2026, 5, 8, 16, 0, 0)
+
+    def report(stock_code: str, stock_name: str, index: int) -> Report:
+        return Report(
+            stock_name=stock_name,
+            stock_code=stock_code,
+            title=f"{stock_name} 점검 {index}",
+            broker_name=f"증권사{index}",
+            published_at=datetime(2026, 5, 8, 9, index, 0),
+            business_date=business_date,
+            collected_at=fetched_at,
+            target_price_value=100_000 + index,
+            opinion_normalized="buy",
+            source_id=f"rank-vs-composite-{stock_code}-{index}",
+            identity_key=f"rank-vs-composite-{stock_code}-{index}",
+        )
+
+    repository.insert_reports(
+        [
+            report("000101", "RankOnlyNoFlow", 1),
+            report("000101", "RankOnlyNoFlow", 2),
+            report("000202", "CompositeFlow", 1),
+            report("000202", "CompositeFlow", 2),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="000101",
+                stock_name="RankOnlyNoFlow",
+                market="KOSPI",
+                close_price=80_000,
+                change_percent=1.2,
+                volume=10_000,
+                turnover=100_000_000,
+                fetched_at=fetched_at,
+            ),
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="000202",
+                stock_name="CompositeFlow",
+                market="KOSPI",
+                close_price=90_000,
+                change_percent=1.5,
+                volume=20_000,
+                turnover=200_000_000,
+                fetched_at=fetched_at,
+            ),
+        ]
+    )
+    repository.upsert_stock_investor_flow_daily(
+        [
+            StockInvestorFlowDaily(
+                business_date=date(2026, 5, 7),
+                stock_code="000202",
+                stock_name="CompositeFlow",
+                investor_type="외국인",
+                fetched_at=fetched_at,
+                net_buy_amount=1_000,
+            ),
+            StockInvestorFlowDaily(
+                business_date=business_date,
+                stock_code="000202",
+                stock_name="CompositeFlow",
+                investor_type="외국인",
+                fetched_at=fetched_at,
+                net_buy_amount=1_000,
+            ),
+        ]
+    )
+    repository.upsert_investor_net_buy_top_daily(
+        [
+            InvestorNetBuyTopDaily(
+                business_date=business_date,
+                market="STK",
+                investor_type="foreign",
+                rank=1,
+                stock_code="000101",
+                stock_name="RankOnlyNoFlow",
+                net_buy_amount=1_000,
+                fetched_at=fetched_at,
+            )
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=2,
+    )
+    internal_snapshot = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=2,
+        include_internal=True,
+    )
+
+    assert [row["stock_code"] for row in snapshot["rows"]] == ["000202", "000101"]
+    assert snapshot["rows"][0]["why_notable"] == ["리포트 집중", "수급 전환 지속"]
+    assert snapshot["rows"][1]["why_notable"] == ["리포트 집중"]
+    assert "외국인 순매수 상위 참고" in snapshot["rows"][1]["evidence_layers"]["support"]
+    assert snapshot["rows"][1]["missing_information"] == ["종목 수급 저장값 없음"]
+    assert internal_snapshot["rows"][1]["internal_candidate_signals"][-1] == "외국인 순매수 상위"
+
+
+def test_web_view_candidate_evidence_prefers_exact_flow_composite_over_rank_only(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 8)
+    previous_date = date(2026, 5, 7)
+    fetched_at = datetime(2026, 5, 8, 16, 0, 0)
+
+    def report(stock_code: str, stock_name: str, index: int, target: int, day: date) -> Report:
+        return Report(
+            stock_name=stock_name,
+            stock_code=stock_code,
+            title=f"{stock_name} 점검 {day.isoformat()} {index}",
+            broker_name=f"증권사{index}",
+            published_at=datetime(day.year, day.month, day.day, 9, index, 0),
+            business_date=day,
+            collected_at=fetched_at,
+            target_price_value=target,
+            opinion_normalized="buy",
+            source_id=f"rank-only-calibration-{stock_code}-{day.isoformat()}-{index}",
+            identity_key=f"rank-only-calibration-{stock_code}-{day.isoformat()}-{index}",
+        )
+
+    repository.insert_reports(
+        [
+            report("000101", "RankOnlyNoFlow", 1, 80_000, previous_date),
+            report("000101", "RankOnlyNoFlow", 1, 90_000, business_date),
+            report("000101", "RankOnlyNoFlow", 2, 90_000, business_date),
+            report("000202", "ExactFlowComposite", 1, 80_000, previous_date),
+            report("000202", "ExactFlowComposite", 1, 90_000, business_date),
+            report("000202", "ExactFlowComposite", 2, 90_000, business_date),
+        ]
+    )
+    repository.rebuild_daily_summaries(previous_date)
+    repository.rebuild_daily_summaries(business_date)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="000101",
+                stock_name="RankOnlyNoFlow",
+                market="KOSPI",
+                close_price=80_000,
+                change_percent=1.2,
+                volume=10_000,
+                turnover=100_000_000,
+                fetched_at=fetched_at,
+            ),
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="000202",
+                stock_name="ExactFlowComposite",
+                market="KOSPI",
+                close_price=90_000,
+                change_percent=1.5,
+                volume=20_000,
+                turnover=200_000_000,
+                fetched_at=fetched_at,
+            ),
+        ]
+    )
+    repository.upsert_stock_investor_flow_daily(
+        [
+            StockInvestorFlowDaily(
+                business_date=business_date,
+                stock_code="000202",
+                stock_name="ExactFlowComposite",
+                investor_type="외국인",
+                fetched_at=fetched_at,
+                net_buy_amount=1_000,
+            )
+        ]
+    )
+    repository.upsert_investor_net_buy_top_daily(
+        [
+            InvestorNetBuyTopDaily(
+                business_date=business_date,
+                market="STK",
+                investor_type="foreign",
+                rank=1,
+                stock_code="000101",
+                stock_name="RankOnlyNoFlow",
+                net_buy_amount=1_000,
+                fetched_at=fetched_at,
+            )
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=2,
+    )
+
+    assert [row["stock_code"] for row in snapshot["rows"]] == ["000202", "000101"]
+    assert snapshot["rows"][0]["observation_priority"] == "확인 후보"
+    assert snapshot["rows"][0]["why_notable"] == ["리포트 집중", "목표가 상향"]
+    assert snapshot["rows"][0]["missing_information"] == []
+    assert snapshot["rows"][1]["why_notable"] == ["리포트 집중", "목표가 상향"]
+    assert "외국인 순매수 상위 참고" in snapshot["rows"][1]["evidence_layers"]["support"]
+    assert snapshot["rows"][1]["missing_information"] == ["종목 수급 저장값 없음"]
 
 
 def test_web_view_daily_category_contract_uses_snapshot_availability_without_rollups(tmp_path, monkeypatch) -> None:

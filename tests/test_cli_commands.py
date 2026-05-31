@@ -789,6 +789,56 @@ def test_web_view_browser_api_smoke_checks_intraday_market_top_route(monkeypatch
     } in api_checks
 
 
+def test_web_view_browser_api_smoke_flags_candidate_json_operator_keys(monkeypatch) -> None:
+    def fake_request(url: str, *, method: str = "GET", data=None):  # noqa: ARG001
+        path = url.split("http://127.0.0.1:8780", 1)[1]
+        if path == "/api/daily/2026-05-20" and method == "POST":
+            return 405, b"", "text/plain"
+        if path == "/api/daily/2026-05-20":
+            return 200, json.dumps({"business_date": "2026-05-20", "stocks": []}).encode("utf-8"), "application/json"
+        if path == "/api/daily/2026-05-20?intraday_market_top=1&market_top_limit=100&market_top_page_size=20":
+            return (
+                200,
+                json.dumps(
+                    {
+                        "business_date": "2026-05-20",
+                        "market_commentary": {
+                            "intraday_market_top_reference": {
+                                "live_fetch": True,
+                                "writes_snapshot_tables": False,
+                            },
+                        },
+                    }
+                ).encode("utf-8"),
+                "application/json",
+            )
+        if path == "/api/candidate-evidence?date=2026-05-20&limit=5":
+            return (
+                200,
+                b'{"rows":[{"report_intensity":{"five_business_day_broker_count":2},'
+                b'"target_price_revision":{"previous_broker_count":1}}]}',
+                "application/json",
+            )
+        if path == "/api/status":
+            return 404, b"not found", "text/plain"
+        return 404, b"not found", "text/plain"
+
+    monkeypatch.setattr(cli_module, "_web_view_smoke_http_request", fake_request)
+    issues: list[dict[str, object]] = []
+
+    cli_module._collect_web_view_browser_api_smoke_issues(
+        "http://127.0.0.1:8780",
+        business_date=date(2026, 5, 20),
+        stock_limit=5,
+        issues=issues,
+        api_checks=[],
+    )
+
+    assert [issue["code"] for issue in issues] == ["candidate_json_exposes_operator_keys"]
+    assert "five_business_day_broker_count" in issues[0]["message"]
+    assert "previous_broker_count" in issues[0]["message"]
+
+
 def test_market_commentary_practice_parser_accepts_intraday_market_top_options() -> None:
     parser = cli_module.build_parser()
 
@@ -1527,7 +1577,11 @@ def test_external_web_view_smoke_flags_operator_keys_in_candidate_json(monkeypat
         if path == "/api/daily/2026-05-15" and method == "GET":
             return 200, b'{"business_date":"2026-05-15"}', "application/json"
         if path == "/api/candidate-evidence?date=2026-05-15&limit=5":
-            return 200, b'{"rows":[{"worker_states":{}}]}', "application/json"
+            return 200, (
+                b'{"rows":[{"internal_candidate_signals":["debug"],"_sort_signal":1,'
+                b'"report_intensity":{"five_business_day_broker_count":2},'
+                b'"target_price_revision":{"previous_broker_count":1}}]}'
+            ), "application/json"
         if path in {
             "/api/flow-trend?date=2026-05-15&limit=5",
             "/api/etf-trend?date=2026-05-15&limit=5",
@@ -1556,7 +1610,10 @@ def test_external_web_view_smoke_flags_operator_keys_in_candidate_json(monkeypat
 
     assert payload["issue_count"] == 1
     assert payload["issues"][0]["code"] == "candidate_json_exposes_operator_keys"
-    assert "worker_states" in payload["issues"][0]["message"]
+    assert "internal_candidate_signals" in payload["issues"][0]["message"]
+    assert "_sort_signal" in payload["issues"][0]["message"]
+    assert "five_business_day_broker_count" in payload["issues"][0]["message"]
+    assert "previous_broker_count" in payload["issues"][0]["message"]
 
 
 def test_external_web_view_smoke_flags_operator_keys_in_stock_detail_json(monkeypatch) -> None:
