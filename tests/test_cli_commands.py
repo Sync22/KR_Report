@@ -100,6 +100,12 @@ class _KrxDailyBackfillHolidayDateTime(datetime):
         return cls(2026, 5, 25, 8, 10, 0, tzinfo=tz)
 
 
+class _KrxBaselineFridayLateDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return cls(2026, 5, 29, 22, 0, 0, tzinfo=tz)
+
+
 class _KrxMentionedFlowAllowedDateTime(datetime):
     @classmethod
     def now(cls, tz=None):
@@ -6704,6 +6710,41 @@ def test_next_phase_readiness_groups_latest_krx_openapi_probe_batch(tmp_path) ->
     assert payload["latest_status_counts"] == {"not_published": 2}
     assert payload["latest_endpoint_count"] == 2
     assert payload["latest_endpoints"][0]["stored"] is False
+
+
+def test_latest_publishable_krx_openapi_date_uses_next_business_day_0800_rule() -> None:
+    assert cli_module._latest_publishable_krx_openapi_date(
+        datetime(2026, 5, 29, 22, 0, 0),
+        set(),
+    ) == date(2026, 5, 28)
+    assert cli_module._latest_publishable_krx_openapi_date(
+        datetime(2026, 6, 1, 7, 59, 0),
+        set(),
+    ) == date(2026, 5, 28)
+    assert cli_module._latest_publishable_krx_openapi_date(
+        datetime(2026, 6, 1, 8, 0, 0),
+        set(),
+    ) == date(2026, 5, 29)
+
+
+def test_krx_baseline_analysis_omits_unpublished_current_business_date(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cli_module, "datetime", _KrxBaselineFridayLateDateTime)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path)
+    repository.initialize()
+
+    payload = cli_module._build_krx_baseline_analysis(
+        config,
+        repository,
+        lookback_days=3,
+        to_date=None,
+        max_missing_dates=3,
+    )
+
+    assert payload["window"]["to_date"] == "2026-05-28"
+    missing_dates = [row["business_date"] for row in payload["missing_daily_snapshots"]["next"]]
+    assert missing_dates == ["2026-05-28", "2026-05-27", "2026-05-26"]
+    assert "2026-05-29" not in missing_dates
 
 
 def test_krx_flow_dry_run_resolves_isu_cd_from_metadata(tmp_path, monkeypatch, capsys) -> None:
