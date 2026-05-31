@@ -3040,6 +3040,32 @@ def test_next_phase_readiness_summarizes_read_only_blockers(tmp_path, capsys) ->
     assert "manual Telegram review sends 0/3" in payload["completion_blockers"]
     assert "web-view Startup fallback configuration" in payload["completion_blockers"]
     assert payload["completion_ready"] is False
+    dev_env = payload["development_environment"]
+    assert dev_env["mode"] == "development"
+    assert dev_env["read_only"] is True
+    assert "development environment" in dev_env["interpretation"]
+    assert "python -m stock_monitor market-briefing-readiness --recent-report-dates 5 --json" in dev_env[
+        "dev_safe_next_commands"
+    ]
+    assert "python -m stock_monitor krx-baseline-analysis --json" in dev_env["dev_safe_next_commands"]
+    assert "python -m stock_monitor operator-status --json --health-exit" not in dev_env[
+        "dev_safe_next_commands"
+    ]
+    assert "python -m stock_monitor operator-status --json --health-exit" in dev_env[
+        "operator_or_live_next_commands"
+    ]
+    assert any("market-briefing --date 2026-05-14 --limit 5 --send" in command for command in dev_env[
+        "operator_or_live_next_commands"
+    ])
+    assert any("create_web_view_startup_shortcut.ps1" in command for command in dev_env[
+        "operator_or_live_next_commands"
+    ])
+    assert any("verify_cloudflare_web_view_tunnel.ps1" in command for command in dev_env[
+        "operator_or_live_next_commands"
+    ])
+    assert not any("--send" in command for command in dev_env["dev_safe_next_commands"])
+    assert "manual Telegram review sends 0/3" in dev_env["live_ops_blockers_deferred"]
+    assert "web-view Startup fallback configuration" in dev_env["live_ops_blockers_deferred"]
 
     repository.record_delivery(
         DeliveryLog(
