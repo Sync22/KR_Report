@@ -12054,6 +12054,20 @@ def _run_candidate_evidence_readiness(
         "visible_missing_information_counts": _sum_count_maps(date_rows, "visible_missing_information_counts"),
         "internal_candidate_signal_counts": _sum_count_maps(date_rows, "internal_candidate_signal_counts"),
         "internal_missing_information_counts": _sum_count_maps(date_rows, "internal_missing_information_counts"),
+        "explanation_quality_counts": _sum_count_maps(date_rows, "explanation_quality_counts"),
+        "top_candidate_explanation_quality_counts": _sum_count_maps(
+            date_rows, "top_candidate_explanation_quality_counts"
+        ),
+        "top_candidate_support_counts": _sum_count_maps(date_rows, "top_candidate_support_counts"),
+        "top_candidate_gap_counts": _sum_count_maps(date_rows, "top_candidate_gap_counts"),
+        "top_candidate_next_evidence_gap_counts": _sum_count_maps(
+            date_rows, "top_candidate_next_evidence_gap_counts"
+        ),
+        "top_candidate_review_reason_counts": _sum_count_maps(date_rows, "top_candidate_review_reason_counts"),
+        "top_candidate_review_priority_counts": _sum_count_maps(date_rows, "top_candidate_review_priority_counts"),
+        "top_candidate_review_date_count": sum(
+            1 for row in date_rows if (row.get("top_candidate_maturity") or {}).get("review_needed")
+        ),
         "interpretation_blocked": True,
         "interpretation_block_reasons": [
             "candidate evidence is for visible review only",
@@ -12077,6 +12091,12 @@ def _run_candidate_evidence_readiness(
     print(f"- visible why notable: {_format_count_map(payload['visible_why_notable_counts'])}")
     print(f"- visible missing information: {_format_count_map(payload['visible_missing_information_counts'])}")
     print(f"- internal candidate signals: {_format_count_map(payload['internal_candidate_signal_counts'])}")
+    print(f"- explanation quality: {_format_count_map(payload['explanation_quality_counts'])}")
+    print(f"- top candidate quality: {_format_count_map(payload['top_candidate_explanation_quality_counts'])}")
+    print(f"- top candidate gaps: {_format_count_map(payload['top_candidate_gap_counts'])}")
+    print(f"- top candidate next gap: {_format_count_map(payload['top_candidate_next_evidence_gap_counts'])}")
+    print(f"- top candidate review reasons: {_format_count_map(payload['top_candidate_review_reason_counts'])}")
+    print(f"- top candidate review priority: {_format_count_map(payload['top_candidate_review_priority_counts'])}")
     print("- interpretation: blocked for score/recommendation")
     if block_reasons:
         print("- review block reasons:")
@@ -12129,6 +12149,34 @@ def _build_candidate_evidence_readiness_date(
     missing_information_counts = _count_web_view_candidate_list_values(rows, "missing_information")
     internal_candidate_signal_counts = _count_web_view_candidate_list_values(rows, "internal_candidate_signals")
     internal_missing_information_counts = _count_web_view_candidate_list_values(rows, "internal_missing_information")
+    explanation_quality_by_code = {
+        str(row.get("stock_code") or ""): _candidate_explanation_quality_labels(row)
+        for row in rows
+    }
+    explanation_quality_counts: Counter[str] = Counter()
+    for labels in explanation_quality_by_code.values():
+        explanation_quality_counts.update(labels)
+    top_rows = [
+        {
+            "stock_code": row.get("stock_code"),
+            "stock_name": row.get("stock_name"),
+            "report_count": (row.get("report_summary") or {}).get("report_count"),
+            "broker_count": (row.get("report_summary") or {}).get("broker_count"),
+            "quality_flags": row.get("quality_flags") or [],
+            "observation_priority": row.get("observation_priority"),
+            "why_notable": row.get("why_notable") or [],
+            "missing_information": row.get("missing_information") or [],
+            "evidence_layers": row.get("evidence_layers") or {"primary": [], "support": [], "gap": []},
+            "internal_candidate_signals": row.get("internal_candidate_signals") or [],
+            "internal_missing_information": row.get("internal_missing_information") or [],
+            "explanation_quality": explanation_quality_by_code.get(str(row.get("stock_code") or ""), []),
+            "target_validation_available": (row.get("target_price_progress") or {}).get("validation_available"),
+            "stock_flow_available": (row.get("stock_flow_reference") or {}).get("available"),
+            "foreign_top_rank": (row.get("rank_reference") or {}).get("foreign_top_rank"),
+        }
+        for row in rows
+    ]
+    top_candidate_maturity = _candidate_evidence_top_maturity_summary(top_rows[:2])
     return {
         "business_date": business_date.isoformat(),
         "eligible_summary_count": len(summaries),
@@ -12157,31 +12205,148 @@ def _build_candidate_evidence_readiness_date(
         "visible_missing_information_counts": missing_information_counts,
         "internal_candidate_signal_counts": internal_candidate_signal_counts,
         "internal_missing_information_counts": internal_missing_information_counts,
+        "explanation_quality_counts": dict(sorted(explanation_quality_counts.items())),
+        "top_candidate_explanation_quality_counts": top_candidate_maturity["explanation_quality_counts"],
+        "top_candidate_support_counts": top_candidate_maturity["support_counts"],
+        "top_candidate_gap_counts": top_candidate_maturity["gap_counts"],
+        "top_candidate_next_evidence_gap_counts": top_candidate_maturity["next_evidence_gap_counts"],
+        "top_candidate_review_reason_counts": top_candidate_maturity["review_reason_counts"],
+        "top_candidate_review_priority_counts": top_candidate_maturity["review_priority_counts"],
+        "top_candidate_maturity": top_candidate_maturity["summary"],
         "quality_flag_counts": dict(sorted(quality_flag_counts.items())),
         "qa_issue_count": len(issues),
         "qa_warning_count": len(warnings),
         "qa_issues": issues,
         "qa_warnings": warnings,
         "review_ready": bool(rows) and not issues,
-        "top_rows": [
-            {
-                "stock_code": row.get("stock_code"),
-                "stock_name": row.get("stock_name"),
-                "report_count": (row.get("report_summary") or {}).get("report_count"),
-                "broker_count": (row.get("report_summary") or {}).get("broker_count"),
-                "quality_flags": row.get("quality_flags") or [],
-                "observation_priority": row.get("observation_priority"),
-                "why_notable": row.get("why_notable") or [],
-                "missing_information": row.get("missing_information") or [],
-                "internal_candidate_signals": row.get("internal_candidate_signals") or [],
-                "internal_missing_information": row.get("internal_missing_information") or [],
-                "target_validation_available": (row.get("target_price_progress") or {}).get("validation_available"),
-                "stock_flow_available": (row.get("stock_flow_reference") or {}).get("available"),
-                "foreign_top_rank": (row.get("rank_reference") or {}).get("foreign_top_rank"),
-            }
-            for row in rows
-        ],
+        "top_rows": top_rows,
     }
+
+
+def _candidate_evidence_top_maturity_summary(top_rows: list[dict[str, object]]) -> dict[str, object]:
+    explanation_quality_counts: Counter[str] = Counter()
+    support_counts: Counter[str] = Counter()
+    gap_counts: Counter[str] = Counter()
+    for row in top_rows:
+        explanation_quality_counts.update(_public_label_list(row.get("explanation_quality")))
+        layers = row.get("evidence_layers") if isinstance(row.get("evidence_layers"), dict) else {}
+        support_counts.update(_public_label_list((layers or {}).get("support")))
+        gap_counts.update(_public_label_list((layers or {}).get("gap")))
+
+    candidate_count = len(top_rows)
+    composite_count = explanation_quality_counts.get("composite_evidence", 0)
+    weak_support_count = max(candidate_count - composite_count, 0)
+    reason_rules = [
+        ("top_missing_krx_reference", explanation_quality_counts.get("missing_krx_reference", 0)),
+        ("top_missing_price_volume_context", explanation_quality_counts.get("missing_price_volume_context", 0)),
+        ("top_missing_stock_flow_reference", explanation_quality_counts.get("missing_stock_flow_reference", 0)),
+        ("top_rank_without_stock_flow", explanation_quality_counts.get("rank_without_stock_flow", 0)),
+        ("top_report_only_candidate", explanation_quality_counts.get("report_only_candidate", 0)),
+        ("top_weak_support", weak_support_count),
+    ]
+    review_reasons = [reason for reason, count in reason_rules if count]
+    next_evidence_gap = _candidate_evidence_next_gap(gap_counts)
+    review_priority = _candidate_evidence_review_priority(
+        explanation_quality_counts=explanation_quality_counts,
+        weak_support_count=weak_support_count,
+        next_evidence_gap=next_evidence_gap,
+    )
+    summary = {
+        "candidate_count": candidate_count,
+        "composite_evidence_count": composite_count,
+        "weak_support_count": weak_support_count,
+        "report_only_count": explanation_quality_counts.get("report_only_candidate", 0),
+        "rank_without_stock_flow_count": explanation_quality_counts.get("rank_without_stock_flow", 0),
+        "missing_stock_flow_count": explanation_quality_counts.get("missing_stock_flow_reference", 0),
+        "missing_krx_count": explanation_quality_counts.get("missing_krx_reference", 0),
+        "missing_price_volume_context_count": explanation_quality_counts.get("missing_price_volume_context", 0),
+        "missing_52w_position_count": explanation_quality_counts.get("missing_52w_position", 0),
+        "support_counts": dict(sorted(support_counts.items())),
+        "gap_counts": dict(sorted(gap_counts.items())),
+        "next_evidence_gap": next_evidence_gap,
+        "review_needed": bool(review_reasons),
+        "review_priority": review_priority,
+        "review_reasons": review_reasons,
+    }
+    next_gap_counts = {next_evidence_gap: 1} if next_evidence_gap else {}
+    review_priority_counts = {review_priority: 1} if review_priority != "none" else {}
+    return {
+        "explanation_quality_counts": dict(sorted(explanation_quality_counts.items())),
+        "support_counts": dict(sorted(support_counts.items())),
+        "gap_counts": dict(sorted(gap_counts.items())),
+        "next_evidence_gap_counts": next_gap_counts,
+        "review_reason_counts": {reason: 1 for reason in review_reasons},
+        "review_priority_counts": review_priority_counts,
+        "summary": summary,
+    }
+
+
+def _candidate_evidence_next_gap(gap_counts: Counter[str]) -> str | None:
+    if not gap_counts:
+        return None
+    priority = {
+        "종목 수급 저장값 없음": 0,
+        "선택일 KRX 저장값 없음": 1,
+        "목표가 정보 없음": 2,
+        "투자의견 정보 없음": 3,
+    }
+    return sorted(gap_counts, key=lambda label: (-gap_counts[label], priority.get(label, 99), label))[0]
+
+
+def _candidate_evidence_review_priority(
+    *,
+    explanation_quality_counts: Counter[str],
+    weak_support_count: int,
+    next_evidence_gap: str | None,
+) -> str:
+    if next_evidence_gap == "종목 수급 저장값 없음":
+        return "flow_backfill"
+    if next_evidence_gap == "선택일 KRX 저장값 없음":
+        return "krx_backfill"
+    if explanation_quality_counts.get("missing_price_volume_context", 0):
+        return "price_volume_review"
+    if explanation_quality_counts.get("rank_without_stock_flow", 0):
+        return "rank_reference_review"
+    if explanation_quality_counts.get("report_only_candidate", 0):
+        return "report_context_review"
+    if weak_support_count:
+        return "weak_support_review"
+    return "none"
+
+
+def _candidate_explanation_quality_labels(row: dict[str, object]) -> list[str]:
+    layers = row.get("evidence_layers") if isinstance(row.get("evidence_layers"), dict) else {}
+    primary = _public_label_list((layers or {}).get("primary"))
+    flags = {str(flag) for flag in row.get("quality_flags") or []}
+    stock_flow_available = bool((row.get("stock_flow_reference") or {}).get("available"))
+    rank_available = (row.get("rank_reference") or {}).get("foreign_top_rank") is not None
+    price_volume_reference = row.get("price_volume_reference") if isinstance(row.get("price_volume_reference"), dict) else {}
+    price_volume_available = bool((price_volume_reference or {}).get("available"))
+    position_52w_available = (price_volume_reference or {}).get("close_position_52w_percent") is not None
+    has_public_gap = any(
+        (
+            "missing_krx_stock_snapshot" in flags,
+            not stock_flow_available,
+            not price_volume_available,
+        )
+    )
+
+    labels: list[str] = []
+    if primary == ["리포트 집중"]:
+        labels.append("report_only_candidate")
+    if "missing_krx_stock_snapshot" in flags or not row.get("market_reference"):
+        labels.append("missing_krx_reference")
+    if not stock_flow_available:
+        labels.append("missing_stock_flow_reference")
+    if rank_available and not stock_flow_available:
+        labels.append("rank_without_stock_flow")
+    if not price_volume_available:
+        labels.append("missing_price_volume_context")
+    elif not position_52w_available:
+        labels.append("missing_52w_position")
+    if not has_public_gap and any(label != "리포트 집중" for label in primary):
+        labels.append("composite_evidence")
+    return labels
 
 
 def _run_market_briefing(
