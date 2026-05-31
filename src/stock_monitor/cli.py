@@ -15276,9 +15276,17 @@ def _run_web_view_browser_smoke(
     print(f"- api checks: {len(payload['api_checks'])}")
     print(f"- issues: {payload['issue_count']}")
     for viewport in payload["viewports"]:
+        tab_order = "/".join(viewport.get("tab_order") or [])
+        panel_state = (
+            f"watch={viewport.get('watch_panel_clickable')} "
+            f"stock={viewport.get('stock_panel_clickable')} "
+            f"market={viewport.get('market_panel_clickable')} "
+            f"rotation={viewport.get('rotation_panel_clickable')}"
+        )
         print(
             f"- viewport | {viewport['name']} | {viewport['width']}x{viewport['height']} | "
-            f"tabs={viewport['tab_count']} | overflow={viewport['horizontal_overflow_px']}px"
+            f"tabs={viewport['tab_count']} | order={tab_order} | panels={panel_state} | "
+            f"overflow={viewport['horizontal_overflow_px']}px"
         )
     for check in payload["api_checks"]:
         print(f"- api | {check['path']} | {check['method']} | {check['status']}")
@@ -16145,10 +16153,16 @@ def _collect_web_view_browser_render_smoke_issues(
                         page.wait_for_selector("#archive-calendar", timeout=timeout_ms)
                         page.wait_for_timeout(500)
                         body_text = page.locator("body").inner_text(timeout=timeout_ms)
-                        tab_count = page.locator("[data-view-tab]").count()
+                        view_tab_locator = page.locator("[data-view-tab]")
+                        tab_count = view_tab_locator.count()
+                        tab_order = view_tab_locator.evaluate_all(
+                            "(nodes) => nodes.map((node) => node.getAttribute('data-view-tab'))"
+                        )
+                        current_tab_count = page.locator('[data-view-tab][aria-current="page"]').count()
                         search_count = page.locator("#stock-search-input").count()
                         intraday_button_visible = page.locator("#intraday-market-top-check").is_visible()
-                        candidate_count = page.locator("#candidate-evidence-rows").count()
+                        intraday_overlap_count = page.locator("#intraday-market-top-overlap").count()
+                        candidate_count = page.locator("#main-priority-rows").count()
                         horizontal_overflow_px = int(
                             page.evaluate(
                                 """
@@ -16162,25 +16176,57 @@ def _collect_web_view_browser_render_smoke_issues(
                                 """
                             )
                         )
-                        candidate_panel_visible = page.locator("#candidate-evidence-rows").is_visible()
-                        intraday_overlap_panel = page.locator("#intraday-market-top-overlap").is_visible()
+                        candidate_panel_visible = page.locator("#main-priority-rows").is_visible()
+                        intraday_overlap_initial_visible = page.locator("#intraday-market-top-overlap").is_visible()
+                        observation_summary_main_visible = page.locator("#observation-summary-card").is_visible()
                         page.locator('[data-view-tab="watch"]').click(timeout=timeout_ms)
                         page.wait_for_timeout(250)
-                        watch_panel_visible = page.locator("#stock-context-card").is_visible()
+                        watch_panel_visible = page.locator("#candidate-evidence-card").is_visible()
+                        watch_observation_summary_visible = page.locator("#observation-summary-card").is_visible()
+                        watch_tab_current = page.locator('[data-view-tab="watch"]').get_attribute("aria-current") == "page"
+                        page.locator('[data-view-tab="stock"]').click(timeout=timeout_ms)
+                        page.wait_for_timeout(250)
+                        stock_panel_visible = page.locator("#stock-context-card").is_visible()
+                        stock_tab_current = page.locator('[data-view-tab="stock"]').get_attribute("aria-current") == "page"
+                        page.locator('[data-view-tab="market"]').click(timeout=timeout_ms)
+                        page.wait_for_timeout(250)
+                        market_panel_visible = page.locator("#market-reference-card").is_visible()
+                        market_tab_current = page.locator('[data-view-tab="market"]').get_attribute("aria-current") == "page"
+                        page.locator('[data-view-tab="rotation"]').click(timeout=timeout_ms)
+                        page.wait_for_timeout(250)
+                        rotation_panel_visible = page.locator("#rotation-details").is_visible()
+                        rotation_tab_current = page.locator('[data-view-tab="rotation"]').get_attribute("aria-current") == "page"
+                        page.locator('[data-view-tab="stock"]').focus(timeout=timeout_ms)
+                        page.keyboard.press("ArrowRight")
+                        page.wait_for_timeout(250)
+                        keyboard_market_current = page.locator('[data-view-tab="market"]').get_attribute("aria-current") == "page"
                         viewport_result = {
                             "name": spec["name"],
                             "width": spec["width"],
                             "height": spec["height"],
                             "tab_count": tab_count,
+                            "tab_order": tab_order,
+                            "current_tab_count": current_tab_count,
                             "search_input": bool(search_count),
                             "intraday_button": intraday_button_visible,
+                            "intraday_overlap_panel": bool(intraday_overlap_count),
                             "candidate_panel": bool(candidate_count) and candidate_panel_visible,
-                            "intraday_overlap_panel": intraday_overlap_panel,
+                            "intraday_overlap_initial_visible": intraday_overlap_initial_visible,
+                            "observation_summary_main_visible": observation_summary_main_visible,
                             "watch_panel_clickable": watch_panel_visible,
+                            "watch_observation_summary_visible": watch_observation_summary_visible,
+                            "stock_panel_clickable": stock_panel_visible,
+                            "market_panel_clickable": market_panel_visible,
+                            "rotation_panel_clickable": rotation_panel_visible,
+                            "watch_tab_current": watch_tab_current,
+                            "stock_tab_current": stock_tab_current,
+                            "market_tab_current": market_tab_current,
+                            "rotation_tab_current": rotation_tab_current,
+                            "keyboard_market_current": keyboard_market_current,
                             "horizontal_overflow_px": horizontal_overflow_px,
                         }
                         viewports.append(viewport_result)
-                        for text in ("오늘 읽을 요약", "국장 관찰 요약", "일일 종목 요약"):
+                        for text in ("오늘 읽을 요약", "오늘의 우선순위"):
                             if text not in body_text:
                                 issues.append(
                                     {
@@ -16189,12 +16235,29 @@ def _collect_web_view_browser_render_smoke_issues(
                                         "message": f"required visible text is missing: {text}",
                                     }
                                 )
-                        if tab_count < 4:
+                        expected_tab_order = ["main", "watch", "stock", "market", "rotation"]
+                        if tab_count != len(expected_tab_order):
                             issues.append(
                                 {
                                     "code": "missing_view_tabs",
                                     "path": f"viewport[{spec['name']}].tabs",
-                                    "message": f"expected at least 4 view tabs, found {tab_count}",
+                                    "message": f"expected exactly {len(expected_tab_order)} view tabs, found {tab_count}",
+                                }
+                            )
+                        if tab_order != expected_tab_order:
+                            issues.append(
+                                {
+                                    "code": "invalid_view_tab_order",
+                                    "path": f"viewport[{spec['name']}].tabs",
+                                    "message": "expected view tab order main/watch/stock/market/rotation",
+                                }
+                            )
+                        if current_tab_count != 1:
+                            issues.append(
+                                {
+                                    "code": "invalid_current_tab_count",
+                                    "path": f"viewport[{spec['name']}].tabs",
+                                    "message": f"expected exactly one current tab, found {current_tab_count}",
                                 }
                             )
                         if not search_count:
@@ -16213,15 +16276,103 @@ def _collect_web_view_browser_render_smoke_issues(
                                     "message": "intraday market-top check button is missing",
                                 }
                             )
+                        if intraday_overlap_initial_visible:
+                            issues.append(
+                                {
+                                    "code": "intraday_overlap_visible_before_check",
+                                    "path": f"viewport[{spec['name']}].intraday_overlap",
+                                    "message": "intraday market-top overlap panel should stay hidden before the user checks it",
+                                }
+                            )
                         if not watch_panel_visible:
                             issues.append(
                                 {
                                     "code": "watch_tab_not_clickable",
                                     "path": f"viewport[{spec['name']}].watch_tab",
-                                    "message": "watch tab did not expose selected-stock detail panel",
+                                    "message": "watch tab did not expose candidate evidence panel",
                                 }
                             )
-                        if not intraday_overlap_panel:
+                        if observation_summary_main_visible:
+                            issues.append(
+                                {
+                                    "code": "observation_summary_visible_on_main",
+                                    "path": f"viewport[{spec['name']}].main",
+                                    "message": "observation summary should stay out of the default main panel",
+                                }
+                            )
+                        if not watch_observation_summary_visible:
+                            issues.append(
+                                {
+                                    "code": "watch_observation_summary_missing",
+                                    "path": f"viewport[{spec['name']}].watch_tab",
+                                    "message": "watch tab did not expose observation summary panel",
+                                }
+                            )
+                        if not watch_tab_current:
+                            issues.append(
+                                {
+                                    "code": "watch_tab_state_not_current",
+                                    "path": f"viewport[{spec['name']}].watch_tab",
+                                    "message": "watch tab did not expose current state after click",
+                                }
+                            )
+                        if not stock_panel_visible:
+                            issues.append(
+                                {
+                                    "code": "stock_tab_not_clickable",
+                                    "path": f"viewport[{spec['name']}].stock_tab",
+                                    "message": "stock tab did not expose selected-stock detail panel",
+                                }
+                            )
+                        if not stock_tab_current:
+                            issues.append(
+                                {
+                                    "code": "stock_tab_state_not_current",
+                                    "path": f"viewport[{spec['name']}].stock_tab",
+                                    "message": "stock tab did not expose current state after click",
+                                }
+                            )
+                        if not market_panel_visible:
+                            issues.append(
+                                {
+                                    "code": "market_tab_not_clickable",
+                                    "path": f"viewport[{spec['name']}].market_tab",
+                                    "message": "market tab did not expose market reference panel",
+                                }
+                            )
+                        if not market_tab_current:
+                            issues.append(
+                                {
+                                    "code": "market_tab_current_state_missing",
+                                    "path": f"viewport[{spec['name']}].market_tab",
+                                    "message": "market tab did not expose current state after click",
+                                }
+                            )
+                        if not rotation_panel_visible:
+                            issues.append(
+                                {
+                                    "code": "rotation_tab_not_clickable",
+                                    "path": f"viewport[{spec['name']}].rotation_tab",
+                                    "message": "rotation tab did not expose rotation reference panel",
+                                }
+                            )
+                        if not rotation_tab_current:
+                            issues.append(
+                                {
+                                    "code": "rotation_tab_current_state_missing",
+                                    "path": f"viewport[{spec['name']}].rotation_tab",
+                                    "message": "rotation tab did not expose current state after click",
+                                }
+                            )
+                        if not keyboard_market_current:
+                            issues.append(
+                                {
+                                    "code": "top_tab_keyboard_navigation_failed",
+                                    "path": f"viewport[{spec['name']}].tabs",
+                                    "message": "ArrowRight from stock tab did not move current state to market tab",
+                                }
+                            )
+                        if not intraday_overlap_count:
                             issues.append(
                                 {
                                     "code": "missing_intraday_overlap_panel",
@@ -19264,8 +19415,6 @@ def _render_web_view_html() -> str:
     .briefing-flow-row small { color: var(--muted); font-size: 11px; line-height: 1.35; }
     .briefing-reference-card .briefing-flow-row b { color: var(--ink); font-size: 13px; font-weight: 800; }
     .briefing-reference-card .briefing-flow-row span { color: var(--ink); font-size: 12px; font-weight: 600; }
-    .briefing-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-    .briefing-chip { border: 1px solid var(--line); border-radius: 999px; padding: 7px 10px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 800; }
     .briefing-comments { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
     .briefing-comment { border-left: 3px solid var(--accent); padding: 8px 10px; background: #fff; color: var(--ink); font-size: 12px; line-height: 1.45; }
     .briefing-comment b { display: block; margin-bottom: 3px; color: var(--accent); font-size: 12px; }
@@ -19279,8 +19428,8 @@ def _render_web_view_html() -> str:
     .briefing-detail-flow span { display: block; color: var(--ink); }
     .briefing-live-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
     .briefing-live-status { margin: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-    .live-source-pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 3px 8px; background: #e9f4ff; color: #1769aa; font-size: 11px; font-weight: 900; }
     .intraday-overlap-panel { display: grid; gap: 8px; margin: 10px 0 12px; border: 1px solid #d8e8f5; border-radius: 8px; padding: 10px 12px; background: #f6fbff; }
+    .intraday-overlap-panel[hidden] { display: none; }
     .intraday-overlap-meta { color: #1769aa; font-size: 11px; font-weight: 900; }
     .intraday-overlap-chips { display: flex; flex-wrap: wrap; gap: 8px; }
     .intraday-overlap-chip { border: 1px solid #c8dced; border-radius: 999px; padding: 7px 10px; background: #fff; color: var(--ink); cursor: pointer; font: inherit; font-size: 12px; font-weight: 900; text-align: left; }
@@ -19344,6 +19493,10 @@ def _render_web_view_html() -> str:
     .market-block { min-width: 0; border: 1px solid var(--line); border-radius: 16px; padding: 14px; background: #fffaf1; }
     .market-block h3 { margin: 0 0 10px; font-size: 15px; }
     .candidate-list { display: grid; gap: 10px; }
+    .main-priority-card { order: -1; }
+    .main-priority-list { display: grid; gap: 10px; }
+    .main-priority-list:empty { display: none; }
+    .main-priority-note { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
     .top-two-candidates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 4px; }
     .top-two-card { border: 1px solid var(--line); border-radius: 16px; padding: 12px; background: #fff; color: inherit; cursor: pointer; text-align: left; font: inherit; }
     .top-two-card b { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 5px; color: var(--accent); font-size: 13px; }
@@ -19360,6 +19513,8 @@ def _render_web_view_html() -> str:
     .candidate-market-inline { display: inline-grid; gap: 1px; color: var(--muted); font-size: 12px; font-weight: 800; line-height: 1.2; }
     .candidate-market-inline span { display: block; }
     .candidate-market-inline span:first-child { color: var(--ink); font-size: 18px; font-weight: 900; }
+    .candidate-intraday-line { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; margin: -2px 0 8px; color: var(--muted); font-size: 12px; }
+    .candidate-intraday-line b { color: var(--accent); font-size: 12px; }
     .candidate-evidence-grid { display: grid; grid-template-columns: minmax(120px, .72fr) minmax(0, 1.14fr) minmax(0, 1.14fr); gap: 8px; }
     .candidate-evidence-grid > span { border: 1px solid rgba(222,216,204,.8); border-radius: 12px; padding: 8px; color: var(--muted); font-size: 12px; }
     .candidate-evidence-grid > span > b { display: block; color: var(--ink); font-size: 13px; }
@@ -19369,9 +19524,8 @@ def _render_web_view_html() -> str:
     .candidate-info-grid em { display: block; color: var(--muted); font-style: normal; }
     .candidate-target-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .candidate-flow-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .candidate-quality-grid { display: grid; grid-template-columns: minmax(120px, .72fr) minmax(0, 1.14fr) minmax(0, 1.14fr); gap: 8px; margin: 8px 0 10px; }
+    .candidate-quality-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, .95fr); gap: 8px; margin: 8px 0 10px; }
     .candidate-quality-grid .quality-line { display: block; margin-top: 0; min-width: 0; }
-    .candidate-quality-grid .quality-line:first-child { grid-column: span 2; }
     .candidate-quality-grid .quality-line b { display: block; border-bottom: 1px solid rgba(222,216,204,.8); padding-bottom: 5px; margin-bottom: 6px; color: var(--ink); }
     .candidate-quality-grid .quality-chip { margin: 0 6px 5px 0; vertical-align: top; }
     .candidate-metric-list, .target-trail-list { display: grid; gap: 5px; margin-top: 5px; }
@@ -19441,6 +19595,7 @@ def _render_web_view_html() -> str:
     .quality-line { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
     .quality-chip { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 4px 9px; background: #fffaf1; color: var(--muted); font-size: 12px; }
     .quality-chip.quality-chip--why { border-color: rgba(37,99,80,.28); background: #e9f4ec; color: var(--accent); }
+    .quality-chip.quality-chip--support { border-color: rgba(82,112,93,.24); background: #f4f8ef; color: var(--muted); }
     .quality-chip.quality-chip--missing { border-color: rgba(178,93,38,.28); background: #fff0df; color: #9b4a1c; }
     .quality-chip.quality-chip-overflow { border-color: rgba(99,111,106,.24); background: #f3f1ea; color: var(--muted); font-weight: 800; }
     .rotation-wrap { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: #fffaf1; }
@@ -19467,7 +19622,6 @@ def _render_web_view_html() -> str:
       .rotation-evidence { grid-template-columns: 1fr; }
       .candidate-evidence-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .candidate-quality-grid { grid-template-columns: 1fr; }
-      .candidate-quality-grid .quality-line:first-child { grid-column: auto; }
       .stock-focus-card { min-height: auto; }
       table { display: block; overflow-x: auto; white-space: nowrap; }
     }
@@ -19505,11 +19659,11 @@ def _render_web_view_html() -> str:
             <input id="stock-search-input" type="search" autocomplete="off" placeholder="현재 날짜 종목명/코드" aria-describedby="stock-search-status" disabled>
             <div id="stock-search-results" class="stock-search-results" hidden></div>
           </div>
-          <button class="top-tab active" type="button" data-view-tab="main">메인</button>
-          <button class="top-tab" type="button" data-view-tab="watch">관찰</button>
-          <button class="top-tab" type="button" data-view-tab="market">시장</button>
-          <button class="top-tab" type="button" data-view-tab="etf">ETF</button>
-          <button class="top-tab" type="button" data-view-tab="rotation">순환매</button>
+          <button class="top-tab active" type="button" data-view-tab="main" aria-current="page" aria-pressed="true">메인</button>
+          <button class="top-tab" type="button" data-view-tab="watch" aria-current="false" aria-pressed="false">관찰</button>
+          <button class="top-tab" type="button" data-view-tab="stock" aria-current="false" aria-pressed="false">종목</button>
+          <button class="top-tab" type="button" data-view-tab="market" aria-current="false" aria-pressed="false">시장</button>
+          <button class="top-tab" type="button" data-view-tab="rotation" aria-current="false" aria-pressed="false">순환매</button>
         </nav>
         <p class="stock-search-status" id="stock-search-status" aria-live="polite">날짜를 선택하면 현재 날짜 종목을 찾을 수 있습니다.</p>
       </div>
@@ -19529,19 +19683,12 @@ def _render_web_view_html() -> str:
           <h2>오늘 읽을 요약 <span class="muted" id="daily-briefing-date"></span></h2>
           <div class="summary-actions">
             <span class="status-pill">저장 데이터 기준</span>
-            <button id="intraday-market-top-check" class="ghost-button" type="button" disabled>장중 거래대금 확인</button>
           </div>
-        </div>
-        <div class="briefing-live-tools">
-          <span class="live-source-pill">Naver 장중 참고</span>
-          <p class="briefing-live-status" id="intraday-market-top-status">날짜를 선택하면 장중 거래대금 교집합을 확인할 수 있습니다.</p>
         </div>
         <p class="briefing-mini-label">리포트 간략 정리</p>
         <p class="briefing-line" id="daily-briefing-headline">날짜를 선택하면 읽을 흐름을 압축해서 보여줍니다.</p>
         <p class="briefing-mini-label">한줄평</p>
         <ul class="briefing-check-points" id="briefing-check-points"><li>확인 포인트가 있으면 여기에 표시됩니다.</li></ul>
-        <p class="briefing-mini-label">확인 종목</p>
-        <div class="briefing-chips" id="briefing-watch-chips"><span class="muted">후보가 있으면 여기에 표시됩니다.</span></div>
         <div class="briefing-comments" id="briefing-one-line-comments"></div>
         <div class="briefing-market-row">
           <div class="briefing-mood-card" id="briefing-mood-card">
@@ -19573,22 +19720,36 @@ def _render_web_view_html() -> str:
         </div>
       </div>
 
-      <div class="card span-12" id="candidate-evidence-card" data-view-panel="main">
+      <div class="card span-12 main-priority-card" id="main-priority-card" data-view-panel="main">
+        <div class="section-header">
+          <h2>오늘의 우선순위 <span class="muted" id="main-priority-date"></span></h2>
+          <div class="summary-actions">
+            <span class="status-pill">우선 확인 2종</span>
+            <button id="intraday-market-top-check" class="ghost-button" type="button" disabled>장중 거래대금 확인</button>
+          </div>
+        </div>
+        <div class="briefing-live-tools">
+          <p class="briefing-live-status" id="intraday-market-top-status">날짜를 선택하면 우선 확인 종목과 장중 거래대금 교집합을 확인할 수 있습니다.</p>
+        </div>
+        <p class="brief">전체 근거는 관찰 탭에서 확인합니다.</p>
+        <div id="main-priority-rows" class="main-priority-list"><span class="muted">날짜를 선택하세요.</span></div>
+        <div id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden></div>
+        <p class="main-priority-note">저장 리포트, KRX, [12009] 수급 참고값 기준이며 실시간 시세가 아닙니다.</p>
+      </div>
+
+      <div class="card span-12" id="candidate-evidence-card" data-view-panel="watch" hidden>
         <div class="section-header">
           <h2>오늘의 관찰 후보 <span class="muted" id="candidate-evidence-date"></span></h2>
           <span class="status-pill">우선 확인</span>
         </div>
+        <p class="brief">관찰 탭은 전체 후보 근거와 리포트 후 흐름을 함께 확인하는 화면입니다.</p>
         <p class="brief" id="candidate-evidence-notice"></p>
-        <div id="intraday-market-top-overlap" class="intraday-overlap-panel">
-          <div class="intraday-overlap-meta">Naver 장중 참고 대기</div>
-          <span class="muted">장중 거래대금 확인 후 리포트 언급과 겹친 종목이 여기에 표시됩니다.</span>
-        </div>
         <div class="scroll-panel stock-summary-panel candidate-evidence-panel">
           <div id="candidate-evidence-rows" class="candidate-list"><span class="muted">날짜를 선택하세요.</span></div>
         </div>
       </div>
 
-      <div class="card span-12" data-view-panel="main">
+      <div class="card span-12" id="observation-summary-card" data-view-panel="watch" hidden>
         <div class="section-header">
           <h2>국장 관찰 요약 <span class="muted" id="observation-summary-date"></span></h2>
           <span class="status-pill">수급 참고</span>
@@ -19599,14 +19760,16 @@ def _render_web_view_html() -> str:
         </div>
       </div>
 
-      <div class="card span-7 focus-card stock-focus-card" id="stock-context-card" data-view-panel="watch" tabindex="-1" hidden>
+      <div class="card span-7 focus-card stock-focus-card" id="stock-context-card" data-view-panel="stock" tabindex="-1" hidden>
         <div class="section-header">
           <h2>선택 종목</h2>
+          <div class="selection-strip" id="stock-selection-status"><span class="muted">선택된 종목이 없습니다.</span></div>
         </div>
+        <p class="brief">검색, 우선순위, 관찰 후보, 일일 종목 요약에서 선택한 종목의 저장 근거를 확인합니다.</p>
         <div id="stock-context" class="detail-list scroll-panel stock-context-panel"><span class="muted">종목 행을 선택하면 KRX 참고와 수급 정보를 불러옵니다.</span></div>
       </div>
 
-      <div class="card span-5 focus-card stock-focus-card" id="stock-detail-card" data-view-panel="watch" tabindex="-1" hidden>
+      <div class="card span-5 focus-card stock-focus-card" id="stock-detail-card" data-view-panel="stock" tabindex="-1" hidden>
         <div class="section-header">
           <h2>선택 종목 리포트 <span class="muted" id="detail-title"></span></h2>
           <label class="toggle-switch"><input id="report-no-opinion-toggle" type="checkbox"> 의견없음 제외</label>
@@ -19633,8 +19796,9 @@ def _render_web_view_html() -> str:
         <p class="notice">저장 데이터 기반 확인용입니다. 세부 리포트와 시장 참고값을 함께 확인하세요.</p>
       </div>
 
-      <div class="card span-12" data-view-panel="etf" hidden>
+      <div class="card span-12" data-view-panel="rotation" hidden>
         <h2>ETF 흐름 <span class="muted" id="etf-tab-title"></span></h2>
+        <p class="brief">순환매 탭은 업종/테마 흐름과 ETF 참고를 같은 보조 관찰 축으로 묶어 봅니다.</p>
         <div class="scroll-panel">
           <table class="mobile-card-table">
             <thead><tr><th>날짜</th><th>거래대금 상위 ETF</th></tr></thead>
@@ -19652,7 +19816,7 @@ def _render_web_view_html() -> str:
         <p class="notice" id="rotation-notice">저장된 리포트 분류 요약 기준입니다.</p>
       </details>
 
-      <div class="card span-12" data-view-panel="main">
+      <div class="card span-12" data-view-panel="watch" hidden>
         <div class="section-header">
           <h2>일일 종목 요약 <span class="muted" id="daily-date"></span></h2>
           <div class="summary-actions">
@@ -19669,8 +19833,9 @@ def _render_web_view_html() -> str:
         </div>
       </div>
 
-      <div class="card span-12 focus-card" id="category-detail-card" data-view-panel="main" tabindex="-1">
+      <div class="card span-12 focus-card" id="category-detail-card" data-view-panel="rotation" tabindex="-1" hidden>
         <h2>업종/테마 상세 <span class="muted" id="category-title"></span></h2>
+        <p class="brief" id="category-selection-status">업종 또는 테마 행을 선택하면 상세 종목과 최근 흐름을 불러옵니다.</p>
         <div class="scroll-panel">
           <table class="mobile-card-table">
             <thead><tr><th>종목</th><th>건수</th><th>증권사</th><th>목표가</th><th>의견</th><th>KRX 참고</th></tr></thead>
@@ -19680,7 +19845,7 @@ def _render_web_view_html() -> str:
         <p class="notice">업종/테마는 저장된 분류 참고값입니다. 일부 과거 날짜는 최신 저장 분류 기준일 수 있습니다.</p>
       </div>
 
-      <details class="card span-12 compact-details" id="category-trend-details" data-view-panel="main">
+      <details class="card span-12 compact-details" id="category-trend-details" data-view-panel="rotation" hidden>
         <summary><h2>업종/테마 최근 흐름 <span class="muted" id="category-trend-title"></span></h2></summary>
         <div class="scroll-panel compact">
           <table class="mobile-card-table">
@@ -19691,11 +19856,12 @@ def _render_web_view_html() -> str:
         <p class="notice">최근 저장 요약 기준입니다. 분류 기준이 완전히 통일되기 전까지는 참고 흐름으로만 봅니다.</p>
       </details>
 
-      <details class="card span-12 market-reference-card" data-view-panel="market" hidden>
+      <details class="card span-12 market-reference-card" id="market-reference-card" data-view-panel="market" hidden open>
         <summary>
           <h2>시장 참고 <span class="muted">당일 마감 기준</span></h2>
           <span class="muted">시장 흐름 보조 지표</span>
         </summary>
+        <p class="brief">시장 탭은 해석 문장이 아니라 선택 날짜의 저장 KRX/수급 근거를 확인하는 화면입니다.</p>
 
         <details class="market-reference-panel" open>
           <summary>선택 날짜 KRX 시장 참고 <span class="muted" id="market-date"></span></summary>
@@ -19896,13 +20062,19 @@ def _render_web_view_html() -> str:
     function setViewTab(tabName) {
       activeViewTab = tabName || "main";
       document.querySelectorAll("[data-view-tab]").forEach((button) => {
-        button.classList.toggle("active", button.dataset.viewTab === activeViewTab);
+        const isActive = button.dataset.viewTab === activeViewTab;
+        button.classList.toggle("active", isActive);
+        button.setAttribute("aria-current", isActive ? "page" : "false");
+        button.setAttribute("aria-pressed", isActive ? "true" : "false");
       });
       document.querySelectorAll("[data-view-panel]").forEach((panel) => {
         panel.hidden = panel.dataset.viewPanel !== activeViewTab;
       });
       if (activeViewTab === "rotation") {
         document.getElementById("rotation-details").open = true;
+      }
+      if (activeViewTab === "market") {
+        document.getElementById("market-reference-card").open = true;
       }
       if (activeViewTab === "rotation" && selectedDate) {
         loadRotationOverlayOnce(selectedDate).catch((error) => {
@@ -19916,8 +20088,34 @@ def _render_web_view_html() -> str:
       }
     }
 
+    function moveViewTabFromKeyboard(currentButton, key) {
+      const buttons = Array.from(document.querySelectorAll("[data-view-tab]"));
+      const currentIndex = buttons.indexOf(currentButton);
+      if (currentIndex < 0 || !buttons.length) return;
+      let nextIndex = currentIndex;
+      if (key === "ArrowRight") nextIndex = (currentIndex + 1) % buttons.length;
+      if (key === "ArrowLeft") nextIndex = (currentIndex - 1 + buttons.length) % buttons.length;
+      if (key === "Home") nextIndex = 0;
+      if (key === "End") nextIndex = buttons.length - 1;
+      const nextButton = buttons[nextIndex];
+      if (!nextButton) return;
+      nextButton.focus();
+      setViewTab(nextButton.dataset.viewTab);
+    }
+
     function updateSelectionStatus() {
-      return;
+      const stockStatus = document.getElementById("stock-selection-status");
+      if (stockStatus) {
+        stockStatus.innerHTML = selectedStockCode
+          ? `<span class="selection-chip">종목 ${esc(selectedStockLabel || selectedStockCode)}</span>`
+          : '<span class="muted">선택된 종목이 없습니다. 검색 또는 후보/요약 행을 선택하세요.</span>';
+      }
+      const categoryStatus = document.getElementById("category-selection-status");
+      if (categoryStatus) {
+        categoryStatus.textContent = selectedCategoryDisplayName
+          ? `${selectedCategoryLabel || selectedCategoryDisplayName} 선택됨`
+          : "업종 또는 테마 행을 선택하면 상세 종목과 최근 흐름을 불러옵니다.";
+      }
     }
 
     function setActiveStockSelection(stockCode, label = null, source = null) {
@@ -20020,7 +20218,7 @@ def _render_web_view_html() -> str:
         document.getElementById("stock-search-input").value = `${picked.stock_name || "-"} ${picked.stock_code || ""}`.trim();
         updateStockSearchStatus(`${picked.stock_name || "-"} ${picked.stock_code || ""}`.trim() + " 선택");
       }
-      setViewTab("watch");
+      setViewTab("stock");
       loadStockDetail(selectedDate, stockCode, { scrollToDetail: true, userSelected: true }).then(() => {
         syncCategoryFromStock(picked);
       }).catch((error) => {
@@ -20095,16 +20293,18 @@ def _render_web_view_html() -> str:
     function renderLazyTabError(tabName, error) {
       const message = `<span class="muted">오류: ${esc(error)}</span>`;
       if (tabName === "main") {
-        document.getElementById("candidate-evidence-rows").innerHTML = message;
+        document.getElementById("main-priority-rows").innerHTML = message;
       } else if (tabName === "watch") {
         document.getElementById("candidate-evidence-rows").innerHTML = message;
         document.getElementById("backtest-observation-rows").innerHTML = `<tr><td colspan="5" class="muted">오류: ${esc(error)}</td></tr>`;
+      } else if (tabName === "stock") {
+        document.getElementById("stock-context").innerHTML = message;
+        document.getElementById("stock-detail").innerHTML = message;
       } else if (tabName === "market") {
         document.getElementById("flow-trend-rows").innerHTML = `<tr><td colspan="3" class="muted">오류: ${esc(error)}</td></tr>`;
-      } else if (tabName === "etf") {
-        document.getElementById("etf-tab-rows").innerHTML = `<tr><td colspan="2" class="muted">오류: ${esc(error)}</td></tr>`;
       } else if (tabName === "rotation") {
         document.getElementById("rotation-overlay").innerHTML = message;
+        document.getElementById("etf-tab-rows").innerHTML = `<tr><td colspan="2" class="muted">오류: ${esc(error)}</td></tr>`;
       }
     }
 
@@ -20133,12 +20333,13 @@ def _render_web_view_html() -> str:
           await loadFlowTrend(date);
           flowTrendLoadedDate = date;
         }
-      } else if (activeViewTab === "etf") {
+      } else if (activeViewTab === "stock") {
+        return;
+      } else if (activeViewTab === "rotation") {
         if (etfTrendLoadedDate !== date) {
           await loadEtfTrend(date);
           etfTrendLoadedDate = date;
         }
-      } else if (activeViewTab === "rotation") {
         await loadRotationOverlayOnce(date);
       }
     }
@@ -20182,6 +20383,8 @@ def _render_web_view_html() -> str:
       renderDailyStocks(data);
       renderDailyBriefing(data);
       renderObservationSummary(data.observation_summary);
+      document.getElementById("main-priority-date").textContent = `(${date})`;
+      document.getElementById("main-priority-rows").innerHTML = '<span class="muted">오늘 우선순위를 불러오는 중입니다.</span>';
       document.getElementById("candidate-evidence-date").textContent = `(${date})`;
       document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">오늘의 관찰 후보를 불러오는 중입니다.</span>';
       document.getElementById("backtest-observation-date").textContent = `(${date})`;
@@ -20194,7 +20397,7 @@ def _render_web_view_html() -> str:
       renderKrxRecentFlow(data.krx_recent_flow);
       renderInvestorFlow(data.krx_investor_flow);
       document.getElementById("etf-tab-title").textContent = `(${date})`;
-      document.getElementById("etf-tab-rows").innerHTML = '<tr><td colspan="2" class="muted">ETF 탭을 열면 최근 ETF 흐름을 불러옵니다.</td></tr>';
+      document.getElementById("etf-tab-rows").innerHTML = '<tr><td colspan="2" class="muted">순환매 탭을 열면 최근 ETF 흐름을 불러옵니다.</td></tr>';
       document.getElementById("flow-trend-title").textContent = `(${date})`;
       document.getElementById("flow-trend-rows").innerHTML = '<tr><td colspan="3" class="muted">시장 탭을 열면 최근 수급 흐름을 불러옵니다.</td></tr>';
       rotationLoadedDate = null;
@@ -20237,8 +20440,6 @@ def _render_web_view_html() -> str:
       const reportCount = Number(mood.total_reports || 0);
       const stockCount = Number(mood.stock_count || 0);
       const multiCount = Number(mood.multi_report_stock_count || 0);
-      const candidateCount = candidates.length;
-      const notableStocks = Array.isArray(briefing.notable_stocks) ? briefing.notable_stocks : candidates;
       const turnoverPair = briefing.turnover_summary
         ? briefingTurnoverPair(briefing.turnover_summary)
         : briefingLinePair(briefing.turnover_reference_lines, "거래대금 저장값 없음", "");
@@ -20256,13 +20457,6 @@ def _render_web_view_html() -> str:
       document.getElementById("briefing-investor-flow-title").textContent = flowPair.title || "수급 참고";
       setBriefingPairValue("briefing-investor-flow", flowPair);
       document.getElementById("briefing-investor-flow-sub").textContent = flowPair.label;
-      document.getElementById("briefing-watch-chips").innerHTML = notableStocks.length
-        ? notableStocks.slice(0, 5).map((item) => `
-            <button class="briefing-chip" type="button" data-stock-search-code="${esc(item.stock_code || "")}" title="${esc(briefingStockTitle(item))}">
-              ${esc(item.stock_name || "-")}${item.stock_code ? ` ${esc(item.stock_code)}` : ""}
-            </button>
-          `).join("")
-        : '<span class="muted">확인 후보가 없습니다.</span>';
       renderBriefingOneLineComments(data?.market_commentary);
       renderIntradayMarketTopStatus(data?.market_commentary);
       renderIntradayMarketTopOverlap(data?.market_commentary);
@@ -20335,6 +20529,22 @@ def _render_web_view_html() -> str:
       return `Naver 장중 참고 · 호출 ${number(calls)}회${errors ? ` · 오류 ${number(errors)}건` : ""}`;
     }
 
+    function marketStatusLabel(status) {
+      const value = String(status || "").trim().toUpperCase();
+      if (!value) return "";
+      if (value === "OPEN") return "장중";
+      if (value === "CLOSE") return "마감";
+      return value;
+    }
+
+    function intradayMarketTopFreshnessLabel(item) {
+      const parts = [];
+      const status = marketStatusLabel(item?.market_status);
+      if (status) parts.push(status);
+      if (item?.trade_time) parts.push(`거래시각 ${String(item.trade_time).replace("T", " ").slice(0, 16)}`);
+      return parts.join(" · ");
+    }
+
     function renderIntradayMarketTopOverlap(commentary) {
       const node = document.getElementById("intraday-market-top-overlap");
       if (!node) return;
@@ -20343,13 +20553,20 @@ def _render_web_view_html() -> str:
       const items = Array.isArray(reference.items) ? reference.items : [];
       const meta = intradayMarketTopReferenceMeta(reference);
       if (!items.length) {
-        const reason = reference.empty_reason || status.reason || "장중 거래대금 확인 후 리포트 언급과 겹친 종목이 여기에 표시됩니다.";
+        if (!reference.live_fetch) {
+          node.hidden = true;
+          node.innerHTML = "";
+          return;
+        }
+        node.hidden = false;
+        const reason = reference.empty_reason || status.reason || "장중 거래대금 상위와 리포트 언급이 겹친 종목이 없습니다.";
         node.innerHTML = `
           <div class="intraday-overlap-meta">${esc(meta)}</div>
           <span class="muted">${esc(reason)}</span>
         `;
         return;
       }
+      node.hidden = false;
       node.innerHTML = `
         <div class="intraday-overlap-meta">${esc(meta)}</div>
         <div class="intraday-overlap-chips">
@@ -20359,9 +20576,10 @@ def _render_web_view_html() -> str:
             const market = item.market || "-";
             const rank = item.rank ? `${number(item.rank)}위` : "순위 없음";
             const amount = item.trade_amount ? compactTurnover(item.trade_amount) : "거래대금 없음";
+            const freshness = intradayMarketTopFreshnessLabel(item);
             return `
               <button class="intraday-overlap-chip" type="button" data-stock-code="${esc(code)}" title="${esc(name)} ${esc(code)}">
-                ${esc(name)}${code ? ` ${esc(code)}` : ""}<span>${esc(market)} ${esc(rank)} · ${esc(amount)}</span>
+                ${esc(name)}${code ? ` ${esc(code)}` : ""}<span>${esc(market)} ${esc(rank)} · ${esc(amount)}${freshness ? ` · ${esc(freshness)}` : ""}</span>
               </button>
             `;
           }).join("")}
@@ -20399,10 +20617,18 @@ def _render_web_view_html() -> str:
         renderIntradayMarketTopOverlap(data?.market_commentary);
         intradayMarketTopLastLoadedAt = Date.now();
         intradayMarketTopLastLoadedDate = selectedDate;
-        setViewTab("watch");
+        setViewTab("main");
         document.getElementById("intraday-market-top-overlap")?.scrollIntoView({ block: "nearest" });
       } catch (error) {
         if (statusNode) statusNode.textContent = "장중 참고 데이터를 가져오지 못했습니다. 저장된 요약을 계속 표시합니다.";
+        const overlapNode = document.getElementById("intraday-market-top-overlap");
+        if (overlapNode) {
+          overlapNode.hidden = false;
+          overlapNode.innerHTML = `
+            <div class="intraday-overlap-meta">Naver 장중 참고 오류</div>
+            <span class="muted">장중 참고 데이터를 가져오지 못했습니다. 저장된 요약을 계속 표시합니다.</span>
+          `;
+        }
       } finally {
         intradayMarketTopLoading = false;
         if (button) {
@@ -20765,12 +20991,6 @@ def _render_web_view_html() -> str:
       };
     }
 
-    function briefingStockTitle(item) {
-      if (item.reason) return item.reason;
-      if (item.mention_count) return `리포트 ${number(item.mention_count)}건`;
-      return "";
-    }
-
     async function loadRotationOverlay(date) {
       const data = await fetch(`/api/rotation-overlay?date=${encodeURIComponent(date)}&limit=5`, { cache: "no-store" }).then((response) => response.json());
       document.getElementById("rotation-title").textContent = `(${data.business_date})`;
@@ -21092,16 +21312,22 @@ def _render_web_view_html() -> str:
 
     function renderCandidateEvidence(evidence) {
       document.getElementById("candidate-evidence-date").textContent = evidence?.business_date ? `(${evidence.business_date})` : "";
+      document.getElementById("main-priority-date").textContent = evidence?.business_date ? `(${evidence.business_date})` : "";
       document.getElementById("candidate-evidence-notice").textContent = "";
       const rows = evidence?.rows || [];
       if (!rows.length) {
+        document.getElementById("main-priority-rows").innerHTML = '<span class="muted">우선 확인 후보 데이터가 없습니다.</span>';
         document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">눈에 띄는 종목 데이터가 없습니다.</span>';
         return;
       }
-      document.getElementById("candidate-evidence-rows").innerHTML = renderTopTwoReviewCandidates(rows) + rows.map((item) => {
+      document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(rows);
+      document.getElementById("candidate-evidence-rows").innerHTML = rows.map((item, index) => {
         const report = item.report_summary || {};
         const targetMetrics = candidateTargetMetrics(report, item.target_price_progress);
         const market = candidateMarketInline(item.market_reference);
+        const intradayLine = index < 2
+          ? `<div class="candidate-intraday-line"><b>장중 참고</b><span>${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span></div>`
+          : "";
         const turnover = item.market_reference?.turnover
           ? compactTurnover(item.market_reference.turnover)
           : "";
@@ -21109,18 +21335,25 @@ def _render_web_view_html() -> str:
           ? `외국인 순매수 ${number(item.rank_reference.foreign_top_rank)}위`
           : "순매수 상위 없음";
         const flowLine = evidenceFlowLabel(item.stock_flow_reference);
-        const whyNotable = candidateWhyDisplayItems(item.why_notable);
-        const missingInformation = Array.isArray(item.missing_information) ? item.missing_information.filter(Boolean) : [];
+        const layers = candidateEvidenceLayers(item);
+        const whyNotable = candidateWhyDisplayItems(layers.primary);
+        const supportEvidence = candidateWhyDisplayItems(layers.support);
+        const missingInformation = candidateWhyDisplayItems(layers.gap);
         const whyLine = whyNotable.length
-          ? renderQualityChips(whyNotable, "quality-chip--why")
+          ? renderQualityChips(whyNotable, "quality-chip--why", 2)
           : '<span class="muted">근거 보강 필요</span>';
+        const supportLine = supportEvidence.length
+          ? renderQualityChips(supportEvidence, "quality-chip--support", 3)
+          : '<span class="muted">보조 저장 근거 없음</span>';
         const missingLine = missingInformation.length
-          ? renderQualityChips(missingInformation, "quality-chip--missing")
+          ? renderQualityChips(missingInformation, "quality-chip--missing", 1)
           : '<span class="muted">핵심 저장 정보 있음</span>';
         return `<article class="candidate-card" data-stock-code="${esc(item.stock_code || "")}">
           <h3><span class="candidate-title-stock"><span class="candidate-stock-name">${esc(item.stock_name || "-")}</span><span class="candidate-stock-code">${esc(item.stock_code || "")}</span></span><span class="candidate-title-separator" aria-hidden="true"></span>${market} <span class="status-pill">${esc(item.observation_priority || "확인 후보")}</span></h3>
+          ${intradayLine}
           <div class="candidate-quality-grid">
             <div class="quality-line"><b>왜 눈에 띄는지</b>${whyLine}</div>
+            <div class="quality-line"><b>보조 근거</b>${supportLine}</div>
             <div class="quality-line"><b>부족한 정보</b>${missingLine}</div>
           </div>
           <div class="candidate-evidence-grid">
@@ -21136,19 +21369,36 @@ def _render_web_view_html() -> str:
       const picked = (Array.isArray(rows) ? rows : []).slice(0, 2);
       if (!picked.length) return "";
       return `<section class="top-two-candidates" aria-label="우선 확인 2개">${picked.map((item, index) => {
-        const whyItems = candidateWhyDisplayItems(item.why_notable);
+        const layers = candidateEvidenceLayers(item);
+        const whyItems = candidateWhyDisplayItems(layers.primary);
+        const gapItems = candidateWhyDisplayItems(layers.gap);
         const why = whyItems.length
-          ? whyItems.slice(0, 3).join(" · ")
+          ? candidateCompactLabel(whyItems, 2)
           : "근거 보강 필요";
-        const missing = Array.isArray(item.missing_information) && item.missing_information.length
-          ? `부족한 정보: ${item.missing_information.slice(0, 3).join(" · ")}`
-          : "핵심 저장 정보 있음";
+        const missingLine = gapItems.length
+          ? `<span>부족한 정보: ${esc(candidateCompactLabel(gapItems, 1))}</span>`
+          : "";
         return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span></b>
           <span>왜 눈에 띄는지: ${esc(why)}</span>
-          <span>${esc(missing)}</span>
+          <span>장중 참고: ${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span>
+          ${missingLine}
         </button>`;
       }).join("")}</section>`;
+    }
+
+    function candidateIntradayReferenceLabel(reference) {
+      if (!reference || reference.source_configured === false) {
+        return "실시간 소스 미확정";
+      }
+      if (!reference.available) {
+        return reference.notice || "장중 참고값 없음";
+      }
+      const time = reference.reference_time || "장중";
+      const priceText = reference.price !== null && reference.price !== undefined ? price(reference.price) : "-";
+      const changeText = reference.change_percent !== null && reference.change_percent !== undefined ? percent(reference.change_percent) : "-";
+      const turnoverText = reference.turnover !== null && reference.turnover !== undefined ? compactTurnover(reference.turnover) : "-";
+      return `${time} 기준 ${priceText} · ${changeText} · 거래대금 ${turnoverText}`;
     }
 
     function metricPercent(value) {
@@ -21204,9 +21454,25 @@ def _render_web_view_html() -> str:
       return values;
     }
 
-    function renderQualityChips(items, toneClass) {
+    function candidateEvidenceLayers(item) {
+      const layers = item?.evidence_layers || {};
+      return {
+        primary: Array.isArray(layers.primary) ? layers.primary.filter(Boolean) : candidateWhyDisplayItems(item?.why_notable),
+        support: Array.isArray(layers.support) ? layers.support.filter(Boolean) : [],
+        gap: Array.isArray(layers.gap) ? layers.gap.filter(Boolean) : candidateWhyDisplayItems(item?.missing_information)
+      };
+    }
+
+    function candidateCompactLabel(items, limit) {
       const values = Array.isArray(items) ? items.filter(Boolean) : [];
-      const visible = values.slice(0, QUALITY_CHIP_VISIBLE_LIMIT);
+      const visible = values.slice(0, limit);
+      const overflowCount = Math.max(0, values.length - visible.length);
+      return visible.join(" · ") + (overflowCount > 0 ? ` · +${number(overflowCount)}` : "");
+    }
+
+    function renderQualityChips(items, toneClass, visibleLimit = QUALITY_CHIP_VISIBLE_LIMIT) {
+      const values = Array.isArray(items) ? items.filter(Boolean) : [];
+      const visible = values.slice(0, visibleLimit);
       const overflowCount = Math.max(0, values.length - visible.length);
       const chips = visible.map((item) => `<span class="quality-chip ${esc(toneClass)}">${esc(item)}</span>`);
       if (overflowCount > 0) {
@@ -21712,6 +21978,12 @@ def _render_web_view_html() -> str:
       if (!tabTarget) return;
       setViewTab(tabTarget.dataset.viewTab);
     });
+    document.addEventListener("keydown", (event) => {
+      const tabTarget = event.target.closest("[data-view-tab]");
+      if (!tabTarget || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      moveViewTabFromKeyboard(tabTarget, event.key);
+    });
     document.addEventListener("click", (event) => {
       const searchTarget = event.target.closest("[data-stock-search-code]");
       if (searchTarget) {
@@ -21731,6 +22003,7 @@ def _render_web_view_html() -> str:
       const displayName = target.dataset.categoryDisplayName || "";
       const publicCategoryId = safePublicCategoryId(categoryType, target.dataset.publicCategoryId);
       if (!["sector", "theme"].includes(categoryType) || !displayName) return;
+      setViewTab("rotation");
       loadCategoryDetail(selectedDate, categoryType, publicCategoryId, displayName, { scrollToDetail: true, userSelected: true }).catch((error) => {
         document.getElementById("category-rows").innerHTML = `<tr><td colspan="6" class="muted">오류: ${esc(error)}</td></tr>`;
       });
@@ -21741,7 +22014,7 @@ def _render_web_view_html() -> str:
     document.addEventListener("click", (event) => {
       const target = event.target.closest("[data-stock-code]");
       if (!target || !selectedDate || !target.dataset.stockCode) return;
-      setViewTab("watch");
+      setViewTab("stock");
       const stockItem = (currentDailyData?.stocks || []).find((item) => item.stock_code === target.dataset.stockCode);
       loadStockDetail(selectedDate, target.dataset.stockCode, { scrollToDetail: true, userSelected: true }).then(() => {
         syncCategoryFromStock(stockItem);

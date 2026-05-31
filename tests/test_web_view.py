@@ -74,11 +74,14 @@ def test_web_view_main_layout_first_pass_static_markup() -> None:
     assert '<section class="card span-12 date-picker-card" aria-label="날짜 선택">' in html
     assert "<h2>날짜 선택</h2>" not in html
     assert html.index('id="daily-briefing-headline"') < html.index('id="briefing-check-points"')
-    assert html.index('id="briefing-check-points"') < html.index('id="briefing-watch-chips"')
-    assert html.index('id="briefing-watch-chips"') < html.index('id="briefing-one-line-comments"')
+    assert html.index('id="briefing-check-points"') < html.index('id="briefing-one-line-comments"')
     assert html.index('id="briefing-one-line-comments"') < html.index('id="briefing-mood-card"')
     assert html.index('id="briefing-mood-card"') < html.index('class="briefing-reference-card"')
-    assert "확인 종목" in html
+    daily_briefing_body = html.split('class="card span-12 daily-briefing"', 1)[1].split(
+        'id="main-priority-card"', 1
+    )[0]
+    assert "확인 종목" not in daily_briefing_body
+    assert 'id="briefing-watch-chips"' not in html
     assert "국장 시장 분위기" in html
     assert 'id="selection-status"' not in html
     assert "현재 선택" not in html
@@ -100,6 +103,12 @@ def test_web_view_main_layout_first_pass_static_markup() -> None:
     assert "renderTopTwoReviewCandidates" in html
     assert "top-two-candidates" in html
     assert "우선 확인 2개" in html
+    top_two_renderer = html[
+        html.index("function renderTopTwoReviewCandidates") : html.index("function candidateIntradayReferenceLabel")
+    ]
+    assert "핵심 저장 정보 있음" not in top_two_renderer
+    assert "<span>부족한 정보: ${esc(candidateCompactLabel(gapItems, 1))}</span>" in top_two_renderer
+    assert "${missingLine}" in top_two_renderer
     assert "순환매 참고 종목" in html
     assert "순환매 참고 ETF" in html
     assert "renderTargetPriceTrailRows" in html
@@ -110,6 +119,8 @@ def test_web_view_main_layout_first_pass_static_markup() -> None:
     assert 'id="intraday-market-top-check"' in html
     assert 'id="intraday-market-top-status"' in html
     assert 'id="intraday-market-top-overlap"' in html
+    assert 'id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden' in html
+    assert ".intraday-overlap-panel[hidden] { display: none; }" in html
     assert "Naver 장중 참고" in html
     assert "loadIntradayMarketTopForSelectedDate" in html
     assert "intradayMarketTopCooldownMs" in html
@@ -2915,6 +2926,22 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
             post_status = exc.code
         else:
             post_status = 200
+
+        forbidden_control_route_statuses = {}
+        for route, method, body in (
+            ("/api/status", "GET", None),
+            ("/api/scheduler/run-now", "POST", b'{"task":"poll"}'),
+            ("/api/scheduler/set-enabled", "POST", b'{"task":"poll","enabled":false}'),
+            ("/api/operator/pause", "POST", b'{"reason":"web-view boundary test"}'),
+            ("/api/settings/set", "POST", b'{"key":"operation_profile","value":"manual-only"}'),
+        ):
+            request = urllib.request.Request(base_url + route, data=body, method=method)
+            try:
+                urllib.request.urlopen(request, timeout=5)
+            except urllib.error.HTTPError as exc:
+                forbidden_control_route_statuses[(method, route)] = exc.code
+            else:
+                forbidden_control_route_statuses[(method, route)] = 200
     finally:
         server.shutdown()
         server.server_close()
@@ -2924,10 +2951,22 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "Daily Report" in html
     assert 'data-view-tab="main"' in html
     assert 'data-view-tab="watch"' in html
+    assert 'data-view-tab="stock"' in html
     assert 'data-view-tab="market"' in html
-    assert 'data-view-tab="etf"' in html
     assert 'data-view-tab="rotation"' in html
-    assert 'class="card span-12 market-reference-card" data-view-panel="market"' in html
+    assert html.index('data-view-tab="main"') < html.index('data-view-tab="watch"')
+    assert html.index('data-view-tab="watch"') < html.index('data-view-tab="stock"')
+    assert html.index('data-view-tab="stock"') < html.index('data-view-tab="market"')
+    assert html.index('data-view-tab="market"') < html.index('data-view-tab="rotation"')
+    assert 'data-view-tab="main" aria-current="page" aria-pressed="true"' in html
+    assert 'data-view-tab="watch" aria-current="false" aria-pressed="false"' in html
+    assert 'button.setAttribute("aria-current", isActive ? "page" : "false");' in html
+    assert 'button.setAttribute("aria-pressed", isActive ? "true" : "false");' in html
+    assert "moveViewTabFromKeyboard" in html
+    assert '["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)' in html
+    assert 'page.keyboard.press("ArrowRight")' not in html
+    assert 'class="card span-12 market-reference-card" id="market-reference-card" data-view-panel="market" hidden open' in html
+    assert 'document.getElementById("market-reference-card").open = true' in html
     assert "눈에 띄는 종목" in html
     assert 'item.turnover_display || compactAmount(item.turnover, "원")' in html
     assert "리포트 후 흐름" in html
@@ -2944,16 +2983,42 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "관찰 근거" in html
     assert "candidate-evidence-rows" in html
     assert "backtest-observation-rows" in html
-    assert 'id="candidate-evidence-card" data-view-panel="main"' in html
-    assert 'id="candidate-evidence-card" data-view-panel="watch"' not in html
+    assert (
+        'class="card span-12 main-priority-card" id="main-priority-card" '
+        'data-view-panel="main"'
+    ) in html
+    assert ".main-priority-card { order: -1; }" in html
+    main_priority_body = html.split('id="main-priority-card"', 1)[1].split(
+        'id="candidate-evidence-card"', 1
+    )[0]
+    daily_briefing_body = html.split('class="card span-12 daily-briefing"', 1)[1].split(
+        'id="main-priority-card"', 1
+    )[0]
+    assert 'id="intraday-market-top-check"' in main_priority_body
+    assert 'id="intraday-market-top-status"' in main_priority_body
+    assert 'id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden' in main_priority_body
+    assert "전체 근거는 관찰 탭에서 확인합니다." in main_priority_body
+    assert "메인은 오늘 먼저 볼 2종만 압축합니다." not in html
+    assert 'class="live-source-pill"' not in main_priority_body
+    assert ".live-source-pill" not in html
+    assert 'id="intraday-market-top-check"' not in daily_briefing_body
+    assert 'id="intraday-market-top-status"' not in daily_briefing_body
+    assert 'id="candidate-evidence-card" data-view-panel="watch"' in html
+    assert 'id="candidate-evidence-card" data-view-panel="main"' not in html
+    assert 'id="observation-summary-card" data-view-panel="watch" hidden' in html
+    assert 'id="observation-summary-card" data-view-panel="main"' not in html
+    assert "관찰 탭은 전체 후보 근거와 리포트 후 흐름을 함께 확인하는 화면입니다." in html
     assert "candidate-evidence-panel" in html
     assert 'id="backtest-observation-card" data-view-panel="watch"' in html
-    assert html.index('id="candidate-evidence-card"') < html.index('id="observation-summary-date"')
+    assert html.index('id="main-priority-card"') < html.index('id="observation-summary-date"')
+    assert html.index('id="candidate-evidence-card"') < html.index('id="observation-summary-card"')
+    assert html.index('id="observation-summary-card"') < html.index('id="backtest-observation-card"')
     assert html.index('id="candidate-evidence-card"') < html.index('id="backtest-observation-card"')
     assert html.index('id="candidate-evidence-rows"') < html.index('id="backtest-observation-card"')
     assert html.index('id="candidate-evidence-card"') < html.index('id="stock-rows"')
     assert "renderCandidateEvidence(data.candidate_evidence)" not in html
     assert "loadCandidateEvidence(date)" in html
+    assert 'document.getElementById("main-priority-rows").innerHTML = message;' in html
     assert 'if (activeViewTab === "main") {\n        await loadCandidateEvidence(date);' in html
     load_daily_body = html.split("async function loadDaily(date)", 1)[1].split("function renderDailyBriefing", 1)[0]
     assert "loadBacktestObservation(date)" not in load_daily_body
@@ -2980,6 +3045,9 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "candidateTargetMetrics(report, item.target_price_progress)" in html
     assert "candidateFlowMetrics(rank, turnover, flowLine)" in html
     assert "candidateMarketInline(item.market_reference)" in html
+    assert "candidateIntradayReferenceLabel(item.intraday_reference)" in html
+    assert "candidate-intraday-line" in html
+    assert "실시간 소스 미확정" in html
     assert "candidate-info-grid" in html
     assert "candidate-title-stock" in html
     assert "candidate-stock-name" in html
@@ -2988,13 +3056,19 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert ".candidate-title-separator { width: 1px; align-self: stretch;" in html
     assert "candidate-quality-grid" in html
     assert "quality-chip--why" in html
+    assert "quality-chip--support" in html
     assert "quality-chip--missing" in html
-    assert ".candidate-quality-grid { display: grid; grid-template-columns: minmax(120px, .72fr) minmax(0, 1.14fr) minmax(0, 1.14fr);" in html
-    assert ".candidate-quality-grid .quality-line:first-child { grid-column: span 2;" in html
-    assert "renderQualityChips(whyNotable, \"quality-chip--why\")" in html
-    assert "renderQualityChips(missingInformation, \"quality-chip--missing\")" in html
-    assert "candidateWhyDisplayItems(item.why_notable)" in html
+    assert ".candidate-quality-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, .95fr);" in html
+    assert ".candidate-quality-grid .quality-line:first-child { grid-column: span 2;" not in html
+    assert "renderQualityChips(whyNotable, \"quality-chip--why\", 2)" in html
+    assert "renderQualityChips(supportEvidence, \"quality-chip--support\", 3)" in html
+    assert "renderQualityChips(missingInformation, \"quality-chip--missing\", 1)" in html
+    assert "candidateCompactLabel(whyItems, 2)" in html
+    assert "candidateCompactLabel(gapItems, 1)" in html
+    assert "candidateEvidenceLayers(item)" in html
+    assert "candidateWhyDisplayItems(layers.primary)" in html
     assert "return values;" in html
+    assert "브로커 폭" not in html
     assert 'item !== "브로커 폭"' not in html
     assert "quality-chip-overflow" in html
     assert "QUALITY_CHIP_VISIBLE_LIMIT = 6" in html
@@ -3014,7 +3088,10 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert '["의견", opinion(report.dominant_opinion)]' not in html
     assert "증권사 ${number(report.broker_count)}곳" not in html
     assert "<b>KRX</b>" not in html
-    assert "renderTopTwoReviewCandidates(rows) + rows.map" in html
+    assert "renderTopTwoReviewCandidates(rows) + rows.map" not in html
+    assert 'document.getElementById("candidate-evidence-rows").innerHTML = rows.map' in html
+    assert 'document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(rows);' in html
+    assert "오늘의 우선순위" in html
     assert '<p class="brief" id="candidate-evidence-notice"></p>' in html
     assert 'document.getElementById("candidate-evidence-notice").textContent = "";' in html
     assert "${market} <span class=\"status-pill\"" in html
@@ -3086,7 +3163,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "item.time" in html
     assert "setBriefingPairValue" in html
     assert "눈에 띄는 업종" not in html
-    assert "briefing-watch-chips" in html
+    assert "briefing-watch-chips" not in html
     assert "briefing-check-points" in html
     assert "renderBriefingCheckPoints" in html
     assert "briefingTurnoverPair" in html
@@ -3132,22 +3209,30 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "const quantity = (value, unit = \"주\")" in html
     assert "active-selection" in html
     assert "stock-context-card" in html
-    assert 'id="stock-context-card" data-view-panel="watch"' in html
+    assert 'id="stock-context-card" data-view-panel="stock"' in html
+    assert 'id="stock-context-card" data-view-panel="watch"' not in html
     assert 'id="stock-context-card" data-view-panel="main"' not in html
     assert "card span-7 focus-card stock-focus-card" in html
     assert "stock-context-panel" in html
     assert "stock-context" in html
     assert "선택 종목</h2>" in html
+    assert "stock-selection-status" in html
+    assert "검색 또는 후보/요약 행을 선택하세요." in html
+    assert "검색, 우선순위, 관찰 후보, 일일 종목 요약에서 선택한 종목의 저장 근거를 확인합니다." in html
     assert "선택 종목 상태" not in html
     assert "stock-detail-card" in html
-    assert 'id="stock-detail-card" data-view-panel="watch"' in html
+    assert 'id="stock-detail-card" data-view-panel="stock"' in html
+    assert 'id="stock-detail-card" data-view-panel="watch"' not in html
     assert 'id="stock-detail-card" data-view-panel="main"' not in html
     assert "card span-5 focus-card stock-focus-card" in html
     assert "stock-report-panel" in html
     assert "category-detail-card" in html
+    assert "category-selection-status" in html
+    assert "업종 또는 테마 행을 선택하면 상세 종목과 최근 흐름을 불러옵니다." in html
+    assert "selectedCategoryLabel || selectedCategoryDisplayName" in html
     assert html.index('id="candidate-evidence-card"') < html.index('id="stock-context-card"')
     assert html.index('id="stock-detail-card"') < html.index('id="backtest-observation-card"')
-    assert 'setViewTab("watch");' in html
+    assert 'setViewTab("stock");' in html
     assert "scrollIntoView" in html
     assert "market-notice" in html
     assert "mobile-card-table" in html
@@ -3211,12 +3296,14 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "<b>${esc(data.stock_name || \"-\")} ${esc(data.stock_code || \"\")} | ${market}</b>" in html
     assert "brokerDisplay(item.broker_display)" in html
     assert "KRX 시장 참고" in html
+    assert "시장 탭은 해석 문장이 아니라 선택 날짜의 저장 KRX/수급 근거를 확인하는 화면입니다." in html
     assert "KRX 최근 흐름" in html
     assert "주기 데이터 점검" not in html
     assert "저장된 테마 구성 종목 중 선택 날짜에 리포트가 나온 종목" not in html
     assert "투자자 수급 참고" in html
     assert "수급 흐름" in html
     assert "순환매 참고" in html
+    assert "순환매 탭은 업종/테마 흐름과 ETF 참고를 같은 보조 관찰 축으로 묶어 봅니다." in html
     assert "rotation-details" in html
     assert 'document.getElementById("rotation-details").open = true' in html
     assert "renderRotationCandidateStocks(item.candidate_stocks)" in html
@@ -3333,6 +3420,13 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     ):
         _assert_public_safe_payload(public_payload)
     assert post_status == 405
+    assert forbidden_control_route_statuses == {
+        ("GET", "/api/status"): 404,
+        ("POST", "/api/scheduler/run-now"): 405,
+        ("POST", "/api/scheduler/set-enabled"): 405,
+        ("POST", "/api/operator/pause"): 405,
+        ("POST", "/api/settings/set"): 405,
+    }
 
 
 def test_web_view_server_logs_api_perf_and_gzips_large_json(tmp_path, monkeypatch) -> None:
@@ -3518,6 +3612,15 @@ def test_web_view_browser_smoke_checks_tablet_and_large_mobile_viewports() -> No
     assert "#intraday-market-top-check" in source
     assert "#intraday-market-top-overlap" in source
     assert "intraday_overlap_panel" in source
+    assert "intraday_overlap_initial_visible" in source
+    assert "intraday_overlap_visible_before_check" in source
+    assert "#observation-summary-card" in source
+    assert "observation_summary_main_visible" in source
+    assert "watch_observation_summary_visible" in source
+    assert "observation_summary_visible_on_main" in source
+    assert "watch_observation_summary_missing" in source
+    assert 'for text in ("오늘 읽을 요약", "오늘의 우선순위")' in source
+    assert '"국장 관찰 요약")' not in source
     assert ".is_visible()" in source
 
 
@@ -3526,8 +3629,17 @@ def test_web_view_intraday_market_top_button_js_has_safe_click_flow() -> None:
 
     assert "currentStatus.can_overlap_intraday_market_top === false" in html
     assert "장중 참고 데이터를 가져오지 못했습니다. 저장된 요약을 계속 표시합니다." in html
+    assert "Naver 장중 참고 오류" in html
+    assert "장중 거래대금 상위와 리포트 언급이 겹친 종목이 없습니다." in html
+    assert "intradayMarketTopFreshnessLabel(item)" in html
+    assert "marketStatusLabel(item?.market_status)" in html
+    assert "거래시각" in html
+    assert "node.hidden = true;" in html
+    assert "node.hidden = false;" in html
+    assert "overlapNode.hidden = false;" in html
     assert "intradayMarketTopLastLoadedAt = Date.now();" in html
-    assert "setViewTab(\"watch\");" in html
+    assert "setViewTab(\"main\");" in html
+    assert "setViewTab(\"watch\");" not in html
     assert "scrollIntoView({ block: \"nearest\" })" in html
 
 
