@@ -1014,8 +1014,11 @@ def test_web_view_browser_smoke_json_reports_read_only_contract(tmp_path, monkey
         return {
             "surface": "web-view-browser-smoke",
             "read_only": True,
+            "live_fetch": False,
             "sends_telegram": False,
             "registers_scheduler": False,
+            "scoring": False,
+            "recommendation": False,
             "host": "127.0.0.1",
             "business_date": business_date.isoformat(),
             "stock_limit": stock_limit,
@@ -1027,10 +1030,19 @@ def test_web_view_browser_smoke_json_reports_read_only_contract(tmp_path, monkey
                     "name": "mobile",
                     "width": 390,
                     "height": 844,
-                    "tab_count": 4,
+                    "tab_count": 5,
+                    "tab_order": ["main", "watch", "stock", "market", "rotation"],
                     "search_input": True,
                     "candidate_panel": True,
                     "watch_panel_clickable": True,
+                    "stock_panel_clickable": True,
+                    "market_panel_clickable": True,
+                    "rotation_panel_clickable": True,
+                    "watch_tab_current": True,
+                    "stock_tab_current": True,
+                    "market_tab_current": True,
+                    "rotation_tab_current": True,
+                    "keyboard_market_current": True,
                     "horizontal_overflow_px": 0,
                 }
             ],
@@ -1055,13 +1067,77 @@ def test_web_view_browser_smoke_json_reports_read_only_contract(tmp_path, monkey
     assert exit_code == 0
     assert payload["surface"] == "web-view-browser-smoke"
     assert payload["read_only"] is True
+    assert payload["live_fetch"] is False
     assert payload["sends_telegram"] is False
     assert payload["registers_scheduler"] is False
+    assert payload["scoring"] is False
+    assert payload["recommendation"] is False
     assert payload["host"] == "127.0.0.1"
     assert payload["issue_count"] == 0
     assert captured["business_date"] == date(2026, 5, 11)
     assert captured["stock_limit"] == 12
     assert captured["respect_access_code"] is False
+
+
+def test_web_view_browser_smoke_text_reports_tab_contract(tmp_path, monkeypatch, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+
+    def fake_probe(
+        config,
+        repository,
+        *,
+        business_date,
+        stock_limit,
+        respect_access_code,
+    ):
+        return {
+            "surface": "web-view-browser-smoke",
+            "read_only": True,
+            "live_fetch": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "scoring": False,
+            "recommendation": False,
+            "host": "127.0.0.1",
+            "business_date": business_date.isoformat(),
+            "stock_limit": stock_limit,
+            "access_code_mode": "temporary_disabled_for_local_smoke",
+            "issue_count": 0,
+            "issues": [],
+            "viewports": [
+                {
+                    "name": "desktop",
+                    "width": 1366,
+                    "height": 900,
+                    "tab_count": 5,
+                    "tab_order": ["main", "watch", "stock", "market", "rotation"],
+                    "watch_panel_clickable": True,
+                    "stock_panel_clickable": True,
+                    "market_panel_clickable": True,
+                    "rotation_panel_clickable": True,
+                    "horizontal_overflow_px": 0,
+                }
+            ],
+            "api_checks": [],
+        }
+
+    monkeypatch.setattr(cli_module, "_probe_web_view_browser_smoke", fake_probe)
+
+    exit_code = cli_module._run_web_view_browser_smoke(
+        config,
+        repository,
+        business_date=date(2026, 5, 11),
+        stock_limit=12,
+        respect_access_code=False,
+        as_json=False,
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "tabs=5" in output
+    assert "order=main/watch/stock/market/rotation" in output
+    assert "panels=watch=True stock=True market=True rotation=True" in output
 
 
 def test_external_web_view_smoke_accepts_access_gate_and_blocks_admin(monkeypatch) -> None:
