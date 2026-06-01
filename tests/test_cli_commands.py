@@ -1,4 +1,4 @@
-﻿import json
+import json
 import sqlite3
 from argparse import Namespace
 from datetime import date, datetime, timedelta
@@ -2376,6 +2376,250 @@ def test_category_catalog_discover_industries_json_marks_existing_display_matche
     ]
     assert payload[1]["existing_display_match"] is False
     assert payload[1]["existing_matches"] == []
+
+
+def test_news_intelligence_preview_parser_accepts_operator_inputs() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "news-intelligence-preview",
+            "--stock-name",
+            "삼성전자",
+            "--stock-code",
+            "005930",
+            "--alias",
+            "삼전",
+            "--date",
+            "2026-06-01",
+            "--scrapling-exe",
+            "C:/tools/scrapling.exe",
+        ]
+    )
+
+    assert args.command == "news-intelligence-preview"
+    assert args.stock_name == "삼성전자"
+    assert args.stock_code == "005930"
+    assert args.alias == ["삼전"]
+    assert args.date == date(2026, 6, 1)
+    assert str(args.scrapling_exe).endswith("tools\\scrapling.exe")
+
+
+def test_news_intelligence_preview_cli_outputs_operator_only_json(tmp_path, monkeypatch, capsys) -> None:
+    scrapling_exe = tmp_path / "scrapling.exe"
+    scrapling_exe.write_text("fake", encoding="utf-8")
+
+    mainnews = """
+* 2026. 06. 01
+  :   2026. 06. 01. 09:10
+
+      [### 삼성전자, AI 반도체 공급 계약 체결
+
+      삼성전자가 글로벌 고객사와 AI 반도체 공급 계약을 체결했다.
+
+      한국경제
+
+      ![](https://imgnews.pstatic.net/image/origin/015/2026/06/01/1.jpg)](https://n.news.naver.com/article/015/0000001)
+"""
+    section_json = json.dumps(
+        {
+            "articles": [
+                {
+                    "officeHName": "한국경제",
+                    "title": "삼성전자 투자 확대",
+                    "subcontent": "삼성전자가 반도체 투자 확대 계획을 밝혔다.",
+                    "date": "20260601101000",
+                    "url": "https://n.news.naver.com/mnews/article/015/0000002?sid=101258402",
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, **_kwargs):
+        output_path = command[4]
+        if command[2] == "get":
+            (tmp_path / "last_get.txt").write_text(command[3], encoding="utf-8")
+            tmp_output = section_json
+        else:
+            tmp_output = mainnews
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(tmp_output)
+        return Result()
+
+    monkeypatch.setattr("stock_monitor.news.collectors.subprocess.run", fake_run)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-preview",
+            "--stock-name",
+            "삼성전자",
+            "--stock-code",
+            "005930",
+            "--alias",
+            "삼전",
+            "--date",
+            "2026-06-01",
+            "--scrapling-exe",
+            str(scrapling_exe),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["surface"] == "news-intelligence-preview"
+    assert payload["operator_only"] is True
+    assert payload["public_safe"] is False
+    assert payload["live_fetch"] is True
+    assert payload["writes_db"] is False
+    assert payload["sends_telegram"] is False
+    assert payload["registers_scheduler"] is False
+    assert payload["connects_web_view"] is False
+    assert payload["page_limit"] == 1
+    assert payload["full_day_complete"] is False
+    assert payload["matched_count"] >= 1
+    assert payload["articles"][0]["matched_alias"] == "삼성전자"
+    assert payload["articles"][0]["match_reason"] == "stock_name"
+    assert payload["report"]["operator_only"] is True
+    assert payload["report"]["public_safe"] is False
+
+
+def test_news_intelligence_preview_cli_keeps_default_no_write_guard(tmp_path, monkeypatch, capsys) -> None:
+    scrapling_exe = tmp_path / "scrapling.exe"
+    scrapling_exe.write_text("fake", encoding="utf-8")
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, **_kwargs):
+        output_path = command[4]
+        with open(output_path, "w", encoding="utf-8") as file:
+            if command[2] == "get":
+                file.write('{"articles":[]}')
+            else:
+                file.write(
+                    """
+* 2026. 06. 01
+  :   2026. 06. 01. 09:10
+
+      [### 삼성전자, AI 반도체 공급 계약 체결
+
+      삼성전자가 글로벌 고객사와 AI 반도체 공급 계약을 체결했다.
+
+      한국경제
+
+      ![](https://imgnews.pstatic.net/image/origin/015/2026/06/01/1.jpg)](https://n.news.naver.com/article/015/0000001)
+"""
+                )
+        return Result()
+
+    monkeypatch.setattr("stock_monitor.news.collectors.subprocess.run", fake_run)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-preview",
+            "--stock-name",
+            "삼성전자",
+            "--stock-code",
+            "005930",
+            "--date",
+            "2026-06-01",
+            "--scrapling-exe",
+            str(scrapling_exe),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["writes_db"] is False
+    assert "saved_run_id" not in payload
+
+
+
+def test_news_intelligence_preview_cli_keeps_partial_source_failure(tmp_path, monkeypatch, capsys) -> None:
+    scrapling_exe = tmp_path / "scrapling.exe"
+    scrapling_exe.write_text("fake", encoding="utf-8")
+
+    class Result:
+        def __init__(self, returncode: int) -> None:
+            self.returncode = returncode
+            self.stdout = ""
+            self.stderr = "blocked"
+
+    def fake_run(command, **_kwargs):
+        output_path = command[4]
+        if "flashnews" in command[3]:
+            return Result(1)
+        with open(output_path, "w", encoding="utf-8") as file:
+            if command[2] == "get":
+                file.write(
+                    json.dumps(
+                        {
+                            "articles": [
+                                {
+                                    "officeHName": "한국경제",
+                                    "title": "삼성전자 수주 증가",
+                                    "subcontent": "삼성전자 수주 증가 소식이다.",
+                                    "date": "20260601101000",
+                                    "url": "https://n.news.naver.com/mnews/article/015/0000003",
+                                }
+                            ]
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            else:
+                file.write("")
+        return Result(0)
+
+    monkeypatch.setattr("stock_monitor.news.collectors.subprocess.run", fake_run)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-preview",
+            "--stock-name",
+            "삼성전자",
+            "--date",
+            "2026-06-01",
+            "--scrapling-exe",
+            str(scrapling_exe),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert any(source["fetch_error"] for source in payload["sources"])
+    assert any("flashnews" in warning for warning in payload["warnings"])
+    assert payload["parsed_count"] > 0
+
+
+def test_news_intelligence_preview_cli_reports_missing_scrapling_path(tmp_path, capsys) -> None:
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-preview",
+            "--stock-name",
+            "삼성전자",
+            "--date",
+            "2026-06-01",
+            "--scrapling-exe",
+            str(tmp_path / "missing-scrapling.exe"),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert payload["surface"] == "news-intelligence-preview"
+    assert payload["operator_only"] is True
+    assert payload["public_safe"] is False
+    assert payload["live_fetch"] is True
+    assert "missing" in payload["error"]
+    assert ".env" not in json.dumps(payload)
 
 
 def test_resolve_web_view_value_qa_dates_includes_recent_business_days_and_dedupes(tmp_path, monkeypatch) -> None:

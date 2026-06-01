@@ -1,23 +1,24 @@
-﻿# News Intelligence Contract
+# News Intelligence Contract
 
 ## Purpose
 
-This contract defines the operator-only news intelligence core for KR_Report / Stock Monitor.
+This contract defines the first operator-only news intelligence module for KR_Report / Stock Monitor.
 
 The module may generate sentiment scores, event impact labels, and an operator summary, but only inside an operator-only recommendation-draft lane. It does not approve public numeric scores, investment grades, trading calls, Telegram candidate alerts, broker execution, or order routing.
 
 ## Scope
 
-Allowed in the core analysis slice:
+Allowed in v1:
 
 - Manual or in-memory article input supplied by a caller or test fixture.
+- Date-mode Naver stock-news collection boundaries for operator-only preview work.
+- Fixture-backed parser tests for Naver stock-news pages.
 - Deduplication by URL, normalized title, and similar titles.
 - Article-level concise summary, sentiment label, sentiment score, keywords, event types, impact label, and impact explanation.
 - Stock-level operator JSON with sentiment distribution, top five news items, important events, and operator summary.
 - Future analyzer injection so an LLM-backed analyzer can be added later behind the same contract.
-- Pure Python report-linked evidence classification that combines news judgment with existing report, KRX, flow, and candidate context passed in by the caller.
 
-Blocked in the core analysis slice:
+Blocked by default in v1:
 
 - Automatic live news crawling or provider smoke.
 - SQLite writes or migrations.
@@ -26,6 +27,57 @@ Blocked in the core analysis slice:
 - Public `web-view` exposure.
 - Broker secrets, broker execution, order routing, or order suggestions.
 - Public buy/sell, one-pick, investment-grade, target-return, conviction, entry, or exit wording.
+
+## Collection Boundary
+
+The v1 source lane is Naver stock news, but collection stays operator-only and disconnected from production surfaces.
+
+Supported source lanes:
+
+- `https://stock.naver.com/news/flashnews`
+- `https://stock.naver.com/news/mainnews`
+- `https://stock.naver.com/news/ranknews`
+- `https://stock.naver.com/api/domestic/news/focus?sid=401&page=1&pageSize=20&date=YYYYMMDD` for `시황·전망`
+- `https://stock.naver.com/api/domestic/news/focus?sid=402&page=1&pageSize=20&date=YYYYMMDD` for `기업·종목분석`
+
+The default collection mode is date mode, not latest mode. The default target date is Asia/Seoul today. Latest-mode views may hide older same-day items, so v1 request specs should represent a full target-date collection intent per source lane.
+
+The collector boundary is:
+
+- `NewsCollector` protocol for article collection.
+- `ManualNewsCollector` for in-memory and fixture-driven use.
+- `NaverStockNewsCollector` for Naver stock-news source boundaries.
+- Transport and parser separation: tests validate Markdown page parsing and focus API JSON parsing with fixtures; live transport is injected manually and must not run automatically.
+- `/news/section` rendered Markdown is a source-probe or active-tab fallback only. The two supported section lanes must use the focus API `sid` values above.
+- Stock matching by company name, stock name, stock code, and caller-supplied aliases after per-source deduplication.
+
+Scrapling is the preferred active source-probe tool for rendered Naver source inspection and manual operator preview collection. The allowed v1 command is:
+
+- `python -m stock_monitor news-intelligence-preview --stock-name NAME [--stock-code CODE] [--alias ALIAS] [--date YYYY-MM-DD]`
+
+This command is manual and operator-only. It emits JSON to stdout, uses temporary files for Scrapling output, deletes those files after reading, and must not write live fetch results into the repository, SQLite, logs, scheduler state, Telegram, admin-gui, or public `web-view`.
+
+The preview command is intentionally incomplete as a day-level collector:
+
+- `page_limit=1`
+- `full_day_complete=false`
+- `coverage_note="v1 preview fetches first visible/API page per source lane"`
+
+Per-source preview diagnostics must include `fetched`, `fetch_error`, `parsed_count`, and `matched_count`. Overall diagnostics must include `parsed_count`, `deduped_count`, and `matched_count`. Matched articles must include `source_lane`, `matched_alias`, `match_reason`, `match_scope`, `relevance`, and `relevance_reason`.
+
+Supported relevance labels:
+
+- `direct`: the stock appears in the title or title+summary and the article is primarily stock-specific.
+- `indirect`: the stock appears only in the summary/body.
+- `market_context`: the article is mainly index, ETF, sector, flow, or broad market context even when the stock is mentioned.
+
+Supported match scopes:
+
+- `title`
+- `summary`
+- `both`
+
+Partial source failures are allowed and should be represented in `sources[*].fetch_error` plus `warnings`. The command should exit non-zero only when Scrapling is unavailable or no articles can be parsed from any source lane.
 
 ## Output Contract
 
@@ -42,6 +94,17 @@ The JSON report must include:
 - `important_events`
 - `top_news`
 - `operator_summary`
+
+The manual preview wrapper must also include contract flags:
+
+- `surface="news-intelligence-preview"`
+- `operator_only=true`
+- `public_safe=false`
+- `live_fetch=true`
+- `writes_db=false`
+- `sends_telegram=false`
+- `registers_scheduler=false`
+- `connects_web_view=false`
 
 `overall_sentiment` and article `sentiment_score` are internal operator values on the `-100..100` scale. They are not public scores and must not be copied into public `web-view` or Telegram output without a later policy change.
 
@@ -74,8 +137,13 @@ The deterministic v1 analyzer is Korean-rule based. It should treat price jumps,
 News intelligence is not an isolated news table. Its operator value comes from linking news judgment to the existing report pipeline:
 
 - `target_date + stock_code` is the primary join key.
-- Existing report references, daily summary presence, candidate priority presence, KRX reference presence, KRX turnover, and investor-flow presence are caller-supplied context in the pure core slice.
+- `reports.source_id` and `reports.identity_key` may be stored as related report references.
+- `daily_stock_summaries` provides same-day report density and broker/opinion context.
+- KRX stock snapshots provide same-day price, volume, turnover, and market-reference presence.
+- KRX investor-flow rows provide stored flow context when available.
 - Candidate-evidence priority may be used as operator-only context, but news evidence must not be copied into public candidate DTOs without a separate public-safe contract.
+
+The report-linked analysis slice remains pure Python. The default `news-intelligence-preview` command must still emit JSON only and must not write DB rows, start schedulers, send Telegram, or expose anything in web-view/admin-gui.
 
 Supported operator-only evidence cases:
 
@@ -92,7 +160,7 @@ These cases may use operator recommendation labels such as `strengthen_report_ca
 
 ## Integration Boundary
 
-The core analysis slice is a pure Python library under `stock_monitor.news`.
+The v1 module is a pure Python library under `stock_monitor.news`.
 
 It must not import or call:
 
@@ -102,7 +170,7 @@ It must not import or call:
 - web-view route builders
 - scheduler scripts
 
-Public surface integration requires a separate surface-contract update and public-safe QA.
+The safe first integration point is the manual/operator CLI preview above. Public surface integration requires a separate surface-contract update and public-safe QA.
 
 ## LLM Extension Point
 
