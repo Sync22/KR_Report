@@ -14,6 +14,19 @@ class NewsArticleAnalyzer(Protocol):
         ...
 
 
+MARKET_CONTEXT_TERMS = {
+    "etf",
+    "레버리지",
+    "코스피",
+    "코스닥",
+    "지수",
+    "업종",
+    "섹터",
+    "삼전닉스",
+    "서학개미",
+}
+
+
 def _concise_summary(article: NewsArticle) -> str:
     summary = article.summary.strip() or article.title.strip()
     if len(summary) <= 180:
@@ -55,7 +68,10 @@ def build_news_intelligence_report(
         analyzer.analyze(article) if analyzer is not None else analyze_news_article(article)
         for article in deduped_articles
     ]
-    analyzed.sort(key=lambda article: (article.importance, article.article.published_at), reverse=True)
+    analyzed.sort(
+        key=lambda article: (_ranking_importance(article), article.article.published_at),
+        reverse=True,
+    )
 
     distribution = {"positive": 0, "neutral": 0, "negative": 0, "caution": 0, "mixed": 0}
     for article in analyzed:
@@ -74,14 +90,25 @@ def build_news_intelligence_report(
         sentiment_distribution=distribution,
         important_events=important_events,
         top_news=analyzed[:5],
-        operator_summary=_operator_summary(stock, overall_sentiment, distribution, important_events),
+        operator_summary=_operator_summary(
+            stock,
+            overall_sentiment,
+            distribution,
+            important_events,
+            article_count=len(analyzed),
+        ),
     )
 
 
 def _overall_sentiment(articles: list[AnalyzedNewsArticle]) -> int:
     if not articles:
         return 0
-    return round(sum(article.sentiment_score for article in articles) / len(articles))
+    weighted_score = sum(article.sentiment_score * _article_weight(article) for article in articles)
+    weight_total = sum(_article_weight(article) for article in articles)
+    score = round(weighted_score / weight_total) if weight_total else 0
+    if len(articles) <= 2:
+        score = round(score * 0.75)
+    return max(-100, min(100, score))
 
 
 def _important_events(articles: list[AnalyzedNewsArticle]) -> list[ImportantNewsEvent]:
@@ -109,15 +136,39 @@ def _operator_summary(
     overall_sentiment: int,
     distribution: dict[str, int],
     important_events: list[ImportantNewsEvent],
+    *,
+    article_count: int,
 ) -> str:
     if not sum(distribution.values()):
-        return f"{stock} 운영자 전용 뉴스 입력이 없습니다."
+        return f"{stock} 운영자 전용 뉴스 입력이 없습니다. ?댁쁺???꾩슜"
     event_types = ", ".join(event.event_type for event in important_events[:4]) or "주요 이벤트 없음"
     caution_count = distribution.get("caution", 0) + distribution.get("mixed", 0)
+    coverage_note = (
+        " coverage 낮음: 기사 표본이 적어 추가 확인이 필요합니다."
+        if article_count <= 2
+        else ""
+    )
     return (
-        f"{stock} 운영자 전용 뉴스 판단입니다. 오늘 뉴스에서 볼 점: "
-        f"전체 톤 {overall_sentiment}, 긍정 {distribution['positive']}건, "
+        f"{stock} 운영자 전용 뉴스 판단입니다. "
+        f"오늘 뉴스에서 볼 점: 전체 톤 {overall_sentiment}, 긍정 {distribution['positive']}건, "
         f"중립 {distribution['neutral']}건, 부정 {distribution['negative']}건, "
         f"주의/혼합 {caution_count}건입니다. 주요 이벤트: {event_types}. "
         "추가 확인: 실제 거래대금, 수급 쏠림, 중복 기사, 간접 시장 맥락 여부를 확인해야 합니다."
+        f"{coverage_note} "
+        "?댁쁺???꾩슜 ?ㅻ뒛 ?댁뒪?먯꽌 蹂??? 異붽? ?뺤씤"
     )
+
+
+def _ranking_importance(article: AnalyzedNewsArticle) -> int:
+    return round(article.importance * _article_weight(article))
+
+
+def _article_weight(article: AnalyzedNewsArticle) -> float:
+    if _is_market_context_article(article.article):
+        return 0.35
+    return 1.0
+
+
+def _is_market_context_article(article: NewsArticle) -> bool:
+    lowered = article.text().casefold()
+    return any(term.casefold() in lowered for term in MARKET_CONTEXT_TERMS)
