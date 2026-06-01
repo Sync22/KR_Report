@@ -2556,6 +2556,11 @@ def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
             "sources": [source.to_dict() for source in preview.sources],
             "articles": [article.to_dict() for article in preview.articles],
             "report": report.to_dict(),
+            "operator_decision_notes": _news_intelligence_operator_decision_notes(
+                preview.articles,
+                [analyze_news_article(match.article) for match in preview.articles],
+                report_context_evaluated=bool(args.save_observation),
+            ),
             "warnings": preview.warnings,
             "parsed_count": preview.parsed_count,
             "deduped_count": preview.deduped_count,
@@ -2643,6 +2648,126 @@ def _save_news_intelligence_observation(
         "saved_db_path": str(db_path),
         "saved_evidence_count": len(evidence_rows),
     }
+
+
+def _news_intelligence_operator_decision_notes(
+    matches: list[object],
+    analyzed_articles: list[object],
+    *,
+    report_context_evaluated: bool,
+) -> dict[str, object]:
+    matched_count = len(matches)
+    relevance_counts = Counter(str(getattr(match, "relevance", "")) for match in matches)
+    direct_count = relevance_counts.get("direct", 0)
+    indirect_count = relevance_counts.get("indirect", 0)
+    market_context_count = relevance_counts.get("market_context", 0)
+    dominant_relevance = _news_intelligence_dominant_relevance(relevance_counts)
+    event_counts: Counter[str] = Counter()
+    caution_count = 0
+    positive_count = 0
+    negative_count = 0
+    for analyzed in analyzed_articles:
+        sentiment = str(getattr(analyzed, "sentiment", ""))
+        stock_impact = str(getattr(analyzed, "stock_impact", ""))
+        event_types = tuple(str(event) for event in getattr(analyzed, "event_types", ()))
+        event_counts.update(event_types)
+        if sentiment in {"Caution", "Mixed"} or stock_impact == "Caution" or "Risk/Caution" in event_types:
+            caution_count += 1
+        if sentiment == "Positive" or stock_impact in {"Positive", "Strong Positive"}:
+            positive_count += 1
+        if sentiment == "Negative" or stock_impact in {"Negative", "Strong Negative"}:
+            negative_count += 1
+    coverage_level = _news_intelligence_coverage_level(matched_count)
+    market_context_heavy = matched_count > 0 and market_context_count >= max(1, round(matched_count * 0.5))
+    return {
+        "coverage_level": coverage_level,
+        "matched_count": matched_count,
+        "direct_count": direct_count,
+        "indirect_count": indirect_count,
+        "market_context_count": market_context_count,
+        "dominant_relevance": dominant_relevance,
+        "caution_count": caution_count,
+        "positive_count": positive_count,
+        "negative_count": negative_count,
+        "top_event_types": [event for event, _count in event_counts.most_common(5)],
+        "market_context_heavy": market_context_heavy,
+        "decision_note_ko": _news_intelligence_decision_note_ko(
+            coverage_level=coverage_level,
+            matched_count=matched_count,
+            market_context_heavy=market_context_heavy,
+            caution_count=caution_count,
+            positive_count=positive_count,
+            negative_count=negative_count,
+        ),
+        "missing_context": {
+            "report_krx_context": (
+                {
+                    "evaluated": True,
+                    "reason": "report/KRX context is evaluated because --save-observation is used",
+                }
+                if report_context_evaluated
+                else {
+                    "evaluated": False,
+                    "reason": "report/KRX context is only evaluated when --save-observation is used",
+                }
+            ),
+            "candidate_evidence": {
+                "evaluated": False,
+                "reason": "candidate evidence linkage is not part of news-intelligence-preview v1",
+            },
+        },
+    }
+
+
+def _news_intelligence_coverage_level(matched_count: int) -> str:
+    if matched_count <= 0:
+        return "none"
+    if matched_count <= 2:
+        return "low"
+    if matched_count <= 5:
+        return "moderate"
+    return "broad"
+
+
+def _news_intelligence_dominant_relevance(relevance_counts: Counter[str]) -> str:
+    for relevance in ("direct", "indirect", "market_context"):
+        relevance_counts.setdefault(relevance, 0)
+    if not sum(relevance_counts.values()):
+        return "none"
+    return max(
+        ("direct", "indirect", "market_context"),
+        key=lambda relevance: (
+            relevance_counts[relevance],
+            {"direct": 2, "indirect": 1, "market_context": 0}[relevance],
+        ),
+    )
+
+
+def _news_intelligence_decision_note_ko(
+    *,
+    coverage_level: str,
+    matched_count: int,
+    market_context_heavy: bool,
+    caution_count: int,
+    positive_count: int,
+    negative_count: int,
+) -> str:
+    notes: list[str] = []
+    if coverage_level == "none":
+        notes.append("매칭된 기사가 없어 판단 보조로 쓰기 어렵습니다.")
+    elif coverage_level == "low":
+        notes.append(f"coverage 낮음: 매칭 기사 {matched_count}건이라 추가 확인이 필요합니다.")
+    else:
+        notes.append(f"coverage {coverage_level}: 매칭 기사 {matched_count}건을 기준으로 요약했습니다.")
+    if market_context_heavy:
+        notes.append("market_context 비중이 높아 종목 직접 판단 근거로 과신하지 말 것.")
+    if caution_count:
+        notes.append(f"주의/혼합 신호 {caution_count}건은 리스크 문구를 먼저 확인하십시오.")
+    if positive_count and not market_context_heavy:
+        notes.append(f"긍정 신호 {positive_count}건은 리포트/KRX 맥락과 함께 재확인하십시오.")
+    if negative_count:
+        notes.append(f"부정 신호 {negative_count}건은 원문과 반복 여부를 확인하십시오.")
+    return " ".join(notes)
 
 
 def _news_intelligence_run_id(
@@ -2825,6 +2950,11 @@ def _news_intelligence_preview_base_payload(
         "parsed_count": 0,
         "deduped_count": 0,
         "matched_count": 0,
+        "operator_decision_notes": _news_intelligence_operator_decision_notes(
+            [],
+            [],
+            report_context_evaluated=False,
+        ),
     }
 
 
