@@ -43,6 +43,12 @@ def analyze_news_article(article: NewsArticle) -> AnalyzedNewsArticle:
         event_types,
         sentiment_label=sentiment.label,
     )
+    if _is_market_context_article(article) and stock_impact in {"Positive", "Strong Positive"}:
+        stock_impact = "Caution"
+        impact_explanation = (
+            "ETF, 지수, 업종, 레버리지 같은 시장 맥락 기사라 직접 종목 긍정으로 보지 않고 "
+            "수급/과열/중복 여부를 추가 확인해야 합니다."
+        )
     return AnalyzedNewsArticle(
         article=article,
         concise_summary=_concise_summary(article),
@@ -154,8 +160,7 @@ def _operator_summary(
         f"중립 {distribution['neutral']}건, 부정 {distribution['negative']}건, "
         f"주의/혼합 {caution_count}건입니다. 주요 이벤트: {event_types}. "
         "추가 확인: 실제 거래대금, 수급 쏠림, 중복 기사, 간접 시장 맥락 여부를 확인해야 합니다."
-        f"{coverage_note} "
-        "?댁쁺???꾩슜 ?ㅻ뒛 ?댁뒪?먯꽌 蹂??? 異붽? ?뺤씤"
+        f"{coverage_note}"
     )
 
 

@@ -42,6 +42,12 @@ def test_market_context_news_is_downweighted_in_report_judgment() -> None:
 
     assert report["overall_sentiment"] < 80
     assert report["top_news"][0]["title"] == "삼성전자 직접 공급 계약 체결"
+    market_context_impacts = {
+        article["stock_impact"]
+        for article in report["top_news"]
+        if "ETF" in article["title"] or "레버리지" in article["title"] or "삼전닉스" in article["title"]
+    }
+    assert not (market_context_impacts & {"Positive", "Strong Positive"})
 
 
 def test_low_coverage_report_summary_marks_additional_confirmation_needed() -> None:
@@ -65,6 +71,23 @@ def test_low_coverage_report_summary_marks_additional_confirmation_needed() -> N
     assert report["overall_sentiment"] < 100
     assert "coverage 낮음" in report["operator_summary"]
     assert "추가 확인" in report["operator_summary"]
+
+
+def test_market_context_positive_terms_do_not_become_direct_positive_impact() -> None:
+    report = build_news_intelligence_report(
+        stock="삼성전자",
+        stock_code="005930",
+        articles=[
+            _article(
+                "삼전닉스 ETF 투자 확대",
+                "반도체 ETF와 레버리지 상품에 삼성전자와 SK하이닉스 편입 비중이 커지고 투자 자금이 증가했다.",
+                url="https://example.test/news/etf-positive",
+            )
+        ],
+    ).to_dict()
+
+    assert report["top_news"][0]["stock_impact"] not in {"Positive", "Strong Positive"}
+    assert report["top_news"][0]["stock_impact"] == "Caution"
 
 
 def test_management_event_requires_actual_leadership_change_context() -> None:
