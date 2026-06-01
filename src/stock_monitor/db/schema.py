@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 @dataclass(frozen=True)
@@ -320,11 +320,95 @@ CATEGORY_SNAPSHOT_MIGRATION = SchemaMigration(
 )
 
 
+NEWS_INTELLIGENCE_OBSERVATION_MIGRATION = SchemaMigration(
+    version=6,
+    name="news_intelligence_observation",
+    statements=(
+        """
+        CREATE TABLE IF NOT EXISTS news_intelligence_runs (
+            run_id TEXT PRIMARY KEY,
+            target_date TEXT NOT NULL,
+            stock_name TEXT NOT NULL,
+            stock_code TEXT,
+            aliases_json TEXT NOT NULL,
+            source_mode TEXT NOT NULL,
+            page_limit INTEGER NOT NULL,
+            full_day_complete INTEGER NOT NULL,
+            live_fetch INTEGER NOT NULL,
+            parsed_count INTEGER NOT NULL,
+            deduped_count INTEGER NOT NULL,
+            matched_count INTEGER NOT NULL,
+            operator_summary_snapshot TEXT NOT NULL,
+            warnings_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_news_intelligence_runs_target_stock
+        ON news_intelligence_runs (target_date, stock_code, stock_name, created_at DESC)
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS report_linked_news_evidence (
+            run_id TEXT NOT NULL,
+            evidence_key TEXT NOT NULL,
+            target_date TEXT NOT NULL,
+            stock_code TEXT,
+            stock_name TEXT NOT NULL,
+            related_report_count INTEGER NOT NULL,
+            related_report_source_ids_json TEXT NOT NULL,
+            daily_summary_presence INTEGER NOT NULL,
+            candidate_priority_presence INTEGER NOT NULL,
+            candidate_observation_priority TEXT,
+            krx_reference_presence INTEGER NOT NULL,
+            krx_turnover INTEGER,
+            investor_flow_presence INTEGER NOT NULL,
+            source_lane TEXT NOT NULL,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            source TEXT NOT NULL,
+            published_at TEXT NOT NULL,
+            url TEXT NOT NULL,
+            matched_alias TEXT NOT NULL,
+            match_reason TEXT NOT NULL,
+            match_scope TEXT NOT NULL,
+            relevance TEXT NOT NULL,
+            relevance_reason TEXT NOT NULL,
+            sentiment TEXT NOT NULL,
+            sentiment_score INTEGER NOT NULL,
+            event_types_json TEXT NOT NULL,
+            stock_impact TEXT NOT NULL,
+            impact_explanation TEXT NOT NULL,
+            evidence_case TEXT NOT NULL,
+            operator_recommendation TEXT NOT NULL,
+            recommendation_reason TEXT NOT NULL,
+            operator_summary_snapshot TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (run_id, evidence_key),
+            FOREIGN KEY (run_id) REFERENCES news_intelligence_runs(run_id)
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_report_linked_news_target_stock
+        ON report_linked_news_evidence (target_date, stock_code, evidence_case)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_report_linked_news_report_context
+        ON report_linked_news_evidence (target_date, related_report_count, relevance, stock_impact)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_report_linked_news_url
+        ON report_linked_news_evidence (url, target_date, stock_code)
+        """,
+    ),
+)
+
+
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     KRX_MARKET_SNAPSHOT_MIGRATION,
     APP_SETTINGS_MIGRATION,
     KRX_INVESTOR_FLOW_MIGRATION,
     CATEGORY_SNAPSHOT_MIGRATION,
+    NEWS_INTELLIGENCE_OBSERVATION_MIGRATION,
 )
 
 

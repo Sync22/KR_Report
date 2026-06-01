@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from datetime import date, datetime
 
@@ -12,9 +13,11 @@ from stock_monitor.models import (
     KrxStockMetadataSnapshot,
     MarketIndexDailySnapshot,
     MarketInvestorFlowDaily,
+    NewsIntelligenceRun,
     OperationEvent,
     Opinion,
     Report,
+    ReportLinkedNewsEvidenceRecord,
     StockInvestorFlowDaily,
     StockMarketDailySnapshot,
     StockMetadata,
@@ -118,6 +121,7 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
         (3, "app_settings_and_audit_log"),
         (4, "krx_investor_flow_tables"),
         (5, "category_snapshots"),
+        (6, "news_intelligence_observation"),
     ]
     assert snapshot_tables == {
         "stock_market_daily",
@@ -132,6 +136,113 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
         "category_master",
         "category_membership_snapshots",
     }
+
+
+def test_repository_initializes_news_intelligence_observation_tables(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+
+    with repository.connect() as connection:
+        tables = {
+            row["name"]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        indexes = {
+            row["name"]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            ).fetchall()
+        }
+        user_version = connection.execute("PRAGMA user_version").fetchone()[0]
+
+    assert user_version == SCHEMA_VERSION
+    assert "news_intelligence_runs" in tables
+    assert "report_linked_news_evidence" in tables
+    assert "idx_news_intelligence_runs_target_stock" in indexes
+    assert "idx_report_linked_news_target_stock" in indexes
+    assert "idx_report_linked_news_report_context" in indexes
+    assert "idx_report_linked_news_url" in indexes
+
+
+def test_repository_saves_and_lists_report_linked_news_evidence(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+
+    repository.save_news_intelligence_observation(
+        _news_intelligence_run(),
+        [_news_evidence()],
+    )
+
+    runs = repository.list_news_intelligence_runs(target_date=date(2026, 6, 1), stock_code="005930")
+    rows = repository.list_report_linked_news_evidence(run_id="news-run-1")
+
+    assert len(runs) == 1
+    assert runs[0].aliases == ("삼전",)
+    assert runs[0].warnings == ()
+    assert runs[0].live_fetch is True
+    assert len(rows) == 1
+    assert rows[0].evidence_case == "report_direct_positive_news"
+    assert rows[0].related_report_source_ids == ("91999", "92000")
+    assert rows[0].event_types == ("Contract", "Earnings")
+    assert rows[0].krx_turnover == 1_200_000_000
+
+
+def test_repository_news_intelligence_save_is_idempotent_within_run(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+
+    run = _news_intelligence_run()
+    evidence = _news_evidence()
+    repository.save_news_intelligence_observation(run, [evidence])
+    repository.save_news_intelligence_observation(run, [evidence])
+
+    rows = repository.list_report_linked_news_evidence(run_id=run.run_id)
+
+    assert len(rows) == 1
+
+
+def test_repository_news_intelligence_preserves_repeated_runs(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+
+    repository.save_news_intelligence_observation(
+        _news_intelligence_run("news-run-1"),
+        [_news_evidence(run_id="news-run-1", evidence_key="article-key")],
+    )
+    repository.save_news_intelligence_observation(
+        _news_intelligence_run("news-run-2"),
+        [_news_evidence(run_id="news-run-2", evidence_key="article-key")],
+    )
+
+    runs = repository.list_news_intelligence_runs(target_date=date(2026, 6, 1), stock_code="005930")
+    rows = repository.list_report_linked_news_evidence(target_date=date(2026, 6, 1), stock_code="005930")
+
+    assert {run.run_id for run in runs} == {"news-run-1", "news-run-2"}
+    assert len(rows) == 2
+    assert {row.run_id for row in rows} == {"news-run-1", "news-run-2"}
+
+
+def test_repository_news_intelligence_stores_json_fields_without_public_surface(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+
+    repository.save_news_intelligence_observation(
+        _news_intelligence_run(),
+        [_news_evidence()],
+    )
+
+    with repository.connect() as connection:
+        run_row = connection.execute("SELECT aliases_json, warnings_json FROM news_intelligence_runs").fetchone()
+        evidence_row = connection.execute(
+            "SELECT related_report_source_ids_json, event_types_json FROM report_linked_news_evidence"
+        ).fetchone()
+
+    assert json.loads(run_row["aliases_json"]) == ["삼전"]
+    assert json.loads(run_row["warnings_json"]) == []
+    assert json.loads(evidence_row["related_report_source_ids_json"]) == ["91999", "92000"]
+    assert json.loads(evidence_row["event_types_json"]) == ["Contract", "Earnings"]
 
 
 def test_repository_enable_wal_mode_sets_file_database_to_wal(tmp_path) -> None:
@@ -168,7 +279,7 @@ def test_repository_migrate_schema_reports_existing_status(tmp_path) -> None:
 
     assert status.current_version == SCHEMA_VERSION
     assert status.target_version == SCHEMA_VERSION
-    assert status.applied_versions == (1, 2, 3, 4, 5)
+    assert status.applied_versions == (1, 2, 3, 4, 5, 6)
     assert status.pending_versions == ()
 
 
@@ -220,6 +331,7 @@ def test_repository_initialize_seeds_migration_history_for_existing_v1_database(
         (3, "app_settings_and_audit_log"),
         (4, "krx_investor_flow_tables"),
         (5, "category_snapshots"),
+        (6, "news_intelligence_observation"),
     ]
 
 
@@ -231,7 +343,7 @@ def test_repository_initialize_is_noop_after_migration_history_seed(tmp_path) ->
     with repository.connect() as connection:
         migration_count = connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
 
-    assert migration_count == 5
+    assert migration_count == 6
 
 
 def test_krx_snapshot_tables_enforce_daily_source_keys(tmp_path) -> None:
@@ -905,6 +1017,7 @@ def test_repository_filters_operation_events_without_recent_limit_truncation(tmp
             detail='{"endpoint":"stock-kospi-daily","called_at":"2026-05-20T08:00:00+09:00"}',
         )
     )
+
     for index in range(2100):
         repository.record_operation_event(
             OperationEvent(
@@ -1844,3 +1957,68 @@ def test_repository_returns_latest_krx_stock_metadata_by_stock_code(tmp_path) ->
     assert metadata is not None
     assert metadata.standard_code == "KR7005930003"
     assert metadata.stock_code == "005930"
+
+
+def _news_intelligence_run(run_id: str = "news-run-1") -> NewsIntelligenceRun:
+    return NewsIntelligenceRun(
+        run_id=run_id,
+        target_date=date(2026, 6, 1),
+        stock_name="삼성전자",
+        stock_code="005930",
+        aliases=("삼전",),
+        source_mode="naver_5_lane_preview",
+        page_limit=1,
+        full_day_complete=False,
+        live_fetch=True,
+        parsed_count=99,
+        deduped_count=64,
+        matched_count=15,
+        operator_summary_snapshot="삼성전자 운영자 전용 뉴스 판단입니다.",
+        warnings=(),
+        created_at=datetime(2026, 6, 1, 10, 0, 0),
+    )
+
+
+def _news_evidence(
+    *,
+    run_id: str = "news-run-1",
+    evidence_key: str = "ev-1",
+    url: str = "https://n.news.naver.com/article/015/0000001",
+    evidence_case: str = "report_direct_positive_news",
+) -> ReportLinkedNewsEvidenceRecord:
+    return ReportLinkedNewsEvidenceRecord(
+        run_id=run_id,
+        evidence_key=evidence_key,
+        target_date=date(2026, 6, 1),
+        stock_code="005930",
+        stock_name="삼성전자",
+        related_report_count=2,
+        related_report_source_ids=("91999", "92000"),
+        daily_summary_presence=True,
+        candidate_priority_presence=True,
+        candidate_observation_priority="우선 확인",
+        krx_reference_presence=True,
+        krx_turnover=1_200_000_000,
+        investor_flow_presence=False,
+        source_lane="mainnews",
+        title="삼성전자, 대규모 공급 계약 체결",
+        summary="AI 반도체 수주 증가와 장기공급계약 확대가 실적 기대를 높였다.",
+        source="한국경제",
+        published_at=datetime(2026, 6, 1, 9, 30, 0),
+        url=url,
+        matched_alias="삼성전자",
+        match_reason="stock_name",
+        match_scope="both",
+        relevance="direct",
+        relevance_reason="삼성전자가 제목과 요약에 함께 등장합니다.",
+        sentiment="Positive",
+        sentiment_score=100,
+        event_types=("Contract", "Earnings"),
+        stock_impact="Strong Positive",
+        impact_explanation="리포트 근거와 직접 긍정 뉴스가 겹칩니다.",
+        evidence_case=evidence_case,
+        operator_recommendation="strengthen_report_candidate",
+        recommendation_reason="리포트와 뉴스가 같은 방향이라 우선 확인 근거를 강화합니다.",
+        operator_summary_snapshot="삼성전자 운영자 전용 뉴스 판단입니다.",
+        created_at=datetime(2026, 6, 1, 10, 0, 0),
+    )

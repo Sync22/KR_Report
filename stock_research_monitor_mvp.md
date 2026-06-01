@@ -228,6 +228,8 @@ Telegram은 개인 운영용 알림과 명령 처리 채널이다.
 - Telegram 매매 후보 알림
 - public scored investment ranking
 
+Operator-only news intelligence is allowed as a recommendation-draft input when it stays outside public `web-view`, Telegram sends, scheduler automation, and broker/execution paths. The v1 default preview is no-write JSON; only an explicit operator `--save-observation` run may write operator-only observation rows. Its sentiment score and impact labels are internal review aids, not public numeric scores or trading calls.
+
 내부 scoring draft CLI는 research-only이며 public surface와 연결하지 않는다. 장기적으로 매매 판단까지 가려면 scoring draft가 아니라 별도 operator-only decision-support lane, source freshness 검증, 실패 처리, broker/execution-lab 안전장치가 먼저 필요하다.
 
 ## 데이터 품질 규칙

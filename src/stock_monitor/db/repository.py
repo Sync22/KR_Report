@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -39,10 +40,12 @@ from stock_monitor.models import (
     KrxStockMetadataSnapshot,
     MarketIndexDailySnapshot,
     MarketInvestorFlowDaily,
+    NewsIntelligenceRun,
     StockMetadata,
     StockMarketDailySnapshot,
     StockInvestorFlowDaily,
     StockThemeMembership,
+    ReportLinkedNewsEvidenceRecord,
     ThemeDailyRollup,
     WorkerState,
 )
@@ -115,6 +118,193 @@ class StockMonitorRepository:
     def get_schema_migration_status(self) -> SchemaMigrationStatus:
         with self.connect() as connection:
             return get_schema_migration_status(connection)
+
+    def save_news_intelligence_observation(
+        self,
+        run: NewsIntelligenceRun,
+        evidence_rows: list[ReportLinkedNewsEvidenceRecord],
+    ) -> None:
+        with self.connect() as connection:
+            with connection:
+                connection.execute(
+                    """
+                    INSERT OR REPLACE INTO news_intelligence_runs (
+                        run_id,
+                        target_date,
+                        stock_name,
+                        stock_code,
+                        aliases_json,
+                        source_mode,
+                        page_limit,
+                        full_day_complete,
+                        live_fetch,
+                        parsed_count,
+                        deduped_count,
+                        matched_count,
+                        operator_summary_snapshot,
+                        warnings_json,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        run.run_id,
+                        run.target_date.isoformat(),
+                        run.stock_name,
+                        run.stock_code,
+                        self._encode_json_tuple(run.aliases),
+                        run.source_mode,
+                        run.page_limit,
+                        int(run.full_day_complete),
+                        int(run.live_fetch),
+                        run.parsed_count,
+                        run.deduped_count,
+                        run.matched_count,
+                        run.operator_summary_snapshot,
+                        self._encode_json_tuple(run.warnings),
+                        run.created_at.isoformat(),
+                    ),
+                )
+                for evidence in evidence_rows:
+                    connection.execute(
+                        """
+                        INSERT OR REPLACE INTO report_linked_news_evidence (
+                            run_id,
+                            evidence_key,
+                            target_date,
+                            stock_code,
+                            stock_name,
+                            related_report_count,
+                            related_report_source_ids_json,
+                            daily_summary_presence,
+                            candidate_priority_presence,
+                            candidate_observation_priority,
+                            krx_reference_presence,
+                            krx_turnover,
+                            investor_flow_presence,
+                            source_lane,
+                            title,
+                            summary,
+                            source,
+                            published_at,
+                            url,
+                            matched_alias,
+                            match_reason,
+                            match_scope,
+                            relevance,
+                            relevance_reason,
+                            sentiment,
+                            sentiment_score,
+                            event_types_json,
+                            stock_impact,
+                            impact_explanation,
+                            evidence_case,
+                            operator_recommendation,
+                            recommendation_reason,
+                            operator_summary_snapshot,
+                            created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            evidence.run_id,
+                            evidence.evidence_key,
+                            evidence.target_date.isoformat(),
+                            evidence.stock_code,
+                            evidence.stock_name,
+                            evidence.related_report_count,
+                            self._encode_json_tuple(evidence.related_report_source_ids),
+                            int(evidence.daily_summary_presence),
+                            int(evidence.candidate_priority_presence),
+                            evidence.candidate_observation_priority,
+                            int(evidence.krx_reference_presence),
+                            evidence.krx_turnover,
+                            int(evidence.investor_flow_presence),
+                            evidence.source_lane,
+                            evidence.title,
+                            evidence.summary,
+                            evidence.source,
+                            evidence.published_at.isoformat(),
+                            evidence.url,
+                            evidence.matched_alias,
+                            evidence.match_reason,
+                            evidence.match_scope,
+                            evidence.relevance,
+                            evidence.relevance_reason,
+                            evidence.sentiment,
+                            evidence.sentiment_score,
+                            self._encode_json_tuple(evidence.event_types),
+                            evidence.stock_impact,
+                            evidence.impact_explanation,
+                            evidence.evidence_case,
+                            evidence.operator_recommendation,
+                            evidence.recommendation_reason,
+                            evidence.operator_summary_snapshot,
+                            evidence.created_at.isoformat(),
+                        ),
+                    )
+
+    def list_news_intelligence_runs(
+        self,
+        *,
+        target_date: date | None = None,
+        stock_code: str | None = None,
+        limit: int = 20,
+    ) -> list[NewsIntelligenceRun]:
+        conditions: list[str] = []
+        params: list[object] = []
+        if target_date is not None:
+            conditions.append("target_date = ?")
+            params.append(target_date.isoformat())
+        if stock_code is not None:
+            conditions.append("stock_code = ?")
+            params.append(stock_code)
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.append(limit)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT *
+                FROM news_intelligence_runs
+                {where_clause}
+                ORDER BY created_at DESC, run_id DESC
+                LIMIT ?
+                """,
+                tuple(params),
+            ).fetchall()
+        return [self._row_to_news_intelligence_run(row) for row in rows]
+
+    def list_report_linked_news_evidence(
+        self,
+        *,
+        run_id: str | None = None,
+        target_date: date | None = None,
+        stock_code: str | None = None,
+        limit: int = 100,
+    ) -> list[ReportLinkedNewsEvidenceRecord]:
+        conditions: list[str] = []
+        params: list[object] = []
+        if run_id is not None:
+            conditions.append("run_id = ?")
+            params.append(run_id)
+        if target_date is not None:
+            conditions.append("target_date = ?")
+            params.append(target_date.isoformat())
+        if stock_code is not None:
+            conditions.append("stock_code = ?")
+            params.append(stock_code)
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.append(limit)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT *
+                FROM report_linked_news_evidence
+                {where_clause}
+                ORDER BY target_date DESC, created_at DESC, evidence_key
+                LIMIT ?
+                """,
+                tuple(params),
+            ).fetchall()
+        return [self._row_to_report_linked_news_evidence(row) for row in rows]
 
     def insert_reports(self, reports: list[Report], *, queue_intraday_alerts: bool = False) -> InsertResult:
         normalized = [report.with_identity() for report in reports]
@@ -3026,6 +3216,76 @@ class StockMonitorRepository:
                 (business_date.isoformat(), channel),
             ).fetchone()
         return row is not None
+
+    @staticmethod
+    def _encode_json_tuple(values: tuple[str, ...]) -> str:
+        return json.dumps(list(values), ensure_ascii=False)
+
+    @staticmethod
+    def _decode_json_tuple(value: str) -> tuple[str, ...]:
+        parsed = json.loads(value or "[]")
+        return tuple(str(item) for item in parsed)
+
+    @staticmethod
+    def _row_to_news_intelligence_run(row: sqlite3.Row) -> NewsIntelligenceRun:
+        return NewsIntelligenceRun(
+            run_id=row["run_id"],
+            target_date=date.fromisoformat(row["target_date"]),
+            stock_name=row["stock_name"],
+            stock_code=row["stock_code"],
+            aliases=StockMonitorRepository._decode_json_tuple(row["aliases_json"]),
+            source_mode=row["source_mode"],
+            page_limit=int(row["page_limit"]),
+            full_day_complete=bool(row["full_day_complete"]),
+            live_fetch=bool(row["live_fetch"]),
+            parsed_count=int(row["parsed_count"]),
+            deduped_count=int(row["deduped_count"]),
+            matched_count=int(row["matched_count"]),
+            operator_summary_snapshot=row["operator_summary_snapshot"],
+            warnings=StockMonitorRepository._decode_json_tuple(row["warnings_json"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+    @staticmethod
+    def _row_to_report_linked_news_evidence(row: sqlite3.Row) -> ReportLinkedNewsEvidenceRecord:
+        return ReportLinkedNewsEvidenceRecord(
+            run_id=row["run_id"],
+            evidence_key=row["evidence_key"],
+            target_date=date.fromisoformat(row["target_date"]),
+            stock_code=row["stock_code"],
+            stock_name=row["stock_name"],
+            related_report_count=int(row["related_report_count"]),
+            related_report_source_ids=StockMonitorRepository._decode_json_tuple(
+                row["related_report_source_ids_json"]
+            ),
+            daily_summary_presence=bool(row["daily_summary_presence"]),
+            candidate_priority_presence=bool(row["candidate_priority_presence"]),
+            candidate_observation_priority=row["candidate_observation_priority"],
+            krx_reference_presence=bool(row["krx_reference_presence"]),
+            krx_turnover=row["krx_turnover"],
+            investor_flow_presence=bool(row["investor_flow_presence"]),
+            source_lane=row["source_lane"],
+            title=row["title"],
+            summary=row["summary"],
+            source=row["source"],
+            published_at=datetime.fromisoformat(row["published_at"]),
+            url=row["url"],
+            matched_alias=row["matched_alias"],
+            match_reason=row["match_reason"],
+            match_scope=row["match_scope"],
+            relevance=row["relevance"],
+            relevance_reason=row["relevance_reason"],
+            sentiment=row["sentiment"],
+            sentiment_score=int(row["sentiment_score"]),
+            event_types=StockMonitorRepository._decode_json_tuple(row["event_types_json"]),
+            stock_impact=row["stock_impact"],
+            impact_explanation=row["impact_explanation"],
+            evidence_case=row["evidence_case"],
+            operator_recommendation=row["operator_recommendation"],
+            recommendation_reason=row["recommendation_reason"],
+            operator_summary_snapshot=row["operator_summary_snapshot"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
 
     @staticmethod
     def _row_to_report(row: sqlite3.Row) -> Report:
