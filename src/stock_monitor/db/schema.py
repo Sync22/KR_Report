@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 @dataclass(frozen=True)
@@ -403,12 +403,25 @@ NEWS_INTELLIGENCE_OBSERVATION_MIGRATION = SchemaMigration(
 )
 
 
+NEWS_INTELLIGENCE_REFERENCE_DATES_MIGRATION = SchemaMigration(
+    version=7,
+    name="news_intelligence_reference_dates",
+    statements=(
+        """
+        ALTER TABLE report_linked_news_evidence
+        ADD COLUMN krx_reference_date TEXT
+        """,
+    ),
+)
+
+
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     KRX_MARKET_SNAPSHOT_MIGRATION,
     APP_SETTINGS_MIGRATION,
     KRX_INVESTOR_FLOW_MIGRATION,
     CATEGORY_SNAPSHOT_MIGRATION,
     NEWS_INTELLIGENCE_OBSERVATION_MIGRATION,
+    NEWS_INTELLIGENCE_REFERENCE_DATES_MIGRATION,
 )
 
 

@@ -2702,6 +2702,7 @@ def _news_intelligence_observation_context(
         "candidate_priority_presence": False,
         "candidate_observation_priority": None,
         "krx_reference_presence": bool(krx_snapshots),
+        "krx_reference_date": krx_snapshots[0].business_date if krx_snapshots else None,
         "krx_turnover": krx_snapshots[0].turnover if krx_snapshots else None,
         "investor_flow_presence": bool(investor_flows),
     }
@@ -2742,6 +2743,7 @@ def _news_intelligence_evidence_record(
             candidate_priority_presence=bool(context["candidate_priority_presence"]),
             candidate_observation_priority=context["candidate_observation_priority"],
             krx_reference_presence=bool(context["krx_reference_presence"]),
+            krx_reference_date=context["krx_reference_date"],
             krx_turnover=context["krx_turnover"],
             investor_flow_presence=bool(context["investor_flow_presence"]),
         ),
@@ -2759,6 +2761,7 @@ def _news_intelligence_evidence_record(
         candidate_priority_presence=linked.candidate_priority_presence,
         candidate_observation_priority=linked.candidate_observation_priority,
         krx_reference_presence=linked.krx_reference_presence,
+        krx_reference_date=linked.krx_reference_date,
         krx_turnover=linked.krx_turnover,
         investor_flow_presence=linked.investor_flow_presence,
         source_lane=article.source_lane or "",

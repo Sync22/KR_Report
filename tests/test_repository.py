@@ -122,6 +122,7 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
         (4, "krx_investor_flow_tables"),
         (5, "category_snapshots"),
         (6, "news_intelligence_observation"),
+        (7, "news_intelligence_reference_dates"),
     ]
     assert snapshot_tables == {
         "stock_market_daily",
@@ -186,6 +187,7 @@ def test_repository_saves_and_lists_report_linked_news_evidence(tmp_path) -> Non
     assert rows[0].evidence_case == "report_direct_positive_news"
     assert rows[0].related_report_source_ids == ("91999", "92000")
     assert rows[0].event_types == ("Contract", "Earnings")
+    assert rows[0].krx_reference_date == date(2026, 5, 29)
     assert rows[0].krx_turnover == 1_200_000_000
 
 
@@ -279,7 +281,7 @@ def test_repository_migrate_schema_reports_existing_status(tmp_path) -> None:
 
     assert status.current_version == SCHEMA_VERSION
     assert status.target_version == SCHEMA_VERSION
-    assert status.applied_versions == (1, 2, 3, 4, 5, 6)
+    assert status.applied_versions == (1, 2, 3, 4, 5, 6, 7)
     assert status.pending_versions == ()
 
 
@@ -332,6 +334,7 @@ def test_repository_initialize_seeds_migration_history_for_existing_v1_database(
         (4, "krx_investor_flow_tables"),
         (5, "category_snapshots"),
         (6, "news_intelligence_observation"),
+        (7, "news_intelligence_reference_dates"),
     ]
 
 
@@ -343,7 +346,7 @@ def test_repository_initialize_is_noop_after_migration_history_seed(tmp_path) ->
     with repository.connect() as connection:
         migration_count = connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
 
-    assert migration_count == 6
+    assert migration_count == 7
 
 
 def test_krx_snapshot_tables_enforce_daily_source_keys(tmp_path) -> None:
@@ -1998,6 +2001,7 @@ def _news_evidence(
         candidate_priority_presence=True,
         candidate_observation_priority="우선 확인",
         krx_reference_presence=True,
+        krx_reference_date=date(2026, 5, 29),
         krx_turnover=1_200_000_000,
         investor_flow_presence=False,
         source_lane="mainnews",

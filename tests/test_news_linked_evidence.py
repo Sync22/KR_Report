@@ -39,6 +39,7 @@ def _context(**overrides) -> ReportLinkedNewsContext:
         "candidate_priority_presence": False,
         "candidate_observation_priority": None,
         "krx_reference_presence": False,
+        "krx_reference_date": None,
         "krx_turnover": None,
         "investor_flow_presence": False,
     }

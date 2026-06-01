@@ -507,6 +507,7 @@ class ReportLinkedNewsEvidenceRecord:
     candidate_priority_presence: bool
     candidate_observation_priority: str | None
     krx_reference_presence: bool
+    krx_reference_date: date | None
     krx_turnover: int | None
     investor_flow_presence: bool
     source_lane: str
