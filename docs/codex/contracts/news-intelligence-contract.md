@@ -21,7 +21,7 @@ Allowed in v1:
 Blocked by default in v1:
 
 - Automatic live news crawling or provider smoke.
-- SQLite writes or migrations.
+- SQLite writes or migrations unless the operator explicitly passes `--save-observation` for the operator-only observation tables.
 - Scheduler registration, scheduler execution, or unattended collection.
 - Telegram send or Telegram candidate alerts.
 - Public `web-view` exposure.
@@ -143,7 +143,7 @@ News intelligence is not an isolated news table. Its operator value comes from l
 - KRX investor-flow rows provide stored flow context when available.
 - Candidate-evidence priority may be used as operator-only context, but news evidence must not be copied into public candidate DTOs without a separate public-safe contract.
 
-The report-linked analysis slice remains pure Python. The default `news-intelligence-preview` command must still emit JSON only and must not write DB rows, start schedulers, send Telegram, or expose anything in web-view/admin-gui.
+The report-linked analysis slice remains pure Python. The default `news-intelligence-preview` command must still emit JSON only and must not write DB rows, start schedulers, send Telegram, or expose anything in web-view/admin-gui. The only v1 DB write exception is the explicit operator-only `--save-observation` path described below.
 
 Supported operator-only evidence cases:
 
@@ -157,6 +157,27 @@ Supported operator-only evidence cases:
 - `weak_news_duplicate_context`: repeated market-context news should be downranked as weak direct evidence.
 
 These cases may use operator recommendation labels such as `strengthen_report_candidate`, `review_with_caution`, or `promote_news_only_candidate`. They are recommendation-support labels for the operator lane, not public buy/sell instructions, investment grades, broker execution, or order-routing signals.
+
+## Operator Observation Save Boundary
+
+The manual preview command may persist report-linked news observations for quality review only when the operator passes `--save-observation`. This is not enabled by default.
+
+Allowed storage tables:
+
+- `news_intelligence_runs`: one operator preview/evaluation run.
+- `report_linked_news_evidence`: article-level report-linked evidence rows for that run.
+
+The stored lane may include:
+
+- `run_id`, `target_date`, `stock_name`, `stock_code`, aliases, source mode, coverage counts, warning summaries, and the operator summary snapshot.
+- Related report references, daily summary presence, candidate priority presence, KRX reference presence, KRX turnover, investor-flow presence, source lane, article fields, match diagnostics, relevance, sentiment, event types, stock impact, evidence case, and operator recommendation-support labels.
+
+Storage guardrails:
+
+- DB writes require the explicit operator save option `--save-observation`.
+- The default manual preview remains `writes_db=false`.
+- Stored rows are operator-only observation/evaluation data and must not be copied into public `web-view`, Telegram, scheduler, or admin-gui surfaces without a separate public-safe contract.
+- The stored lane must not contain broker secrets, order intent, order-routing instructions, or public buy/sell calls.
 
 ## Integration Boundary
 

@@ -476,6 +476,63 @@ class MarketIndexDailySnapshot:
 
 
 @dataclass(frozen=True)
+class NewsIntelligenceRun:
+    run_id: str
+    target_date: date
+    stock_name: str
+    stock_code: str | None
+    aliases: tuple[str, ...]
+    source_mode: str
+    page_limit: int
+    full_day_complete: bool
+    live_fetch: bool
+    parsed_count: int
+    deduped_count: int
+    matched_count: int
+    operator_summary_snapshot: str
+    warnings: tuple[str, ...]
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class ReportLinkedNewsEvidenceRecord:
+    run_id: str
+    evidence_key: str
+    target_date: date
+    stock_code: str | None
+    stock_name: str
+    related_report_count: int
+    related_report_source_ids: tuple[str, ...]
+    daily_summary_presence: bool
+    candidate_priority_presence: bool
+    candidate_observation_priority: str | None
+    krx_reference_presence: bool
+    krx_turnover: int | None
+    investor_flow_presence: bool
+    source_lane: str
+    title: str
+    summary: str
+    source: str
+    published_at: datetime
+    url: str
+    matched_alias: str
+    match_reason: str
+    match_scope: str
+    relevance: str
+    relevance_reason: str
+    sentiment: str
+    sentiment_score: int
+    event_types: tuple[str, ...]
+    stock_impact: str
+    impact_explanation: str
+    evidence_case: str
+    operator_recommendation: str
+    recommendation_reason: str
+    operator_summary_snapshot: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
 class StockResearchEntry:
     stock_name: str
     stock_code: str

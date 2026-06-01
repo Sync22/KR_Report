@@ -1,4 +1,4 @@
-import json
+﻿import json
 import sqlite3
 from argparse import Namespace
 from datetime import date, datetime, timedelta
@@ -2394,6 +2394,9 @@ def test_news_intelligence_preview_parser_accepts_operator_inputs() -> None:
             "2026-06-01",
             "--scrapling-exe",
             "C:/tools/scrapling.exe",
+            "--db-path",
+            "C:/tmp/news-intelligence.db",
+            "--save-observation",
         ]
     )
 
@@ -2403,6 +2406,8 @@ def test_news_intelligence_preview_parser_accepts_operator_inputs() -> None:
     assert args.alias == ["삼전"]
     assert args.date == date(2026, 6, 1)
     assert str(args.scrapling_exe).endswith("tools\\scrapling.exe")
+    assert str(args.db_path).endswith("news-intelligence.db")
+    assert args.save_observation is True
 
 
 def test_news_intelligence_preview_cli_outputs_operator_only_json(tmp_path, monkeypatch, capsys) -> None:
@@ -2492,6 +2497,8 @@ def test_news_intelligence_preview_cli_outputs_operator_only_json(tmp_path, monk
 def test_news_intelligence_preview_cli_keeps_default_no_write_guard(tmp_path, monkeypatch, capsys) -> None:
     scrapling_exe = tmp_path / "scrapling.exe"
     scrapling_exe.write_text("fake", encoding="utf-8")
+    db_path = tmp_path / "news-intelligence.db"
+
     class Result:
         returncode = 0
         stdout = ""
@@ -2532,6 +2539,8 @@ def test_news_intelligence_preview_cli_keeps_default_no_write_guard(tmp_path, mo
             "2026-06-01",
             "--scrapling-exe",
             str(scrapling_exe),
+            "--db-path",
+            str(db_path),
         ]
     )
 
@@ -2539,7 +2548,205 @@ def test_news_intelligence_preview_cli_keeps_default_no_write_guard(tmp_path, mo
     assert exit_code == 0
     assert payload["writes_db"] is False
     assert "saved_run_id" not in payload
+    assert not db_path.exists()
 
+
+def test_news_intelligence_preview_cli_saves_observation_only_when_explicit(tmp_path, monkeypatch, capsys) -> None:
+    scrapling_exe = tmp_path / "scrapling.exe"
+    scrapling_exe.write_text("fake", encoding="utf-8")
+    db_path = tmp_path / "news-intelligence.db"
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, **_kwargs):
+        output_path = command[4]
+        with open(output_path, "w", encoding="utf-8") as file:
+            if command[2] == "get":
+                file.write('{"articles":[]}')
+            else:
+                file.write(
+                    """
+* 2026. 06. 01
+  :   2026. 06. 01. 09:10
+
+      [### 삼성전자, AI 반도체 공급 계약 체결
+
+      삼성전자가 글로벌 고객사와 AI 반도체 공급 계약을 체결했다.
+
+      한국경제
+
+      ![](https://imgnews.pstatic.net/image/origin/015/2026/06/01/1.jpg)](https://n.news.naver.com/article/015/0000001)
+"""
+                )
+        return Result()
+
+    monkeypatch.setattr("stock_monitor.news.collectors.subprocess.run", fake_run)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-preview",
+            "--stock-name",
+            "삼성전자",
+            "--stock-code",
+            "005930",
+            "--alias",
+            "삼전",
+            "--date",
+            "2026-06-01",
+            "--scrapling-exe",
+            str(scrapling_exe),
+            "--db-path",
+            str(db_path),
+            "--save-observation",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    repository = StockMonitorRepository(db_path)
+    runs = repository.list_news_intelligence_runs(target_date=date(2026, 6, 1), stock_code="005930")
+    rows = repository.list_report_linked_news_evidence(run_id=payload["saved_run_id"])
+
+    assert exit_code == 0
+    assert payload["writes_db"] is True
+    assert payload["saved_evidence_count"] == 1
+    assert len(runs) == 1
+    assert runs[0].run_id == payload["saved_run_id"]
+    assert runs[0].live_fetch is True
+    assert len(rows) == 1
+    assert rows[0].evidence_case == "no_report_strong_direct_news"
+    assert rows[0].operator_recommendation == "promote_news_only_candidate"
+    assert rows[0].related_report_count == 0
+    assert rows[0].krx_reference_presence is False
+
+
+def test_news_intelligence_preview_save_observation_attaches_report_and_krx_context(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    scrapling_exe = tmp_path / "scrapling.exe"
+    scrapling_exe.write_text("fake", encoding="utf-8")
+    db_path = tmp_path / "news-intelligence.db"
+    business_date = date(2026, 6, 1)
+    repository = StockMonitorRepository(db_path)
+    repository.initialize()
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="AI 반도체 수주 확대",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 6, 1, 8, 30, 0),
+                collected_at=datetime(2026, 6, 1, 8, 40, 0),
+                business_date=business_date,
+                target_price_raw="100000",
+                target_price_value=100000,
+                opinion_raw="Buy",
+                opinion_normalized=Opinion.BUY.value,
+                source_url="https://stock.naver.com/research/company/92001",
+                source_id="92001",
+            ),
+            Report(
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="HBM 공급 계약 기대",
+                broker_name="한국투자증권",
+                published_at=datetime(2026, 6, 1, 8, 50, 0),
+                collected_at=datetime(2026, 6, 1, 9, 0, 0),
+                business_date=business_date,
+                target_price_raw="105000",
+                target_price_value=105000,
+                opinion_raw="Buy",
+                opinion_normalized=Opinion.BUY.value,
+                source_url="https://stock.naver.com/research/company/92002",
+                source_id="92002",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                fetched_at=datetime(2026, 6, 1, 16, 0, 0),
+                close_price=80000,
+                change_amount=1200,
+                change_percent=1.52,
+                volume=10_000_000,
+                turnover=850_000_000_000,
+            )
+        ]
+    )
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, **_kwargs):
+        output_path = command[4]
+        with open(output_path, "w", encoding="utf-8") as file:
+            if command[2] == "get":
+                file.write('{"articles":[]}')
+            else:
+                file.write(
+                    """
+* 2026. 06. 01
+  :   2026. 06. 01. 09:10
+
+      [### 삼성전자, AI 반도체 공급 계약 체결
+
+      삼성전자가 글로벌 고객사와 AI 반도체 공급 계약을 체결했다.
+
+      한국경제
+
+      ![](https://imgnews.pstatic.net/image/origin/015/2026/06/01/1.jpg)](https://n.news.naver.com/article/015/0000001)
+"""
+                )
+        return Result()
+
+    monkeypatch.setattr("stock_monitor.news.collectors.subprocess.run", fake_run)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-preview",
+            "--stock-name",
+            "삼성전자",
+            "--stock-code",
+            "005930",
+            "--date",
+            "2026-06-01",
+            "--scrapling-exe",
+            str(scrapling_exe),
+            "--db-path",
+            str(db_path),
+            "--save-observation",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    rows = repository.list_report_linked_news_evidence(run_id=payload["saved_run_id"])
+
+    assert exit_code == 0
+    assert payload["writes_db"] is True
+    assert payload["saved_evidence_count"] == 1
+    assert len(rows) == 1
+    assert rows[0].related_report_count == 2
+    assert rows[0].related_report_source_ids == ("92001", "92002")
+    assert rows[0].daily_summary_presence is True
+    assert rows[0].krx_reference_presence is True
+    assert rows[0].krx_turnover == 850_000_000_000
+    assert rows[0].evidence_case == "report_direct_positive_news"
+    assert rows[0].operator_recommendation == "strengthen_report_candidate"
+    assert rows[0].candidate_priority_presence is False
+    assert rows[0].candidate_observation_priority is None
 
 
 def test_news_intelligence_preview_cli_keeps_partial_source_failure(tmp_path, monkeypatch, capsys) -> None:

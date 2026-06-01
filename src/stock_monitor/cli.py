@@ -102,6 +102,8 @@ from stock_monitor.models import (
     MarketInvestorFlowDaily,
     OperationEvent,
     Report,
+    NewsIntelligenceRun,
+    ReportLinkedNewsEvidenceRecord,
     StockInvestorFlowDaily,
     StockMarketDailySnapshot,
     StockMetadata,
@@ -381,6 +383,8 @@ def build_parser() -> argparse.ArgumentParser:
     news_preview_parser.add_argument("--alias", action="append", default=[])
     news_preview_parser.add_argument("--date", type=date.fromisoformat)
     news_preview_parser.add_argument("--scrapling-exe", type=Path)
+    news_preview_parser.add_argument("--db-path", type=Path)
+    news_preview_parser.add_argument("--save-observation", action="store_true")
 
     poll_parser = subparsers.add_parser("manual-poll", help="Fetch reports and save unseen rows into SQLite.")
     poll_parser.add_argument("--limit", type=int, default=50)
@@ -2502,6 +2506,7 @@ def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
         StockNewsQuery,
         collect_naver_news_preview,
     )
+    from stock_monitor.news.report import analyze_news_article
 
     target_date = args.date or datetime.now(tz=ZoneInfo("Asia/Seoul")).date()
     scrapling_exe = _resolve_scrapling_exe(args.scrapling_exe)
@@ -2561,9 +2566,234 @@ def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
         payload["error"] = "no Naver news articles parsed"
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 1
+    if args.save_observation:
+        analyzed_matches = [(match, analyze_news_article(match.article)) for match in preview.articles]
+        save_result = _save_news_intelligence_observation(
+            db_path=args.db_path or Path("data") / "stock_monitor.db",
+            target_date=target_date,
+            query=query,
+            preview=preview,
+            report=report,
+            analyzed_matches=analyzed_matches,
+        )
+        payload.update(save_result)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
+
+def _save_news_intelligence_observation(
+    *,
+    db_path: Path,
+    target_date: date,
+    query: object,
+    preview: object,
+    report: object,
+    analyzed_matches: list[tuple[object, object]],
+) -> dict[str, object]:
+    repository = StockMonitorRepository(db_path)
+    repository.initialize()
+    created_at = datetime.now(tz=ZoneInfo("Asia/Seoul"))
+    stock_name = getattr(query, "stock_name")
+    stock_code = getattr(query, "stock_code")
+    aliases = tuple(getattr(query, "aliases"))
+    run_id = _news_intelligence_run_id(
+        target_date=target_date,
+        stock_name=stock_name,
+        stock_code=stock_code,
+        created_at=created_at,
+    )
+    run = NewsIntelligenceRun(
+        run_id=run_id,
+        target_date=target_date,
+        stock_name=stock_name,
+        stock_code=stock_code,
+        aliases=aliases,
+        source_mode="naver_5_lane_preview",
+        page_limit=1,
+        full_day_complete=False,
+        live_fetch=True,
+        parsed_count=int(getattr(preview, "parsed_count")),
+        deduped_count=int(getattr(preview, "deduped_count")),
+        matched_count=int(getattr(preview, "matched_count")),
+        operator_summary_snapshot=str(getattr(report, "operator_summary")),
+        warnings=tuple(str(warning) for warning in getattr(preview, "warnings")),
+        created_at=created_at,
+    )
+    context = _news_intelligence_observation_context(
+        repository,
+        target_date=target_date,
+        stock_name=stock_name,
+        stock_code=stock_code,
+    )
+    evidence_rows = [
+        _news_intelligence_evidence_record(
+            run_id=run_id,
+            match=match,
+            analyzed=analyzed,
+            context=context,
+            operator_summary_snapshot=run.operator_summary_snapshot,
+            created_at=created_at,
+        )
+        for match, analyzed in analyzed_matches
+    ]
+    repository.save_news_intelligence_observation(run, evidence_rows)
+    return {
+        "writes_db": True,
+        "saved_run_id": run_id,
+        "saved_db_path": str(db_path),
+        "saved_evidence_count": len(evidence_rows),
+    }
+
+
+def _news_intelligence_run_id(
+    *,
+    target_date: date,
+    stock_name: str,
+    stock_code: str | None,
+    created_at: datetime,
+) -> str:
+    raw = "|".join(
+        [
+            target_date.isoformat(),
+            stock_code or "",
+            stock_name,
+            created_at.isoformat(),
+        ]
+    )
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    return f"news-{target_date.isoformat()}-{stock_code or stock_name}-{digest}"
+
+
+def _news_intelligence_observation_context(
+    repository: StockMonitorRepository,
+    *,
+    target_date: date,
+    stock_name: str,
+    stock_code: str | None,
+) -> dict[str, object]:
+    if stock_code:
+        reports = repository.list_reports_for_stock_on_business_date(target_date, stock_code)
+    else:
+        reports = [
+            report
+            for report in repository.list_reports_for_business_date(target_date)
+            if report.stock_name == stock_name
+        ]
+    summaries = [
+        summary
+        for summary in repository.list_daily_summaries(target_date)
+        if (stock_code and summary.stock_code == stock_code) or summary.stock_name == stock_name
+    ]
+    krx_snapshots = (
+        repository.list_stock_market_daily_for_code_on_or_before(target_date, stock_code, limit=1)
+        if stock_code
+        else []
+    )
+    investor_flows = repository.list_stock_investor_flow_daily(target_date, stock_code) if stock_code else []
+    return {
+        "target_date": target_date,
+        "stock_name": stock_name,
+        "stock_code": stock_code,
+        "related_report_count": len(reports),
+        "related_report_source_ids": tuple(
+            sorted(report.source_id for report in reports if report.source_id)
+        ),
+        "daily_summary_presence": bool(summaries),
+        "candidate_priority_presence": False,
+        "candidate_observation_priority": None,
+        "krx_reference_presence": bool(krx_snapshots),
+        "krx_turnover": krx_snapshots[0].turnover if krx_snapshots else None,
+        "investor_flow_presence": bool(investor_flows),
+    }
+
+
+def _news_intelligence_evidence_record(
+    *,
+    run_id: str,
+    match: object,
+    analyzed: object,
+    context: dict[str, object],
+    operator_summary_snapshot: str,
+    created_at: datetime,
+) -> ReportLinkedNewsEvidenceRecord:
+    from stock_monitor.news.linked_evidence import (
+        ReportLinkedNewsContext,
+        ReportLinkedNewsInput,
+        build_report_linked_news_evidence,
+    )
+
+    article = analyzed.article
+    linked_rows = build_report_linked_news_evidence(
+        [
+            ReportLinkedNewsInput(
+                analyzed_article=analyzed,
+                relevance=match.relevance,
+                match_scope=match.match_scope,
+                duplicate_count=1,
+            )
+        ],
+        ReportLinkedNewsContext(
+            target_date=context["target_date"],
+            stock_name=str(context.get("stock_name") or ""),
+            stock_code=context.get("stock_code"),
+            related_report_count=int(context["related_report_count"]),
+            related_report_source_ids=tuple(context["related_report_source_ids"]),
+            daily_summary_presence=bool(context["daily_summary_presence"]),
+            candidate_priority_presence=bool(context["candidate_priority_presence"]),
+            candidate_observation_priority=context["candidate_observation_priority"],
+            krx_reference_presence=bool(context["krx_reference_presence"]),
+            krx_turnover=context["krx_turnover"],
+            investor_flow_presence=bool(context["investor_flow_presence"]),
+        ),
+    )
+    linked = linked_rows[0]
+    return ReportLinkedNewsEvidenceRecord(
+        run_id=run_id,
+        evidence_key=_news_intelligence_evidence_key(article),
+        target_date=linked.target_date,
+        stock_code=linked.stock_code,
+        stock_name=linked.stock_name,
+        related_report_count=linked.related_report_count,
+        related_report_source_ids=linked.related_report_source_ids,
+        daily_summary_presence=linked.daily_summary_presence,
+        candidate_priority_presence=linked.candidate_priority_presence,
+        candidate_observation_priority=linked.candidate_observation_priority,
+        krx_reference_presence=linked.krx_reference_presence,
+        krx_turnover=linked.krx_turnover,
+        investor_flow_presence=linked.investor_flow_presence,
+        source_lane=article.source_lane or "",
+        title=article.title,
+        summary=article.summary,
+        source=article.source,
+        published_at=article.published_at,
+        url=article.url,
+        matched_alias=match.matched_alias,
+        match_reason=match.match_reason,
+        match_scope=match.match_scope,
+        relevance=match.relevance,
+        relevance_reason=match.relevance_reason,
+        sentiment=analyzed.sentiment,
+        sentiment_score=analyzed.sentiment_score,
+        event_types=tuple(analyzed.event_types),
+        stock_impact=analyzed.stock_impact,
+        impact_explanation=analyzed.impact_explanation,
+        evidence_case=linked.evidence_case,
+        operator_recommendation=linked.operator_recommendation,
+        recommendation_reason=linked.recommendation_reason,
+        operator_summary_snapshot=operator_summary_snapshot,
+        created_at=created_at,
+    )
+
+
+def _news_intelligence_evidence_key(article: object) -> str:
+    raw = "|".join(
+        [
+            article.source_lane or "",
+            article.url,
+            article.title,
+        ]
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _news_intelligence_preview_base_payload(

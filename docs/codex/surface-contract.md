@@ -129,6 +129,8 @@ When that future lane is approved, `read-only` still means no DB write, no Teleg
 
 If a later phase evaluates trading decisions, keep it out of the public `web-view` contract. It should be an operator-only decision-support or execution-lab surface with its own permission, audit, source freshness, failure, and order-safety contract.
 
+Operator-only news intelligence may produce sentiment scores, event impact labels, and recommendation-draft summaries only outside public `web-view` and Telegram surfaces. The v1 contract is [news-intelligence-contract.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/contracts/news-intelligence-contract.md): the default preview writes no DB rows, and only the explicit `--save-observation` operator path may write to operator-only observation tables. It still connects to no scheduler, Telegram, broker, or public route.
+
 ## Web-View API Contract
 
 The current endpoint contract is GET-only:
