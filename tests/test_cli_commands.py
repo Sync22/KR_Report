@@ -2742,6 +2742,7 @@ def test_news_intelligence_preview_save_observation_attaches_report_and_krx_cont
     assert rows[0].related_report_source_ids == ("92001", "92002")
     assert rows[0].daily_summary_presence is True
     assert rows[0].krx_reference_presence is True
+    assert rows[0].krx_reference_date == business_date
     assert rows[0].krx_turnover == 850_000_000_000
     assert rows[0].evidence_case == "report_direct_positive_news"
     assert rows[0].operator_recommendation == "strengthen_report_candidate"

@@ -17,6 +17,7 @@ class ReportLinkedNewsContext:
     candidate_priority_presence: bool
     candidate_observation_priority: str | None
     krx_reference_presence: bool
+    krx_reference_date: date | None
     krx_turnover: int | None
     investor_flow_presence: bool
 
@@ -44,6 +45,7 @@ class ReportLinkedNewsEvidence:
     candidate_priority_presence: bool
     candidate_observation_priority: str | None
     krx_reference_presence: bool
+    krx_reference_date: date | None
     krx_turnover: int | None
     investor_flow_presence: bool
     evidence_case: str
@@ -65,6 +67,7 @@ class ReportLinkedNewsEvidence:
             "candidate_priority_presence": self.candidate_priority_presence,
             "candidate_observation_priority": self.candidate_observation_priority,
             "krx_reference_presence": self.krx_reference_presence,
+            "krx_reference_date": self.krx_reference_date.isoformat() if self.krx_reference_date else None,
             "krx_turnover": self.krx_turnover,
             "investor_flow_presence": self.investor_flow_presence,
             "evidence_case": self.evidence_case,
@@ -99,6 +102,7 @@ def _build_evidence_row(
         candidate_priority_presence=context.candidate_priority_presence,
         candidate_observation_priority=context.candidate_observation_priority,
         krx_reference_presence=context.krx_reference_presence,
+        krx_reference_date=context.krx_reference_date,
         krx_turnover=context.krx_turnover,
         investor_flow_presence=context.investor_flow_presence,
         evidence_case=evidence_case,

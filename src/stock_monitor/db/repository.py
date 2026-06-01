@@ -179,6 +179,7 @@ class StockMonitorRepository:
                             candidate_priority_presence,
                             candidate_observation_priority,
                             krx_reference_presence,
+                            krx_reference_date,
                             krx_turnover,
                             investor_flow_presence,
                             source_lane,
@@ -202,7 +203,7 @@ class StockMonitorRepository:
                             recommendation_reason,
                             operator_summary_snapshot,
                             created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             evidence.run_id,
@@ -216,6 +217,7 @@ class StockMonitorRepository:
                             int(evidence.candidate_priority_presence),
                             evidence.candidate_observation_priority,
                             int(evidence.krx_reference_presence),
+                            evidence.krx_reference_date.isoformat() if evidence.krx_reference_date else None,
                             evidence.krx_turnover,
                             int(evidence.investor_flow_presence),
                             evidence.source_lane,
@@ -3262,6 +3264,7 @@ class StockMonitorRepository:
             candidate_priority_presence=bool(row["candidate_priority_presence"]),
             candidate_observation_priority=row["candidate_observation_priority"],
             krx_reference_presence=bool(row["krx_reference_presence"]),
+            krx_reference_date=date.fromisoformat(row["krx_reference_date"]) if row["krx_reference_date"] else None,
             krx_turnover=row["krx_turnover"],
             investor_flow_presence=bool(row["investor_flow_presence"]),
             source_lane=row["source_lane"],
