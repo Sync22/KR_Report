@@ -2490,8 +2490,86 @@ def test_news_intelligence_preview_cli_outputs_operator_only_json(tmp_path, monk
     assert payload["matched_count"] >= 1
     assert payload["articles"][0]["matched_alias"] == "삼성전자"
     assert payload["articles"][0]["match_reason"] == "stock_name"
+    assert payload["operator_decision_notes"]["coverage_level"] == "low"
+    assert payload["operator_decision_notes"]["matched_count"] == payload["matched_count"]
+    assert payload["operator_decision_notes"]["direct_count"] >= 1
+    assert payload["operator_decision_notes"]["top_event_types"]
+    assert payload["operator_decision_notes"]["missing_context"]["report_krx_context"] == {
+        "evaluated": False,
+        "reason": "report/KRX context is only evaluated when --save-observation is used",
+    }
     assert payload["report"]["operator_only"] is True
     assert payload["report"]["public_safe"] is False
+
+
+def test_news_intelligence_preview_cli_notes_low_coverage_and_market_context(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    scrapling_exe = tmp_path / "scrapling.exe"
+    scrapling_exe.write_text("fake", encoding="utf-8")
+    section_json = json.dumps(
+        {
+            "articles": [
+                {
+                    "officeHName": "한국경제",
+                    "title": "삼성전자 ETF 변동성 주의",
+                    "subcontent": "삼성전자와 반도체 ETF 레버리지 단타 과열을 주의해야 한다.",
+                    "date": "20260601101000",
+                    "url": "https://n.news.naver.com/mnews/article/015/0000101",
+                },
+                {
+                    "officeHName": "매일경제",
+                    "title": "반도체 업종 급등 속 삼성전자 언급",
+                    "subcontent": "코스피 반도체 업종과 삼성전자 수급이 함께 움직였다.",
+                    "date": "20260601102000",
+                    "url": "https://n.news.naver.com/mnews/article/009/0000102",
+                },
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, **_kwargs):
+        output_path = command[4]
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(section_json if command[2] == "get" else "")
+        return Result()
+
+    monkeypatch.setattr("stock_monitor.news.collectors.subprocess.run", fake_run)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-preview",
+            "--stock-name",
+            "삼성전자",
+            "--stock-code",
+            "005930",
+            "--date",
+            "2026-06-01",
+            "--scrapling-exe",
+            str(scrapling_exe),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    notes = payload["operator_decision_notes"]
+
+    assert exit_code == 0
+    assert notes["coverage_level"] == "low"
+    assert notes["matched_count"] == 2
+    assert notes["market_context_count"] == 2
+    assert notes["dominant_relevance"] == "market_context"
+    assert notes["market_context_heavy"] is True
+    assert "추가 확인" in notes["decision_note_ko"]
+    assert "직접 판단 근거로 과신하지 말 것" in notes["decision_note_ko"]
+    assert notes["missing_context"]["report_krx_context"]["evaluated"] is False
 
 
 def test_news_intelligence_preview_cli_keeps_default_no_write_guard(tmp_path, monkeypatch, capsys) -> None:
