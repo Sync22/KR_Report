@@ -10,6 +10,7 @@ import html
 import ipaddress
 import json
 import math
+import os
 import re
 import secrets
 import shutil
@@ -147,6 +148,7 @@ ACCESS_CODE_COOKIE_NAMES = {
 }
 ACCESS_CODE_HASH_ITERATIONS = 200_000
 ACCESS_CODE_SESSION_MAX_AGE_SECONDS = 12 * 60 * 60
+DEFAULT_SCRAPLING_EXE = Path(r"C:\Users\MING\Codex\_tools\scrapling\.venv\Scripts\scrapling.exe")
 SCHEDULED_NOTIFY_EARLIEST_TIME = datetime_time(hour=8, minute=0)
 SCHEDULED_NOTIFY_LATEST_TIME = datetime_time(hour=8, minute=30)
 SCHEDULED_MARKET_BRIEFING_EARLIEST_TIME = datetime_time(hour=16, minute=10)
@@ -369,6 +371,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     naver_fixture_parser.add_argument("fixture_path", type=Path)
     naver_fixture_parser.add_argument("--json", action="store_true")
+
+    news_preview_parser = subparsers.add_parser(
+        "news-intelligence-preview",
+        help="Run a manual operator-only Scrapling preview for Naver stock news intelligence.",
+    )
+    news_preview_parser.add_argument("--stock-name", required=True)
+    news_preview_parser.add_argument("--stock-code")
+    news_preview_parser.add_argument("--alias", action="append", default=[])
+    news_preview_parser.add_argument("--date", type=date.fromisoformat)
+    news_preview_parser.add_argument("--scrapling-exe", type=Path)
 
     poll_parser = subparsers.add_parser("manual-poll", help="Fetch reports and save unseen rows into SQLite.")
     poll_parser.add_argument("--limit", type=int, default=50)
@@ -1675,6 +1687,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if args.command == "news-intelligence-preview":
+        return _run_news_intelligence_preview(args)
+
     config = RuntimeConfig.from_env(headless=not getattr(args, "headed", False))
     config.ensure_runtime_dirs()
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
@@ -2478,6 +2493,121 @@ def _prepare_repository_for_command(repository: StockMonitorRepository, args: ar
             )
         return
     repository.initialize()
+
+
+def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
+    from stock_monitor.news import build_news_intelligence_report
+    from stock_monitor.news.collectors import (
+        ScraplingNewsTransport,
+        StockNewsQuery,
+        collect_naver_news_preview,
+    )
+
+    target_date = args.date or datetime.now(tz=ZoneInfo("Asia/Seoul")).date()
+    scrapling_exe = _resolve_scrapling_exe(args.scrapling_exe)
+    if scrapling_exe is None:
+        payload = _news_intelligence_preview_base_payload(
+            stock_name=args.stock_name,
+            stock_code=args.stock_code,
+            aliases=tuple(args.alias or ()),
+            target_date=target_date,
+        )
+        payload.update(
+            {
+                "sources": [],
+                "articles": [],
+                "report": None,
+                "warnings": ["Scrapling executable is missing; set --scrapling-exe or SCRAPLING_EXE."],
+                "error": "missing Scrapling executable",
+            }
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 1
+
+    query = StockNewsQuery(
+        stock_name=args.stock_name,
+        stock_code=args.stock_code,
+        aliases=tuple(args.alias or ()),
+        target_date=target_date,
+    )
+    preview = collect_naver_news_preview(
+        query,
+        transport=ScraplingNewsTransport(scrapling_exe=scrapling_exe),
+    )
+    matched_articles = [match.article for match in preview.articles]
+    report = build_news_intelligence_report(
+        stock=query.stock_name,
+        stock_code=query.stock_code,
+        articles=matched_articles,
+    )
+    payload = _news_intelligence_preview_base_payload(
+        stock_name=query.stock_name,
+        stock_code=query.stock_code,
+        aliases=query.aliases,
+        target_date=target_date,
+    )
+    payload.update(
+        {
+            "sources": [source.to_dict() for source in preview.sources],
+            "articles": [article.to_dict() for article in preview.articles],
+            "report": report.to_dict(),
+            "warnings": preview.warnings,
+            "parsed_count": preview.parsed_count,
+            "deduped_count": preview.deduped_count,
+            "matched_count": preview.matched_count,
+        }
+    )
+    if preview.parsed_count == 0:
+        payload["error"] = "no Naver news articles parsed"
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 1
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+
+def _news_intelligence_preview_base_payload(
+    *,
+    stock_name: str,
+    stock_code: str | None,
+    aliases: tuple[str, ...],
+    target_date: date,
+) -> dict[str, object]:
+    return {
+        "surface": "news-intelligence-preview",
+        "stock": stock_name,
+        "stock_code": stock_code,
+        "aliases": list(aliases),
+        "target_date": target_date.isoformat(),
+        "operator_only": True,
+        "public_safe": False,
+        "live_fetch": True,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "connects_web_view": False,
+        "page_limit": 1,
+        "full_day_complete": False,
+        "coverage_note": "v1 preview fetches first visible/API page per source lane",
+        "parsed_count": 0,
+        "deduped_count": 0,
+        "matched_count": 0,
+    }
+
+
+def _resolve_scrapling_exe(explicit_path: Path | None) -> Path | None:
+    candidates: list[Path] = []
+    if explicit_path is not None:
+        candidates.append(explicit_path)
+    elif os.environ.get("SCRAPLING_EXE"):
+        candidates.append(Path(os.environ["SCRAPLING_EXE"]))
+        candidates.append(DEFAULT_SCRAPLING_EXE)
+    else:
+        candidates.append(DEFAULT_SCRAPLING_EXE)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _uses_read_only_schema_current_check(args: argparse.Namespace) -> bool:
