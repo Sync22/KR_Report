@@ -150,7 +150,7 @@ News intelligence is not an isolated news table. Its operator value comes from l
 - KRX investor-flow rows provide stored flow context when available.
 - Candidate-evidence priority may be used as operator-only context, but news evidence must not be copied into public candidate DTOs without a separate public-safe contract.
 
-The report-linked analysis slice remains pure Python. The default `news-intelligence-preview` command must still emit JSON only and must not write DB rows, start schedulers, send Telegram, or expose anything in web-view/admin-gui. The only v1 DB write exception is the explicit operator-only `--save-observation` path described below.
+The report-linked analysis slice remains pure Python. The default `news-intelligence-preview` command must still emit JSON only and must not write DB rows, start schedulers, send Telegram, or expose anything in public `web-view`. It also does not update `admin-gui` in v1; future `admin-gui` use should be documented as an operator-only review surface before implementation. The only v1 DB write exception is the explicit operator-only `--save-observation` path described below.
 
 Supported operator-only evidence cases:
 

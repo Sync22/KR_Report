@@ -3245,6 +3245,12 @@ def test_news_intelligence_preview_save_observation_attaches_report_and_krx_cont
     assert exit_code == 0
     assert payload["writes_db"] is True
     assert payload["saved_evidence_count"] == 1
+    assert payload["krx_reference_freshness"] == {
+        "status": "exact",
+        "target_date": "2026-06-01",
+        "krx_reference_date": "2026-06-01",
+        "exact_date": True,
+    }
     assert len(rows) == 1
     assert rows[0].related_report_count == 2
     assert rows[0].related_report_source_ids == ("92001", "92002")

@@ -3597,11 +3597,12 @@ def _news_intelligence_krx_reference_freshness(
             "krx_reference_date": None,
             "exact_date": False,
         }
+    exact_date = krx_reference_date == target_date
     return {
-        "status": "exact_date" if krx_reference_date == target_date else "stale_reference",
+        "status": "exact" if exact_date else "stale_reference",
         "target_date": target_date.isoformat(),
         "krx_reference_date": krx_reference_date.isoformat(),
-        "exact_date": krx_reference_date == target_date,
+        "exact_date": exact_date,
     }
 
 
