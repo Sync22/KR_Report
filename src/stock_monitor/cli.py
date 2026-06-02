@@ -2824,6 +2824,11 @@ def _news_intelligence_observation_run_payload(
         "krx_reference_freshness": _news_intelligence_observation_krx_freshness(run, all_evidence),
         "candidate_linkage_hint": str(candidate_linkage_preview["label"]),
         "candidate_linkage_preview": candidate_linkage_preview,
+        "candidate_linkage_evaluation": _news_intelligence_candidate_linkage_evaluation(
+            run,
+            evidence_rows=all_evidence,
+            derived_counts=derived_counts,
+        ),
         "evidence": [
             _news_intelligence_observation_evidence_payload(row)
             for row in all_evidence[: max(0, evidence_per_run)]
@@ -2933,6 +2938,65 @@ def _news_intelligence_candidate_linkage_preview(
         "market_context_count": market_context_count,
         "krx_reference_status": krx_freshness["status"],
         "reason": reason,
+    }
+
+
+def _news_intelligence_candidate_linkage_evaluation(
+    run: NewsIntelligenceRun,
+    *,
+    evidence_rows: list[ReportLinkedNewsEvidenceRecord],
+    derived_counts: dict[str, object],
+) -> dict[str, object]:
+    krx_freshness = _news_intelligence_observation_krx_freshness(run, evidence_rows)
+    relevance_counts = derived_counts["relevance"]
+    direct_count = int(relevance_counts["direct"]) if isinstance(relevance_counts, dict) else 0
+    market_context_count = int(relevance_counts["market_context"]) if isinstance(relevance_counts, dict) else 0
+    caution_count = sum(
+        1
+        for row in evidence_rows
+        if row.operator_recommendation == "review_with_caution"
+        or row.stock_impact == "Caution"
+        or row.sentiment in {"Caution", "Mixed"}
+        or "Risk/Caution" in row.event_types
+    )
+    candidate_priority_presence = any(row.candidate_priority_presence for row in evidence_rows)
+    related_report_count = max((row.related_report_count for row in evidence_rows), default=0)
+    if krx_freshness["status"] == "stale_reference":
+        label = "stale_krx_check_first"
+        recommendation_support = "check_krx_before_linking"
+        reason_ko = "KRX 기준일이 대상일과 달라 후보 연결 전에 시장 반응 기준일을 먼저 확인해야 합니다."
+    elif run.matched_count <= 0 or not evidence_rows:
+        label = "insufficient_evidence"
+        recommendation_support = "hold_until_more_news"
+        reason_ko = "저장된 뉴스 근거가 부족해 후보 판단에 연결하기 어렵습니다."
+    elif caution_count > 0:
+        label = "review_existing_candidate_with_caution"
+        recommendation_support = "review_with_caution"
+        reason_ko = "주의 또는 혼합 뉴스가 있어 기존 후보 판단에 리스크 확인을 함께 붙입니다."
+    elif direct_count <= 0:
+        label = "support_only_context"
+        recommendation_support = "keep_as_supporting_evidence"
+        reason_ko = "직접 뉴스가 없어 시장 분위기나 간접 맥락 보조 근거로만 둡니다."
+    elif candidate_priority_presence:
+        label = "strengthen_existing_candidate"
+        recommendation_support = "strengthen_existing_candidate"
+        reason_ko = "기존 후보에 직접 뉴스 근거가 붙어 operator 검토 우선도를 강화할 수 있습니다."
+    else:
+        label = "promote_news_only_candidate"
+        recommendation_support = "promote_news_only_candidate"
+        reason_ko = "기존 후보에는 없지만 직접 뉴스 근거가 있어 뉴스 단독 후보 검토 대상으로 올릴 수 있습니다."
+    return {
+        "label": label,
+        "target_date": run.target_date.isoformat(),
+        "stock_code": run.stock_code,
+        "candidate_priority_presence": candidate_priority_presence,
+        "related_report_count": related_report_count,
+        "direct_count": direct_count,
+        "caution_count": caution_count,
+        "market_context_count": market_context_count,
+        "krx_reference_status": krx_freshness["status"],
+        "recommendation_support": recommendation_support,
+        "reason_ko": reason_ko,
     }
 
 
