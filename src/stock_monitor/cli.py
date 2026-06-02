@@ -2798,6 +2798,11 @@ def _news_intelligence_observation_run_payload(
     evidence_per_run: int,
 ) -> dict[str, object]:
     derived_counts = _news_intelligence_observation_derived_counts(all_evidence)
+    candidate_linkage_preview = _news_intelligence_candidate_linkage_preview(
+        run,
+        evidence_rows=all_evidence,
+        derived_counts=derived_counts,
+    )
     return {
         "run_id": run.run_id,
         "target_date": run.target_date.isoformat(),
@@ -2817,7 +2822,8 @@ def _news_intelligence_observation_run_payload(
         "evidence_count": len(all_evidence),
         "derived_counts": derived_counts,
         "krx_reference_freshness": _news_intelligence_observation_krx_freshness(run, all_evidence),
-        "candidate_linkage_hint": _news_intelligence_candidate_linkage_hint(run, all_evidence, derived_counts),
+        "candidate_linkage_hint": str(candidate_linkage_preview["label"]),
+        "candidate_linkage_preview": candidate_linkage_preview,
         "evidence": [
             _news_intelligence_observation_evidence_payload(row)
             for row in all_evidence[: max(0, evidence_per_run)]
@@ -2874,16 +2880,60 @@ def _news_intelligence_candidate_linkage_hint(
     evidence_rows: list[ReportLinkedNewsEvidenceRecord],
     derived_counts: dict[str, object],
 ) -> str:
+    return str(
+        _news_intelligence_candidate_linkage_preview(
+            run,
+            evidence_rows=evidence_rows,
+            derived_counts=derived_counts,
+        )["label"]
+    )
+
+
+def _news_intelligence_candidate_linkage_preview(
+    run: NewsIntelligenceRun,
+    *,
+    evidence_rows: list[ReportLinkedNewsEvidenceRecord],
+    derived_counts: dict[str, object],
+) -> dict[str, object]:
     krx_freshness = _news_intelligence_observation_krx_freshness(run, evidence_rows)
-    if krx_freshness["status"] == "stale_reference":
-        return "stale_krx_check_first"
     relevance_counts = derived_counts["relevance"]
     direct_count = int(relevance_counts["direct"]) if isinstance(relevance_counts, dict) else 0
-    if run.matched_count <= 0 or not evidence_rows:
-        return "needs_more_data"
-    if direct_count <= 0:
-        return "support_only_context"
-    return "ready_for_operator_review"
+    market_context_count = int(relevance_counts["market_context"]) if isinstance(relevance_counts, dict) else 0
+    support_only_count = sum(1 for row in evidence_rows if row.relevance in {"indirect", "market_context"})
+    caution_count = sum(
+        1
+        for row in evidence_rows
+        if row.operator_recommendation == "review_with_caution"
+        or row.stock_impact == "Caution"
+        or row.sentiment in {"Caution", "Mixed"}
+        or "Risk/Caution" in row.event_types
+    )
+    candidate_priority_presence = any(row.candidate_priority_presence for row in evidence_rows)
+    if krx_freshness["status"] == "stale_reference":
+        label = "stale_krx_check_first"
+        reason = "KRX reference is stale; verify market reaction before candidate linkage."
+    elif run.matched_count <= 0 or not evidence_rows:
+        label = "insufficient_news_evidence"
+        reason = "No stored news evidence is available for candidate linkage."
+    elif caution_count > 0:
+        label = "review_with_caution"
+        reason = "Caution or mixed news evidence should temper candidate review."
+    elif direct_count <= 0:
+        label = "support_only_context"
+        reason = "News evidence is indirect or market context only; keep it as support."
+    else:
+        label = "strengthen_candidate"
+        reason = "Direct news evidence can strengthen operator candidate review."
+    return {
+        "label": label,
+        "candidate_priority_presence": candidate_priority_presence,
+        "direct_count": direct_count,
+        "caution_count": caution_count,
+        "support_only_count": support_only_count,
+        "market_context_count": market_context_count,
+        "krx_reference_status": krx_freshness["status"],
+        "reason": reason,
+    }
 
 
 def _news_intelligence_observation_evidence_payload(

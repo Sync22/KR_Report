@@ -3473,8 +3473,112 @@ def test_news_intelligence_observations_outputs_read_only_run_comparison(
         "exact_date": False,
     }
     assert payload["runs"][0]["candidate_linkage_hint"] == "stale_krx_check_first"
+    assert payload["runs"][0]["candidate_linkage_preview"] == {
+        "label": "stale_krx_check_first",
+        "candidate_priority_presence": False,
+        "direct_count": 1,
+        "caution_count": 0,
+        "support_only_count": 1,
+        "market_context_count": 1,
+        "krx_reference_status": "stale_reference",
+        "reason": "KRX reference is stale; verify market reaction before candidate linkage.",
+    }
     assert len(payload["runs"][0]["evidence"]) == 1
     assert payload["runs"][0]["evidence"][0]["evidence_key"] == "ev-context"
+
+
+def test_news_intelligence_observations_classifies_candidate_linkage_preview_labels(
+    tmp_path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "news-intelligence.db"
+    repository = StockMonitorRepository(db_path)
+    repository.initialize()
+    cases = [
+        (
+            _news_intelligence_cli_run(run_id="run-strengthen"),
+            [
+                _news_intelligence_cli_evidence(
+                    run_id="run-strengthen",
+                    evidence_key="ev-strengthen",
+                    relevance="direct",
+                    match_scope="both",
+                    candidate_priority_presence=True,
+                    candidate_observation_priority="top_2",
+                )
+            ],
+            "strengthen_candidate",
+        ),
+        (
+            _news_intelligence_cli_run(run_id="run-caution"),
+            [
+                _news_intelligence_cli_evidence(
+                    run_id="run-caution",
+                    evidence_key="ev-caution",
+                    relevance="direct",
+                    match_scope="both",
+                    evidence_case="report_with_caution_news",
+                    operator_recommendation="review_with_caution",
+                    sentiment="Caution",
+                    stock_impact="Caution",
+                    event_types=("Risk/Caution",),
+                )
+            ],
+            "review_with_caution",
+        ),
+        (
+            _news_intelligence_cli_run(run_id="run-support"),
+            [
+                _news_intelligence_cli_evidence(
+                    run_id="run-support",
+                    evidence_key="ev-support",
+                    relevance="indirect",
+                    match_scope="summary",
+                    evidence_case="linked_news_context",
+                    operator_recommendation="keep_as_supporting_evidence",
+                )
+            ],
+            "support_only_context",
+        ),
+        (
+            _news_intelligence_cli_run(run_id="run-empty"),
+            [],
+            "insufficient_news_evidence",
+        ),
+    ]
+    for run, evidence, _label in cases:
+        repository.save_news_intelligence_observation(run, evidence)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-observations",
+            "--date",
+            "2026-06-01",
+            "--stock-code",
+            "005930",
+            "--db-path",
+            str(db_path),
+            "--limit",
+            "10",
+            "--evidence-per-run",
+            "0",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    labels_by_run_id = {
+        run["run_id"]: run["candidate_linkage_preview"]["label"]
+        for run in payload["runs"]
+    }
+
+    assert exit_code == 0
+    assert labels_by_run_id == {
+        "run-strengthen": "strengthen_candidate",
+        "run-caution": "review_with_caution",
+        "run-support": "support_only_context",
+        "run-empty": "insufficient_news_evidence",
+    }
+    assert payload["runs"][0]["candidate_linkage_preview"]["reason"]
 
 
 def test_news_intelligence_observations_reports_missing_db_without_writes(
@@ -3533,6 +3637,11 @@ def _news_intelligence_cli_evidence(
     match_scope: str,
     evidence_case: str = "report_direct_positive_news",
     operator_recommendation: str = "strengthen_report_candidate",
+    sentiment: str = "Positive",
+    stock_impact: str = "Positive",
+    event_types: tuple[str, ...] = ("Contract",),
+    candidate_priority_presence: bool = False,
+    candidate_observation_priority: str | None = None,
     krx_reference_date: date | None = date(2026, 6, 1),
 ) -> ReportLinkedNewsEvidenceRecord:
     return ReportLinkedNewsEvidenceRecord(
@@ -3544,8 +3653,8 @@ def _news_intelligence_cli_evidence(
         related_report_count=2,
         related_report_source_ids=("92001", "92002"),
         daily_summary_presence=True,
-        candidate_priority_presence=False,
-        candidate_observation_priority=None,
+        candidate_priority_presence=candidate_priority_presence,
+        candidate_observation_priority=candidate_observation_priority,
         krx_reference_presence=krx_reference_date is not None,
         krx_reference_date=krx_reference_date,
         krx_turnover=850_000_000_000 if krx_reference_date is not None else None,
@@ -3561,10 +3670,10 @@ def _news_intelligence_cli_evidence(
         match_scope=match_scope,
         relevance=relevance,
         relevance_reason="삼성전자가 기사 문맥에 등장합니다.",
-        sentiment="Positive",
+        sentiment=sentiment,
         sentiment_score=80,
-        event_types=("Contract",),
-        stock_impact="Positive",
+        event_types=event_types,
+        stock_impact=stock_impact,
         impact_explanation="리포트 근거와 뉴스가 같은 방향입니다.",
         evidence_case=evidence_case,
         operator_recommendation=operator_recommendation,
