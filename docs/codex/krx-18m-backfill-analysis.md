@@ -12,14 +12,14 @@ The goal is not to enable scoring, recommendations, or automated KRX Data Market
 | --- | --- | --- | --- |
 | KRX OpenAPI | Stock/ETF/index daily price, volume, turnover snapshots | Primary 18-month backfill lane | Approved API source, stable request shape, no browser session dependency. |
 | KRX Data Marketplace | Investor flow `[12008]`, `[12009]`, `[12010]` | Manual/raw-login lane; broad scheduled ingest disabled; narrow `[12009]` same-day mentioned-stock 31-day backfill is the only automatic exception | Useful for flow reference, but login/session-dependent and higher operational risk. |
-| Botasaurus/browser probe | Browser-gated source/session diagnostics | Probe only | Use only when Data Marketplace login/session/selectors or blocking behavior needs validation. |
+| Scrapling/browser probe | Browser-gated source/session diagnostics | Probe only | Preferred active tool for new rendered-page, browser-gated, anti-bot-sensitive, or source-comparison checks. |
 | Naver report collector | Research reports | Keep separate | Report source remains Naver; do not use KRX for report history. |
 
 ## Skill And Agent Comparison
 
 | Tool/agent | Best use | Not for | Current P2 decision |
 | --- | --- | --- | --- |
-| `botasaurus-stock-monitor` skill | Short-lived browser-gated KRX/Data Marketplace probes, session/blocking diagnostics | Main Naver collector, Telegram, SQLite operation, KRX OpenAPI daily snapshots | Available but not used for stock/ETF/index backfill. |
+| `scrapling-official` skill | Short-lived rendered-page/browser-gated source probes, session/blocking diagnostics, source comparison | Main Naver collector, Telegram, SQLite operation, KRX OpenAPI daily snapshots | Preferred active probe tool; Botasaurus is legacy/reference-only unless explicitly restored. |
 | `market-data-engineer` | KRX/KIS/ETF/flow source fields, request limits, source-boundary decisions | UI polish or scheduler recovery implementation | Used for lane comparison and backfill limit review. |
 | `sql-pro` | DB retention, backup, row growth, migration/cleanup risk | Source semantics or browser probing | Used for 18-month DB safety and retention review. |
 | `reviewer` | Business-day rules, stale docs, regression risk | Bulk data collection | Used for holiday expansion and documentation drift review. |
