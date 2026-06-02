@@ -21260,6 +21260,7 @@ def _render_web_view_html() -> str:
     .news-observation-summary-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
     .news-observation-summary-head b { font-size: 13px; }
     .news-observation-summary-reason { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .news-observation-summary-connection { margin: -2px 0 0; color: var(--accent); font-size: 12px; font-weight: 800; line-height: 1.4; }
     .news-observation-summary-meta { display: flex; flex-wrap: wrap; gap: 6px; }
     .news-observation-summary-titles { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; color: var(--ink); font-size: 12px; }
     .news-observation-summary-titles li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -21571,6 +21572,7 @@ def _render_web_view_html() -> str:
         <div id="news-observation-summary" class="news-observation-summary" aria-live="polite">
           <div class="news-observation-summary-head"><b>뉴스 관찰</b><span class="status-pill">저장 데이터</span></div>
           <p class="news-observation-summary-reason">날짜를 선택하면 저장된 뉴스 관찰을 확인합니다.</p>
+          <p class="news-observation-summary-connection">우선 확인 후보와 함께 읽는 뉴스 근거입니다.</p>
         </div>
         <div id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden></div>
         <p class="main-priority-note">저장 리포트, KRX, [12009] 수급 참고값 기준이며 실시간 시세가 아닙니다.</p>
@@ -22423,23 +22425,38 @@ def _render_web_view_html() -> str:
       const available = summary?.available === true;
       const label = summary?.display_label || summary?.empty_state || "뉴스 관찰 없음";
       const reason = summary?.reason || summary?.empty_state || "저장된 뉴스 관찰 없음";
+      const connection = summary?.connection_note || (available ? "우선 확인 후보와 함께 읽는 뉴스 근거입니다." : "우선 확인 후보와 연결할 저장 뉴스 관찰이 없습니다.");
+      const candidateOverlapNames = Array.isArray(summary?.candidate_overlap_names) ? summary.candidate_overlap_names.filter(Boolean).slice(0, 3) : [];
       const direct = Number(summary?.direct_count || 0);
       const caution = Number(summary?.caution_count || 0);
       const marketContext = Number(summary?.market_context_count || 0);
       const krx = summary?.krx_reference_status || "missing";
       const titles = Array.isArray(summary?.top_titles) ? summary.top_titles.filter(Boolean).slice(0, 3) : [];
-      const meta = available
-        ? `직접 ${number(direct)} · 주의 ${number(caution)} · 시장맥락 ${number(marketContext)} · KRX ${esc(krx)}`
-        : "저장된 뉴스 관찰 없음";
+      const metaChips = newsObservationMetaChips(available, direct, caution, marketContext, krx, candidateOverlapNames);
       node.innerHTML = `
         <div class="news-observation-summary-head">
           <b>${esc(label)}</b>
           <span class="status-pill">저장 뉴스</span>
         </div>
         <p class="news-observation-summary-reason">${esc(reason)}</p>
-        <div class="news-observation-summary-meta"><span class="quality-chip">${meta}</span></div>
+        <p class="news-observation-summary-connection">${esc(connection)}</p>
+        <div class="news-observation-summary-meta">${metaChips.map((item) => `<span class="quality-chip">${esc(item)}</span>`).join("")}</div>
         ${titles.length ? `<ul class="news-observation-summary-titles">${titles.map((title) => `<li>${esc(title)}</li>`).join("")}</ul>` : ""}
       `;
+    }
+
+    function newsObservationMetaChips(available, direct, caution, marketContext, krx, candidateOverlapNames) {
+      if (!available) return ["저장된 뉴스 관찰 없음"];
+      const chips = [
+        `뉴스 근거 직접 ${number(direct)}`,
+        `주의 ${number(caution)}`,
+        `시장맥락 ${number(marketContext)}`,
+        `KRX ${krx || "missing"}`
+      ];
+      if (candidateOverlapNames.length) {
+        chips.unshift(`관찰 후보 겹침 ${candidateOverlapNames.join(", ")}`);
+      }
+      return chips;
     }
 
     function renderIntradayMarketTopOverlap(commentary) {
@@ -25389,6 +25406,9 @@ def _build_web_view_news_observation_summary(
             "business_date": business_date.isoformat(),
             "display_label": "뉴스 관찰 없음",
             "reason": "저장된 뉴스 관찰 없음",
+            "connection_note": "우선 확인 후보와 연결할 저장 뉴스 관찰이 없습니다.",
+            "candidate_overlap_count": 0,
+            "candidate_overlap_names": [],
             "direct_count": 0,
             "caution_count": 0,
             "market_context_count": 0,
@@ -25402,12 +25422,18 @@ def _build_web_view_news_observation_summary(
     caution_count = sum(1 for row in evidence_rows if _web_view_news_observation_is_caution(row))
     market_context_count = sum(1 for row in evidence_rows if row.relevance == "market_context")
     krx_reference_status = _web_view_news_observation_krx_status(evidence_rows, business_date)
+    candidate_overlap_names = _web_view_news_candidate_overlap_names(evidence_rows, limit=3)
     top_titles = _web_view_unique_texts([row.title for row in evidence_rows], limit=3)
     display_label, reason = _web_view_news_observation_label(
         direct_count=direct_count,
         caution_count=caution_count,
         market_context_count=market_context_count,
         krx_reference_status=krx_reference_status,
+    )
+    connection_note = (
+        "우선 확인 후보와 겹친 뉴스 근거: " + ", ".join(candidate_overlap_names)
+        if candidate_overlap_names
+        else "우선 확인 후보와 함께 읽는 뉴스 근거입니다."
     )
     return {
         "source": "stored_news_intelligence_observation",
@@ -25417,6 +25443,9 @@ def _build_web_view_news_observation_summary(
         "business_date": business_date.isoformat(),
         "display_label": display_label,
         "reason": reason,
+        "connection_note": connection_note,
+        "candidate_overlap_count": len(candidate_overlap_names),
+        "candidate_overlap_names": candidate_overlap_names,
         "direct_count": direct_count,
         "caution_count": caution_count,
         "market_context_count": market_context_count,
@@ -25446,6 +25475,26 @@ def _web_view_news_observation_krx_status(
     if reference_dates:
         return "stale"
     return "missing"
+
+
+def _web_view_news_candidate_overlap_names(
+    rows: list[ReportLinkedNewsEvidenceRecord],
+    *,
+    limit: int,
+) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not row.candidate_priority_presence:
+            continue
+        key = row.stock_code or row.stock_name
+        if key in seen:
+            continue
+        seen.add(key)
+        names.append(row.stock_name or row.stock_code or "-")
+        if len(names) >= max(limit, 0):
+            break
+    return names
 
 
 def _web_view_news_observation_label(

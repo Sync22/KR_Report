@@ -194,6 +194,13 @@ def test_web_view_main_layout_first_pass_static_markup() -> None:
     assert "renderTopTwoReviewCandidates" in html
     assert 'id="news-observation-summary"' in html
     assert "renderNewsObservationSummary" in html
+    assert "function newsObservationMetaChips" in html
+    assert "news-observation-summary-connection" in html
+    assert "우선 확인 후보와 함께 읽는 뉴스 근거" in html
+    assert "candidate_overlap_names" in html
+    assert "관찰 후보 겹침" in html
+    assert "뉴스 근거" in html
+    assert "`직접 ${number(direct)} · 주의" not in html
     assert "top-two-candidates" in html
     assert "우선 확인 2개" in html
     top_two_renderer = html[
@@ -280,6 +287,9 @@ def test_web_view_daily_snapshot_exposes_news_observation_empty_state(tmp_path, 
         "business_date": "2026-06-02",
         "display_label": "뉴스 관찰 없음",
         "reason": "저장된 뉴스 관찰 없음",
+        "connection_note": "우선 확인 후보와 연결할 저장 뉴스 관찰이 없습니다.",
+        "candidate_overlap_count": 0,
+        "candidate_overlap_names": [],
         "direct_count": 0,
         "caution_count": 0,
         "market_context_count": 0,
@@ -324,6 +334,9 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
     assert summary["available"] is True
     assert summary["display_label"] == "주의 뉴스 확인"
     assert summary["reason"] == "주의 문구가 있어 리포트 근거와 함께 확인합니다."
+    assert summary["connection_note"] == "우선 확인 후보와 겹친 뉴스 근거: 삼성전자"
+    assert summary["candidate_overlap_count"] == 1
+    assert summary["candidate_overlap_names"] == ["삼성전자"]
     assert summary["direct_count"] == 1
     assert summary["caution_count"] == 1
     assert summary["market_context_count"] == 1
