@@ -13,6 +13,7 @@ The current product direction is no longer "add every available data layer to th
 | Principle | Roadmap Impact |
 | --- | --- |
 | Rough usable result first | Ship readable Telegram/web summaries with clear caveats before adding more intermediate validation views. |
+| Visible result over hidden maturity | If a feature is already meant to help judgment, make the smallest safe result visible in `web-view` before adding more hidden quality gates. Low coverage should be labeled, not hidden. |
 | Memo intent over implementation inventory | Mark an item complete only when the operator's intended user-facing outcome is met; backend scaffolding alone is partial. |
 | Compressed user page | Move raw tables, operational reasoning, and debug evidence out of the shared page unless they directly explain the selected daily summary. |
 | Observation curation allowed | `오늘의 관찰 후보`, `우선 확인`, `관찰 우선순위`, `관심도 높은 흐름`, `왜 눈에 띄는지`, `눈에 띄는`, `확인 후보`, `시장 분위기`, and `수급 참고` are allowed; public numeric scores, investment grades, and trading-call wording remain blocked. |
@@ -36,6 +37,7 @@ The current product direction is no longer "add every available data layer to th
 | Theme rollup | First pass done | Theme membership refresh exists and theme summaries are shown in admin. |
 | Market mood | First pass done | Simple market mood summary exists. |
 | 사용자용 web-view | V1 closeout | Separate GET-only `web-view` command/server exists with archive, daily summary, stock/category detail, intraday API, and market reference APIs; the visible shared page is slimmed to report/category/market reading rather than operator-style diagnostics. |
+| News intelligence | Operator evidence lane | Naver 5-lane manual preview, explicit `--save-observation`, readback, text summaries, candidate linkage evaluation, and daily brief exist. The next value step is a stored-data-only public-safe `web-view` summary, not more invisible analysis. |
 | ETF / flow analytics | Raised planning priority | KRX Open API snapshots exist for price/volume/turnover, and KRX Data Marketplace screens `[12008]`, `[12009]`, `[12010]` now have screen-backed request candidates. Scoring remains deferred. |
 | US market data expansion | New memo | Investigate official/semi-official US market APIs later; no implementation yet. |
 
@@ -60,6 +62,7 @@ This is the current decision baseline for planning. It intentionally separates t
 | Scheduler / 운영 안정성 | 75-80% | Historical mini-PC scheduler verification is trace evidence only. On the current main PC, `market-day-observation --date 2026-05-29 --json` is incomplete and all expected scheduled-run evidence is missing after verify times. |
 | DB / schema / backup / verification | 97% | Keep `db-verify`, backup, restore-smoke, cleanup guard, and KRX backfill discipline green after future bulk data changes. Read-only diagnostics now check current schema without running the schema initializer when the DB already exists, reducing avoidable SQLite write-lock contention during parallel health checks. `db-restore-smoke` now records a local operation event, and `next-phase-readiness.db_safety` blocks completion when the latest backup is missing, lacks a matching successful restore-smoke, or `db-verify` has failing checks. |
 | 사용자용 web-view | 90-93% | Direction reset is underway and the five-tab GET-only user surface is the current target. Historical mini-PC provider smoke remains trace evidence; on the current main PC, external provider smoke is not recorded and the Startup shortcut is missing, so local fallback health is not proven. |
+| News intelligence / report-linked evidence | 72-78% | Operator-only collection, judgment, save/readback, candidate linkage evaluation, and daily brief exist. It becomes product-visible when saved observations are projected into `web-view` as public-safe labels/counts/reasons without sentiment scores, numeric impact, or trading calls. |
 | admin-gui | 85% | Validate controls in live operation and refine status/log/settings UX without exposing admin externally. DB backup/verify reminders, readable recent-event summaries, and read-only recovery guidance are now visible in the operator status surface. |
 | KRX / 수급 / ETF | 88-91% | Open API daily snapshots are stored through `2026-05-19`, but the `2026-05-29` baseline reports 6 missing publishable daily snapshot dates starting `2026-05-28`. Expand investor-flow coverage only through guarded/manual or separately approved scheduled ingest. |
 | 관찰 후보 추천 / 백테스트 / 점수화 초안 | 84% | Build `오늘의 관찰 후보` ordering from stored evidence; the public `관찰` tab now has a top-2 `우선 확인` block, while reaction windows stay read-only and public numeric scores, investment grades, and trading calls remain blocked. Future approved intraday references may affect observation ordering; later trading-decision support must be operator-only and separately gated. |
@@ -511,6 +514,7 @@ Next practical sequence, updated after the `2026-05-29` main-PC readiness refres
 4. Verify real market-day scheduled-run evidence from an elevated/local shell without changing scheduler registration.
 5. Configure and observe only the GET-only `web-view` Startup fallback and external provider smoke; keep `admin-gui` private.
 6. Continue candidate evidence and web-view polish as observation curation only; keep public scoring, investment grades, trading calls, broker execution, and order routing blocked.
+7. For news intelligence, move from CLI-only readback to a compact stored-data `web-view` summary so the feature produces a visible daily result before deeper recommendation-support work.
 
 ## Testing Gates
 

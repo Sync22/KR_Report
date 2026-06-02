@@ -20,7 +20,9 @@ from stock_monitor.models import (
     InvestorNetBuyTopDaily,
     MarketIndexDailySnapshot,
     MarketInvestorFlowDaily,
+    NewsIntelligenceRun,
     Report,
+    ReportLinkedNewsEvidenceRecord,
     StockInvestorFlowDaily,
     StockMarketDailySnapshot,
     StockMetadata,
@@ -60,6 +62,83 @@ def _assert_public_safe_payload(payload) -> None:
     elif isinstance(payload, list):
         for item in payload:
             _assert_public_safe_payload(item)
+
+
+def _web_view_news_run(
+    *,
+    run_id: str = "news-web-view-run-1",
+    target_date: date = date(2026, 6, 2),
+    stock_name: str = "삼성전자",
+    stock_code: str = "005930",
+) -> NewsIntelligenceRun:
+    return NewsIntelligenceRun(
+        run_id=run_id,
+        target_date=target_date,
+        stock_name=stock_name,
+        stock_code=stock_code,
+        aliases=("삼전",),
+        source_mode="naver_5_lane_preview",
+        page_limit=1,
+        full_day_complete=False,
+        live_fetch=True,
+        parsed_count=85,
+        deduped_count=70,
+        matched_count=2,
+        operator_summary_snapshot=f"{stock_name} operator-only news summary",
+        warnings=(),
+        created_at=datetime(2026, 6, 2, 10, 0, 0),
+    )
+
+
+def _web_view_news_evidence(
+    *,
+    run_id: str = "news-web-view-run-1",
+    evidence_key: str = "news-evidence-1",
+    title: str = "삼성전자, AI 반도체 공급 계약 체결",
+    relevance: str = "direct",
+    sentiment: str = "Positive",
+    stock_impact: str = "Strong Positive",
+    operator_recommendation: str = "strengthen_report_candidate",
+    target_date: date = date(2026, 6, 2),
+    krx_reference_date: date | None = date(2026, 6, 2),
+) -> ReportLinkedNewsEvidenceRecord:
+    return ReportLinkedNewsEvidenceRecord(
+        run_id=run_id,
+        evidence_key=evidence_key,
+        target_date=target_date,
+        stock_code="005930",
+        stock_name="삼성전자",
+        related_report_count=2,
+        related_report_source_ids=("92001", "92002"),
+        daily_summary_presence=True,
+        candidate_priority_presence=True,
+        candidate_observation_priority="priority",
+        krx_reference_presence=krx_reference_date is not None,
+        krx_reference_date=krx_reference_date,
+        krx_turnover=850_000_000_000 if krx_reference_date else None,
+        investor_flow_presence=False,
+        source_lane="mainnews",
+        title=title,
+        summary="삼성전자가 AI 반도체 공급 계약을 체결했다.",
+        source="한국경제",
+        published_at=datetime(2026, 6, 2, 9, 10, 0),
+        url=f"https://n.news.naver.com/article/015/{evidence_key}",
+        matched_alias="삼성전자",
+        match_reason="stock_name",
+        match_scope="title",
+        relevance=relevance,
+        relevance_reason="종목명이 제목에 등장합니다.",
+        sentiment=sentiment,
+        sentiment_score=82,
+        event_types=("Contract",),
+        stock_impact=stock_impact,
+        impact_explanation="리포트 근거와 뉴스가 같은 방향입니다.",
+        evidence_case="report_direct_positive_news",
+        operator_recommendation=operator_recommendation,
+        recommendation_reason="리포트와 뉴스가 같은 방향입니다.",
+        operator_summary_snapshot="operator-only summary",
+        created_at=datetime(2026, 6, 2, 10, 0, 0),
+    )
 
 
 def test_web_view_host_guard_allows_loopback_hosts() -> None:
@@ -110,6 +189,8 @@ def test_web_view_main_layout_first_pass_static_markup() -> None:
     assert "renderSectorBreadthBars" in html
     assert "sector-breadth-bar" in html
     assert "renderTopTwoReviewCandidates" in html
+    assert 'id="news-observation-summary"' in html
+    assert "renderNewsObservationSummary" in html
     assert "top-two-candidates" in html
     assert "우선 확인 2개" in html
     top_two_renderer = html[
@@ -137,6 +218,88 @@ def test_web_view_main_layout_first_pass_static_markup() -> None:
     assert "renderIntradayMarketTopOverlap" in html
     assert "intraday-overlap-chip" in html
     assert "호출 ${number(calls)}회" in html
+
+
+def test_web_view_daily_snapshot_exposes_news_observation_empty_state(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+
+    snapshot = cli_module.build_web_view_daily_snapshot(
+        config,
+        repository,
+        business_date=date(2026, 6, 2),
+        now=datetime(2026, 6, 2, 10, 0, 0),
+    )
+
+    summary = snapshot["news_observation_summary"]
+    assert summary == {
+        "source": "stored_news_intelligence_observation",
+        "read_only": True,
+        "live_fetch": False,
+        "available": False,
+        "business_date": "2026-06-02",
+        "display_label": "뉴스 관찰 없음",
+        "reason": "저장된 뉴스 관찰 없음",
+        "direct_count": 0,
+        "caution_count": 0,
+        "market_context_count": 0,
+        "krx_reference_status": "missing",
+        "top_titles": [],
+        "empty_state": "저장된 뉴스 관찰 없음",
+        "missing_context": ["stored_news_observation"],
+    }
+    _assert_public_safe_payload(snapshot)
+
+
+def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    run = _web_view_news_run()
+    repository.save_news_intelligence_observation(
+        run,
+        [
+            _web_view_news_evidence(),
+            _web_view_news_evidence(
+                evidence_key="news-evidence-2",
+                title="삼성전자, 변동성 확대 주의",
+                relevance="market_context",
+                sentiment="Caution",
+                stock_impact="Strong Negative",
+                operator_recommendation="review_with_caution",
+            ),
+        ],
+    )
+
+    snapshot = cli_module.build_web_view_daily_snapshot(
+        config,
+        repository,
+        business_date=date(2026, 6, 2),
+        now=datetime(2026, 6, 2, 10, 30, 0),
+    )
+
+    summary = snapshot["news_observation_summary"]
+    assert summary["available"] is True
+    assert summary["display_label"] == "주의 뉴스 확인"
+    assert summary["reason"] == "주의 문구가 있어 리포트 근거와 함께 확인합니다."
+    assert summary["direct_count"] == 1
+    assert summary["caution_count"] == 1
+    assert summary["market_context_count"] == 1
+    assert summary["krx_reference_status"] == "exact"
+    assert summary["top_titles"] == [
+        "삼성전자, AI 반도체 공급 계약 체결",
+        "삼성전자, 변동성 확대 주의",
+    ]
+    assert "overall_sentiment" not in summary
+    assert "sentiment_score" not in json.dumps(summary, ensure_ascii=False)
+    assert "stock_impact" not in json.dumps(summary, ensure_ascii=False)
+    assert "operator_recommendation" not in json.dumps(summary, ensure_ascii=False)
+    _assert_public_safe_payload(snapshot)
 
 
 def test_web_view_report_title_display_trims_only_trailing_parenthetical() -> None:

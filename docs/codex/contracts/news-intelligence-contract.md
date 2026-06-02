@@ -24,7 +24,7 @@ Blocked by default in v1:
 - SQLite writes or migrations unless the operator explicitly passes `--save-observation` for the operator-only observation tables.
 - Scheduler registration, scheduler execution, or unattended collection.
 - Telegram send or Telegram candidate alerts.
-- Public `web-view` exposure.
+- Direct public `web-view` exposure of raw/operator-only payloads. A later public-safe, stored-data-only projection is allowed when this contract and `surface-contract.md` define the exact fields.
 - Broker secrets, broker execution, order routing, or order suggestions.
 - Public buy/sell, one-pick, investment-grade, target-return, conviction, entry, or exit wording.
 
@@ -55,7 +55,14 @@ Scrapling is the preferred active source-probe tool for rendered Naver source in
 
 - `python -m stock_monitor news-intelligence-preview --stock-name NAME [--stock-code CODE] [--alias ALIAS] [--date YYYY-MM-DD]`
 
-This command is manual and operator-only. It emits JSON to stdout, uses temporary files for Scrapling output, deletes those files after reading, and must not write live fetch results into the repository, SQLite, logs, scheduler state, Telegram, admin-gui, or public `web-view`.
+This command is manual and operator-only. It emits JSON to stdout, uses temporary files for Scrapling output, deletes those files after reading, and must not write live fetch results into the repository, SQLite, logs, scheduler state, Telegram, or public `web-view` by default. It also does not update `admin-gui` in v1; an `admin-gui` review surface is a future operator-only integration candidate, not a public-surface exception.
+
+Saved operator observations may be reviewed with:
+
+- `python -m stock_monitor news-intelligence-observations [--date YYYY-MM-DD] [--stock-code CODE] [--run-id RUN_ID]`
+- `python -m stock_monitor news-intelligence-daily-brief --date YYYY-MM-DD [--format text|json]`
+
+These readback commands are operator-only and read-only. They compare saved runs and evidence rows, emit operator summaries, and must not fetch live news, write DB rows, start schedulers, send Telegram, or expose raw operator payloads in public `web-view`.
 
 The preview command is intentionally incomplete as a day-level collector:
 
@@ -176,8 +183,37 @@ Storage guardrails:
 
 - DB writes require the explicit operator save option `--save-observation`.
 - The default manual preview remains `writes_db=false`.
-- Stored rows are operator-only observation/evaluation data and must not be copied into public `web-view`, Telegram, scheduler, or admin-gui surfaces without a separate public-safe contract.
+- Stored rows are operator-only observation/evaluation data and must not be copied raw into public `web-view`, Telegram, or scheduler surfaces. A thin public-safe `web-view` projection may be added later when it hides internal sentiment scores, impact scores, raw warnings, and operator-only recommendation-support fields. `admin-gui` remains private/operator-only and may later show fuller review rows after a separate operator-review contract.
+- When KRX reference data comes from the nearest prior stored row, the preview/save payload must distinguish exact-date reference from stale fallback reference and warn rather than silently treating stale KRX data as same-day confirmation.
 - The stored lane must not contain broker secrets, order intent, order-routing instructions, or public buy/sell calls.
+
+## Public-Safe Web-View Projection Direction
+
+News intelligence should not remain invisible after saved observations exist. The product direction is to surface an incomplete-but-clearly-labeled summary in `web-view` rather than waiting for perfect news judgment.
+
+Allowed public-safe projection, stored-data only:
+
+- Availability state: `news_observation_available=true|false`.
+- Display labels derived from existing operator labels, such as `뉴스로 후보 강화`, `주의 뉴스 확인`, `시장 맥락 참고`, `KRX 기준일 확인 필요`, and `뉴스 근거 부족`.
+- Compact counts such as direct-news count, caution count, and market-context count.
+- KRX reference status as `exact`, `stale`, or `missing`.
+- One to three article titles/sources when they are already stored in observation rows.
+- A short public reason that explains what to check, not what to buy or sell.
+
+Forbidden in public projection:
+
+- `overall_sentiment`, article `sentiment_score`, numeric impact, conviction, target-return, investment grade, buy/sell, entry/exit, take-profit, one-pick, broker, or order-routing wording.
+- Live Naver fetch from `web-view`.
+- Triggering `--save-observation` from `web-view`.
+- Scheduler, Telegram, admin control, or DB mutation from the public route.
+
+Placement direction:
+
+- The first visible slice should be a small stored-data block in the `메인` top-2 priority area or a compact row in the `관찰` tab.
+- If there are no saved observations, the page should show a simple missing state such as `저장된 뉴스 관찰 없음` instead of hiding the feature entirely.
+- Low coverage, indirect-only, or market-context-heavy results should still be visible as `참고` or `추가 확인 필요`; do not hard-block visibility solely because the analysis is imperfect.
+
+Future Toss Securities Open API or another verified quote/turnover source may strengthen this projection by confirming market reaction freshness. That use remains read-only observation support and must not become broker execution, order routing, or public trading advice.
 
 ## Integration Boundary
 
@@ -191,7 +227,7 @@ It must not import or call:
 - web-view route builders
 - scheduler scripts
 
-The safe first integration point is the manual/operator CLI preview above. Public surface integration requires a separate surface-contract update and public-safe QA.
+The safe first integration points are the manual/operator CLI preview, explicit `--save-observation`, and read-only observation readback/daily brief commands above. The next visible product step is a stored-data-only public-safe web-view projection, not raw operator payload exposure.
 
 ## LLM Extension Point
 
