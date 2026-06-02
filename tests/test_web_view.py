@@ -315,6 +315,144 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
     _assert_public_safe_payload(snapshot)
 
 
+def test_web_view_candidate_evidence_projects_public_safe_news_badge(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 2)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="?쇱꽦?꾩옄",
+                stock_code="005930",
+                title="?쇱꽦?꾩옄 ?먭? A",
+                broker_name="NH?ъ옄利앷텒",
+                published_at=datetime(2026, 6, 2, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 2, 9, 0, 30),
+                target_price_value=100_000,
+                opinion_normalized="buy",
+                source_id="news-badge-report-a",
+                identity_key="news-badge-report-a",
+            ),
+            Report(
+                stock_name="?쇱꽦?꾩옄",
+                stock_code="005930",
+                title="?쇱꽦?꾩옄 ?먭? B",
+                broker_name="KB利앷텒",
+                published_at=datetime(2026, 6, 2, 10, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 2, 10, 0, 30),
+                target_price_value=110_000,
+                opinion_normalized="buy",
+                source_id="news-badge-report-b",
+                identity_key="news-badge-report-b",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    direct_evidence = _web_view_news_evidence(target_date=business_date, krx_reference_date=date(2026, 6, 1))
+    repository.save_news_intelligence_observation(
+        _web_view_news_run(target_date=business_date),
+        [
+            direct_evidence,
+            _web_view_news_evidence(
+                evidence_key="news-badge-caution",
+                title="?쇱꽦?꾩옄, 蹂?숈꽦 ?뺣? 二쇱쓽",
+                relevance="market_context",
+                sentiment="Caution",
+                stock_impact="Negative",
+                operator_recommendation="review_with_caution",
+                target_date=business_date,
+                krx_reference_date=date(2026, 6, 1),
+            ),
+        ],
+    )
+
+    snapshot = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=1,
+    )
+
+    badge = snapshot["rows"][0]["news_observation_badge"]
+    assert badge["available"] is True
+    assert badge["display_label"] == "주의 뉴스"
+    assert badge["reason"] == direct_evidence.title
+    assert badge["direct_count"] == 1
+    assert badge["caution_count"] == 1
+    assert badge["market_context_count"] == 1
+    assert badge["krx_reference_status"] == "stale"
+    assert badge["top_title"] == direct_evidence.title
+    payload = json.dumps(snapshot, ensure_ascii=False)
+    assert "sentiment_score" not in payload
+    assert "stock_impact" not in payload
+    assert "operator_recommendation" not in payload
+    _assert_public_safe_payload(snapshot)
+
+
+def test_web_view_candidate_evidence_projects_empty_news_badge(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 2)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="NAVER",
+                stock_code="035420",
+                title="NAVER ?먭?",
+                broker_name="NH?ъ옄利앷텒",
+                published_at=datetime(2026, 6, 2, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 2, 9, 0, 30),
+                target_price_value=250_000,
+                opinion_normalized="buy",
+                source_id="news-badge-empty-report-a",
+                identity_key="news-badge-empty-report-a",
+            ),
+            Report(
+                stock_name="NAVER",
+                stock_code="035420",
+                title="NAVER ?먭? B",
+                broker_name="KB利앷텒",
+                published_at=datetime(2026, 6, 2, 10, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 2, 10, 0, 30),
+                target_price_value=260_000,
+                opinion_normalized="buy",
+                source_id="news-badge-empty-report-b",
+                identity_key="news-badge-empty-report-b",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    snapshot = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=1,
+    )
+
+    assert snapshot["rows"][0]["news_observation_badge"] == {
+        "available": False,
+        "display_label": "저장 뉴스 근거 없음",
+        "reason": "같은 종목의 저장 뉴스 observation이 없습니다.",
+        "direct_count": 0,
+        "caution_count": 0,
+        "market_context_count": 0,
+        "krx_reference_status": "missing",
+        "top_title": None,
+    }
+    _assert_public_safe_payload(snapshot)
+
+
 def test_web_view_report_title_display_trims_only_trailing_parenthetical() -> None:
     assert cli_module._web_view_report_title_display("업황 회복 (요약)") == "업황 회복"
     assert cli_module._web_view_report_title_display("방산 지상군(이제 철도도 보자)") == "방산 지상군(이제 철도도 보자)"
@@ -3774,6 +3912,9 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "candidateFlowMetrics(rank, turnover, flowLine)" in html
     assert "candidateMarketInline(item.market_reference)" in html
     assert "candidateIntradayReferenceLabel(item.intraday_reference)" in html
+    assert "renderCandidateNewsBadge(item.news_observation_badge)" in html
+    assert "candidateNewsCompactLine(item.news_observation_badge)" in html
+    assert "candidate-news-badge" in html
     assert "candidate-intraday-line" in html
     assert "실시간 소스 미확정" in html
     assert "candidate-info-grid" in html
