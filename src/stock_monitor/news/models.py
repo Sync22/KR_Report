@@ -12,6 +12,8 @@ class NewsArticle:
     published_at: datetime
     url: str
     source_lane: str | None = None
+    match_scope: str | None = None
+    relevance: str | None = None
 
     def text(self) -> str:
         return f"{self.title} {self.summary}".strip()
@@ -24,6 +26,8 @@ class NewsArticle:
             "published_at": self.published_at.isoformat(),
             "url": self.url,
             "source_lane": self.source_lane,
+            "match_scope": self.match_scope,
+            "relevance": self.relevance,
         }
 
 

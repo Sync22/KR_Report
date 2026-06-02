@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Protocol
 
 from .events import classify_news_events
@@ -74,6 +75,7 @@ def build_news_intelligence_report(
         analyzer.analyze(article) if analyzer is not None else analyze_news_article(article)
         for article in deduped_articles
     ]
+    analyzed = [_apply_match_quality_guard(article) for article in analyzed]
     analyzed.sort(
         key=lambda article: (_ranking_importance(article), article.article.published_at),
         reverse=True,
@@ -172,6 +174,28 @@ def _article_weight(article: AnalyzedNewsArticle) -> float:
     if _is_market_context_article(article.article):
         return 0.35
     return 1.0
+
+
+def _apply_match_quality_guard(article: AnalyzedNewsArticle) -> AnalyzedNewsArticle:
+    if not _is_indirect_or_summary_only(article.article):
+        return article
+    stock_impact = article.stock_impact
+    impact_explanation = article.impact_explanation
+    if stock_impact in {"Strong Positive", "Strong Negative"}:
+        stock_impact = "Caution"
+        impact_explanation = (
+            "Summary-only or indirect matched news requires direct stock context before treating it as a strong impact signal."
+        )
+    return replace(
+        article,
+        stock_impact=stock_impact,
+        impact_explanation=impact_explanation,
+        importance=round(article.importance * 0.45),
+    )
+
+
+def _is_indirect_or_summary_only(article: NewsArticle) -> bool:
+    return article.match_scope == "summary" or article.relevance == "indirect"
 
 
 def _is_market_context_article(article: NewsArticle) -> bool:
