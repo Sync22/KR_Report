@@ -203,6 +203,10 @@ READ_ONLY_SCHEMA_CURRENT_COMMANDS = {
     "web-view-startup-fallback-check",
     "web-view-value-qa",
 }
+SCHEMA_PRESERVING_EXISTING_DB_COMMANDS = {
+    "db-backup",
+    "db-restore-smoke",
+}
 WEB_VIEW_STARTUP_SHORTCUT_NAME = "StockMonitor-WebView.lnk"
 MINI_PC_EXPECTED_SCHEDULER_TASK_SUFFIXES = (
     "KrxDailyBackfill",
@@ -2485,6 +2489,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _prepare_repository_for_command(repository: StockMonitorRepository, args: argparse.Namespace) -> None:
+    if _preserves_existing_db_schema(args):
+        if not repository.db_path.exists():
+            repository.initialize()
+        return
     if _uses_read_only_schema_current_check(args):
         if not repository.db_path.exists():
             repository.initialize()
@@ -2982,6 +2990,10 @@ def _uses_read_only_schema_current_check(args: argparse.Namespace) -> bool:
     if command == "krx-openapi-availability-probe":
         return bool(getattr(args, "dry_run", False))
     return command in READ_ONLY_SCHEMA_CURRENT_COMMANDS
+
+
+def _preserves_existing_db_schema(args: argparse.Namespace) -> bool:
+    return str(getattr(args, "command", "")) in SCHEMA_PRESERVING_EXISTING_DB_COMMANDS
 
 
 def _run_db_migrate(repository: StockMonitorRepository, *, dry_run: bool) -> int:
