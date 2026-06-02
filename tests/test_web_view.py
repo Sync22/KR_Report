@@ -204,6 +204,8 @@ def test_web_view_main_layout_first_pass_static_markup() -> None:
     assert "news-observation-summary-connection" in html
     assert "news-observation-summary-items" in html
     assert "news-observation-summary-item" in html
+    assert "news-observation-summary-link" in html
+    assert 'data-stock-code="${esc(item.stock_code)}"' in html
     assert "우선 확인 후보와 함께 읽는 뉴스 근거" in html
     assert "candidate_overlap_names" in html
     assert "관찰 후보 겹침" in html
