@@ -3915,6 +3915,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "renderCandidateNewsBadge(item.news_observation_badge)" in html
     assert "candidateNewsCompactLine(item.news_observation_badge)" in html
     assert "candidate-news-badge" in html
+    assert ".candidate-news-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; border: 1px solid #e7d8bf;" in html
     assert "candidate-intraday-line" in html
     assert "실시간 소스 미확정" in html
     assert "candidate-info-grid" in html
