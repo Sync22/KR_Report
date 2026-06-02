@@ -2559,6 +2559,10 @@ def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
         aliases=query.aliases,
         target_date=target_date,
     )
+    source_coverage = _news_intelligence_source_coverage(preview.sources)
+    warnings = [*preview.warnings]
+    if source_coverage["empty_source_lanes"]:
+        warnings.append("일부 source lane이 파싱 기여 없음")
     payload.update(
         {
             "sources": [source.to_dict() for source in preview.sources],
@@ -2568,11 +2572,15 @@ def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
                 preview.articles,
                 [analyze_news_article(match.article) for match in preview.articles],
                 report_context_evaluated=bool(args.save_observation),
+                source_coverage=source_coverage,
             ),
-            "warnings": preview.warnings,
+            "warnings": warnings,
             "parsed_count": preview.parsed_count,
             "deduped_count": preview.deduped_count,
             "matched_count": preview.matched_count,
+            "effective_source_count": source_coverage["effective_source_count"],
+            "empty_source_lanes": source_coverage["empty_source_lanes"],
+            "source_coverage": source_coverage,
         }
     )
     if preview.parsed_count == 0:
@@ -2663,6 +2671,7 @@ def _news_intelligence_operator_decision_notes(
     analyzed_articles: list[object],
     *,
     report_context_evaluated: bool,
+    source_coverage: dict[str, object] | None = None,
 ) -> dict[str, object]:
     matched_count = len(matches)
     relevance_counts = Counter(str(getattr(match, "relevance", "")) for match in matches)
@@ -2687,6 +2696,11 @@ def _news_intelligence_operator_decision_notes(
             negative_count += 1
     coverage_level = _news_intelligence_coverage_level(matched_count)
     market_context_heavy = matched_count > 0 and market_context_count >= max(1, round(matched_count * 0.5))
+    source_coverage_payload = source_coverage or {
+        "total_source_count": 0,
+        "effective_source_count": 0,
+        "empty_source_lanes": [],
+    }
     return {
         "coverage_level": coverage_level,
         "matched_count": matched_count,
@@ -2699,6 +2713,7 @@ def _news_intelligence_operator_decision_notes(
         "negative_count": negative_count,
         "top_event_types": [event for event, _count in event_counts.most_common(5)],
         "market_context_heavy": market_context_heavy,
+        "source_coverage": source_coverage_payload,
         "decision_note_ko": _news_intelligence_decision_note_ko(
             coverage_level=coverage_level,
             matched_count=matched_count,
@@ -2706,6 +2721,7 @@ def _news_intelligence_operator_decision_notes(
             caution_count=caution_count,
             positive_count=positive_count,
             negative_count=negative_count,
+            source_coverage=source_coverage_payload,
         ),
         "missing_context": {
             "report_krx_context": (
@@ -2724,6 +2740,20 @@ def _news_intelligence_operator_decision_notes(
                 "reason": "candidate evidence linkage is not part of news-intelligence-preview v1",
             },
         },
+    }
+
+
+def _news_intelligence_source_coverage(sources: list[object]) -> dict[str, object]:
+    source_payloads = [source.to_dict() for source in sources]
+    empty_source_lanes = [
+        str(source["source"])
+        for source in source_payloads
+        if source.get("fetched") is True and int(source.get("parsed_count") or 0) == 0
+    ]
+    return {
+        "total_source_count": len(source_payloads),
+        "effective_source_count": sum(1 for source in source_payloads if int(source.get("parsed_count") or 0) > 0),
+        "empty_source_lanes": empty_source_lanes,
     }
 
 
@@ -2759,6 +2789,7 @@ def _news_intelligence_decision_note_ko(
     caution_count: int,
     positive_count: int,
     negative_count: int,
+    source_coverage: dict[str, object],
 ) -> str:
     notes: list[str] = []
     if coverage_level == "none":
@@ -2775,6 +2806,14 @@ def _news_intelligence_decision_note_ko(
         notes.append(f"긍정 신호 {positive_count}건은 리포트/KRX 맥락과 함께 재확인하십시오.")
     if negative_count:
         notes.append(f"부정 신호 {negative_count}건은 원문과 반복 여부를 확인하십시오.")
+    total_source_count = int(source_coverage.get("total_source_count") or 0)
+    effective_source_count = int(source_coverage.get("effective_source_count") or 0)
+    empty_source_lanes = source_coverage.get("empty_source_lanes") or []
+    if total_source_count and empty_source_lanes:
+        notes.append(
+            f"일부 source lane이 파싱 기여 없음: 유효 {effective_source_count}/{total_source_count}개 lane만 "
+            "판단에 반영되어 추가 확인 필요합니다."
+        )
     return " ".join(notes)
 
 
@@ -2958,6 +2997,13 @@ def _news_intelligence_preview_base_payload(
         "parsed_count": 0,
         "deduped_count": 0,
         "matched_count": 0,
+        "effective_source_count": 0,
+        "empty_source_lanes": [],
+        "source_coverage": {
+            "total_source_count": 0,
+            "effective_source_count": 0,
+            "empty_source_lanes": [],
+        },
         "operator_decision_notes": _news_intelligence_operator_decision_notes(
             [],
             [],

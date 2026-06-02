@@ -2605,6 +2605,70 @@ def test_news_intelligence_preview_cli_notes_low_coverage_and_market_context(
     assert notes["missing_context"]["report_krx_context"]["evaluated"] is False
 
 
+def test_news_intelligence_preview_cli_reports_empty_fetched_source_lanes(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    scrapling_exe = tmp_path / "scrapling.exe"
+    scrapling_exe.write_text("fake", encoding="utf-8")
+    section_json = json.dumps(
+        {
+            "articles": [
+                {
+                    "officeHName": "한국경제",
+                    "title": "삼성전자 AI 반도체 공급 계약",
+                    "subcontent": "삼성전자가 AI 반도체 공급 계약을 체결했다.",
+                    "date": "20260601101000",
+                    "url": "https://n.news.naver.com/mnews/article/015/0000201",
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, **_kwargs):
+        output_path = command[4]
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(section_json if command[2] == "get" else "")
+        return Result()
+
+    monkeypatch.setattr("stock_monitor.news.collectors.subprocess.run", fake_run)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-preview",
+            "--stock-name",
+            "삼성전자",
+            "--stock-code",
+            "005930",
+            "--date",
+            "2026-06-01",
+            "--scrapling-exe",
+            str(scrapling_exe),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    notes = payload["operator_decision_notes"]
+
+    assert exit_code == 0
+    assert payload["effective_source_count"] == 2
+    assert payload["empty_source_lanes"] == ["flashnews", "mainnews", "ranknews"]
+    assert payload["source_coverage"]["effective_source_count"] == 2
+    assert payload["source_coverage"]["empty_source_lanes"] == ["flashnews", "mainnews", "ranknews"]
+    assert "일부 source lane이 파싱 기여 없음" in payload["warnings"]
+    assert notes["source_coverage"]["effective_source_count"] == 2
+    assert notes["source_coverage"]["empty_source_lanes"] == ["flashnews", "mainnews", "ranknews"]
+    assert "일부 source lane이 파싱 기여 없음" in notes["decision_note_ko"]
+    assert "추가 확인 필요" in notes["decision_note_ko"]
+
+
 def test_news_intelligence_preview_cli_keeps_default_no_write_guard(tmp_path, monkeypatch, capsys) -> None:
     scrapling_exe = tmp_path / "scrapling.exe"
     scrapling_exe.write_text("fake", encoding="utf-8")
