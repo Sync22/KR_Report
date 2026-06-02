@@ -2605,6 +2605,65 @@ def test_news_intelligence_preview_cli_notes_low_coverage_and_market_context(
     assert notes["missing_context"]["report_krx_context"]["evaluated"] is False
 
 
+def test_news_intelligence_preview_cli_reports_summary_only_match_count(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    scrapling_exe = tmp_path / "scrapling.exe"
+    scrapling_exe.write_text("fake", encoding="utf-8")
+    section_json = json.dumps(
+        {
+            "articles": [
+                {
+                    "officeHName": "Test News",
+                    "title": "Cloud vendor announces AI server supply contract",
+                    "subcontent": "NAVER is mentioned only as the customer reference in the article body.",
+                    "date": "20260601101000",
+                    "url": "https://n.news.naver.com/mnews/article/015/0000301",
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, **_kwargs):
+        output_path = command[4]
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(section_json if command[2] == "get" else "")
+        return Result()
+
+    monkeypatch.setattr("stock_monitor.news.collectors.subprocess.run", fake_run)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-preview",
+            "--stock-name",
+            "NAVER",
+            "--stock-code",
+            "035420",
+            "--date",
+            "2026-06-01",
+            "--scrapling-exe",
+            str(scrapling_exe),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    notes = payload["operator_decision_notes"]
+
+    assert exit_code == 0
+    assert payload["matched_count"] == 1
+    assert notes["indirect_count"] == 1
+    assert notes["summary_only_count"] == 1
+    assert "summary-only" in notes["decision_note_ko"]
+
+
 def test_news_intelligence_preview_cli_reports_empty_fetched_source_lanes(
     tmp_path,
     monkeypatch,

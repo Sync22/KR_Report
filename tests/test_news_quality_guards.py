@@ -2,17 +2,115 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from stock_monitor.news import NewsArticle, build_news_intelligence_report
+from stock_monitor.news import AnalyzedNewsArticle, NewsArticle, build_news_intelligence_report
 
 
-def _article(title: str, summary: str, *, url: str) -> NewsArticle:
+def _article(
+    title: str,
+    summary: str,
+    *,
+    url: str,
+    match_scope: str | None = None,
+    relevance: str | None = None,
+) -> NewsArticle:
     return NewsArticle(
         title=title,
         summary=summary,
         source="Test News",
         published_at=datetime(2026, 6, 2, 9, 30, tzinfo=timezone.utc),
         url=url,
+        match_scope=match_scope,
+        relevance=relevance,
     )
+
+
+class _StaticAnalyzer:
+    def analyze(self, article: NewsArticle) -> AnalyzedNewsArticle:
+        if article.url.endswith("/summary-only-positive"):
+            return AnalyzedNewsArticle(
+                article=article,
+                concise_summary=article.summary,
+                sentiment="Positive",
+                sentiment_score=100,
+                keywords=["contract"],
+                event_types=["Contract", "Investment"],
+                stock_impact="Strong Positive",
+                impact_explanation="direct-looking positive event",
+                importance=100,
+            )
+        if article.url.endswith("/summary-only-negative"):
+            return AnalyzedNewsArticle(
+                article=article,
+                concise_summary=article.summary,
+                sentiment="Negative",
+                sentiment_score=-100,
+                keywords=["lawsuit"],
+                event_types=["Regulation", "Lawsuit"],
+                stock_impact="Strong Negative",
+                impact_explanation="direct-looking negative event",
+                importance=100,
+            )
+        return AnalyzedNewsArticle(
+            article=article,
+            concise_summary=article.summary,
+            sentiment="Positive",
+            sentiment_score=45,
+            keywords=["supply"],
+            event_types=["Contract"],
+            stock_impact="Positive",
+            impact_explanation="direct positive event",
+            importance=70,
+        )
+
+
+def test_summary_only_indirect_positive_news_is_downweighted_below_direct_news() -> None:
+    report = build_news_intelligence_report(
+        stock="Samsung Electronics",
+        stock_code="005930",
+        articles=[
+            _article(
+                "Other supplier wins major AI server contract",
+                "Samsung Electronics appears only as a customer reference in the article body.",
+                url="https://example.test/news/summary-only-positive",
+                match_scope="summary",
+                relevance="indirect",
+            ),
+            _article(
+                "Samsung Electronics signs supply agreement",
+                "Samsung Electronics directly announced a new supply agreement.",
+                url="https://example.test/news/direct-positive",
+                match_scope="both",
+                relevance="direct",
+            ),
+        ],
+        analyzer=_StaticAnalyzer(),
+    ).to_dict()
+
+    summary_only = next(article for article in report["top_news"] if article["url"].endswith("/summary-only-positive"))
+
+    assert report["top_news"][0]["url"].endswith("/direct-positive")
+    assert summary_only["stock_impact"] != "Strong Positive"
+    assert summary_only["importance"] < report["top_news"][0]["importance"]
+
+
+def test_summary_only_indirect_negative_news_is_not_promoted_to_strong_negative() -> None:
+    report = build_news_intelligence_report(
+        stock="NAVER",
+        stock_code="035420",
+        articles=[
+            _article(
+                "Cloud vendor faces regulatory lawsuit",
+                "NAVER appears only as a customer reference in the article body.",
+                url="https://example.test/news/summary-only-negative",
+                match_scope="summary",
+                relevance="indirect",
+            )
+        ],
+        analyzer=_StaticAnalyzer(),
+    ).to_dict()
+
+    assert report["top_news"][0]["stock_impact"] != "Strong Negative"
+    assert report["top_news"][0]["importance"] < 100
 
 
 def test_market_context_news_is_downweighted_in_report_judgment() -> None:

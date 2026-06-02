@@ -2514,7 +2514,7 @@ def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
         StockNewsQuery,
         collect_naver_news_preview,
     )
-    from stock_monitor.news.report import analyze_news_article
+    from stock_monitor.news.report import _apply_match_quality_guard, analyze_news_article
 
     target_date = args.date or datetime.now(tz=ZoneInfo("Asia/Seoul")).date()
     scrapling_exe = _resolve_scrapling_exe(args.scrapling_exe)
@@ -2547,7 +2547,11 @@ def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
         query,
         transport=ScraplingNewsTransport(scrapling_exe=scrapling_exe),
     )
-    matched_articles = [match.article for match in preview.articles]
+    matched_articles = [_news_article_with_match_quality(match) for match in preview.articles]
+    analyzed_preview_articles = [
+        _apply_match_quality_guard(analyze_news_article(article))
+        for article in matched_articles
+    ]
     report = build_news_intelligence_report(
         stock=query.stock_name,
         stock_code=query.stock_code,
@@ -2570,7 +2574,7 @@ def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
             "report": report.to_dict(),
             "operator_decision_notes": _news_intelligence_operator_decision_notes(
                 preview.articles,
-                [analyze_news_article(match.article) for match in preview.articles],
+                analyzed_preview_articles,
                 report_context_evaluated=bool(args.save_observation),
                 source_coverage=source_coverage,
             ),
@@ -2588,7 +2592,10 @@ def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 1
     if args.save_observation:
-        analyzed_matches = [(match, analyze_news_article(match.article)) for match in preview.articles]
+        analyzed_matches = [
+            (match, _apply_match_quality_guard(analyze_news_article(_news_article_with_match_quality(match))))
+            for match in preview.articles
+        ]
         save_result = _save_news_intelligence_observation(
             db_path=args.db_path or Path("data") / "stock_monitor.db",
             target_date=target_date,
@@ -2666,6 +2673,14 @@ def _save_news_intelligence_observation(
     }
 
 
+def _news_article_with_match_quality(match: object) -> object:
+    return replace(
+        getattr(match, "article"),
+        match_scope=str(getattr(match, "match_scope", "")),
+        relevance=str(getattr(match, "relevance", "")),
+    )
+
+
 def _news_intelligence_operator_decision_notes(
     matches: list[object],
     analyzed_articles: list[object],
@@ -2675,6 +2690,7 @@ def _news_intelligence_operator_decision_notes(
 ) -> dict[str, object]:
     matched_count = len(matches)
     relevance_counts = Counter(str(getattr(match, "relevance", "")) for match in matches)
+    summary_only_count = sum(1 for match in matches if str(getattr(match, "match_scope", "")) == "summary")
     direct_count = relevance_counts.get("direct", 0)
     indirect_count = relevance_counts.get("indirect", 0)
     market_context_count = relevance_counts.get("market_context", 0)
@@ -2706,6 +2722,7 @@ def _news_intelligence_operator_decision_notes(
         "matched_count": matched_count,
         "direct_count": direct_count,
         "indirect_count": indirect_count,
+        "summary_only_count": summary_only_count,
         "market_context_count": market_context_count,
         "dominant_relevance": dominant_relevance,
         "caution_count": caution_count,
@@ -2721,6 +2738,7 @@ def _news_intelligence_operator_decision_notes(
             caution_count=caution_count,
             positive_count=positive_count,
             negative_count=negative_count,
+            summary_only_count=summary_only_count,
             source_coverage=source_coverage_payload,
         ),
         "missing_context": {
@@ -2789,6 +2807,7 @@ def _news_intelligence_decision_note_ko(
     caution_count: int,
     positive_count: int,
     negative_count: int,
+    summary_only_count: int,
     source_coverage: dict[str, object],
 ) -> str:
     notes: list[str] = []
@@ -2800,6 +2819,8 @@ def _news_intelligence_decision_note_ko(
         notes.append(f"coverage {coverage_level}: 매칭 기사 {matched_count}건을 기준으로 요약했습니다.")
     if market_context_heavy:
         notes.append("market_context 비중이 높아 종목 직접 판단 근거로 과신하지 말 것.")
+    if summary_only_count:
+        notes.append(f"summary-only/indirect match {summary_only_count}건은 direct stock news보다 낮은 확신으로 보십시오.")
     if caution_count:
         notes.append(f"주의/혼합 신호 {caution_count}건은 리스크 문구를 먼저 확인하십시오.")
     if positive_count and not market_context_heavy:
