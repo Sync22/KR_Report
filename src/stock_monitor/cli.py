@@ -5644,6 +5644,7 @@ def _build_market_commentary_practice_snapshot(
     intraday_market_top_delay_seconds: float = 0.5,
     require_current_business_day_for_intraday_market_top: bool = False,
     current_date_for_intraday_market_top: date | None = None,
+    checked_at: datetime | None = None,
 ) -> dict[str, object]:
     resolved_date = _resolve_stored_business_date(repository, business_date)
     if resolved_date is None:
@@ -5663,6 +5664,7 @@ def _build_market_commentary_practice_snapshot(
     if not summaries and report_count:
         summaries = repository.rebuild_daily_summaries(resolved_date)
     summary_count = len(summaries)
+    intraday_checked_at = checked_at or datetime.now(ZoneInfo(config.timezone))
     summary_stock_code_count = len({summary.stock_code for summary in summaries if summary.stock_code})
     same_day_report_status = _build_same_day_report_status(
         resolved_date,
@@ -5722,6 +5724,7 @@ def _build_market_commentary_practice_snapshot(
             limit=intraday_market_top_limit,
             page_size=intraday_market_top_page_size,
             delay_seconds=intraday_market_top_delay_seconds,
+            checked_at=intraday_checked_at,
         )
         if include_intraday_market_top and same_day_report_status["can_overlap_intraday_market_top"]
         else _empty_intraday_market_top_reference(
@@ -5846,6 +5849,7 @@ def _empty_intraday_market_top_reference(
         "limit": min(max(limit, 0), 100),
         "page_size": min(max(page_size, 1), 20),
         "delay_seconds": None,
+        "checked_at": None,
         "items": [],
         "errors": [],
         "empty_reason": empty_reason,
@@ -5859,6 +5863,7 @@ def _build_intraday_market_top_reference(
     limit: int,
     page_size: int,
     delay_seconds: float,
+    checked_at: datetime,
 ) -> dict[str, object]:
     normalized_limit = min(max(limit, 0), 100)
     normalized_page_size = min(max(page_size, 1), 20)
@@ -5900,7 +5905,14 @@ def _build_intraday_market_top_reference(
                 if summary is None or row.stock_code in seen_codes:
                     continue
                 seen_codes.add(row.stock_code)
-                items.append(_intraday_market_top_reference_item(summary, row, rank=rank_offset))
+                items.append(
+                    _intraday_market_top_reference_item(
+                        summary,
+                        row,
+                        rank=rank_offset,
+                        checked_at=checked_at,
+                    )
+                )
             if len(rows) < normalized_page_size:
                 break
     items.sort(
@@ -5919,6 +5931,7 @@ def _build_intraday_market_top_reference(
         "limit": normalized_limit,
         "page_size": normalized_page_size,
         "delay_seconds": normalized_delay,
+        "checked_at": checked_at.isoformat(),
         "calls": call_count,
         "items": items,
         "errors": errors,
@@ -5948,6 +5961,7 @@ def _intraday_market_top_reference_item(
     row: NaverMarketTopStock,
     *,
     rank: int,
+    checked_at: datetime,
 ) -> dict[str, object]:
     return {
         "source": "naver_price_top",
@@ -5963,6 +5977,7 @@ def _intraday_market_top_reference_item(
         "trade_volume": row.trade_volume,
         "market_status": row.market_status,
         "trade_time": row.trade_time.isoformat() if row.trade_time else None,
+        "checked_at": checked_at.isoformat(),
         "stock_end_type": row.stock_end_type,
     }
 
@@ -21305,6 +21320,9 @@ def _render_web_view_html() -> str:
       const parts = [];
       const status = marketStatusLabel(item?.market_status);
       if (status) parts.push(status);
+      if (!item?.trade_time && item?.checked_at) {
+        parts.push(`확인 ${String(item.checked_at).replace("T", " ").slice(11, 16)}`);
+      }
       if (item?.trade_time) parts.push(`거래시각 ${String(item.trade_time).replace("T", " ").slice(0, 16)}`);
       return parts.join(" · ");
     }
@@ -23324,6 +23342,7 @@ def build_web_view_daily_snapshot(
         intraday_market_top_delay_seconds=intraday_market_top_delay_seconds,
         require_current_business_day_for_intraday_market_top=True,
         current_date_for_intraday_market_top=current.date(),
+        checked_at=current,
     )
     return {
         "now": current.isoformat(),

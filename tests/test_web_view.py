@@ -1182,9 +1182,78 @@ def test_web_view_daily_snapshot_can_include_explicit_intraday_market_top_refere
     assert reference["items"][0]["stock_code"] == "000001"
     assert reference["items"][0]["market_status"] == "OPEN"
     assert reference["items"][0]["trade_time"] == "2026-05-20T12:01:00"
+    assert reference["items"][0]["checked_at"] == "2026-05-20T09:30:00"
     assert reference["empty_reason"] is None
     assert snapshot["market_commentary"]["same_day_report_status"]["can_overlap_intraday_market_top"] is True
     assert "Naver 거래대금 상위 기준" in snapshot["market_commentary"]["comments"][1]["comment"]
+    _assert_public_safe_payload(snapshot)
+
+
+def test_web_view_intraday_market_top_reference_marks_checked_at_when_trade_time_missing(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 20)
+    now = datetime(2026, 5, 20, 9, 35, 0)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="한미약품",
+                stock_code="128940",
+                title="한미약품 리포트",
+                broker_name="테스트증권",
+                published_at=now,
+                collected_at=now,
+                business_date=business_date,
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    def fake_market_top(market: str, **_kwargs):
+        if market != "KOSPI":
+            return []
+        return [
+            cli_module.NaverMarketTopStock(
+                market="KOSPI",
+                sort_type="PRICE_TOP",
+                stock_code="128940",
+                stock_name="한미약품",
+                stock_end_type="stock",
+                current_price=302_000,
+                change_price=10_000,
+                change_percent=3.42,
+                trade_amount=120_000_000_000,
+                trade_volume=450_000,
+                market_status="OPEN",
+                trade_time=None,
+            )
+        ]
+
+    monkeypatch.setattr(cli_module, "fetch_market_top_stocks", fake_market_top)
+    monkeypatch.setattr(cli_module.time, "sleep", lambda _seconds: None)
+
+    snapshot = cli_module.build_web_view_daily_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        now=now,
+        include_intraday_market_top=True,
+        intraday_market_top_limit=20,
+        intraday_market_top_page_size=20,
+        intraday_market_top_delay_seconds=0,
+    )
+
+    item = snapshot["market_commentary"]["intraday_market_top_reference"]["items"][0]
+    assert item["stock_code"] == "128940"
+    assert item["market_status"] == "OPEN"
+    assert item["trade_time"] is None
+    assert item["checked_at"] == "2026-05-20T09:35:00"
     _assert_public_safe_payload(snapshot)
 
 
@@ -4117,6 +4186,8 @@ def test_web_view_intraday_market_top_button_js_has_safe_click_flow() -> None:
     assert "intradayMarketTopFreshnessLabel(item)" in html
     assert "marketStatusLabel(item?.market_status)" in html
     assert "거래시각" in html
+    assert "item?.checked_at" in html
+    assert "확인" in html
     assert "node.hidden = true;" in html
     assert "node.hidden = false;" in html
     assert "overlapNode.hidden = false;" in html
