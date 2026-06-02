@@ -2565,6 +2565,15 @@ def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
     )
     source_coverage = _news_intelligence_source_coverage(preview.sources)
     warnings = [*preview.warnings]
+    operator_decision_notes = _news_intelligence_operator_decision_notes(
+        preview.articles,
+        analyzed_preview_articles,
+        report_context_evaluated=bool(args.save_observation),
+        source_coverage=source_coverage,
+    )
+    observation_save_warning = operator_decision_notes["observation_quality"].get("save_warning")
+    if args.save_observation and observation_save_warning:
+        warnings.append(str(observation_save_warning))
     if source_coverage["empty_source_lanes"]:
         warnings.append("일부 source lane이 해당 mode/date에서 파싱 기여 없음")
     payload.update(
@@ -2572,12 +2581,7 @@ def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
             "sources": [source.to_dict() for source in preview.sources],
             "articles": [article.to_dict() for article in preview.articles],
             "report": report.to_dict(),
-            "operator_decision_notes": _news_intelligence_operator_decision_notes(
-                preview.articles,
-                analyzed_preview_articles,
-                report_context_evaluated=bool(args.save_observation),
-                source_coverage=source_coverage,
-            ),
+            "operator_decision_notes": operator_decision_notes,
             "warnings": warnings,
             "parsed_count": preview.parsed_count,
             "deduped_count": preview.deduped_count,
@@ -2603,6 +2607,7 @@ def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
             preview=preview,
             report=report,
             analyzed_matches=analyzed_matches,
+            run_warnings=warnings,
         )
         payload.update(save_result)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -2617,6 +2622,7 @@ def _save_news_intelligence_observation(
     preview: object,
     report: object,
     analyzed_matches: list[tuple[object, object]],
+    run_warnings: list[str],
 ) -> dict[str, object]:
     repository = StockMonitorRepository(db_path)
     repository.initialize()
@@ -2644,7 +2650,7 @@ def _save_news_intelligence_observation(
         deduped_count=int(getattr(preview, "deduped_count")),
         matched_count=int(getattr(preview, "matched_count")),
         operator_summary_snapshot=str(getattr(report, "operator_summary")),
-        warnings=tuple(str(warning) for warning in getattr(preview, "warnings")),
+        warnings=tuple(str(warning) for warning in run_warnings),
         created_at=created_at,
     )
     context = _news_intelligence_observation_context(
@@ -2712,6 +2718,11 @@ def _news_intelligence_operator_decision_notes(
             negative_count += 1
     coverage_level = _news_intelligence_coverage_level(matched_count)
     market_context_heavy = matched_count > 0 and market_context_count >= max(1, round(matched_count * 0.5))
+    observation_quality = _news_intelligence_observation_quality(
+        matched_count=matched_count,
+        direct_count=direct_count,
+        summary_only_count=summary_only_count,
+    )
     source_coverage_payload = source_coverage or {
         "total_source_count": 0,
         "effective_source_count": 0,
@@ -2730,6 +2741,7 @@ def _news_intelligence_operator_decision_notes(
         "negative_count": negative_count,
         "top_event_types": [event for event, _count in event_counts.most_common(5)],
         "market_context_heavy": market_context_heavy,
+        "observation_quality": observation_quality,
         "source_coverage": source_coverage_payload,
         "decision_note_ko": _news_intelligence_decision_note_ko(
             coverage_level=coverage_level,
@@ -2758,6 +2770,29 @@ def _news_intelligence_operator_decision_notes(
                 "reason": "candidate evidence linkage is not part of news-intelligence-preview v1",
             },
         },
+    }
+
+
+def _news_intelligence_observation_quality(
+    *,
+    matched_count: int,
+    direct_count: int,
+    summary_only_count: int,
+) -> dict[str, object]:
+    if matched_count > 0 and direct_count == 0 and summary_only_count == matched_count:
+        return {
+            "level": "support_only_indirect",
+            "matched_count": matched_count,
+            "direct_count": direct_count,
+            "summary_only_count": summary_only_count,
+            "save_warning": "support_only_indirect: no direct news evidence; interpret as supporting context only",
+        }
+    return {
+        "level": "reviewable",
+        "matched_count": matched_count,
+        "direct_count": direct_count,
+        "summary_only_count": summary_only_count,
+        "save_warning": None,
     }
 
 

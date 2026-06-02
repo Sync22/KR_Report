@@ -2858,6 +2858,77 @@ def test_news_intelligence_preview_cli_saves_observation_only_when_explicit(tmp_
     assert rows[0].krx_reference_presence is False
 
 
+def test_news_intelligence_preview_save_observation_warns_on_indirect_only_run(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    scrapling_exe = tmp_path / "scrapling.exe"
+    scrapling_exe.write_text("fake", encoding="utf-8")
+    db_path = tmp_path / "news-intelligence.db"
+    section_json = json.dumps(
+        {
+            "articles": [
+                {
+                    "officeHName": "Test News",
+                    "title": "Cloud vendor signs AI server supply contract",
+                    "subcontent": "NAVER is mentioned only as the customer reference in the article body.",
+                    "date": "20260601101000",
+                    "url": "https://n.news.naver.com/mnews/article/015/0000401",
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, **_kwargs):
+        output_path = command[4]
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(section_json if command[2] == "get" else "")
+        return Result()
+
+    monkeypatch.setattr("stock_monitor.news.collectors.subprocess.run", fake_run)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-preview",
+            "--stock-name",
+            "NAVER",
+            "--stock-code",
+            "035420",
+            "--date",
+            "2026-06-01",
+            "--scrapling-exe",
+            str(scrapling_exe),
+            "--db-path",
+            str(db_path),
+            "--save-observation",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    repository = StockMonitorRepository(db_path)
+    runs = repository.list_news_intelligence_runs(target_date=date(2026, 6, 1), stock_code="035420")
+
+    assert exit_code == 0
+    assert payload["writes_db"] is True
+    assert payload["operator_decision_notes"]["observation_quality"] == {
+        "level": "support_only_indirect",
+        "matched_count": 1,
+        "direct_count": 0,
+        "summary_only_count": 1,
+        "save_warning": "support_only_indirect: no direct news evidence; interpret as supporting context only",
+    }
+    assert "support_only_indirect: no direct news evidence; interpret as supporting context only" in payload["warnings"]
+    assert len(runs) == 1
+    assert "support_only_indirect: no direct news evidence; interpret as supporting context only" in runs[0].warnings
+
+
 def test_news_intelligence_preview_save_observation_attaches_report_and_krx_context(
     tmp_path,
     monkeypatch,
