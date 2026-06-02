@@ -18494,6 +18494,11 @@ def _is_web_view_forbidden_public_key(key: str) -> bool:
         "daily_summary_min_mention_count",
         "daily_summary_require_target_price",
         "notification_default_limit",
+        "overall_sentiment",
+        "sentiment_score",
+        "stock_impact",
+        "operator_recommendation",
+        "recommendation_support",
     }
 
 
@@ -21129,6 +21134,10 @@ def _render_web_view_html() -> str:
     .detail-item { border: 1px solid var(--line); border-radius: 16px; padding: 12px; background: #fffaf1; }
     .detail-item b { display: block; margin-bottom: 6px; }
     .detail-meta { color: var(--muted); font-size: 13px; }
+    .stock-news-observation-detail { display: grid; gap: 6px; border-color: #e7d8bf; background: #fff; }
+    .stock-news-observation-detail b { color: var(--accent); }
+    .stock-news-title-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; color: var(--ink); font-size: 12px; line-height: 1.45; }
+    .stock-news-title-list li { overflow-wrap: anywhere; }
     .volume-bars { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 8px; align-items: end; min-height: 126px; margin-top: 8px; }
     .volume-bar { display: grid; gap: 6px; align-content: end; color: var(--muted); font-size: 11px; text-align: center; }
     .volume-bar span { display: block; min-height: 10px; border-radius: 999px 999px 4px 4px; background: linear-gradient(180deg, var(--accent), #8aa69b); }
@@ -21607,7 +21616,9 @@ def _render_web_view_html() -> str:
     };
     const empty = (span) => `<tr><td colspan="${span}" class="muted">표시할 데이터가 없습니다.</td></tr>`;
     const validDate = (value) => /^\\d{4}-\\d{2}-\\d{2}$/.test(value || "");
+    const validStockCode = (value) => /^\\d{6}$/.test(value || "");
     const requestedDate = () => new URLSearchParams(window.location.search).get("date");
+    const requestedStockCode = () => new URLSearchParams(window.location.search).get("stock");
     const DAILY_STOCK_DEFAULT_LIMIT = 6;
     const BACKTEST_OBSERVATION_DEFAULT_LIMIT = 6;
     let selectedDate = null;
@@ -21819,10 +21830,11 @@ def _render_web_view_html() -> str:
       archiveItems = dates;
       archiveDates = dates.map((item) => item.business_date);
       const urlDate = requestedDate();
+      const urlStockCode = requestedStockCode();
       selectedDate = validDate(urlDate) ? urlDate : dates[0]?.business_date || null;
       calendarCursor = selectedDate ? new Date(`${selectedDate}T00:00:00`) : new Date();
       renderArchiveButtons();
-      if (selectedDate) await loadDaily(selectedDate);
+      if (selectedDate) await loadDaily(selectedDate, { initialStockCode: urlStockCode });
       updateArchiveNavigation();
     }
 
@@ -21931,8 +21943,10 @@ def _render_web_view_html() -> str:
       }
     }
 
-    async function loadDaily(date) {
+    async function loadDaily(date, options = {}) {
       const loadSequence = ++dailyLoadSequence;
+      const requestedInitialStockCode = String(options.initialStockCode || "").trim();
+      const initialStockCode = validStockCode(requestedInitialStockCode) ? requestedInitialStockCode : "";
       selectedDate = date;
       selectedStockCode = null;
       selectedStockLabel = null;
@@ -21947,6 +21961,11 @@ def _render_web_view_html() -> str:
       if (validDate(date)) {
         const url = new URL(window.location.href);
         url.searchParams.set("date", date);
+        if (initialStockCode) {
+          url.searchParams.set("stock", initialStockCode);
+        } else {
+          url.searchParams.delete("stock");
+        }
         history.replaceState(null, "", url);
         calendarCursor = new Date(`${date}T00:00:00`);
       }
@@ -22018,6 +22037,15 @@ def _render_web_view_html() -> str:
         ? '<tr><td colspan="3" class="muted">업종 또는 테마 행을 선택하면 최근 흐름을 불러옵니다.</td></tr>'
         : '<tr><td colspan="3" class="muted">선택 날짜에 업종/테마 흐름 기준이 없습니다.</td></tr>';
       setActiveCategorySelection(null, null, null);
+      if (initialStockCode) {
+        const stockItem = (currentDailyData?.stocks || []).find((item) => item.stock_code === initialStockCode);
+        setViewTab("stock");
+        await loadStockDetail(date, initialStockCode, { scrollToDetail: false, updateUrl: false }).then(() => {
+          syncCategoryFromStock(stockItem);
+        }).catch((error) => {
+          document.getElementById("stock-detail").innerHTML = `<span class="muted">오류: ${esc(error)}</span>`;
+        });
+      }
       await loadTabDataForActiveView(date);
     }
 
@@ -22701,6 +22729,12 @@ def _render_web_view_html() -> str:
     async function loadStockDetail(date, stockCode, options = {}) {
       const data = await fetch(`/api/daily/${date}/stocks/${encodeURIComponent(stockCode)}`, { cache: "no-store" }).then((response) => response.json());
       dailyFlowExpanded = false;
+      if (validDate(date) && stockCode && options.updateUrl !== false) {
+        const url = new URL(window.location.href);
+        url.searchParams.set("date", date);
+        url.searchParams.set("stock", stockCode);
+        history.replaceState(null, "", url);
+      }
       document.getElementById("detail-title").textContent = "";
       currentStockDetailData = data;
       renderStockContext(data);
@@ -22726,6 +22760,7 @@ def _render_web_view_html() -> str:
       const investorTabs = data.investor_flow_tabs || {};
       const targetTrail = data.target_price_trail || {};
       const relatedContext = data.related_context || {};
+      const newsObservationDetail = data.news_observation_detail || {};
       const volumeReference = data.recent_volume_days?.exact_date_available === false
         ? `<div class="notice">선택 날짜 거래량이 없어 최근 저장일 ${esc(data.recent_volume_days?.reference_date || "-")} 기준 흐름을 표시합니다.</div>`
         : "";
@@ -22741,6 +22776,7 @@ def _render_web_view_html() -> str:
       const relatedContextBlock = relatedContext.available
         ? `<div class="detail-item"><b>관련 업종/ETF 참고 <span class="muted">저장 분류 · 수동 ETF 매핑</span></b>${renderRelatedContext(relatedContext.categories)}</div>`
         : `<div class="detail-item"><span class="detail-meta">${esc(relatedContext.notice || "관련 업종/ETF 참고가 없습니다.")}</span></div>`;
+      const newsObservationBlock = renderStockNewsObservationDetail(newsObservationDetail);
       const dailyFlowRows = renderDailyReferenceRows(investorTabs.retail_foreign_institution, selectedDate);
       const dailyVolumeRows = renderDailyReferenceRows(volumeItems, selectedDate);
       const expandLabel = dailyFlowExpanded ? "접기" : "펼치기";
@@ -22760,6 +22796,7 @@ def _render_web_view_html() -> str:
       </div>`;
       document.getElementById("stock-context").innerHTML = `
         <div class="detail-item"><b>${esc(data.stock_name || "-")} ${esc(data.stock_code || "")} | ${market}</b></div>
+        ${newsObservationBlock}
         ${targetTrailBlock}
         ${relatedContextBlock}
         ${periodFlow}
@@ -22804,6 +22841,35 @@ def _render_web_view_html() -> str:
           </div>
         `;
       }).join("")}</div>`;
+    }
+
+    function renderStockNewsObservationDetail(detail) {
+      if (!detail) return "";
+      const status = detail.krx_reference_status === "exact"
+        ? "KRX 당일"
+        : detail.krx_reference_status === "stale"
+          ? "KRX 이전 기준"
+          : "KRX 없음";
+      if (!detail.available) {
+        return `<div class="detail-item stock-news-observation-detail muted">
+          <b>${esc(detail.display_label || "저장 뉴스 근거 없음")}</b>
+          <span class="detail-meta">${esc(detail.empty_state || detail.reason || "같은 종목의 저장 뉴스 observation이 없습니다.")}</span>
+        </div>`;
+      }
+      const direct = Number(detail.direct_count || 0);
+      const caution = Number(detail.caution_count || 0);
+      const marketContext = Number(detail.market_context_count || 0);
+      const countLine = `직접 ${number(direct)} · 주의 ${number(caution)} · 시장맥락 ${number(marketContext)} · ${status}`;
+      const titles = Array.isArray(detail.top_titles) ? detail.top_titles.slice(0, 3) : [];
+      const titleList = titles.length
+        ? `<ul class="stock-news-title-list">${titles.map((title) => `<li>${esc(title)}</li>`).join("")}</ul>`
+        : "";
+      return `<div class="detail-item stock-news-observation-detail">
+        <b>저장 뉴스 근거 · ${esc(detail.display_label || "뉴스 근거 있음")}</b>
+        <span class="detail-meta">${esc(detail.reason || countLine)}</span>
+        <span class="detail-meta">${esc(countLine)}</span>
+        ${titleList}
+      </div>`;
     }
 
     function isNoOpinionReport(item) {
@@ -26092,23 +26158,45 @@ def _web_view_candidate_news_badges_by_code(
     *,
     business_date: date,
     stock_codes: list[str],
+    stock_names_by_code: dict[str, str] | None = None,
 ) -> dict[str, dict[str, object]]:
     stock_code_set = {stock_code for stock_code in stock_codes if stock_code}
     if not stock_code_set:
         return {}
+    normalized_names_by_code = {
+        stock_code: _web_view_normalize_news_identity(stock_name)
+        for stock_code, stock_name in (stock_names_by_code or {}).items()
+        if stock_code and stock_name
+    }
+    code_by_normalized_name = {
+        normalized_name: stock_code
+        for stock_code, normalized_name in normalized_names_by_code.items()
+        if normalized_name and stock_code in stock_code_set
+    }
     rows_by_code: dict[str, list[ReportLinkedNewsEvidenceRecord]] = {stock_code: [] for stock_code in stock_code_set}
     runs = repository.list_news_intelligence_runs(target_date=business_date, limit=100)
     for run in runs:
-        if run.stock_code not in stock_code_set:
+        target_stock_code = run.stock_code if run.stock_code in stock_code_set else None
+        if target_stock_code is None:
+            target_stock_code = code_by_normalized_name.get(_web_view_normalize_news_identity(run.stock_name))
+        if target_stock_code is None:
             continue
         evidence_rows = repository.list_report_linked_news_evidence(run_id=run.run_id, limit=20)
-        rows_by_code.setdefault(run.stock_code or "", []).extend(
-            row for row in evidence_rows if row.stock_code == run.stock_code
+        target_stock_name = normalized_names_by_code.get(target_stock_code, "")
+        rows_by_code.setdefault(target_stock_code, []).extend(
+            row
+            for row in evidence_rows
+            if row.stock_code == target_stock_code
+            or (target_stock_name and _web_view_normalize_news_identity(row.stock_name) == target_stock_name)
         )
     return {
         stock_code: _web_view_candidate_news_badge(rows, business_date=business_date)
         for stock_code, rows in rows_by_code.items()
     }
+
+
+def _web_view_normalize_news_identity(value: str | None) -> str:
+    return (value or "").strip().casefold()
 
 
 def _web_view_empty_candidate_news_badge() -> dict[str, object]:
@@ -26160,6 +26248,74 @@ def _web_view_candidate_news_badge(
         "market_context_count": market_context_count,
         "krx_reference_status": _web_view_news_observation_krx_status(rows, business_date),
         "top_title": top_title,
+    }
+
+
+def _web_view_news_observation_rows_for_stock(
+    repository: StockMonitorRepository,
+    *,
+    business_date: date,
+    stock_code: str,
+    stock_name: str | None = None,
+) -> list[ReportLinkedNewsEvidenceRecord]:
+    normalized_stock_name = _web_view_normalize_news_identity(stock_name)
+    if not stock_code and not normalized_stock_name:
+        return []
+    rows: list[ReportLinkedNewsEvidenceRecord] = []
+    runs = repository.list_news_intelligence_runs(target_date=business_date, limit=100)
+    for run in runs:
+        if stock_code and run.stock_code not in {stock_code, None}:
+            continue
+        if run.stock_code is None and normalized_stock_name and _web_view_normalize_news_identity(run.stock_name) != normalized_stock_name:
+            continue
+        rows.extend(
+            row
+            for row in repository.list_report_linked_news_evidence(run_id=run.run_id, limit=20)
+            if row.stock_code == stock_code
+            or (normalized_stock_name and _web_view_normalize_news_identity(row.stock_name) == normalized_stock_name)
+        )
+    return rows
+
+
+def _web_view_stock_news_observation_detail(
+    repository: StockMonitorRepository,
+    *,
+    business_date: date,
+    stock_code: str,
+    stock_name: str | None = None,
+) -> dict[str, object]:
+    rows = _web_view_news_observation_rows_for_stock(
+        repository,
+        business_date=business_date,
+        stock_code=stock_code,
+        stock_name=stock_name,
+    )
+    if not rows:
+        empty = _web_view_empty_candidate_news_badge()
+        return {
+            "source": "stored_news_intelligence_observation",
+            "read_only": True,
+            "live_fetch": False,
+            **empty,
+            "top_titles": [],
+            "empty_state": empty["display_label"],
+            "missing_context": ["stored_news_observation"],
+        }
+    badge = _web_view_candidate_news_badge(rows, business_date=business_date)
+    ordered_rows = sorted(
+        rows,
+        key=lambda row: (
+            0 if row.relevance == "direct" else 1 if row.relevance == "indirect" else 2,
+            row.created_at,
+            row.title,
+        ),
+    )
+    return {
+        "source": "stored_news_intelligence_observation",
+        "read_only": True,
+        "live_fetch": False,
+        **badge,
+        "top_titles": _web_view_unique_texts([row.title for row in ordered_rows], limit=3),
     }
 
 
@@ -26470,6 +26626,7 @@ def build_web_view_candidate_evidence_snapshot(
         repository,
         business_date=business_date,
         stock_codes=[summary.stock_code or "" for summary in summaries],
+        stock_names_by_code={summary.stock_code or "": summary.stock_name for summary in summaries if summary.stock_code},
     )
     same_day_flow_by_code = batch_context["same_day_flow_by_code"]
     flow_window_rows_by_code = batch_context["flow_window_rows_by_code"]
@@ -27828,6 +27985,12 @@ def build_web_view_stock_detail_snapshot(
             repository,
             business_date=business_date,
             stock_code=stock_code,
+        ),
+        "news_observation_detail": _web_view_stock_news_observation_detail(
+            repository,
+            business_date=business_date,
+            stock_code=stock_code,
+            stock_name=stock_name,
         ),
         "recent_volume_days": _build_web_view_stock_volume_context(repository, business_date, stock_code),
         "investor_flow": _build_web_view_stock_investor_flow_context(repository, business_date, stock_code),

@@ -51,6 +51,11 @@ PUBLIC_FORBIDDEN_KEYS = {
     "daily_summary_min_mention_count",
     "daily_summary_require_target_price",
     "notification_default_limit",
+    "overall_sentiment",
+    "sentiment_score",
+    "stock_impact",
+    "operator_recommendation",
+    "recommendation_support",
 }
 
 
@@ -69,7 +74,7 @@ def _web_view_news_run(
     run_id: str = "news-web-view-run-1",
     target_date: date = date(2026, 6, 2),
     stock_name: str = "삼성전자",
-    stock_code: str = "005930",
+    stock_code: str | None = "005930",
 ) -> NewsIntelligenceRun:
     return NewsIntelligenceRun(
         run_id=run_id,
@@ -95,6 +100,8 @@ def _web_view_news_evidence(
     run_id: str = "news-web-view-run-1",
     evidence_key: str = "news-evidence-1",
     title: str = "삼성전자, AI 반도체 공급 계약 체결",
+    stock_code: str | None = "005930",
+    stock_name: str = "삼성전자",
     relevance: str = "direct",
     sentiment: str = "Positive",
     stock_impact: str = "Strong Positive",
@@ -106,8 +113,8 @@ def _web_view_news_evidence(
         run_id=run_id,
         evidence_key=evidence_key,
         target_date=target_date,
-        stock_code="005930",
-        stock_name="삼성전자",
+        stock_code=stock_code,
+        stock_name=stock_name,
         related_report_count=2,
         related_report_source_ids=("92001", "92002"),
         daily_summary_presence=True,
@@ -394,6 +401,84 @@ def test_web_view_candidate_evidence_projects_public_safe_news_badge(tmp_path, m
     _assert_public_safe_payload(snapshot)
 
 
+def test_web_view_news_observation_badge_matches_stock_name_when_code_is_missing(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 2)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="NameOnly Corp",
+                stock_code="123456",
+                title="NameOnly Corp check A",
+                broker_name="NH",
+                published_at=datetime(2026, 6, 2, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 2, 9, 0, 30),
+                target_price_value=100_000,
+                opinion_normalized="buy",
+                source_id="name-only-news-report-a",
+                identity_key="name-only-news-report-a",
+            ),
+            Report(
+                stock_name="NameOnly Corp",
+                stock_code="123456",
+                title="NameOnly Corp check B",
+                broker_name="KB",
+                published_at=datetime(2026, 6, 2, 10, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 2, 10, 0, 30),
+                target_price_value=110_000,
+                opinion_normalized="buy",
+                source_id="name-only-news-report-b",
+                identity_key="name-only-news-report-b",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.save_news_intelligence_observation(
+        _web_view_news_run(target_date=business_date, stock_name="NameOnly Corp", stock_code=None),
+        [
+            _web_view_news_evidence(
+                evidence_key="name-only-news-evidence",
+                title="NameOnly Corp expands supply",
+                stock_code=None,
+                stock_name="NameOnly Corp",
+                target_date=business_date,
+                krx_reference_date=business_date,
+            )
+        ],
+    )
+
+    candidate_snapshot = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=1,
+    )
+    stock_snapshot = cli_module.build_web_view_stock_detail_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        stock_code="123456",
+        now=datetime(2026, 6, 2, 10, 30, 0),
+    )
+
+    badge = candidate_snapshot["rows"][0]["news_observation_badge"]
+    assert badge["available"] is True
+    assert badge["direct_count"] == 1
+    assert badge["top_title"] == "NameOnly Corp expands supply"
+    detail = stock_snapshot["news_observation_detail"]
+    assert detail["available"] is True
+    assert detail["direct_count"] == 1
+    assert detail["top_titles"] == ["NameOnly Corp expands supply"]
+    _assert_public_safe_payload(candidate_snapshot)
+    _assert_public_safe_payload(stock_snapshot)
+
+
 def test_web_view_candidate_evidence_projects_empty_news_badge(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
@@ -451,6 +536,156 @@ def test_web_view_candidate_evidence_projects_empty_news_badge(tmp_path, monkeyp
         "top_title": None,
     }
     _assert_public_safe_payload(snapshot)
+
+
+def test_web_view_stock_detail_projects_public_safe_news_observation_detail(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 2)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="Samsung Electronics",
+                stock_code="005930",
+                title="AI semiconductor demand recovery",
+                broker_name="NH",
+                published_at=datetime(2026, 6, 2, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 2, 9, 0, 30),
+                target_price_value=100_000,
+                opinion_normalized="buy",
+                source_id="stock-detail-news-report-a",
+                identity_key="stock-detail-news-report-a",
+            )
+        ]
+    )
+    repository.save_news_intelligence_observation(
+        _web_view_news_run(target_date=business_date, stock_name="Samsung Electronics"),
+        [
+            _web_view_news_evidence(
+                evidence_key="stock-detail-news-direct",
+                title="Samsung expands AI semiconductor supply",
+                target_date=business_date,
+                krx_reference_date=business_date,
+            ),
+            _web_view_news_evidence(
+                evidence_key="stock-detail-news-caution",
+                title="Semiconductor volatility caution",
+                relevance="market_context",
+                sentiment="Caution",
+                stock_impact="Negative",
+                operator_recommendation="review_with_caution",
+                target_date=business_date,
+                krx_reference_date=date(2026, 6, 1),
+            ),
+        ],
+    )
+
+    snapshot = cli_module.build_web_view_stock_detail_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        stock_code="005930",
+        now=datetime(2026, 6, 2, 10, 30, 0),
+    )
+
+    detail = snapshot["news_observation_detail"]
+    assert detail["source"] == "stored_news_intelligence_observation"
+    assert detail["read_only"] is True
+    assert detail["live_fetch"] is False
+    assert detail["available"] is True
+    assert detail["direct_count"] == 1
+    assert detail["caution_count"] == 1
+    assert detail["market_context_count"] == 1
+    assert detail["krx_reference_status"] == "exact"
+    assert detail["top_titles"] == [
+        "Samsung expands AI semiconductor supply",
+        "Semiconductor volatility caution",
+    ]
+    payload = json.dumps(snapshot, ensure_ascii=False)
+    assert "sentiment_score" not in payload
+    assert "stock_impact" not in payload
+    assert "operator_recommendation" not in payload
+    _assert_public_safe_payload(snapshot)
+
+
+def test_web_view_stock_detail_projects_empty_news_observation_detail(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 2)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="NAVER",
+                stock_code="035420",
+                title="Cloud growth check",
+                broker_name="NH",
+                published_at=datetime(2026, 6, 2, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 2, 9, 0, 30),
+                target_price_value=250_000,
+                opinion_normalized="buy",
+                source_id="stock-detail-news-empty-report-a",
+                identity_key="stock-detail-news-empty-report-a",
+            )
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_stock_detail_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        stock_code="035420",
+        now=datetime(2026, 6, 2, 10, 30, 0),
+    )
+
+    detail = snapshot["news_observation_detail"]
+    assert detail["source"] == "stored_news_intelligence_observation"
+    assert detail["read_only"] is True
+    assert detail["live_fetch"] is False
+    assert detail["available"] is False
+    assert detail["direct_count"] == 0
+    assert detail["caution_count"] == 0
+    assert detail["market_context_count"] == 0
+    assert detail["krx_reference_status"] == "missing"
+    assert detail["top_titles"] == []
+    assert detail["missing_context"] == ["stored_news_observation"]
+    _assert_public_safe_payload(snapshot)
+
+
+def test_web_view_static_html_renders_stock_news_observation_detail() -> None:
+    html = cli_module._render_web_view_html()
+
+    assert "news_observation_detail" in html
+    assert "renderStockNewsObservationDetail" in html
+    assert "stock-news-observation-detail" in html
+    assert "stock-news-title-list" in html
+    assert ".stock-news-observation-detail { display: grid; gap: 6px; border-color: #e7d8bf; background: #fff; }" in html
+    assert 'const validStockCode = (value) => /^\\d{6}$/.test(value || "");' in html
+    assert "const requestedStockCode = () => new URLSearchParams(window.location.search).get(\"stock\");" in html
+    assert 'const initialStockCode = validStockCode(requestedInitialStockCode) ? requestedInitialStockCode : "";' in html
+    assert "await loadDaily(selectedDate, { initialStockCode: urlStockCode });" in html
+    assert "url.searchParams.set(\"stock\", stockCode);" in html
+    assert "sentiment_score" not in html
+    assert "stock_impact" not in html
+    assert "operator_recommendation" not in html
+
+
+def test_web_view_forbidden_public_keys_include_news_operator_fields() -> None:
+    for key in [
+        "overall_sentiment",
+        "sentiment_score",
+        "stock_impact",
+        "operator_recommendation",
+        "recommendation_support",
+    ]:
+        assert cli_module._is_web_view_forbidden_public_key(key) is True
 
 
 def test_web_view_report_title_display_trims_only_trailing_parenthetical() -> None:
