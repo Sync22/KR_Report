@@ -199,8 +199,11 @@ def test_web_view_main_layout_first_pass_static_markup() -> None:
     assert "renderTopTwoReviewCandidates" in html
     assert 'id="news-observation-summary"' in html
     assert "renderNewsObservationSummary" in html
+    assert "renderNewsObservationSummaryItem" in html
     assert "function newsObservationMetaChips" in html
     assert "news-observation-summary-connection" in html
+    assert "news-observation-summary-items" in html
+    assert "news-observation-summary-item" in html
     assert "우선 확인 후보와 함께 읽는 뉴스 근거" in html
     assert "candidate_overlap_names" in html
     assert "관찰 후보 겹침" in html
@@ -300,6 +303,7 @@ def test_web_view_daily_snapshot_exposes_news_observation_empty_state(tmp_path, 
         "market_context_count": 0,
         "krx_reference_status": "missing",
         "top_titles": [],
+        "items": [],
         "empty_state": "저장된 뉴스 관찰 없음",
         "missing_context": ["stored_news_observation"],
     }
@@ -349,6 +353,20 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
     assert summary["top_titles"] == [
         "삼성전자, AI 반도체 공급 계약 체결",
         "삼성전자, 변동성 확대 주의",
+    ]
+    assert summary["items"] == [
+        {
+            "available": True,
+            "stock_name": "삼성전자",
+            "stock_code": "005930",
+            "display_label": "주의 뉴스",
+            "reason": "삼성전자, AI 반도체 공급 계약 체결",
+            "direct_count": 1,
+            "caution_count": 1,
+            "market_context_count": 1,
+            "krx_reference_status": "exact",
+            "top_title": "삼성전자, AI 반도체 공급 계약 체결",
+        }
     ]
     assert "overall_sentiment" not in summary
     assert "sentiment_score" not in json.dumps(summary, ensure_ascii=False)
