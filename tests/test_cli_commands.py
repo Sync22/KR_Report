@@ -3104,6 +3104,8 @@ def test_news_intelligence_observations_parser_accepts_filters() -> None:
             "5",
             "--evidence-per-run",
             "3",
+            "--format",
+            "text",
             "--db-path",
             "C:/tmp/news-intelligence.db",
         ]
@@ -3115,6 +3117,7 @@ def test_news_intelligence_observations_parser_accepts_filters() -> None:
     assert args.run_id == "news-run-1"
     assert args.limit == 5
     assert args.evidence_per_run == 3
+    assert args.format == "text"
     assert str(args.db_path).endswith("news-intelligence.db")
 
 
@@ -3356,6 +3359,65 @@ def test_news_intelligence_observations_classifies_candidate_linkage_preview_lab
     assert evaluation["reason_ko"]
 
 
+def test_news_intelligence_observations_outputs_operator_readable_text(
+    tmp_path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "news-intelligence.db"
+    repository = StockMonitorRepository(db_path)
+    repository.initialize()
+    run = _news_intelligence_cli_run(run_id="run-text")
+    repository.save_news_intelligence_observation(
+        run,
+        [
+            _news_intelligence_cli_evidence(
+                run_id=run.run_id,
+                evidence_key="ev-text-1",
+                relevance="direct",
+                match_scope="both",
+                candidate_priority_presence=True,
+                candidate_observation_priority="top_2",
+            ),
+            _news_intelligence_cli_evidence(
+                run_id=run.run_id,
+                evidence_key="ev-text-2",
+                relevance="market_context",
+                match_scope="summary",
+                title="삼성전자 포함 반도체 업종 강세",
+                source_lane="section_market_outlook",
+            ),
+        ],
+    )
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-observations",
+            "--date",
+            "2026-06-01",
+            "--stock-code",
+            "005930",
+            "--db-path",
+            str(db_path),
+            "--format",
+            "text",
+            "--evidence-per-run",
+            "5",
+        ]
+    )
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "News intelligence observations" in output
+    assert "2026-06-01 삼성전자 (005930)" in output
+    assert "판단: strengthen_existing_candidate" in output
+    assert "이유: 기존 후보에 직접 뉴스 근거가 붙어 operator 검토 우선도를 강화할 수 있습니다." in output
+    assert "direct 1 / caution 0 / market_context 1" in output
+    assert "KRX: exact" in output
+    assert "[mainnews] 삼성전자, AI 반도체 공급 계약 체결" in output
+    assert "[section_market_outlook] 삼성전자 포함 반도체 업종 강세" in output
+
+
 def test_news_intelligence_observations_reports_missing_db_without_writes(
     tmp_path,
     capsys,
@@ -3420,6 +3482,8 @@ def _news_intelligence_cli_evidence(
     related_report_count: int = 2,
     related_report_source_ids: tuple[str, ...] = ("92001", "92002"),
     daily_summary_presence: bool = True,
+    title: str = "삼성전자, AI 반도체 공급 계약 체결",
+    source_lane: str = "mainnews",
     krx_reference_date: date | None = date(2026, 6, 1),
 ) -> ReportLinkedNewsEvidenceRecord:
     return ReportLinkedNewsEvidenceRecord(
@@ -3437,8 +3501,8 @@ def _news_intelligence_cli_evidence(
         krx_reference_date=krx_reference_date,
         krx_turnover=850_000_000_000 if krx_reference_date is not None else None,
         investor_flow_presence=False,
-        source_lane="mainnews",
-        title="삼성전자, AI 반도체 공급 계약 체결",
+        source_lane=source_lane,
+        title=title,
         summary="삼성전자가 글로벌 고객사와 AI 반도체 공급 계약을 체결했다.",
         source="한국경제",
         published_at=datetime(2026, 6, 1, 9, 10, 0),

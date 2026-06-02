@@ -399,6 +399,7 @@ def build_parser() -> argparse.ArgumentParser:
     news_observations_parser.add_argument("--run-id")
     news_observations_parser.add_argument("--limit", type=int, default=20)
     news_observations_parser.add_argument("--evidence-per-run", type=int, default=10)
+    news_observations_parser.add_argument("--format", choices=("json", "text"), default="json")
     news_observations_parser.add_argument("--db-path", type=Path)
 
     poll_parser = subparsers.add_parser("manual-poll", help="Fetch reports and save unseen rows into SQLite.")
@@ -2711,7 +2712,7 @@ def _run_news_intelligence_observations(args: argparse.Namespace) -> int:
     )
     if not db_path.exists():
         payload["error"] = "database does not exist"
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        _print_news_intelligence_observations_payload(args, payload)
         return 1
     status = repository.get_schema_migration_status()
     if status.current_version != status.target_version or status.pending_versions:
@@ -2721,7 +2722,7 @@ def _run_news_intelligence_observations(args: argparse.Namespace) -> int:
             "target_version": status.target_version,
             "pending_versions": list(status.pending_versions),
         }
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        _print_news_intelligence_observations_payload(args, payload)
         return 1
 
     runs = repository.list_news_intelligence_runs(
@@ -2750,8 +2751,58 @@ def _run_news_intelligence_observations(args: argparse.Namespace) -> int:
             "runs": run_payloads,
         }
     )
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    _print_news_intelligence_observations_payload(args, payload)
     return 0
+
+
+def _print_news_intelligence_observations_payload(
+    args: argparse.Namespace,
+    payload: dict[str, object],
+) -> None:
+    if getattr(args, "format", "json") == "text":
+        print(_format_news_intelligence_observations_text(payload), end="")
+        return
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _format_news_intelligence_observations_text(payload: dict[str, object]) -> str:
+    lines = ["News intelligence observations"]
+    error = payload.get("error")
+    if error:
+        lines.append(f"error: {error}")
+        return "\n".join(lines) + "\n"
+    runs = payload.get("runs")
+    if not isinstance(runs, list) or not runs:
+        lines.append("no saved observations")
+        return "\n".join(lines) + "\n"
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        evaluation = run.get("candidate_linkage_evaluation")
+        if not isinstance(evaluation, dict):
+            evaluation = {}
+        stock_code = run.get("stock_code") or "-"
+        lines.append("")
+        lines.append(f"{run.get('target_date')} {run.get('stock_name')} ({stock_code})")
+        lines.append(f"판단: {evaluation.get('label', '-')}")
+        lines.append(f"이유: {evaluation.get('reason_ko', '-')}")
+        lines.append(
+            "근거수: "
+            f"direct {evaluation.get('direct_count', 0)} / "
+            f"caution {evaluation.get('caution_count', 0)} / "
+            f"market_context {evaluation.get('market_context_count', 0)}"
+        )
+        lines.append(f"KRX: {evaluation.get('krx_reference_status', '-')}")
+        evidence = run.get("evidence")
+        if isinstance(evidence, list) and evidence:
+            lines.append("top evidence:")
+            for row in evidence[:3]:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(f"- [{row.get('source_lane', '-')}] {row.get('title', '-')}")
+        else:
+            lines.append("top evidence: none")
+    return "\n".join(lines) + "\n"
 
 
 def _news_intelligence_observations_base_payload(
