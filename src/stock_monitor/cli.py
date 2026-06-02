@@ -21364,6 +21364,8 @@ def _render_web_view_html() -> str:
     .candidate-quality-grid .quality-line { display: block; margin-top: 0; min-width: 0; }
     .candidate-quality-grid .quality-line b { display: block; border-bottom: 1px solid rgba(222,216,204,.8); padding-bottom: 5px; margin-bottom: 6px; color: var(--ink); }
     .candidate-quality-grid .quality-chip { margin: 0 6px 5px 0; vertical-align: top; }
+    .candidate-news-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .candidate-news-badge b { color: var(--ink); }
     .candidate-metric-list, .target-trail-list { display: grid; gap: 5px; margin-top: 5px; }
     .candidate-metric-line { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 8px; align-items: baseline; }
     .candidate-metric-key { color: var(--muted); font-size: 11px; font-weight: 800; }
@@ -23239,6 +23241,7 @@ def _render_web_view_html() -> str:
         const report = item.report_summary || {};
         const targetMetrics = candidateTargetMetrics(report, item.target_price_progress);
         const market = candidateMarketInline(item.market_reference);
+        const newsBadge = renderCandidateNewsBadge(item.news_observation_badge);
         const intradayLine = index < 2
           ? `<div class="candidate-intraday-line"><b>장중 참고</b><span>${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span></div>`
           : "";
@@ -23264,6 +23267,7 @@ def _render_web_view_html() -> str:
           : '<span class="muted">핵심 저장 정보 있음</span>';
         return `<article class="candidate-card" data-stock-code="${esc(item.stock_code || "")}">
           <h3><span class="candidate-title-stock"><span class="candidate-stock-name">${esc(item.stock_name || "-")}</span><span class="candidate-stock-code">${esc(item.stock_code || "")}</span></span><span class="candidate-title-separator" aria-hidden="true"></span>${market} <span class="status-pill">${esc(item.observation_priority || "확인 후보")}</span></h3>
+          ${newsBadge}
           ${intradayLine}
           <div class="candidate-quality-grid">
             <div class="quality-line"><b>왜 눈에 띄는지</b>${whyLine}</div>
@@ -23292,13 +23296,39 @@ def _render_web_view_html() -> str:
         const missingLine = gapItems.length
           ? `<span>부족한 정보: ${esc(candidateCompactLabel(gapItems, 1))}</span>`
           : "";
+        const newsLine = candidateNewsCompactLine(item.news_observation_badge);
         return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span></b>
           <span>왜 눈에 띄는지: ${esc(why)}</span>
           <span>장중 참고: ${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span>
+          <span>${esc(newsLine)}</span>
           ${missingLine}
         </button>`;
       }).join("")}</section>`;
+    }
+
+    function candidateNewsCompactLine(badge) {
+      if (!badge || badge.available !== true) return "뉴스 근거: 저장 뉴스 근거 없음";
+      const label = badge.display_label || "뉴스 근거 있음";
+      const krx = badge.krx_reference_status || "missing";
+      return `뉴스 근거: ${label} · KRX ${krx}`;
+    }
+
+    function renderCandidateNewsBadge(badge) {
+      if (!badge || badge.available !== true) {
+        const label = badge?.display_label || "저장 뉴스 근거 없음";
+        const reason = badge?.reason || "같은 종목의 저장 뉴스 observation이 없습니다.";
+        return `<div class="candidate-news-badge"><span class="quality-chip quality-chip--missing">${esc(label)}</span><span>${esc(reason)}</span></div>`;
+      }
+      const chips = [
+        badge.display_label || "뉴스 근거 있음",
+        `직접 ${number(badge.direct_count || 0)}`,
+        `주의 ${number(badge.caution_count || 0)}`,
+        `시장맥락 ${number(badge.market_context_count || 0)}`,
+        `KRX ${badge.krx_reference_status || "missing"}`
+      ];
+      const title = badge.top_title || badge.reason || "";
+      return `<div class="candidate-news-badge">${chips.map((item) => `<span class="quality-chip">${esc(item)}</span>`).join("")}${title ? `<span><b>근거</b> ${esc(title)}</span>` : ""}</div>`;
     }
 
     function candidateIntradayReferenceLabel(reference) {
@@ -26576,6 +26606,82 @@ def _web_view_target_price_progress_from_rows(
     }
 
 
+def _web_view_candidate_news_badges_by_code(
+    repository: StockMonitorRepository,
+    *,
+    business_date: date,
+    stock_codes: list[str],
+) -> dict[str, dict[str, object]]:
+    stock_code_set = {stock_code for stock_code in stock_codes if stock_code}
+    if not stock_code_set:
+        return {}
+    rows_by_code: dict[str, list[ReportLinkedNewsEvidenceRecord]] = {stock_code: [] for stock_code in stock_code_set}
+    runs = repository.list_news_intelligence_runs(target_date=business_date, limit=100)
+    for run in runs:
+        if run.stock_code not in stock_code_set:
+            continue
+        evidence_rows = repository.list_report_linked_news_evidence(run_id=run.run_id, limit=20)
+        rows_by_code.setdefault(run.stock_code or "", []).extend(
+            row for row in evidence_rows if row.stock_code == run.stock_code
+        )
+    return {
+        stock_code: _web_view_candidate_news_badge(rows, business_date=business_date)
+        for stock_code, rows in rows_by_code.items()
+    }
+
+
+def _web_view_empty_candidate_news_badge() -> dict[str, object]:
+    return {
+        "available": False,
+        "display_label": "저장 뉴스 근거 없음",
+        "reason": "같은 종목의 저장 뉴스 observation이 없습니다.",
+        "direct_count": 0,
+        "caution_count": 0,
+        "market_context_count": 0,
+        "krx_reference_status": "missing",
+        "top_title": None,
+    }
+
+
+def _web_view_candidate_news_badge(
+    rows: list[ReportLinkedNewsEvidenceRecord],
+    *,
+    business_date: date,
+) -> dict[str, object]:
+    if not rows:
+        return _web_view_empty_candidate_news_badge()
+    direct_count = sum(1 for row in rows if row.relevance == "direct")
+    caution_count = sum(1 for row in rows if _web_view_news_observation_is_caution(row))
+    market_context_count = sum(1 for row in rows if row.relevance == "market_context")
+    ordered_rows = sorted(
+        rows,
+        key=lambda row: (
+            0 if row.relevance == "direct" else 1 if row.relevance == "indirect" else 2,
+            row.created_at,
+            row.title,
+        ),
+    )
+    top_title = next((title for title in _web_view_unique_texts([row.title for row in ordered_rows], limit=1)), None)
+    if caution_count:
+        display_label = "주의 뉴스"
+    elif direct_count:
+        display_label = "직접 뉴스"
+    elif market_context_count:
+        display_label = "시장맥락 위주"
+    else:
+        display_label = "뉴스 근거 있음"
+    return {
+        "available": True,
+        "display_label": display_label,
+        "reason": top_title or "저장 뉴스 observation이 같은 후보와 연결됩니다.",
+        "direct_count": direct_count,
+        "caution_count": caution_count,
+        "market_context_count": market_context_count,
+        "krx_reference_status": _web_view_news_observation_krx_status(rows, business_date),
+        "top_title": top_title,
+    }
+
+
 def _candidate_evidence_stock_codes(summaries: list[DailyStockSummary]) -> list[str]:
     return sorted({summary.stock_code.strip() for summary in summaries if summary.stock_code and summary.stock_code.strip()})
 
@@ -26879,6 +26985,11 @@ def build_web_view_candidate_evidence_snapshot(
         summaries=summaries,
         holiday_overrides=config.holiday_overrides,
     )
+    news_badges_by_code = _web_view_candidate_news_badges_by_code(
+        repository,
+        business_date=business_date,
+        stock_codes=[summary.stock_code or "" for summary in summaries],
+    )
     same_day_flow_by_code = batch_context["same_day_flow_by_code"]
     flow_window_rows_by_code = batch_context["flow_window_rows_by_code"]
     price_history_by_code = batch_context["price_history_by_code"]
@@ -26998,6 +27109,10 @@ def build_web_view_candidate_evidence_snapshot(
                     "foreign_top_rank": rank_reference.rank if rank_reference else None,
                     "market": _web_view_market_display(rank_reference.market) if rank_reference else None,
                 },
+                "news_observation_badge": news_badges_by_code.get(
+                    stock_code,
+                    _web_view_empty_candidate_news_badge(),
+                ),
                 "quality_flags": quality_flags,
                 "evidence_notes": notes,
                 "_internal_candidate_signals": candidate_profile["internal_candidate_signals"],
