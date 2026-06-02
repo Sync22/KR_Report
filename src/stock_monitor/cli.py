@@ -21015,6 +21015,8 @@ def _render_web_view_html() -> str:
     .news-observation-summary-titles li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .news-observation-summary-items { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
     .news-observation-summary-item { display: grid; gap: 3px; padding: 6px 0 0; border-top: 1px solid #eadfcb; font-size: 12px; }
+    .news-observation-summary-link { display: grid; gap: 3px; width: 100%; padding: 0; border: 0; background: transparent; text-align: left; font: inherit; cursor: pointer; }
+    .news-observation-summary-link:hover b { text-decoration: underline; }
     .news-observation-summary-item b { color: var(--ink); font-size: 12px; }
     .news-observation-summary-item span { color: var(--muted); line-height: 1.4; overflow-wrap: anywhere; }
     .intraday-overlap-panel { display: grid; gap: 8px; margin: 10px 0 12px; border: 1px solid #d8e8f5; border-radius: 8px; padding: 10px 12px; background: #f6fbff; }
@@ -22202,10 +22204,19 @@ def _render_web_view_html() -> str:
       const krx = item.krx_reference_status || "missing";
       const counts = `직접 ${number(item.direct_count || 0)} · 주의 ${number(item.caution_count || 0)} · 시장맥락 ${number(item.market_context_count || 0)} · KRX ${krx}`;
       const title = item.top_title || item.reason || "";
-      return `<li class="news-observation-summary-item">
+      const content = `
         <b>${esc(stock || "-")} · ${esc(label)}</b>
         <span>${esc(counts)}</span>
-        ${title ? `<span>${esc(title)}</span>` : ""}
+        ${title ? `<span>${esc(title)}</span>` : ""}`;
+      if (validStockCode(item.stock_code)) {
+        return `<li class="news-observation-summary-item">
+          <button class="news-observation-summary-link" type="button" data-stock-code="${esc(item.stock_code)}" title="종목 상세 보기">
+            ${content}
+          </button>
+        </li>`;
+      }
+      return `<li class="news-observation-summary-item">
+        ${content}
       </li>`;
     }
 
