@@ -3209,6 +3209,19 @@ def test_news_intelligence_observations_outputs_read_only_run_comparison(
         "krx_reference_status": "stale_reference",
         "reason": "KRX reference is stale; verify market reaction before candidate linkage.",
     }
+    assert payload["runs"][0]["candidate_linkage_evaluation"] == {
+        "label": "stale_krx_check_first",
+        "target_date": "2026-06-01",
+        "stock_code": "005930",
+        "candidate_priority_presence": False,
+        "related_report_count": 2,
+        "direct_count": 1,
+        "caution_count": 0,
+        "market_context_count": 1,
+        "krx_reference_status": "stale_reference",
+        "recommendation_support": "check_krx_before_linking",
+        "reason_ko": "KRX 기준일이 대상일과 달라 후보 연결 전에 시장 반응 기준일을 먼저 확인해야 합니다.",
+    }
     assert len(payload["runs"][0]["evidence"]) == 1
     assert payload["runs"][0]["evidence"][0]["evidence_key"] == "ev-context"
 
@@ -3248,9 +3261,28 @@ def test_news_intelligence_observations_classifies_candidate_linkage_preview_lab
                     sentiment="Caution",
                     stock_impact="Caution",
                     event_types=("Risk/Caution",),
+                    candidate_priority_presence=True,
+                    candidate_observation_priority="top_2",
                 )
             ],
-            "review_with_caution",
+            "review_existing_candidate_with_caution",
+        ),
+        (
+            _news_intelligence_cli_run(run_id="run-promote"),
+            [
+                _news_intelligence_cli_evidence(
+                    run_id="run-promote",
+                    evidence_key="ev-promote",
+                    relevance="direct",
+                    match_scope="both",
+                    evidence_case="no_report_strong_direct_news",
+                    operator_recommendation="promote_news_only_candidate",
+                    related_report_count=0,
+                    related_report_source_ids=(),
+                    daily_summary_presence=False,
+                )
+            ],
+            "promote_news_only_candidate",
         ),
         (
             _news_intelligence_cli_run(run_id="run-support"),
@@ -3258,10 +3290,12 @@ def test_news_intelligence_observations_classifies_candidate_linkage_preview_lab
                 _news_intelligence_cli_evidence(
                     run_id="run-support",
                     evidence_key="ev-support",
-                    relevance="indirect",
+                    relevance="market_context",
                     match_scope="summary",
-                    evidence_case="linked_news_context",
-                    operator_recommendation="keep_as_supporting_evidence",
+                    evidence_case="report_heavy_market_context_only",
+                    operator_recommendation="separate_market_context",
+                    candidate_priority_presence=True,
+                    candidate_observation_priority="top_2",
                 )
             ],
             "support_only_context",
@@ -3293,18 +3327,33 @@ def test_news_intelligence_observations_classifies_candidate_linkage_preview_lab
 
     payload = json.loads(capsys.readouterr().out)
     labels_by_run_id = {
-        run["run_id"]: run["candidate_linkage_preview"]["label"]
+        run["run_id"]: run["candidate_linkage_evaluation"]["label"]
         for run in payload["runs"]
     }
 
     assert exit_code == 0
     assert labels_by_run_id == {
-        "run-strengthen": "strengthen_candidate",
-        "run-caution": "review_with_caution",
+        "run-strengthen": "strengthen_existing_candidate",
+        "run-caution": "review_existing_candidate_with_caution",
+        "run-promote": "promote_news_only_candidate",
         "run-support": "support_only_context",
-        "run-empty": "insufficient_news_evidence",
+        "run-empty": "insufficient_evidence",
     }
-    assert payload["runs"][0]["candidate_linkage_preview"]["reason"]
+    evaluation = payload["runs"][0]["candidate_linkage_evaluation"]
+    assert set(evaluation) == {
+        "label",
+        "target_date",
+        "stock_code",
+        "candidate_priority_presence",
+        "related_report_count",
+        "direct_count",
+        "caution_count",
+        "market_context_count",
+        "krx_reference_status",
+        "recommendation_support",
+        "reason_ko",
+    }
+    assert evaluation["reason_ko"]
 
 
 def test_news_intelligence_observations_reports_missing_db_without_writes(
@@ -3368,6 +3417,9 @@ def _news_intelligence_cli_evidence(
     event_types: tuple[str, ...] = ("Contract",),
     candidate_priority_presence: bool = False,
     candidate_observation_priority: str | None = None,
+    related_report_count: int = 2,
+    related_report_source_ids: tuple[str, ...] = ("92001", "92002"),
+    daily_summary_presence: bool = True,
     krx_reference_date: date | None = date(2026, 6, 1),
 ) -> ReportLinkedNewsEvidenceRecord:
     return ReportLinkedNewsEvidenceRecord(
@@ -3376,9 +3428,9 @@ def _news_intelligence_cli_evidence(
         target_date=date(2026, 6, 1),
         stock_code="005930",
         stock_name="삼성전자",
-        related_report_count=2,
-        related_report_source_ids=("92001", "92002"),
-        daily_summary_presence=True,
+        related_report_count=related_report_count,
+        related_report_source_ids=related_report_source_ids,
+        daily_summary_presence=daily_summary_presence,
         candidate_priority_presence=candidate_priority_presence,
         candidate_observation_priority=candidate_observation_priority,
         krx_reference_presence=krx_reference_date is not None,
