@@ -2636,6 +2636,20 @@ def _save_news_intelligence_observation(
         stock_code=stock_code,
         created_at=created_at,
     )
+    context = _news_intelligence_observation_context(
+        repository,
+        target_date=target_date,
+        stock_name=stock_name,
+        stock_code=stock_code,
+    )
+    krx_reference_freshness = _news_intelligence_krx_reference_freshness(
+        target_date=target_date,
+        krx_reference_date=context["krx_reference_date"],
+    )
+    warnings_for_run = [*run_warnings]
+    krx_warning = _news_intelligence_krx_reference_warning(krx_reference_freshness)
+    if krx_warning:
+        warnings_for_run.append(krx_warning)
     run = NewsIntelligenceRun(
         run_id=run_id,
         target_date=target_date,
@@ -2650,14 +2664,8 @@ def _save_news_intelligence_observation(
         deduped_count=int(getattr(preview, "deduped_count")),
         matched_count=int(getattr(preview, "matched_count")),
         operator_summary_snapshot=str(getattr(report, "operator_summary")),
-        warnings=tuple(str(warning) for warning in run_warnings),
+        warnings=tuple(str(warning) for warning in warnings_for_run),
         created_at=created_at,
-    )
-    context = _news_intelligence_observation_context(
-        repository,
-        target_date=target_date,
-        stock_name=stock_name,
-        stock_code=stock_code,
     )
     evidence_rows = [
         _news_intelligence_evidence_record(
@@ -2676,6 +2684,8 @@ def _save_news_intelligence_observation(
         "saved_run_id": run_id,
         "saved_db_path": str(db_path),
         "saved_evidence_count": len(evidence_rows),
+        "krx_reference_freshness": krx_reference_freshness,
+        "warnings": warnings_for_run,
     }
 
 
@@ -2960,6 +2970,36 @@ def _news_intelligence_observation_context(
         "krx_turnover": krx_snapshots[0].turnover if krx_snapshots else None,
         "investor_flow_presence": bool(investor_flows),
     }
+
+
+def _news_intelligence_krx_reference_freshness(
+    *,
+    target_date: date,
+    krx_reference_date: object,
+) -> dict[str, object]:
+    if not isinstance(krx_reference_date, date):
+        return {
+            "status": "missing",
+            "target_date": target_date.isoformat(),
+            "krx_reference_date": None,
+            "exact_date": False,
+        }
+    exact_date = krx_reference_date == target_date
+    return {
+        "status": "exact" if exact_date else "stale_reference",
+        "target_date": target_date.isoformat(),
+        "krx_reference_date": krx_reference_date.isoformat(),
+        "exact_date": exact_date,
+    }
+
+
+def _news_intelligence_krx_reference_warning(freshness: dict[str, object]) -> str | None:
+    if freshness.get("status") != "stale_reference":
+        return None
+    return (
+        "stale_krx_reference: KRX reference date "
+        f"{freshness.get('krx_reference_date')} differs from target date {freshness.get('target_date')}"
+    )
 
 
 def _news_intelligence_evidence_record(

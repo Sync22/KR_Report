@@ -3241,6 +3241,12 @@ def test_news_intelligence_preview_save_observation_attaches_report_and_krx_cont
     assert exit_code == 0
     assert payload["writes_db"] is True
     assert payload["saved_evidence_count"] == 1
+    assert payload["krx_reference_freshness"] == {
+        "status": "exact",
+        "target_date": "2026-06-01",
+        "krx_reference_date": "2026-06-01",
+        "exact_date": True,
+    }
     assert len(rows) == 1
     assert rows[0].related_report_count == 2
     assert rows[0].related_report_source_ids == ("92001", "92002")
@@ -3252,6 +3258,105 @@ def test_news_intelligence_preview_save_observation_attaches_report_and_krx_cont
     assert rows[0].operator_recommendation == "strengthen_report_candidate"
     assert rows[0].candidate_priority_presence is False
     assert rows[0].candidate_observation_priority is None
+
+
+def test_news_intelligence_preview_save_observation_warns_on_stale_krx_reference(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    scrapling_exe = tmp_path / "scrapling.exe"
+    scrapling_exe.write_text("fake", encoding="utf-8")
+    db_path = tmp_path / "news-intelligence.db"
+    business_date = date(2026, 6, 1)
+    stale_krx_date = date(2026, 5, 29)
+    repository = StockMonitorRepository(db_path)
+    repository.initialize()
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=stale_krx_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                fetched_at=datetime(2026, 5, 29, 16, 0, 0),
+                close_price=79000,
+                change_amount=100,
+                change_percent=0.13,
+                volume=9_000_000,
+                turnover=710_000_000_000,
+            )
+        ]
+    )
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, **_kwargs):
+        output_path = command[4]
+        with open(output_path, "w", encoding="utf-8") as file:
+            if command[2] == "get":
+                file.write('{"articles":[]}')
+            else:
+                file.write(
+                    """
+* 2026. 06. 01
+  :   2026. 06. 01. 09:10
+
+      [### 삼성전자, AI 반도체 공급 계약 체결
+
+      삼성전자가 글로벌 고객사와 AI 반도체 공급 계약을 체결했다.
+
+      한국경제
+
+      ![](https://imgnews.pstatic.net/image/origin/015/2026/06/01/1.jpg)](https://n.news.naver.com/article/015/0000001)
+"""
+                )
+        return Result()
+
+    monkeypatch.setattr("stock_monitor.news.collectors.subprocess.run", fake_run)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-preview",
+            "--stock-name",
+            "삼성전자",
+            "--stock-code",
+            "005930",
+            "--date",
+            "2026-06-01",
+            "--scrapling-exe",
+            str(scrapling_exe),
+            "--db-path",
+            str(db_path),
+            "--save-observation",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    runs = repository.list_news_intelligence_runs(target_date=business_date, stock_code="005930")
+    rows = repository.list_report_linked_news_evidence(run_id=payload["saved_run_id"])
+
+    assert exit_code == 0
+    assert payload["krx_reference_freshness"] == {
+        "status": "stale_reference",
+        "target_date": "2026-06-01",
+        "krx_reference_date": "2026-05-29",
+        "exact_date": False,
+    }
+    assert (
+        "stale_krx_reference: KRX reference date 2026-05-29 differs from target date 2026-06-01"
+        in payload["warnings"]
+    )
+    assert len(runs) == 1
+    assert (
+        "stale_krx_reference: KRX reference date 2026-05-29 differs from target date 2026-06-01"
+        in runs[0].warnings
+    )
+    assert rows[0].krx_reference_presence is True
+    assert rows[0].krx_reference_date == stale_krx_date
 
 
 def test_news_intelligence_preview_cli_keeps_partial_source_failure(tmp_path, monkeypatch, capsys) -> None:
