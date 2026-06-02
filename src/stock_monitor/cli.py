@@ -2722,6 +2722,7 @@ def _news_intelligence_operator_decision_notes(
         matched_count=matched_count,
         direct_count=direct_count,
         summary_only_count=summary_only_count,
+        market_context_heavy=market_context_heavy,
     )
     source_coverage_payload = source_coverage or {
         "total_source_count": 0,
@@ -2778,8 +2779,17 @@ def _news_intelligence_observation_quality(
     matched_count: int,
     direct_count: int,
     summary_only_count: int,
+    market_context_heavy: bool,
 ) -> dict[str, object]:
-    if matched_count > 0 and direct_count == 0 and summary_only_count == matched_count:
+    if matched_count <= 0:
+        return {
+            "level": "no_match",
+            "matched_count": matched_count,
+            "direct_count": direct_count,
+            "summary_only_count": summary_only_count,
+            "save_warning": "no_match: no stock-matched news evidence; store as an empty observation only",
+        }
+    if direct_count == 0 and summary_only_count == matched_count:
         return {
             "level": "support_only_indirect",
             "matched_count": matched_count,
@@ -2787,8 +2797,24 @@ def _news_intelligence_observation_quality(
             "summary_only_count": summary_only_count,
             "save_warning": "support_only_indirect: no direct news evidence; interpret as supporting context only",
         }
+    if market_context_heavy:
+        return {
+            "level": "market_context_heavy",
+            "matched_count": matched_count,
+            "direct_count": direct_count,
+            "summary_only_count": summary_only_count,
+            "save_warning": "market_context_heavy: market or sector context dominates; do not treat as direct stock evidence",
+        }
+    if matched_count <= 2:
+        return {
+            "level": "low_coverage",
+            "matched_count": matched_count,
+            "direct_count": direct_count,
+            "summary_only_count": summary_only_count,
+            "save_warning": "low_coverage: too few matched articles; verify with report/KRX context before relying on this observation",
+        }
     return {
-        "level": "reviewable",
+        "level": "direct_evidence",
         "matched_count": matched_count,
         "direct_count": direct_count,
         "summary_only_count": summary_only_count,
