@@ -43,13 +43,17 @@ Do not keep agents open after their result is integrated. Close completed agents
 
 ## Optional Global Skill
 
-If the global skill `$botasaurus-stock-monitor` is installed, use it only for:
+`$scrapling-official` is the preferred active source-probe skill for new browser-gated, rendered-page, anti-bot-sensitive, or future-source work.
 
-- bounded KRX Data Marketplace session or detection probes
-- future browser-gated source proof-of-concept work
-- narrow cache or parallel browser-fetch experiments
+If the old global skill `$botasaurus-stock-monitor` is present, treat it as legacy/archived reference only. Do not use it as an active maintained probe lane unless the user explicitly asks to restore it.
 
-Do not use it to replace the main Naver report collector, Telegram/scheduler flow, SQLite write path, `admin-gui`, or `web-view` feature work.
+If the global skill `$scrapling-official` is installed, use it as an active source-probe lane for:
+
+- rendered-page extraction where simple request or API paths return only an app shell
+- browser-gated or anti-bot-sensitive source checks
+- bounded source comparison before deciding whether a source should remain probe-only, become fallback, or be proposed for later integration
+
+For Scrapling CLI extraction commands, include `--ai-targeted`. The installed shared runtime is `C:\Users\MING\Codex\_tools\scrapling\.venv\Scripts\scrapling.exe`. Do not wire Scrapling into production DB writes, Telegram automation, scheduler tasks, `admin-gui`, or public `web-view`. KRX/Data Marketplace should still prefer existing request/login/sample validation paths first; use Scrapling only for bounded source probing when those paths are insufficient or the source is new/unstable.
 
 If the global skill `$kronos-market-forecast` is installed, use it only for:
 
@@ -99,11 +103,11 @@ Use a skill when the task needs a specialized workflow or tool lane. Use an agen
 | Task type | Prefer skill | Prefer agent | Why |
 | --- | --- | --- | --- |
 | KRX Open API stock/ETF/index daily data | none | `market-data-engineer`, `backend-developer`, `sql-pro` | The approved Open API path already exists in the main codebase. No browser or anti-detect probe is needed. |
-| KRX Data Marketplace login/session/source probing | `botasaurus-stock-monitor` when browser behavior itself is the question | `market-data-engineer`, `debugger` | Botasaurus is useful for bounded browser-gated probes, but source semantics and production boundary still need project agents. |
+| KRX Data Marketplace login/session/source probing | Existing request/login/sample validation first; `scrapling-official` only for bounded browser/source probes when needed | `market-data-engineer`, `debugger` | Scrapling is the active probe tool, but source semantics and production boundary still need project agents. Botasaurus is legacy reference only unless explicitly restored. |
 | KRX investor-flow schema/import/display | none by default | `market-data-engineer`, `sql-pro`, `web-ui-engineer`, `reviewer` | The data should flow through existing repository/schema/web-view contracts, not through a separate probe lane. |
-| Future real-time quote/turnover lane | source-specific skill only for bounded reachability probes | `market-data-engineer`, `web-ui-engineer`, `security-hardening`, `reviewer`, `test-engineer` | Read-only lab/staging first. After approval, values may affect observation priority and `우선 확인`, but not broker execution, public scores, or trading calls. |
+| Future real-time quote/turnover lane | source-specific skill or `scrapling-official` only for bounded reachability probes | `market-data-engineer`, `web-ui-engineer`, `security-hardening`, `reviewer`, `test-engineer` | Read-only lab/staging first. After approval, values may affect observation priority and `우선 확인`, but not broker execution, public scores, or trading calls. |
 | Future operator decision/execution lane | source/broker skills only after explicit approval | `market-data-engineer`, `security-hardening`, `reviewer`, `sql-pro`, `test-engineer`, `cli-developer` | Do not treat current public wording limits as a permanent goal. Trading-decision support is possible only as a separate operator-only/execution-lab path after real-time source, audit, permission, and order-safety gates. |
-| Naver report collection/parser | none by default | `backend-developer`, `python-pro`, `test-engineer` | Main Naver pipeline is production code; Botasaurus must not replace it. |
+| Naver report collection/parser | none by default; `scrapling-official` only for bounded source discovery | `backend-developer`, `python-pro`, `test-engineer` | Main Naver pipeline is production code; Scrapling probes must not replace stable request/API paths without documented evidence. |
 | Telegram/scheduler/SQLite operation | none | `cli-developer`, `debugger`, `test-engineer`, `reviewer` | Operational behavior needs CLI/DB/replay safety, not a browser skill. |
 | User `web-view` / admin UI | `browser-use:browser` only for local visual verification | `web-ui-engineer`, `admin-ui-engineer`, `security-hardening` | Browser skill can verify UI, but implementation/review should stay with UI/security agents. |
 | OHLCV forecast experiment | `kronos-market-forecast` | `market-data-engineer`, `reviewer` | Kronos is research-only and may compare against stored KRX data; it must not feed public scoring directly. |

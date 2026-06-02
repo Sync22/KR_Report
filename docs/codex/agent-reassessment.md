@@ -97,17 +97,19 @@ When work is multi-step, cross-module, high-risk, or needs separate review, use 
 
 ## Skills versus agents
 
-This project now has two installed project-specific global skills:
+This project now has three installed project-specific global skills:
 
 - `botasaurus-stock-monitor`
 - `kronos-market-forecast`
+- `scrapling-official`
 
 They are useful, but they are not replacements for repository ownership review.
 
 | Capability | Skill fit | Agent fit | Decision |
 | --- | --- | --- | --- |
 | KRX Open API stock/ETF/index backfill | No special skill needed. | `market-data-engineer`, `backend-developer`, `sql-pro` | Keep using the existing Open API CLI/repository path. |
-| KRX Data Marketplace browser/session probing | `botasaurus-stock-monitor` is appropriate for a bounded detection/session probe. | `market-data-engineer`, `debugger` define what success means and whether it should influence the product. | Use Botasaurus only for probes, not production ingest. |
+| KRX Data Marketplace browser/session probing | Existing request/login/sample validation first; `scrapling-official` only when a bounded browser/source probe is needed. | `market-data-engineer`, `debugger` define what success means and whether it should influence the product. | Scrapling is active tooling; Botasaurus is legacy reference only. |
+| Browser-gated rendered-page/source probing | `scrapling-official` is appropriate for bounded rendered extraction and anti-bot-sensitive source comparison. | `market-data-engineer`, `debugger`, `reviewer` decide whether the result stays probe-only, becomes fallback, or needs later integration design. | Use Scrapling as the preferred active probe tool; do not wire it into production ingest or public surfaces. |
 | KRX investor-flow import/display | No skill by default. | `market-data-engineer`, `sql-pro`, `web-ui-engineer`, `reviewer` | Use the normal DB/DTO/UI path. |
 | Stored OHLCV forecasting experiment | `kronos-market-forecast` is appropriate for research-only stored KRX OHLCV experiments. | `market-data-engineer`, `reviewer`, `test-engineer` judge whether results are meaningful. | Keep Kronos output offline and hidden. |
 | Web-view visual verification | `browser-use:browser` is appropriate for local UI inspection when it can access the page. | `web-ui-engineer`, `security-hardening` implement and review public-safe UI behavior. | Browser verifies; agents own changes. |
@@ -116,7 +118,8 @@ They are useful, but they are not replacements for repository ownership review.
 
 The reason this comparison was not previously prominent is that the data targets overlapped: both skills and agents can touch "market data" in a broad sense. The actual boundary is narrower:
 
-- Botasaurus answers browser/source-access questions.
+- Scrapling answers browser/source-access, rendered-page extraction, anti-bot-sensitive source reachability, and source comparison questions.
+- Botasaurus remains historical reference only unless explicitly restored.
 - Kronos answers offline forecast-experiment questions.
 - Local agents answer product correctness, DB safety, UI boundaries, Telegram operations, and documentation consistency.
 

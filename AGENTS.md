@@ -87,8 +87,12 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
 허용되지만 용도가 제한된 전역 skill:
 
 - `botasaurus-stock-monitor`
-  - KRX/Data Marketplace 같은 browser-gated source probe 전용
-  - main Naver/Telegram/SQLite pipeline 대체 금지
+  - legacy/reference-only lane for historical Botasaurus probes
+  - do not treat as active maintained tooling unless the user explicitly asks to restore it
+- `scrapling-official`
+  - preferred active browser/source-probe tool for browser-gated, rendered-page, anti-bot-sensitive, and future-source checks
+  - use `--ai-targeted` for Scrapling CLI extraction commands
+  - production DB writes, Telegram, scheduler, admin-gui, and public `web-view` integration remain blocked
 - `kronos-market-forecast`
   - stored KRX OHLCV 기반 research-only forecast 실험 전용
   - public score, recommendation, Telegram trading alert 연결 금지

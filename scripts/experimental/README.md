@@ -9,9 +9,11 @@ Current rule:
 - Do not use this path from Task Scheduler scripts.
 - Do not touch Naver main collection, Telegram, scheduler, or SQLite operation paths.
 
-## Botasaurus probe environment
+## Botasaurus legacy probe reference
 
-The local probe virtual environment is:
+Botasaurus is no longer the active maintained source-probe lane for this project. Keep the historical files here only as reference unless the user explicitly asks to restore Botasaurus work. The old local runtime `scripts\experimental\.venv-botasaurus` is not assumed to exist.
+
+Historical runtime path:
 
 ```powershell
 scripts\experimental\.venv-botasaurus
@@ -24,15 +26,33 @@ scripts\experimental\.venv-botasaurus\Scripts\python.exe -m pip install -r scrip
 scripts\experimental\.venv-botasaurus\Scripts\python.exe scripts\experimental\probe_botasaurus_import.py
 ```
 
-Run the bounded source probe with:
+Historical bounded source probe:
 
 ```powershell
 scripts\experimental\.venv-botasaurus\Scripts\python.exe scripts\experimental\botasaurus_source_probe.py
 ```
 
-Use this only to compare whether browser-backed loading helps a source. It does
-not write project tables, does not replace the Naver collector, and does not
-approve broader KRX Data Marketplace ingest.
+Do not use Botasaurus for new source probes by default. Use Scrapling unless there is an explicit restore request.
+
+## Scrapling global source-probe runtime
+
+Scrapling is installed globally as the preferred active source-probe tool:
+
+```powershell
+C:\Users\MING\Codex\_tools\scrapling\.venv\Scripts\scrapling.exe
+```
+
+Start with Scrapling when a new or unstable source needs rendered-page extraction, browser-gated checks, or anti-bot-sensitive comparison. Keep probes bounded and record the target, command, observed result, and decision: `probe-only`, `fallback candidate`, or `later integration proposal`.
+
+For CLI extraction commands, include `--ai-targeted`.
+
+Safe first probe proposal for Naver stock news source discovery:
+
+```powershell
+C:\Users\MING\Codex\_tools\scrapling\.venv\Scripts\scrapling.exe extract fetch "https://stock.naver.com/news/mainnews" $env:TEMP\stock-monitor-naver-mainnews.md --ai-targeted --network-idle --wait 1500
+```
+
+After reading the temp output, delete it. Do not save provider responses into project data, do not connect Scrapling to DB writes, Telegram, Task Scheduler, `admin-gui`, or public `web-view`, and do not replace stable request/API paths unless a documented probe shows they are insufficient.
 
 ## Local Node tooling probes
 
@@ -75,7 +95,7 @@ The local research virtual environment is:
 scripts\experimental\.venv-kronos
 ```
 
-Install or verify with:
+Historical install or verify commands:
 
 ```powershell
 scripts\experimental\.venv-kronos\Scripts\python.exe -m pip install -r scripts\experimental\requirements-kronos.txt
