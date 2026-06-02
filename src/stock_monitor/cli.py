@@ -182,6 +182,7 @@ READ_ONLY_SCHEMA_CURRENT_COMMANDS = {
     "market-briefing-readiness",
     "market-day-observation",
     "mini-pc-preflight",
+    "news-intelligence-observations",
     "next-phase-readiness",
     "observation-feature-audit",
     "observation-feature-comparison",
@@ -389,6 +390,16 @@ def build_parser() -> argparse.ArgumentParser:
     news_preview_parser.add_argument("--scrapling-exe", type=Path)
     news_preview_parser.add_argument("--db-path", type=Path)
     news_preview_parser.add_argument("--save-observation", action="store_true")
+    news_observations_parser = subparsers.add_parser(
+        "news-intelligence-observations",
+        help="Read saved operator-only news intelligence observations as JSON.",
+    )
+    news_observations_parser.add_argument("--date", type=date.fromisoformat)
+    news_observations_parser.add_argument("--stock-code")
+    news_observations_parser.add_argument("--run-id")
+    news_observations_parser.add_argument("--limit", type=int, default=20)
+    news_observations_parser.add_argument("--evidence-per-run", type=int, default=10)
+    news_observations_parser.add_argument("--db-path", type=Path)
 
     poll_parser = subparsers.add_parser("manual-poll", help="Fetch reports and save unseen rows into SQLite.")
     poll_parser.add_argument("--limit", type=int, default=50)
@@ -1697,6 +1708,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "news-intelligence-preview":
         return _run_news_intelligence_preview(args)
+    if args.command == "news-intelligence-observations":
+        return _run_news_intelligence_observations(args)
 
     config = RuntimeConfig.from_env(headless=not getattr(args, "headed", False))
     config.ensure_runtime_dirs()
@@ -2686,6 +2699,231 @@ def _save_news_intelligence_observation(
         "saved_evidence_count": len(evidence_rows),
         "krx_reference_freshness": krx_reference_freshness,
         "warnings": warnings_for_run,
+    }
+
+
+def _run_news_intelligence_observations(args: argparse.Namespace) -> int:
+    db_path = args.db_path or Path("data") / "stock_monitor.db"
+    repository = StockMonitorRepository(db_path)
+    payload = _news_intelligence_observations_base_payload(
+        db_path=db_path,
+        target_date=args.date,
+        stock_code=args.stock_code,
+        run_id=args.run_id,
+        limit=args.limit,
+        evidence_per_run=args.evidence_per_run,
+    )
+    if not db_path.exists():
+        payload["error"] = "database does not exist"
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 1
+    status = repository.get_schema_migration_status()
+    if status.current_version != status.target_version or status.pending_versions:
+        payload["error"] = "database schema is not current"
+        payload["schema"] = {
+            "current_version": status.current_version,
+            "target_version": status.target_version,
+            "pending_versions": list(status.pending_versions),
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 1
+
+    runs = repository.list_news_intelligence_runs(
+        target_date=args.date,
+        stock_code=args.stock_code,
+        limit=args.limit,
+    )
+    if args.run_id:
+        runs = [run for run in runs if run.run_id == args.run_id]
+    run_payloads: list[dict[str, object]] = []
+    total_evidence_count = 0
+    for run in runs:
+        all_evidence = repository.list_report_linked_news_evidence(run_id=run.run_id, limit=1000)
+        total_evidence_count += len(all_evidence)
+        run_payloads.append(
+            _news_intelligence_observation_run_payload(
+                run,
+                all_evidence=all_evidence,
+                evidence_per_run=args.evidence_per_run,
+            )
+        )
+    payload.update(
+        {
+            "run_count": len(run_payloads),
+            "evidence_count": total_evidence_count,
+            "runs": run_payloads,
+        }
+    )
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _news_intelligence_observations_base_payload(
+    *,
+    db_path: Path,
+    target_date: date | None,
+    stock_code: str | None,
+    run_id: str | None,
+    limit: int,
+    evidence_per_run: int,
+) -> dict[str, object]:
+    return {
+        "surface": "news-intelligence-observations",
+        "read_only": True,
+        "operator_only": True,
+        "public_safe": False,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "connects_web_view": False,
+        "db_path": str(db_path),
+        "filters": {
+            "target_date": target_date.isoformat() if target_date else None,
+            "stock_code": stock_code,
+            "run_id": run_id,
+            "limit": limit,
+            "evidence_per_run": evidence_per_run,
+        },
+        "run_count": 0,
+        "evidence_count": 0,
+        "runs": [],
+    }
+
+
+def _news_intelligence_observation_run_payload(
+    run: NewsIntelligenceRun,
+    *,
+    all_evidence: list[ReportLinkedNewsEvidenceRecord],
+    evidence_per_run: int,
+) -> dict[str, object]:
+    derived_counts = _news_intelligence_observation_derived_counts(all_evidence)
+    return {
+        "run_id": run.run_id,
+        "target_date": run.target_date.isoformat(),
+        "stock_name": run.stock_name,
+        "stock_code": run.stock_code,
+        "aliases": list(run.aliases),
+        "source_mode": run.source_mode,
+        "page_limit": run.page_limit,
+        "full_day_complete": run.full_day_complete,
+        "live_fetch": run.live_fetch,
+        "parsed_count": run.parsed_count,
+        "deduped_count": run.deduped_count,
+        "matched_count": run.matched_count,
+        "warnings": list(run.warnings),
+        "operator_summary_snapshot": run.operator_summary_snapshot,
+        "created_at": run.created_at.isoformat(),
+        "evidence_count": len(all_evidence),
+        "derived_counts": derived_counts,
+        "krx_reference_freshness": _news_intelligence_observation_krx_freshness(run, all_evidence),
+        "candidate_linkage_hint": _news_intelligence_candidate_linkage_hint(run, all_evidence, derived_counts),
+        "evidence": [
+            _news_intelligence_observation_evidence_payload(row)
+            for row in all_evidence[: max(0, evidence_per_run)]
+        ],
+    }
+
+
+def _news_intelligence_observation_derived_counts(
+    evidence_rows: list[ReportLinkedNewsEvidenceRecord],
+) -> dict[str, object]:
+    relevance = Counter(row.relevance for row in evidence_rows)
+    for key in ("direct", "indirect", "market_context"):
+        relevance.setdefault(key, 0)
+    return {
+        "relevance": {
+            "direct": relevance["direct"],
+            "indirect": relevance["indirect"],
+            "market_context": relevance["market_context"],
+        },
+        "summary_only": sum(1 for row in evidence_rows if row.match_scope == "summary"),
+        "evidence_case": dict(Counter(row.evidence_case for row in evidence_rows)),
+        "operator_recommendation": dict(Counter(row.operator_recommendation for row in evidence_rows)),
+    }
+
+
+def _news_intelligence_observation_krx_freshness(
+    run: NewsIntelligenceRun,
+    evidence_rows: list[ReportLinkedNewsEvidenceRecord],
+) -> dict[str, object]:
+    if not evidence_rows:
+        return {
+            "status": "none",
+            "target_date": run.target_date.isoformat(),
+            "krx_reference_date": None,
+            "exact_date": False,
+        }
+    reference_dates = [row.krx_reference_date for row in evidence_rows if row.krx_reference_date is not None]
+    if not reference_dates:
+        return {
+            "status": "missing",
+            "target_date": run.target_date.isoformat(),
+            "krx_reference_date": None,
+            "exact_date": False,
+        }
+    reference_date = max(reference_dates)
+    return _news_intelligence_krx_reference_freshness(
+        target_date=run.target_date,
+        krx_reference_date=reference_date,
+    )
+
+
+def _news_intelligence_candidate_linkage_hint(
+    run: NewsIntelligenceRun,
+    evidence_rows: list[ReportLinkedNewsEvidenceRecord],
+    derived_counts: dict[str, object],
+) -> str:
+    krx_freshness = _news_intelligence_observation_krx_freshness(run, evidence_rows)
+    if krx_freshness["status"] == "stale_reference":
+        return "stale_krx_check_first"
+    relevance_counts = derived_counts["relevance"]
+    direct_count = int(relevance_counts["direct"]) if isinstance(relevance_counts, dict) else 0
+    if run.matched_count <= 0 or not evidence_rows:
+        return "needs_more_data"
+    if direct_count <= 0:
+        return "support_only_context"
+    return "ready_for_operator_review"
+
+
+def _news_intelligence_observation_evidence_payload(
+    row: ReportLinkedNewsEvidenceRecord,
+) -> dict[str, object]:
+    return {
+        "run_id": row.run_id,
+        "evidence_key": row.evidence_key,
+        "target_date": row.target_date.isoformat(),
+        "stock_code": row.stock_code,
+        "stock_name": row.stock_name,
+        "source_lane": row.source_lane,
+        "title": row.title,
+        "summary": row.summary,
+        "source": row.source,
+        "published_at": row.published_at.isoformat(),
+        "url": row.url,
+        "matched_alias": row.matched_alias,
+        "match_reason": row.match_reason,
+        "match_scope": row.match_scope,
+        "relevance": row.relevance,
+        "relevance_reason": row.relevance_reason,
+        "sentiment": row.sentiment,
+        "sentiment_score": row.sentiment_score,
+        "event_types": list(row.event_types),
+        "stock_impact": row.stock_impact,
+        "impact_explanation": row.impact_explanation,
+        "related_report_count": row.related_report_count,
+        "related_report_source_ids": list(row.related_report_source_ids),
+        "daily_summary_presence": row.daily_summary_presence,
+        "candidate_priority_presence": row.candidate_priority_presence,
+        "candidate_observation_priority": row.candidate_observation_priority,
+        "krx_reference_presence": row.krx_reference_presence,
+        "krx_reference_date": row.krx_reference_date.isoformat() if row.krx_reference_date else None,
+        "krx_turnover": row.krx_turnover,
+        "investor_flow_presence": row.investor_flow_presence,
+        "evidence_case": row.evidence_case,
+        "operator_recommendation": row.operator_recommendation,
+        "recommendation_reason": row.recommendation_reason,
+        "created_at": row.created_at.isoformat(),
     }
 
 

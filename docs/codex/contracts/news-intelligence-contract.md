@@ -57,6 +57,12 @@ Scrapling is the preferred active source-probe tool for rendered Naver source in
 
 This command is manual and operator-only. It emits JSON to stdout, uses temporary files for Scrapling output, deletes those files after reading, and must not write live fetch results into the repository, SQLite, logs, scheduler state, Telegram, or public `web-view` by default. It also does not update `admin-gui` in v1; an `admin-gui` review surface is a future operator-only integration candidate, not a public-surface exception.
 
+Saved operator observations may be reviewed with:
+
+- `python -m stock_monitor news-intelligence-observations [--date YYYY-MM-DD] [--stock-code CODE] [--run-id RUN_ID]`
+
+This readback command is operator-only and read-only. It compares saved runs and evidence rows, emits JSON only, and must not fetch live news, write DB rows, start schedulers, send Telegram, or expose anything in public `web-view`.
+
 The preview command is intentionally incomplete as a day-level collector:
 
 - `page_limit=1`
@@ -166,6 +172,8 @@ Allowed storage tables:
 
 - `news_intelligence_runs`: one operator preview/evaluation run.
 - `report_linked_news_evidence`: article-level report-linked evidence rows for that run.
+
+The readback command may derive review-only summaries from these rows, including direct/indirect/market-context counts, evidence-case counts, operator recommendation-support counts, and KRX exact/stale/missing reference status. These summaries are operator comparison aids for deciding whether candidate-evidence integration is ready; they are not public DTOs.
 
 The stored lane may include:
 
