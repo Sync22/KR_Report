@@ -21013,6 +21013,10 @@ def _render_web_view_html() -> str:
     .news-observation-summary-meta { display: flex; flex-wrap: wrap; gap: 6px; }
     .news-observation-summary-titles { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; color: var(--ink); font-size: 12px; }
     .news-observation-summary-titles li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .news-observation-summary-items { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+    .news-observation-summary-item { display: grid; gap: 3px; padding: 6px 0 0; border-top: 1px solid #eadfcb; font-size: 12px; }
+    .news-observation-summary-item b { color: var(--ink); font-size: 12px; }
+    .news-observation-summary-item span { color: var(--muted); line-height: 1.4; overflow-wrap: anywhere; }
     .intraday-overlap-panel { display: grid; gap: 8px; margin: 10px 0 12px; border: 1px solid #d8e8f5; border-radius: 8px; padding: 10px 12px; background: #f6fbff; }
     .intraday-overlap-panel[hidden] { display: none; }
     .intraday-overlap-meta { color: #1769aa; font-size: 11px; font-weight: 900; }
@@ -22177,6 +22181,7 @@ def _render_web_view_html() -> str:
       const marketContext = Number(summary?.market_context_count || 0);
       const krx = summary?.krx_reference_status || "missing";
       const titles = Array.isArray(summary?.top_titles) ? summary.top_titles.filter(Boolean).slice(0, 3) : [];
+      const items = Array.isArray(summary?.items) ? summary.items.filter(Boolean).slice(0, 3) : [];
       const metaChips = newsObservationMetaChips(available, direct, caution, marketContext, krx, candidateOverlapNames);
       node.innerHTML = `
         <div class="news-observation-summary-head">
@@ -22186,8 +22191,22 @@ def _render_web_view_html() -> str:
         <p class="news-observation-summary-reason">${esc(reason)}</p>
         <p class="news-observation-summary-connection">${esc(connection)}</p>
         <div class="news-observation-summary-meta">${metaChips.map((item) => `<span class="quality-chip">${esc(item)}</span>`).join("")}</div>
+        ${items.length ? `<ul class="news-observation-summary-items">${items.map(renderNewsObservationSummaryItem).join("")}</ul>` : ""}
         ${titles.length ? `<ul class="news-observation-summary-titles">${titles.map((title) => `<li>${esc(title)}</li>`).join("")}</ul>` : ""}
       `;
+    }
+
+    function renderNewsObservationSummaryItem(item) {
+      const stock = [item.stock_name, item.stock_code].filter(Boolean).join(" ");
+      const label = item.display_label || "뉴스 근거 있음";
+      const krx = item.krx_reference_status || "missing";
+      const counts = `직접 ${number(item.direct_count || 0)} · 주의 ${number(item.caution_count || 0)} · 시장맥락 ${number(item.market_context_count || 0)} · KRX ${krx}`;
+      const title = item.top_title || item.reason || "";
+      return `<li class="news-observation-summary-item">
+        <b>${esc(stock || "-")} · ${esc(label)}</b>
+        <span>${esc(counts)}</span>
+        ${title ? `<span>${esc(title)}</span>` : ""}
+      </li>`;
     }
 
     function newsObservationMetaChips(available, direct, caution, marketContext, krx, candidateOverlapNames) {
@@ -24971,8 +24990,11 @@ def _build_web_view_news_observation_summary(
             break
 
     evidence_rows: list[ReportLinkedNewsEvidenceRecord] = []
+    evidence_rows_by_key: dict[str, list[ReportLinkedNewsEvidenceRecord]] = {}
     for run in representative_runs:
-        evidence_rows.extend(repository.list_report_linked_news_evidence(run_id=run.run_id, limit=20))
+        rows = repository.list_report_linked_news_evidence(run_id=run.run_id, limit=20)
+        evidence_rows.extend(rows)
+        evidence_rows_by_key[run.stock_code or run.stock_name] = rows
 
     if not evidence_rows:
         return {
@@ -24991,6 +25013,7 @@ def _build_web_view_news_observation_summary(
             "market_context_count": 0,
             "krx_reference_status": "missing",
             "top_titles": [],
+            "items": [],
             "empty_state": "저장된 뉴스 관찰 없음",
             "missing_context": ["stored_news_observation"],
         }
@@ -25001,6 +25024,14 @@ def _build_web_view_news_observation_summary(
     krx_reference_status = _web_view_news_observation_krx_status(evidence_rows, business_date)
     candidate_overlap_names = _web_view_news_candidate_overlap_names(evidence_rows, limit=3)
     top_titles = _web_view_unique_texts([row.title for row in evidence_rows], limit=3)
+    items = [
+        _web_view_news_observation_summary_item(
+            run,
+            evidence_rows_by_key.get(run.stock_code or run.stock_name, []),
+            business_date=business_date,
+        )
+        for run in representative_runs
+    ]
     display_label, reason = _web_view_news_observation_label(
         direct_count=direct_count,
         caution_count=caution_count,
@@ -25028,7 +25059,29 @@ def _build_web_view_news_observation_summary(
         "market_context_count": market_context_count,
         "krx_reference_status": krx_reference_status,
         "top_titles": top_titles,
+        "items": [item for item in items if item["available"]],
         "missing_context": [],
+    }
+
+
+def _web_view_news_observation_summary_item(
+    run: NewsIntelligenceRun,
+    rows: list[ReportLinkedNewsEvidenceRecord],
+    *,
+    business_date: date,
+) -> dict[str, object]:
+    badge = _web_view_candidate_news_badge(rows, business_date=business_date)
+    return {
+        "available": bool(badge["available"]),
+        "stock_name": run.stock_name,
+        "stock_code": run.stock_code,
+        "display_label": badge["display_label"],
+        "reason": badge["reason"],
+        "direct_count": badge["direct_count"],
+        "caution_count": badge["caution_count"],
+        "market_context_count": badge["market_context_count"],
+        "krx_reference_status": badge["krx_reference_status"],
+        "top_title": badge["top_title"],
     }
 
 
