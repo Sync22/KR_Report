@@ -1174,6 +1174,7 @@ def test_web_view_archive_snapshot_is_read_only_and_public_safe(tmp_path, monkey
             "business_date": "2026-05-08",
             "report_count": 1,
             "summary_stock_count": 1,
+            "news_observation_count": 0,
             "category_mapping": {
                 "mapping_basis": "latest_mapping_fallback",
                 "sector_snapshot_date": None,
@@ -1185,6 +1186,41 @@ def test_web_view_archive_snapshot_is_read_only_and_public_safe(tmp_path, monkey
     assert "scheduler_tasks" not in snapshot
     assert "db_path" not in snapshot
     assert "worker_states" not in snapshot
+    _assert_public_safe_payload(snapshot)
+
+
+def test_web_view_archive_snapshot_marks_news_observation_count(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 8)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="업황 회복",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 5, 8, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 5, 8, 9, 5, 0),
+                source_id="archive-news-count-report",
+                identity_key="archive-news-count-report",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.save_news_intelligence_observation(
+        _web_view_news_run(run_id="archive-news-count-run", target_date=business_date),
+        [_web_view_news_evidence(run_id="archive-news-count-run", target_date=business_date)],
+    )
+
+    snapshot = cli_module.build_web_view_archive_snapshot(config, repository, limit=10)
+
+    assert snapshot["dates"][0]["business_date"] == "2026-05-08"
+    assert snapshot["dates"][0]["news_observation_count"] == 1
     _assert_public_safe_payload(snapshot)
 
 
@@ -4528,6 +4564,11 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "archive-category-summary" not in html
     assert "카테고리 기준:" not in html
     assert "archive-calendar" in html
+    assert "news_observation_count" in html
+    assert "has-news-observation" in html
+    assert "news-count" in html
+    assert "뉴스 관찰 ${number(item.news_observation_count)}건" in html
+    assert "뉴스 ${number(item.news_observation_count)}건" in html
     assert "calendar-prev" in html
     assert "calendar-next" in html
     assert "stock-search-input" in html
