@@ -64,6 +64,14 @@ Saved operator observations may be reviewed with:
 
 These readback commands are operator-only and read-only. They compare saved runs and evidence rows, emit operator summaries, and must not fetch live news, write DB rows, start schedulers, send Telegram, or expose raw operator payloads in public `web-view`.
 
+Operator workflow:
+
+1. Run `news-intelligence-preview` without `--save-observation` to inspect live collection coverage and operator-only judgment fields.
+2. When the operator explicitly wants to keep the result, rerun with `--save-observation`; this is the only write path for news observations.
+3. Use `news-intelligence-observations --format text|json` to inspect saved run/evidence details by date, stock code, or run id.
+4. Use `news-intelligence-daily-brief --format text|json` to group saved runs by date and candidate-linkage label.
+5. Use `web-view` only as a stored-data, public-safe visibility check after observations already exist; it must not fetch news or trigger saving.
+
 The preview command is intentionally incomplete as a day-level collector:
 
 - `page_limit=1`
@@ -185,7 +193,7 @@ Storage guardrails:
 
 - DB writes require the explicit operator save option `--save-observation`.
 - The default manual preview remains `writes_db=false`.
-- Stored rows are operator-only observation/evaluation data and must not be copied raw into public `web-view`, Telegram, or scheduler surfaces. A thin public-safe `web-view` projection may be added later when it hides internal sentiment scores, impact scores, raw warnings, and operator-only recommendation-support fields. `admin-gui` remains private/operator-only and may later show fuller review rows after a separate operator-review contract.
+- Stored rows are operator-only observation/evaluation data and must not be copied raw into public `web-view`, Telegram, or scheduler surfaces. The current `web-view` projection is allowed only as a thin stored-data summary that hides internal sentiment scores, impact scores, raw warnings, and operator-only recommendation-support fields. `admin-gui` remains private/operator-only and may later show fuller review rows after a separate operator-review contract.
 - When KRX reference data comes from the nearest prior stored row, the preview/save payload must distinguish exact-date reference from stale fallback reference and warn rather than silently treating stale KRX data as same-day confirmation.
 - The stored lane must not contain broker secrets, order intent, order-routing instructions, or public buy/sell calls.
 
@@ -202,6 +210,14 @@ Allowed public-safe projection, stored-data only:
 - One to three article titles/sources when they are already stored in observation rows.
 - A short public reason that explains what to check, not what to buy or sell.
 
+Current visible slice:
+
+- Archive calendar dates may show `news_observation_count` from saved observation evidence rows.
+- Daily overview may include `news_observation_summary` with `available`, `display_label`, `reason`, `connection_note`, compact counts, KRX status, `top_titles`, and stock-level `items`.
+- Candidate evidence rows may include a compact `news_observation_badge` for the same stock code or same stock name.
+- Stock detail may include `news_observation_detail` with the same compact public-safe counts, KRX status, and top titles.
+- Daily summary items with a valid stock code may link to the stock detail view so the operator can move from the main summary to the stock-level evidence without exposing raw operator payloads.
+
 Forbidden in public projection:
 
 - `overall_sentiment`, article `sentiment_score`, numeric impact, conviction, target-return, investment grade, buy/sell, entry/exit, take-profit, one-pick, broker, or order-routing wording.
@@ -211,11 +227,22 @@ Forbidden in public projection:
 
 Placement direction:
 
-- The first visible slice should be a small stored-data block in the `메인` top-2 priority area or a compact row in the `관찰` tab.
+- The first visible slice is a small stored-data block in the `메인` summary area plus compact badges in candidate/stock detail surfaces.
 - If there are no saved observations, the page should show a simple missing state such as `저장된 뉴스 관찰 없음` instead of hiding the feature entirely.
 - Low coverage, indirect-only, or market-context-heavy results should still be visible as `참고` or `추가 확인 필요`; do not hard-block visibility solely because the analysis is imperfect.
 
 Future Toss Securities Open API or another verified quote/turnover source may strengthen this projection by confirming market reaction freshness. That use remains read-only observation support and must not become broker execution, order routing, or public trading advice.
+
+## Deferred Operating Data Check
+
+Operating real-data validation is separate from the fixture visible-flow work. For the next business-day check, use a small approved stock set and keep the order:
+
+1. Verify canonical Scrapling runtime and DB health.
+2. Run no-write `news-intelligence-preview` first.
+3. If the operator explicitly approves, run `--save-observation` for only the selected stocks.
+4. Read back with `news-intelligence-observations` and `news-intelligence-daily-brief`.
+5. Open `web-view` and confirm archive count, daily summary, candidate badge, and stock detail projection.
+6. Do not connect the result to scheduler, Telegram, broker/execution, or order routing.
 
 ## Integration Boundary
 
