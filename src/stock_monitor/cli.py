@@ -182,6 +182,7 @@ READ_ONLY_SCHEMA_CURRENT_COMMANDS = {
     "market-briefing-readiness",
     "market-day-observation",
     "mini-pc-preflight",
+    "news-intelligence-daily-brief",
     "news-intelligence-observations",
     "next-phase-readiness",
     "observation-feature-audit",
@@ -401,6 +402,15 @@ def build_parser() -> argparse.ArgumentParser:
     news_observations_parser.add_argument("--evidence-per-run", type=int, default=10)
     news_observations_parser.add_argument("--format", choices=("json", "text"), default="json")
     news_observations_parser.add_argument("--db-path", type=Path)
+    news_daily_brief_parser = subparsers.add_parser(
+        "news-intelligence-daily-brief",
+        help="Read saved news intelligence observations as an operator daily brief.",
+    )
+    news_daily_brief_parser.add_argument("--date", type=date.fromisoformat, required=True)
+    news_daily_brief_parser.add_argument("--stock-code")
+    news_daily_brief_parser.add_argument("--limit", type=int, default=50)
+    news_daily_brief_parser.add_argument("--format", choices=("json", "text"), default="text")
+    news_daily_brief_parser.add_argument("--db-path", type=Path)
 
     poll_parser = subparsers.add_parser("manual-poll", help="Fetch reports and save unseen rows into SQLite.")
     poll_parser.add_argument("--limit", type=int, default=50)
@@ -1711,6 +1721,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_news_intelligence_preview(args)
     if args.command == "news-intelligence-observations":
         return _run_news_intelligence_observations(args)
+    if args.command == "news-intelligence-daily-brief":
+        return _run_news_intelligence_daily_brief(args)
 
     config = RuntimeConfig.from_env(headless=not getattr(args, "headed", False))
     config.ensure_runtime_dirs()
@@ -2806,6 +2818,204 @@ def _format_news_intelligence_observations_text(payload: dict[str, object]) -> s
                 lines.append(f"- [{row.get('source_lane', '-')}] {row.get('title', '-')}")
         else:
             lines.append("top evidence: none")
+    return "\n".join(lines) + "\n"
+
+
+def _run_news_intelligence_daily_brief(args: argparse.Namespace) -> int:
+    db_path = args.db_path or Path("data") / "stock_monitor.db"
+    repository = StockMonitorRepository(db_path)
+    payload = _news_intelligence_daily_brief_base_payload(
+        db_path=db_path,
+        target_date=args.date,
+        stock_code=args.stock_code,
+        limit=args.limit,
+    )
+    if not db_path.exists():
+        payload["error"] = "database does not exist"
+        _print_news_intelligence_daily_brief_payload(args, payload)
+        return 1
+    status = repository.get_schema_migration_status()
+    if status.current_version != status.target_version or status.pending_versions:
+        payload["error"] = "database schema is not current"
+        payload["schema"] = {
+            "current_version": status.current_version,
+            "target_version": status.target_version,
+            "pending_versions": list(status.pending_versions),
+        }
+        _print_news_intelligence_daily_brief_payload(args, payload)
+        return 1
+
+    runs = repository.list_news_intelligence_runs(
+        target_date=args.date,
+        stock_code=args.stock_code,
+        limit=args.limit,
+    )
+    representative_runs: list[NewsIntelligenceRun] = []
+    seen_keys: set[str] = set()
+    for run in runs:
+        key = run.stock_code or run.stock_name
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        representative_runs.append(run)
+
+    sections: dict[str, list[dict[str, object]]] = {
+        label: []
+        for label in _NEWS_INTELLIGENCE_DAILY_BRIEF_LABELS
+    }
+    for run in representative_runs:
+        evidence_rows = repository.list_report_linked_news_evidence(run_id=run.run_id, limit=1000)
+        run_payload = _news_intelligence_observation_run_payload(
+            run,
+            all_evidence=evidence_rows,
+            evidence_per_run=3,
+        )
+        item = _news_intelligence_daily_brief_item(run_payload)
+        label = str(item["label"])
+        sections.setdefault(label, []).append(item)
+
+    payload.update(
+        {
+            "item_count": sum(len(items) for items in sections.values()),
+            "sections": sections,
+        }
+    )
+    _print_news_intelligence_daily_brief_payload(args, payload)
+    return 0
+
+
+_NEWS_INTELLIGENCE_DAILY_BRIEF_LABELS = (
+    "strengthen_existing_candidate",
+    "review_existing_candidate_with_caution",
+    "promote_news_only_candidate",
+    "support_only_context",
+    "stale_krx_check_first",
+    "insufficient_evidence",
+)
+
+
+_NEWS_INTELLIGENCE_DAILY_BRIEF_SECTION_TITLES = {
+    "strengthen_existing_candidate": "강화 후보",
+    "review_existing_candidate_with_caution": "주의 검토",
+    "promote_news_only_candidate": "뉴스 단독 후보",
+    "support_only_context": "보조 맥락",
+    "stale_krx_check_first": "KRX 확인 필요",
+    "insufficient_evidence": "근거 부족",
+}
+
+
+def _news_intelligence_daily_brief_base_payload(
+    *,
+    db_path: Path,
+    target_date: date,
+    stock_code: str | None,
+    limit: int,
+) -> dict[str, object]:
+    return {
+        "surface": "news-intelligence-daily-brief",
+        "read_only": True,
+        "operator_only": True,
+        "public_safe": False,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "connects_web_view": False,
+        "db_path": str(db_path),
+        "filters": {
+            "target_date": target_date.isoformat(),
+            "stock_code": stock_code,
+            "limit": limit,
+        },
+        "section_order": list(_NEWS_INTELLIGENCE_DAILY_BRIEF_LABELS),
+        "item_count": 0,
+        "sections": {
+            label: []
+            for label in _NEWS_INTELLIGENCE_DAILY_BRIEF_LABELS
+        },
+    }
+
+
+def _news_intelligence_daily_brief_item(run_payload: dict[str, object]) -> dict[str, object]:
+    evaluation = run_payload.get("candidate_linkage_evaluation")
+    if not isinstance(evaluation, dict):
+        evaluation = {}
+    evidence = run_payload.get("evidence")
+    evidence_rows = evidence if isinstance(evidence, list) else []
+    return {
+        "run_id": run_payload.get("run_id"),
+        "target_date": run_payload.get("target_date"),
+        "stock_name": run_payload.get("stock_name"),
+        "stock_code": run_payload.get("stock_code"),
+        "label": evaluation.get("label", "insufficient_evidence"),
+        "reason_ko": evaluation.get("reason_ko", ""),
+        "recommendation_support": evaluation.get("recommendation_support", ""),
+        "candidate_priority_presence": evaluation.get("candidate_priority_presence", False),
+        "related_report_count": evaluation.get("related_report_count", 0),
+        "direct_count": evaluation.get("direct_count", 0),
+        "caution_count": evaluation.get("caution_count", 0),
+        "market_context_count": evaluation.get("market_context_count", 0),
+        "krx_reference_status": evaluation.get("krx_reference_status", "-"),
+        "top_evidence": [
+            {
+                "source_lane": row.get("source_lane", "-"),
+                "title": row.get("title", "-"),
+            }
+            for row in evidence_rows[:3]
+            if isinstance(row, dict)
+        ],
+    }
+
+
+def _print_news_intelligence_daily_brief_payload(
+    args: argparse.Namespace,
+    payload: dict[str, object],
+) -> None:
+    if getattr(args, "format", "text") == "json":
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    print(_format_news_intelligence_daily_brief_text(payload), end="")
+
+
+def _format_news_intelligence_daily_brief_text(payload: dict[str, object]) -> str:
+    target_date = payload.get("filters", {}).get("target_date") if isinstance(payload.get("filters"), dict) else "-"
+    lines = [f"News intelligence daily brief - {target_date}"]
+    error = payload.get("error")
+    if error:
+        lines.append(f"error: {error}")
+        return "\n".join(lines) + "\n"
+    sections = payload.get("sections")
+    if not isinstance(sections, dict) or int(payload.get("item_count") or 0) <= 0:
+        lines.append("no saved observations")
+        return "\n".join(lines) + "\n"
+    for label in _NEWS_INTELLIGENCE_DAILY_BRIEF_LABELS:
+        items = sections.get(label)
+        if not isinstance(items, list) or not items:
+            continue
+        lines.append("")
+        lines.append(str(_NEWS_INTELLIGENCE_DAILY_BRIEF_SECTION_TITLES[label]))
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            stock_code = item.get("stock_code") or "-"
+            lines.append(f"- {item.get('target_date')} {item.get('stock_name')} ({stock_code})")
+            lines.append(f"  판단: {item.get('label', '-')}")
+            lines.append(f"  이유: {item.get('reason_ko', '-')}")
+            lines.append(
+                "  근거수: "
+                f"direct {item.get('direct_count', 0)} / "
+                f"caution {item.get('caution_count', 0)} / "
+                f"market_context {item.get('market_context_count', 0)}"
+            )
+            lines.append(f"  KRX: {item.get('krx_reference_status', '-')}")
+            top_evidence = item.get("top_evidence")
+            if isinstance(top_evidence, list) and top_evidence:
+                for row in top_evidence:
+                    if not isinstance(row, dict):
+                        continue
+                    lines.append(f"  - [{row.get('source_lane', '-')}] {row.get('title', '-')}")
+            else:
+                lines.append("  - top evidence 없음")
     return "\n".join(lines) + "\n"
 
 
