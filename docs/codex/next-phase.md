@@ -17,6 +17,7 @@ Recent review found that several memo ideas were implemented as safe data founda
 | Principle | Next-phase Rule |
 | --- | --- |
 | Start rough, then refine | A useful daily briefing or compact web section can ship as `참고` before the analytics are perfect. |
+| Make useful work visible | If a data lane is intended to support daily operator/user judgment, the next step should be a small labeled `web-view` projection, not another hidden CLI-only guard, once stored data exists. |
 | Separate intent completion from foundation completion | A table, DTO, or DB path is not enough to mark a memo done if the intended screen or briefing is still missing. |
 | Compress the shared page | Friend-facing `web-view` should not expose the full validation pipeline or repeated defensive disclaimers. Keep raw evidence, risk wording, and operational details in admin/docs. |
 | Separate trading advice from observation curation | This project does not provide `매수 추천`, `매도 추천`, `진입가`, `청산가`, `익절가`, `목표 수익률`, `확신도`, or `투자등급`, but it can recommend what to observe first. `오늘의 관찰 후보`, `우선 확인`, `관찰 우선순위`, `관심도 높은 흐름`, `왜 눈에 띄는지`, `확인 후보`, `시장 분위기`, `수급 참고`, and `과열 참고` are valid product language. |
@@ -32,8 +33,9 @@ The next candidate-evidence work should improve judgment quality, not visible la
 | --- | --- | --- |
 | 1 | Make top candidates explainable by visible public evidence. | Public ordering must be justified by `why_notable` / `evidence_layers.primary`, not hidden diagnostics or support-only facts. |
 | 2 | Strengthen current-regime context. | Use exact-date KRX, `[12009]` flow, and 52-week/1-year price-volume context as support; do not turn them into public scores. |
-| 3 | Prepare future intraday lane separately. | Top-2 `우선 확인` 5-minute read-only probing belongs in lab/staging only after source burden and permission review; when proven stable, it should affect observation ordering and main-card emphasis. |
-| 4 | Prepare an operator-only decision-support boundary only after real-time evidence is stable. | This is where trading-decision review may begin. It must not be collapsed into public `web-view`, Telegram alerts, or broker execution. |
+| 3 | Surface stored news observations visibly. | Saved news observations should feed a public-safe `web-view` summary label before they feed public candidate scoring. Empty, low-coverage, stale-KRX, and market-context-heavy states should be visible as caveats, not hidden. |
+| 4 | Prepare future intraday lane separately. | Top-2 `우선 확인` 5-minute read-only probing belongs in lab/staging only after source burden and permission review; when proven stable, it should affect observation ordering and main-card emphasis. |
+| 5 | Prepare an operator-only decision-support boundary only after real-time evidence is stable. | This is where trading-decision review may begin. It must not be collapsed into public `web-view`, Telegram alerts, or broker execution. |
 
 Stop rule: do not add a new label, counter, card, or readiness field unless it clarifies a top-level evidence category, blocks misleading ordering, exposes a real missing-data gap, or keeps dense/mobile UI readable.
 
@@ -111,6 +113,7 @@ Historical main-PC `2026-05-20` observations remain trace evidence for the offic
 | Exclusion rules | Apply valid stock code, missing target/opinion, insufficient flow coverage, and fallback category labels. | Bad/missing values do not improve a row. |
 | Web-view preview | Review visible `오늘의 관찰 후보`, `눈에 띄는 종목`, and `리포트 후 흐름` rows across several dates. | The page recommends observation targets, not trades. |
 | Observation compression | First pass implemented: show practical `오늘의 관찰 후보` / `우선 확인` / `확인 후보` rows first, including a top-2 `우선 확인` shortlist, with `왜 눈에 띄는지` and `부족한 정보` chips. | Useful candidates are not buried behind validation-only fields. |
+| News observation projection | Use saved `news_intelligence_runs` / `report_linked_news_evidence` rows to show compact public-safe news context in `메인` or `관찰`. | Show `뉴스로 후보 강화`, `주의 뉴스 확인`, `시장 맥락 참고`, `KRX 기준일 확인 필요`, or `뉴스 근거 부족`; do not show sentiment scores, numeric impact, buy/sell wording, live fetch, or DB write controls. |
 | Report context discipline | Treat Naver reports as a necessary context layer for attention/explanation, not as a strong standalone predictor. | Stronger observation wording must be supported by KRX/flow/price-position evidence and should stay below trading recommendation or public score language. |
 | Evidence hierarchy | Keep `rank-driving evidence`, `context-only support`, and `gap-only missing context` separated. | `[12010]` rank-only stays support-only; hidden diagnostics cannot drive public ordering unless the same public-safe primary reason is visible. |
 | Future intraday probe boundary | If a stable broker/API or quote source becomes available, start with a read-only lab probe for only the top-2 `우선 확인` candidates at a coarse cadence such as 5 minutes. | Request load, source permission, failure behavior, and public wording are reviewed before any production DB write, Telegram, scheduler, or admin integration. Approved intraday references may affect `web-view` observation ordering, but never broker execution or public trading calls. |
@@ -318,8 +321,9 @@ Latest-day retry note (`2026-05-17 08:17 KST`, updated `2026-05-19 01:25 KST`): 
 6. Run feature availability and reaction-distribution audits before any scoring prototype.
 7. Review the first hit-days/max-progress validation fields across several stored dates before any stronger interpretation is discussed.
 8. Keep report-based conclusions framed by the current 52-week/1-year market regime; use 3-year data as an offline validation baseline, not as a reason to overrule recent market structure.
-9. If the source burden is acceptable, evaluate a read-only 5-minute probe only for the top-2 `우선 확인` candidates before discussing broader intraday coverage.
-10. Treat time-slot priority (`09:15`, `12:00`, `15:15`) as a future stage that requires stable intraday quote/turnover/index APIs before stronger same-day ordering claims.
-11. Start Cycle image label alias mapping for rotation ETF/stock preview.
-12. Prepare mini PC/external sharing only after the user page is stable.
+9. Add a stored-data-only news observation summary to `web-view` once saved observations exist; keep it visibly labeled even when coverage is low.
+10. If the source burden is acceptable, evaluate a read-only 5-minute probe only for the top-2 `우선 확인` candidates before discussing broader intraday coverage.
+11. Treat time-slot priority (`09:15`, `12:00`, `15:15`) as a future stage that requires stable intraday quote/turnover/index APIs before stronger same-day ordering claims.
+12. Start Cycle image label alias mapping for rotation ETF/stock preview.
+13. Prepare mini PC/external sharing only after the user page is stable.
 

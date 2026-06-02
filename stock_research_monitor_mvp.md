@@ -230,6 +230,10 @@ Telegram은 개인 운영용 알림과 명령 처리 채널이다.
 
 Operator-only news intelligence is allowed as a recommendation-draft input when it stays outside public `web-view`, Telegram sends, scheduler automation, and broker/execution paths. The v1 default preview is no-write JSON; only an explicit operator `--save-observation` run may write operator-only observation rows. Its sentiment score and impact labels are internal review aids, not public numeric scores or trading calls.
 
+Saved news observations should not remain invisible once they are useful enough to explain a candidate. The intended visible product step is a stored-data-only `web-view` summary that hides numeric sentiment/impact and shows only compact labels, counts, KRX exact/stale/missing status, and a few article titles. Low coverage, indirect-only, or market-context-heavy results should be shown as `참고` / `추가 확인 필요` instead of being hidden until the rule engine is perfect.
+
+Future Toss Securities Open API or another approved intraday source can make this news layer more useful by confirming quote/turnover freshness around the same candidate. That synergy should strengthen observation priority and visible reasoning, not create public trading calls, broker execution, or order paths.
+
 내부 scoring draft CLI는 research-only이며 public surface와 연결하지 않는다. 장기적으로 매매 판단까지 가려면 scoring draft가 아니라 별도 operator-only decision-support lane, source freshness 검증, 실패 처리, broker/execution-lab 안전장치가 먼저 필요하다.
 
 ## 데이터 품질 규칙

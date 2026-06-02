@@ -73,6 +73,7 @@ This is a permission and API boundary, not just a visual layout boundary.
 - later source-backed flow reference views
 - stored-sample investor-flow trend views
 - stored ETF trend views
+- future stored news-observation summary labels for top-2 priority or observation-tab review, when they are public-safe and score-free
 - future approved read-only intraday reference for top-2 observation candidates
 
 `web-view` should not show raw operational internals unless they are intentionally converted into simple public freshness labels.
@@ -129,7 +130,9 @@ When that future lane is approved, `read-only` still means no DB write, no Teleg
 
 If a later phase evaluates trading decisions, keep it out of the public `web-view` contract. It should be an operator-only decision-support or execution-lab surface with its own permission, audit, source freshness, failure, and order-safety contract.
 
-Operator-only news intelligence may produce sentiment scores, event impact labels, and recommendation-draft summaries only outside public `web-view` and Telegram surfaces. The v1 contract is [news-intelligence-contract.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/contracts/news-intelligence-contract.md): the default preview writes no DB rows, and only the explicit `--save-observation` operator path may write to operator-only observation tables. It still connects to no scheduler, Telegram, broker, or public route.
+Operator-only news intelligence may produce sentiment scores, event impact labels, and recommendation-draft summaries for the operator lane. The v1 contract is [news-intelligence-contract.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/contracts/news-intelligence-contract.md): the default preview writes no DB rows, and only the explicit `--save-observation` operator path may write to operator-only observation tables. It still connects to no scheduler, Telegram, broker, or public route by default.
+
+Once observations are saved, `web-view` should be allowed to show a thin public-safe projection instead of keeping the work invisible. That projection must be stored-data-only and may show labels such as `뉴스로 후보 강화`, `주의 뉴스 확인`, `시장 맥락 참고`, `KRX 기준일 확인 필요`, direct/caution/market-context counts, KRX reference status, and one to three article titles. It must not expose internal sentiment scores, numeric impact, operator recommendation-support labels, trading calls, broker/execution language, or any live fetch/write action.
 
 ## Web-View API Contract
 
@@ -151,6 +154,8 @@ The current endpoint contract is GET-only:
 Daily and category DTOs may include public display labels such as `sector_display_name`, `theme_display_name`, or `category_display_name`. They must not include scheduler, worker heartbeat, DB path, `.env`, Telegram secrets, safe settings, or admin audit data.
 
 Daily DTOs may include a public contract block with read-only/source-scope/trading-recommendation/control-exposure flags. This block is user-facing safety copy, not an operator health model. Observation-candidate recommendation is allowed when it is expressed as `오늘의 관찰 후보`, `우선 확인`, `관찰 우선순위`, `관심도 높은 흐름`, or `왜 눈에 띄는지`. The web-view may show graph-like sector/theme breadth bars, a top-2 `우선 확인` observation shortlist, and `순환매 참고 종목`/`순환매 참고 ETF` reference slots when they are stored-data-only and accompanied by missing-information labels where evidence is absent.
+
+Daily or candidate DTOs may later include `news_observation_summary` when it is derived only from stored `news_intelligence_runs` / `report_linked_news_evidence` rows. Empty state should be explicit rather than invisible: `저장된 뉴스 관찰 없음`, `뉴스 근거 부족`, or `추가 확인 필요` is preferable to hiding the block until the model is perfect.
 
 Investor-flow DTOs must clearly mark that they are stored sample/read-only data, do not trigger live KRX fetches from the user page, and do not provide public numeric scoring or trading recommendations.
 

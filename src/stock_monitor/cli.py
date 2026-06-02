@@ -21000,6 +21000,13 @@ def _render_web_view_html() -> str:
     .briefing-detail-flow span { display: block; color: var(--ink); }
     .briefing-live-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
     .briefing-live-status { margin: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+    .news-observation-summary { display: grid; gap: 7px; margin: 10px 0 0; border: 1px solid #e7d8bf; border-radius: 8px; padding: 10px 12px; background: #fffaf1; }
+    .news-observation-summary-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+    .news-observation-summary-head b { font-size: 13px; }
+    .news-observation-summary-reason { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .news-observation-summary-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+    .news-observation-summary-titles { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; color: var(--ink); font-size: 12px; }
+    .news-observation-summary-titles li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .intraday-overlap-panel { display: grid; gap: 8px; margin: 10px 0 12px; border: 1px solid #d8e8f5; border-radius: 8px; padding: 10px 12px; background: #f6fbff; }
     .intraday-overlap-panel[hidden] { display: none; }
     .intraday-overlap-meta { color: #1769aa; font-size: 11px; font-weight: 900; }
@@ -21305,6 +21312,10 @@ def _render_web_view_html() -> str:
         </div>
         <p class="brief">전체 근거는 관찰 탭에서 확인합니다.</p>
         <div id="main-priority-rows" class="main-priority-list"><span class="muted">날짜를 선택하세요.</span></div>
+        <div id="news-observation-summary" class="news-observation-summary" aria-live="polite">
+          <div class="news-observation-summary-head"><b>뉴스 관찰</b><span class="status-pill">저장 데이터</span></div>
+          <p class="news-observation-summary-reason">날짜를 선택하면 저장된 뉴스 관찰을 확인합니다.</p>
+        </div>
         <div id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden></div>
         <p class="main-priority-note">저장 리포트, KRX, [12009] 수급 참고값 기준이며 실시간 시세가 아닙니다.</p>
       </div>
@@ -21955,6 +21966,7 @@ def _render_web_view_html() -> str:
       renderDailyStocks(data);
       renderDailyBriefing(data);
       renderObservationSummary(data.observation_summary);
+      renderNewsObservationSummary(data.news_observation_summary);
       document.getElementById("main-priority-date").textContent = `(${date})`;
       document.getElementById("main-priority-rows").innerHTML = '<span class="muted">오늘 우선순위를 불러오는 중입니다.</span>';
       document.getElementById("candidate-evidence-date").textContent = `(${date})`;
@@ -22118,6 +22130,31 @@ def _render_web_view_html() -> str:
       }
       if (item?.trade_time) parts.push(`거래시각 ${String(item.trade_time).replace("T", " ").slice(0, 16)}`);
       return parts.join(" · ");
+    }
+
+    function renderNewsObservationSummary(summary) {
+      const node = document.getElementById("news-observation-summary");
+      if (!node) return;
+      const available = summary?.available === true;
+      const label = summary?.display_label || summary?.empty_state || "뉴스 관찰 없음";
+      const reason = summary?.reason || summary?.empty_state || "저장된 뉴스 관찰 없음";
+      const direct = Number(summary?.direct_count || 0);
+      const caution = Number(summary?.caution_count || 0);
+      const marketContext = Number(summary?.market_context_count || 0);
+      const krx = summary?.krx_reference_status || "missing";
+      const titles = Array.isArray(summary?.top_titles) ? summary.top_titles.filter(Boolean).slice(0, 3) : [];
+      const meta = available
+        ? `직접 ${number(direct)} · 주의 ${number(caution)} · 시장맥락 ${number(marketContext)} · KRX ${esc(krx)}`
+        : "저장된 뉴스 관찰 없음";
+      node.innerHTML = `
+        <div class="news-observation-summary-head">
+          <b>${esc(label)}</b>
+          <span class="status-pill">저장 뉴스</span>
+        </div>
+        <p class="news-observation-summary-reason">${esc(reason)}</p>
+        <div class="news-observation-summary-meta"><span class="quality-chip">${meta}</span></div>
+        ${titles.length ? `<ul class="news-observation-summary-titles">${titles.map((title) => `<li>${esc(title)}</li>`).join("")}</ul>` : ""}
+      `;
     }
 
     function renderIntradayMarketTopOverlap(commentary) {
@@ -24137,6 +24174,7 @@ def build_web_view_daily_snapshot(
         current_date_for_intraday_market_top=current.date(),
         checked_at=current,
     )
+    news_observation_summary = _build_web_view_news_observation_summary(repository, business_date)
     return {
         "now": current.isoformat(),
         "timezone": config.timezone,
@@ -24152,6 +24190,7 @@ def build_web_view_daily_snapshot(
         "market_briefing": market_briefing,
         "market_commentary": market_commentary,
         "observation_summary": observation_summary,
+        "news_observation_summary": news_observation_summary,
         "krx_context": _build_web_view_krx_context(repository, business_date),
         "krx_recent_flow": _build_web_view_krx_recent_flow(
             repository,
@@ -24798,6 +24837,128 @@ def _build_web_view_observation_summary(
             "themes": theme_items,
         },
     }
+
+
+def _build_web_view_news_observation_summary(
+    repository: StockMonitorRepository,
+    business_date: date,
+    *,
+    limit: int = 3,
+) -> dict:
+    runs = repository.list_news_intelligence_runs(target_date=business_date, limit=20)
+    representative_runs: list[NewsIntelligenceRun] = []
+    seen_keys: set[str] = set()
+    for run in runs:
+        key = run.stock_code or run.stock_name
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        representative_runs.append(run)
+        if len(representative_runs) >= max(limit, 1):
+            break
+
+    evidence_rows: list[ReportLinkedNewsEvidenceRecord] = []
+    for run in representative_runs:
+        evidence_rows.extend(repository.list_report_linked_news_evidence(run_id=run.run_id, limit=20))
+
+    if not evidence_rows:
+        return {
+            "source": "stored_news_intelligence_observation",
+            "read_only": True,
+            "live_fetch": False,
+            "available": False,
+            "business_date": business_date.isoformat(),
+            "display_label": "뉴스 관찰 없음",
+            "reason": "저장된 뉴스 관찰 없음",
+            "direct_count": 0,
+            "caution_count": 0,
+            "market_context_count": 0,
+            "krx_reference_status": "missing",
+            "top_titles": [],
+            "empty_state": "저장된 뉴스 관찰 없음",
+            "missing_context": ["stored_news_observation"],
+        }
+
+    direct_count = sum(1 for row in evidence_rows if row.relevance == "direct")
+    caution_count = sum(1 for row in evidence_rows if _web_view_news_observation_is_caution(row))
+    market_context_count = sum(1 for row in evidence_rows if row.relevance == "market_context")
+    krx_reference_status = _web_view_news_observation_krx_status(evidence_rows, business_date)
+    top_titles = _web_view_unique_texts([row.title for row in evidence_rows], limit=3)
+    display_label, reason = _web_view_news_observation_label(
+        direct_count=direct_count,
+        caution_count=caution_count,
+        market_context_count=market_context_count,
+        krx_reference_status=krx_reference_status,
+    )
+    return {
+        "source": "stored_news_intelligence_observation",
+        "read_only": True,
+        "live_fetch": False,
+        "available": True,
+        "business_date": business_date.isoformat(),
+        "display_label": display_label,
+        "reason": reason,
+        "direct_count": direct_count,
+        "caution_count": caution_count,
+        "market_context_count": market_context_count,
+        "krx_reference_status": krx_reference_status,
+        "top_titles": top_titles,
+        "missing_context": [],
+    }
+
+
+def _web_view_news_observation_is_caution(row: ReportLinkedNewsEvidenceRecord) -> bool:
+    caution_sentiments = {"Caution", "Negative", "Mixed"}
+    caution_impacts = {"Caution", "Negative", "Strong Negative"}
+    return (
+        row.sentiment in caution_sentiments
+        or row.stock_impact in caution_impacts
+        or "Risk/Caution" in row.event_types
+    )
+
+
+def _web_view_news_observation_krx_status(
+    rows: list[ReportLinkedNewsEvidenceRecord],
+    business_date: date,
+) -> str:
+    reference_dates = [row.krx_reference_date for row in rows if row.krx_reference_date is not None]
+    if any(reference_date == business_date for reference_date in reference_dates):
+        return "exact"
+    if reference_dates:
+        return "stale"
+    return "missing"
+
+
+def _web_view_news_observation_label(
+    *,
+    direct_count: int,
+    caution_count: int,
+    market_context_count: int,
+    krx_reference_status: str,
+) -> tuple[str, str]:
+    if caution_count > 0:
+        return "주의 뉴스 확인", "주의 문구가 있어 리포트 근거와 함께 확인합니다."
+    if krx_reference_status == "stale":
+        return "KRX 기준일 확인 필요", "KRX 기준일이 선택 날짜와 달라 시장 반응 확인이 필요합니다."
+    if direct_count > 0:
+        return "뉴스로 후보 강화", "직접 뉴스가 있어 후보 확인 근거를 보강합니다."
+    if market_context_count > 0:
+        return "시장 맥락 참고", "시장/업종 맥락 중심이라 종목 직접 근거로 과신하지 않습니다."
+    return "뉴스 근거 부족", "저장된 뉴스가 있지만 직접 판단 근거는 부족합니다."
+
+
+def _web_view_unique_texts(values: list[str], *, limit: int) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = value.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+        if len(result) >= max(limit, 0):
+            break
+    return result
 
 
 def _web_view_report_concentration_item(
