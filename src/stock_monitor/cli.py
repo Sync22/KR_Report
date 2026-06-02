@@ -20947,8 +20947,11 @@ def _render_web_view_html() -> str:
     .date-calendar-cell.active { border-color: #173f34; background: #173f34; color: #fff; box-shadow: 0 0 0 3px rgba(23, 63, 52, .18); }
     .date-calendar-cell.has-report { background: #c8e0c2; border-color: #4c8b54; box-shadow: inset 0 -4px 0 rgba(76, 139, 84, .26); }
     .date-calendar-cell.has-report.active { background: #173f34; border-color: #173f34; }
+    .date-calendar-cell.has-news-observation { box-shadow: inset 0 -4px 0 rgba(80, 120, 150, .32); }
     .date-calendar-cell .report-count { display: block; margin-top: 14px; color: #245746; font-size: 12px; font-weight: 900; }
+    .date-calendar-cell .news-count { display: block; margin-top: 2px; color: #455f79; font-size: 11px; font-weight: 900; }
     .date-calendar-cell.active .report-count { color: #fff; }
+    .date-calendar-cell.active .news-count { color: #fff; }
     .metric { display: grid; gap: 8px; }
     .metric b { color: var(--muted); font-size: 12px; }
     .metric strong { font-size: 26px; letter-spacing: -.04em; }
@@ -21868,13 +21871,16 @@ def _render_web_view_html() -> str:
         if (day.getMonth() !== month) classes.push("outside");
         if (iso === selectedDate) classes.push("active");
         if (Number(item?.report_count || 0) > 0) classes.push("has-report");
+        if (Number(item?.news_observation_count || 0) > 0) classes.push("has-news-observation");
         if (!item || Number(item.report_count || 0) <= 0) classes.push("no-report");
-      const reportLabel = item ? `${number(item.report_count)}건 · ${number(item.summary_stock_count)}종목` : "기록 없음";
+      const newsLabel = item && Number(item.news_observation_count || 0) > 0 ? ` · 뉴스 관찰 ${number(item.news_observation_count)}건` : "";
+      const reportLabel = item ? `${number(item.report_count)}건 · ${number(item.summary_stock_count)}종목${newsLabel}` : "기록 없음";
       const ariaLabel = `${iso} ${dayNames[day.getDay()]}요일 ${reportLabel}`;
       cells.push(`
           <button class="${classes.join(" ")}" data-date="${iso}" type="button" aria-label="${esc(ariaLabel)}" title="${esc(ariaLabel)}">
             <b>${day.getDate()}</b>
             <span class="report-count" aria-hidden="true">${item && Number(item.report_count || 0) > 0 ? `리포트 ${number(item.report_count)}건` : ""}</span>
+            <span class="news-count" aria-hidden="true">${item && Number(item.news_observation_count || 0) > 0 ? `뉴스 ${number(item.news_observation_count)}건` : ""}</span>
           </button>
         `);
       }
@@ -24232,11 +24238,13 @@ def build_web_view_archive_snapshot(
     summaries_by_date = dict(repository.count_summaries_by_business_date(limit=limit))
     business_dates = sorted(set(reports_by_date) | set(summaries_by_date), reverse=True)[:limit]
     category_mappings = _web_view_archive_category_mappings(repository, business_dates)
+    news_observation_counts = _web_view_news_observation_counts_by_date(repository, business_dates)
     dates = [
         {
             "business_date": business_date.isoformat(),
             "report_count": reports_by_date.get(business_date, 0),
             "summary_stock_count": summaries_by_date.get(business_date, 0),
+            "news_observation_count": news_observation_counts.get(business_date, 0),
             "category_mapping": category_mappings[business_date],
         }
         for business_date in business_dates
@@ -24252,6 +24260,26 @@ def build_web_view_archive_snapshot(
         "category_mapping_summary": _web_view_archive_category_mapping_summary(dates),
         "dates": dates,
     }
+
+
+def _web_view_news_observation_counts_by_date(
+    repository: StockMonitorRepository,
+    business_dates: list[date],
+) -> dict[date, int]:
+    if not business_dates:
+        return {}
+    placeholders = ", ".join("?" for _ in business_dates)
+    with repository.connect() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT target_date, COUNT(DISTINCT run_id) AS run_count
+            FROM report_linked_news_evidence
+            WHERE target_date IN ({placeholders})
+            GROUP BY target_date
+            """,
+            tuple(item.isoformat() for item in business_dates),
+        ).fetchall()
+    return {date.fromisoformat(str(row["target_date"])): int(row["run_count"] or 0) for row in rows}
 
 
 def build_web_view_daily_snapshot(
