@@ -66,9 +66,11 @@ from stock_monitor.models import (
     DeliveryLog,
     MarketIndexDailySnapshot,
     MarketInvestorFlowDaily,
+    NewsIntelligenceRun,
     Opinion,
     OperationEvent,
     Report,
+    ReportLinkedNewsEvidenceRecord,
     StockInvestorFlowDaily,
     StockMarketDailySnapshot,
     StockMetadata,
@@ -277,6 +279,7 @@ def test_prepare_repository_for_read_only_command_rejects_stale_schema(tmp_path)
 
 def test_schema_current_check_only_applies_to_read_only_variants() -> None:
     assert _uses_read_only_schema_current_check(Namespace(command="operator-status"))
+    assert _uses_read_only_schema_current_check(Namespace(command="news-intelligence-observations"))
     assert _uses_read_only_schema_current_check(
         Namespace(command="scheduled-krx-daily-backfill", dry_run=True)
     )
@@ -2985,6 +2988,425 @@ def test_news_intelligence_preview_save_observation_attaches_report_and_krx_cont
     assert rows[0].candidate_priority_presence is False
     assert rows[0].candidate_observation_priority is None
 
+
+def test_news_intelligence_preview_save_observation_warns_on_stale_krx_reference(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    scrapling_exe = tmp_path / "scrapling.exe"
+    scrapling_exe.write_text("fake", encoding="utf-8")
+    db_path = tmp_path / "news-intelligence.db"
+    business_date = date(2026, 6, 1)
+    stale_krx_date = date(2026, 5, 29)
+    repository = StockMonitorRepository(db_path)
+    repository.initialize()
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=stale_krx_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                fetched_at=datetime(2026, 5, 29, 16, 0, 0),
+                close_price=79000,
+                change_amount=100,
+                change_percent=0.13,
+                volume=9_000_000,
+                turnover=710_000_000_000,
+            )
+        ]
+    )
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, **_kwargs):
+        output_path = command[4]
+        with open(output_path, "w", encoding="utf-8") as file:
+            if command[2] == "get":
+                file.write('{"articles":[]}')
+            else:
+                file.write(
+                    """
+* 2026. 06. 01
+  :   2026. 06. 01. 09:10
+
+      [### 삼성전자, AI 반도체 공급 계약 체결
+
+      삼성전자가 글로벌 고객사와 AI 반도체 공급 계약을 체결했다.
+
+      한국경제
+
+      ![](https://imgnews.pstatic.net/image/origin/015/2026/06/01/1.jpg)](https://n.news.naver.com/article/015/0000001)
+"""
+                )
+        return Result()
+
+    monkeypatch.setattr("stock_monitor.news.collectors.subprocess.run", fake_run)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-preview",
+            "--stock-name",
+            "삼성전자",
+            "--stock-code",
+            "005930",
+            "--date",
+            "2026-06-01",
+            "--scrapling-exe",
+            str(scrapling_exe),
+            "--db-path",
+            str(db_path),
+            "--save-observation",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    runs = repository.list_news_intelligence_runs(target_date=business_date, stock_code="005930")
+    rows = repository.list_report_linked_news_evidence(run_id=payload["saved_run_id"])
+
+    assert exit_code == 0
+    assert payload["krx_reference_freshness"] == {
+        "status": "stale_reference",
+        "target_date": "2026-06-01",
+        "krx_reference_date": "2026-05-29",
+        "exact_date": False,
+    }
+    assert (
+        "stale_krx_reference: KRX reference date 2026-05-29 differs from target date 2026-06-01"
+        in payload["warnings"]
+    )
+    assert len(runs) == 1
+    assert (
+        "stale_krx_reference: KRX reference date 2026-05-29 differs from target date 2026-06-01"
+        in runs[0].warnings
+    )
+    assert rows[0].krx_reference_presence is True
+    assert rows[0].krx_reference_date == stale_krx_date
+
+
+def test_news_intelligence_observations_parser_accepts_filters() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "news-intelligence-observations",
+            "--date",
+            "2026-06-01",
+            "--stock-code",
+            "005930",
+            "--run-id",
+            "news-run-1",
+            "--limit",
+            "5",
+            "--evidence-per-run",
+            "3",
+            "--db-path",
+            "C:/tmp/news-intelligence.db",
+        ]
+    )
+
+    assert args.command == "news-intelligence-observations"
+    assert args.date == date(2026, 6, 1)
+    assert args.stock_code == "005930"
+    assert args.run_id == "news-run-1"
+    assert args.limit == 5
+    assert args.evidence_per_run == 3
+    assert str(args.db_path).endswith("news-intelligence.db")
+
+
+def test_news_intelligence_observations_outputs_read_only_run_comparison(
+    tmp_path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "news-intelligence.db"
+    repository = StockMonitorRepository(db_path)
+    repository.initialize()
+    run = _news_intelligence_cli_run(
+        warnings=("stale_krx_reference: KRX reference date 2026-05-29 differs from target date 2026-06-01",)
+    )
+    repository.save_news_intelligence_observation(
+        run,
+        [
+            _news_intelligence_cli_evidence(
+                run_id=run.run_id,
+                evidence_key="ev-direct",
+                relevance="direct",
+                match_scope="both",
+                krx_reference_date=date(2026, 5, 29),
+            ),
+            _news_intelligence_cli_evidence(
+                run_id=run.run_id,
+                evidence_key="ev-context",
+                relevance="market_context",
+                match_scope="summary",
+                evidence_case="report_heavy_market_context_only",
+                operator_recommendation="separate_market_context",
+                krx_reference_date=date(2026, 5, 29),
+            ),
+        ],
+    )
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-observations",
+            "--date",
+            "2026-06-01",
+            "--stock-code",
+            "005930",
+            "--db-path",
+            str(db_path),
+            "--evidence-per-run",
+            "1",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["surface"] == "news-intelligence-observations"
+    assert payload["read_only"] is True
+    assert payload["operator_only"] is True
+    assert payload["public_safe"] is False
+    assert payload["live_fetch"] is False
+    assert payload["writes_db"] is False
+    assert payload["sends_telegram"] is False
+    assert payload["registers_scheduler"] is False
+    assert payload["connects_web_view"] is False
+    assert payload["filters"] == {
+        "target_date": "2026-06-01",
+        "stock_code": "005930",
+        "run_id": None,
+        "limit": 20,
+        "evidence_per_run": 1,
+    }
+    assert payload["run_count"] == 1
+    assert payload["evidence_count"] == 2
+    assert payload["runs"][0]["run_id"] == "news-run-1"
+    assert payload["runs"][0]["derived_counts"]["relevance"] == {
+        "direct": 1,
+        "indirect": 0,
+        "market_context": 1,
+    }
+    assert payload["runs"][0]["derived_counts"]["summary_only"] == 1
+    assert payload["runs"][0]["krx_reference_freshness"] == {
+        "status": "stale_reference",
+        "target_date": "2026-06-01",
+        "krx_reference_date": "2026-05-29",
+        "exact_date": False,
+    }
+    assert payload["runs"][0]["candidate_linkage_hint"] == "stale_krx_check_first"
+    assert payload["runs"][0]["candidate_linkage_preview"] == {
+        "label": "stale_krx_check_first",
+        "candidate_priority_presence": False,
+        "direct_count": 1,
+        "caution_count": 0,
+        "support_only_count": 1,
+        "market_context_count": 1,
+        "krx_reference_status": "stale_reference",
+        "reason": "KRX reference is stale; verify market reaction before candidate linkage.",
+    }
+    assert len(payload["runs"][0]["evidence"]) == 1
+    assert payload["runs"][0]["evidence"][0]["evidence_key"] == "ev-context"
+
+
+def test_news_intelligence_observations_classifies_candidate_linkage_preview_labels(
+    tmp_path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "news-intelligence.db"
+    repository = StockMonitorRepository(db_path)
+    repository.initialize()
+    cases = [
+        (
+            _news_intelligence_cli_run(run_id="run-strengthen"),
+            [
+                _news_intelligence_cli_evidence(
+                    run_id="run-strengthen",
+                    evidence_key="ev-strengthen",
+                    relevance="direct",
+                    match_scope="both",
+                    candidate_priority_presence=True,
+                    candidate_observation_priority="top_2",
+                )
+            ],
+            "strengthen_candidate",
+        ),
+        (
+            _news_intelligence_cli_run(run_id="run-caution"),
+            [
+                _news_intelligence_cli_evidence(
+                    run_id="run-caution",
+                    evidence_key="ev-caution",
+                    relevance="direct",
+                    match_scope="both",
+                    evidence_case="report_with_caution_news",
+                    operator_recommendation="review_with_caution",
+                    sentiment="Caution",
+                    stock_impact="Caution",
+                    event_types=("Risk/Caution",),
+                )
+            ],
+            "review_with_caution",
+        ),
+        (
+            _news_intelligence_cli_run(run_id="run-support"),
+            [
+                _news_intelligence_cli_evidence(
+                    run_id="run-support",
+                    evidence_key="ev-support",
+                    relevance="indirect",
+                    match_scope="summary",
+                    evidence_case="linked_news_context",
+                    operator_recommendation="keep_as_supporting_evidence",
+                )
+            ],
+            "support_only_context",
+        ),
+        (
+            _news_intelligence_cli_run(run_id="run-empty"),
+            [],
+            "insufficient_news_evidence",
+        ),
+    ]
+    for run, evidence, _label in cases:
+        repository.save_news_intelligence_observation(run, evidence)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-observations",
+            "--date",
+            "2026-06-01",
+            "--stock-code",
+            "005930",
+            "--db-path",
+            str(db_path),
+            "--limit",
+            "10",
+            "--evidence-per-run",
+            "0",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    labels_by_run_id = {
+        run["run_id"]: run["candidate_linkage_preview"]["label"]
+        for run in payload["runs"]
+    }
+
+    assert exit_code == 0
+    assert labels_by_run_id == {
+        "run-strengthen": "strengthen_candidate",
+        "run-caution": "review_with_caution",
+        "run-support": "support_only_context",
+        "run-empty": "insufficient_news_evidence",
+    }
+    assert payload["runs"][0]["candidate_linkage_preview"]["reason"]
+
+
+def test_news_intelligence_observations_reports_missing_db_without_writes(
+    tmp_path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "missing.db"
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-observations",
+            "--db-path",
+            str(db_path),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert payload["surface"] == "news-intelligence-observations"
+    assert payload["read_only"] is True
+    assert payload["writes_db"] is False
+    assert payload["error"] == "database does not exist"
+    assert not db_path.exists()
+
+
+def _news_intelligence_cli_run(
+    *,
+    run_id: str = "news-run-1",
+    warnings: tuple[str, ...] = (),
+) -> NewsIntelligenceRun:
+    return NewsIntelligenceRun(
+        run_id=run_id,
+        target_date=date(2026, 6, 1),
+        stock_name="삼성전자",
+        stock_code="005930",
+        aliases=("삼전",),
+        source_mode="naver_5_lane_preview",
+        page_limit=1,
+        full_day_complete=False,
+        live_fetch=True,
+        parsed_count=85,
+        deduped_count=70,
+        matched_count=2,
+        operator_summary_snapshot="삼성전자 운영자 전용 뉴스 판단입니다.",
+        warnings=warnings,
+        created_at=datetime(2026, 6, 1, 10, 0, 0),
+    )
+
+
+def _news_intelligence_cli_evidence(
+    *,
+    run_id: str,
+    evidence_key: str,
+    relevance: str,
+    match_scope: str,
+    evidence_case: str = "report_direct_positive_news",
+    operator_recommendation: str = "strengthen_report_candidate",
+    sentiment: str = "Positive",
+    stock_impact: str = "Positive",
+    event_types: tuple[str, ...] = ("Contract",),
+    candidate_priority_presence: bool = False,
+    candidate_observation_priority: str | None = None,
+    krx_reference_date: date | None = date(2026, 6, 1),
+) -> ReportLinkedNewsEvidenceRecord:
+    return ReportLinkedNewsEvidenceRecord(
+        run_id=run_id,
+        evidence_key=evidence_key,
+        target_date=date(2026, 6, 1),
+        stock_code="005930",
+        stock_name="삼성전자",
+        related_report_count=2,
+        related_report_source_ids=("92001", "92002"),
+        daily_summary_presence=True,
+        candidate_priority_presence=candidate_priority_presence,
+        candidate_observation_priority=candidate_observation_priority,
+        krx_reference_presence=krx_reference_date is not None,
+        krx_reference_date=krx_reference_date,
+        krx_turnover=850_000_000_000 if krx_reference_date is not None else None,
+        investor_flow_presence=False,
+        source_lane="mainnews",
+        title="삼성전자, AI 반도체 공급 계약 체결",
+        summary="삼성전자가 글로벌 고객사와 AI 반도체 공급 계약을 체결했다.",
+        source="한국경제",
+        published_at=datetime(2026, 6, 1, 9, 10, 0),
+        url=f"https://n.news.naver.com/article/015/{evidence_key}",
+        matched_alias="삼성전자",
+        match_reason="stock_name",
+        match_scope=match_scope,
+        relevance=relevance,
+        relevance_reason="삼성전자가 기사 문맥에 등장합니다.",
+        sentiment=sentiment,
+        sentiment_score=80,
+        event_types=event_types,
+        stock_impact=stock_impact,
+        impact_explanation="리포트 근거와 뉴스가 같은 방향입니다.",
+        evidence_case=evidence_case,
+        operator_recommendation=operator_recommendation,
+        recommendation_reason="리포트와 뉴스가 같은 방향이라 우선 확인 근거를 강화합니다.",
+        operator_summary_snapshot="삼성전자 운영자 전용 뉴스 판단입니다.",
+        created_at=datetime(2026, 6, 1, 10, 0, 0),
+    )
 
 def test_news_intelligence_preview_cli_keeps_partial_source_failure(tmp_path, monkeypatch, capsys) -> None:
     scrapling_exe = tmp_path / "scrapling.exe"
