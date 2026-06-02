@@ -2,6 +2,7 @@
 import sqlite3
 from argparse import Namespace
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import stock_monitor.cli as cli_module
 from stock_monitor.cli import (
@@ -3121,6 +3122,33 @@ def test_news_intelligence_observations_parser_accepts_filters() -> None:
     assert str(args.db_path).endswith("news-intelligence.db")
 
 
+def test_news_intelligence_daily_brief_parser_accepts_operator_filters() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "news-intelligence-daily-brief",
+            "--date",
+            "2026-06-01",
+            "--stock-code",
+            "005930",
+            "--limit",
+            "5",
+            "--format",
+            "json",
+            "--db-path",
+            "C:/tmp/news-intelligence.db",
+        ]
+    )
+
+    assert args.command == "news-intelligence-daily-brief"
+    assert args.date == date(2026, 6, 1)
+    assert args.stock_code == "005930"
+    assert args.limit == 5
+    assert args.format == "json"
+    assert str(args.db_path).endswith("news-intelligence.db")
+
+
 def test_news_intelligence_observations_outputs_read_only_run_comparison(
     tmp_path,
     capsys,
@@ -3442,27 +3470,103 @@ def test_news_intelligence_observations_reports_missing_db_without_writes(
     assert not db_path.exists()
 
 
+def test_news_intelligence_daily_brief_outputs_grouped_text(
+    tmp_path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "news-intelligence.db"
+    _seed_news_intelligence_daily_brief_fixture(db_path)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-daily-brief",
+            "--date",
+            "2026-06-01",
+            "--db-path",
+            str(db_path),
+        ]
+    )
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "News intelligence daily brief - 2026-06-01" in output
+    assert "강화 후보" in output
+    assert "2026-06-01 삼성전자 (005930)" in output
+    assert "판단: strengthen_existing_candidate" in output
+    assert "주의 검토" in output
+    assert "NAVER (035420)" in output
+    assert "뉴스 단독 후보" in output
+    assert "보조 맥락" in output
+    assert "KRX 확인 필요" in output
+    assert "근거 부족" in output
+    assert "direct 1 / caution 0 / market_context 0" in output
+    assert "KRX: exact" in output
+    assert "[mainnews] 삼성전자, AI 반도체 공급 계약 체결" in output
+
+
+def test_news_intelligence_daily_brief_outputs_grouped_json(
+    tmp_path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "news-intelligence.db"
+    _seed_news_intelligence_daily_brief_fixture(db_path)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-daily-brief",
+            "--date",
+            "2026-06-01",
+            "--db-path",
+            str(db_path),
+            "--format",
+            "json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["surface"] == "news-intelligence-daily-brief"
+    assert payload["read_only"] is True
+    assert payload["writes_db"] is False
+    assert payload["live_fetch"] is False
+    assert payload["sections"]["strengthen_existing_candidate"][0]["stock_code"] == "005930"
+    assert payload["sections"]["review_existing_candidate_with_caution"][0]["stock_code"] == "035420"
+    assert payload["sections"]["promote_news_only_candidate"][0]["stock_code"] == "000660"
+    assert payload["sections"]["support_only_context"][0]["stock_code"] == "005380"
+    assert payload["sections"]["stale_krx_check_first"][0]["stock_code"] == "066570"
+    assert payload["sections"]["insufficient_evidence"][0]["stock_code"] == "005490"
+    assert payload["item_count"] == 6
+
+
 def _news_intelligence_cli_run(
     *,
     run_id: str = "news-run-1",
     warnings: tuple[str, ...] = (),
+    target_date: date = date(2026, 6, 1),
+    stock_name: str = "삼성전자",
+    stock_code: str = "005930",
+    aliases: tuple[str, ...] = ("삼전",),
+    matched_count: int = 2,
+    created_at: datetime = datetime(2026, 6, 1, 10, 0, 0),
 ) -> NewsIntelligenceRun:
     return NewsIntelligenceRun(
         run_id=run_id,
-        target_date=date(2026, 6, 1),
-        stock_name="삼성전자",
-        stock_code="005930",
-        aliases=("삼전",),
+        target_date=target_date,
+        stock_name=stock_name,
+        stock_code=stock_code,
+        aliases=aliases,
         source_mode="naver_5_lane_preview",
         page_limit=1,
         full_day_complete=False,
         live_fetch=True,
         parsed_count=85,
         deduped_count=70,
-        matched_count=2,
-        operator_summary_snapshot="삼성전자 운영자 전용 뉴스 판단입니다.",
+        matched_count=matched_count,
+        operator_summary_snapshot=f"{stock_name} 운영자 전용 뉴스 판단입니다.",
         warnings=warnings,
-        created_at=datetime(2026, 6, 1, 10, 0, 0),
+        created_at=created_at,
     )
 
 
@@ -3484,14 +3588,17 @@ def _news_intelligence_cli_evidence(
     daily_summary_presence: bool = True,
     title: str = "삼성전자, AI 반도체 공급 계약 체결",
     source_lane: str = "mainnews",
+    target_date: date = date(2026, 6, 1),
+    stock_name: str = "삼성전자",
+    stock_code: str = "005930",
     krx_reference_date: date | None = date(2026, 6, 1),
 ) -> ReportLinkedNewsEvidenceRecord:
     return ReportLinkedNewsEvidenceRecord(
         run_id=run_id,
         evidence_key=evidence_key,
-        target_date=date(2026, 6, 1),
-        stock_code="005930",
-        stock_name="삼성전자",
+        target_date=target_date,
+        stock_code=stock_code,
+        stock_name=stock_name,
         related_report_count=related_report_count,
         related_report_source_ids=related_report_source_ids,
         daily_summary_presence=daily_summary_presence,
@@ -3507,7 +3614,7 @@ def _news_intelligence_cli_evidence(
         source="한국경제",
         published_at=datetime(2026, 6, 1, 9, 10, 0),
         url=f"https://n.news.naver.com/article/015/{evidence_key}",
-        matched_alias="삼성전자",
+        matched_alias=stock_name,
         match_reason="stock_name",
         match_scope=match_scope,
         relevance=relevance,
@@ -3520,9 +3627,125 @@ def _news_intelligence_cli_evidence(
         evidence_case=evidence_case,
         operator_recommendation=operator_recommendation,
         recommendation_reason="리포트와 뉴스가 같은 방향이라 우선 확인 근거를 강화합니다.",
-        operator_summary_snapshot="삼성전자 운영자 전용 뉴스 판단입니다.",
+        operator_summary_snapshot=f"{stock_name} 운영자 전용 뉴스 판단입니다.",
         created_at=datetime(2026, 6, 1, 10, 0, 0),
     )
+
+
+def _seed_news_intelligence_daily_brief_fixture(db_path: Path) -> None:
+    repository = StockMonitorRepository(db_path)
+    repository.initialize()
+    cases = [
+        (
+            _news_intelligence_cli_run(
+                run_id="run-strengthen",
+                stock_name="삼성전자",
+                stock_code="005930",
+                aliases=("삼전",),
+            ),
+            [
+                _news_intelligence_cli_evidence(
+                    run_id="run-strengthen",
+                    evidence_key="ev-strengthen",
+                    relevance="direct",
+                    match_scope="both",
+                    candidate_priority_presence=True,
+                    candidate_observation_priority="top_2",
+                    stock_name="삼성전자",
+                    stock_code="005930",
+                )
+            ],
+        ),
+        (
+            _news_intelligence_cli_run(
+                run_id="run-caution",
+                stock_name="NAVER",
+                stock_code="035420",
+                aliases=("네이버",),
+            ),
+            [
+                _news_intelligence_cli_evidence(
+                    run_id="run-caution",
+                    evidence_key="ev-caution",
+                    relevance="direct",
+                    match_scope="both",
+                    sentiment="Caution",
+                    stock_impact="Caution",
+                    event_types=("Risk/Caution",),
+                    candidate_priority_presence=True,
+                    candidate_observation_priority="top_2",
+                    stock_name="NAVER",
+                    stock_code="035420",
+                    title="NAVER, 규제 우려 확대",
+                )
+            ],
+        ),
+        (
+            _news_intelligence_cli_run(run_id="run-promote", stock_name="SK하이닉스", stock_code="000660"),
+            [
+                _news_intelligence_cli_evidence(
+                    run_id="run-promote",
+                    evidence_key="ev-promote",
+                    relevance="direct",
+                    match_scope="both",
+                    related_report_count=0,
+                    related_report_source_ids=(),
+                    daily_summary_presence=False,
+                    stock_name="SK하이닉스",
+                    stock_code="000660",
+                    title="SK하이닉스, 대형 수주 기대",
+                )
+            ],
+        ),
+        (
+            _news_intelligence_cli_run(
+                run_id="run-support",
+                stock_name="현대차",
+                stock_code="005380",
+                aliases=("현대자동차",),
+            ),
+            [
+                _news_intelligence_cli_evidence(
+                    run_id="run-support",
+                    evidence_key="ev-support",
+                    relevance="market_context",
+                    match_scope="summary",
+                    candidate_priority_presence=True,
+                    candidate_observation_priority="top_2",
+                    stock_name="현대차",
+                    stock_code="005380",
+                    title="자동차 업종 강세",
+                )
+            ],
+        ),
+        (
+            _news_intelligence_cli_run(run_id="run-stale", stock_name="LG전자", stock_code="066570"),
+            [
+                _news_intelligence_cli_evidence(
+                    run_id="run-stale",
+                    evidence_key="ev-stale",
+                    relevance="direct",
+                    match_scope="both",
+                    stock_name="LG전자",
+                    stock_code="066570",
+                    title="LG전자, 신규 제품 출시",
+                    krx_reference_date=date(2026, 5, 29),
+                )
+            ],
+        ),
+        (
+            _news_intelligence_cli_run(
+                run_id="run-empty",
+                stock_name="POSCO홀딩스",
+                stock_code="005490",
+                matched_count=0,
+            ),
+            [],
+        ),
+    ]
+    for run, evidence in cases:
+        repository.save_news_intelligence_observation(run, evidence)
+
 
 def test_news_intelligence_preview_cli_keeps_partial_source_failure(tmp_path, monkeypatch, capsys) -> None:
     scrapling_exe = tmp_path / "scrapling.exe"
