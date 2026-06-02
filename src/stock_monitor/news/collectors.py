@@ -42,6 +42,7 @@ class NaverNewsRequestSpec:
     page_url: str
     target_date: date
     collection_mode: str = "date"
+    source_fetch_mode: str = "latest_rendered_page_date_filter"
     section_name: str | None = None
     response_format: str = "markdown"
 
@@ -79,6 +80,7 @@ class NewsSourcePreview:
     page_url: str
     target_date: date
     collection_mode: str
+    source_fetch_mode: str
     section_name: str | None
     response_format: str
     fetched: bool
@@ -92,6 +94,7 @@ class NewsSourcePreview:
             "page_url": self.page_url,
             "target_date": self.target_date.isoformat(),
             "collection_mode": self.collection_mode,
+            "source_fetch_mode": self.source_fetch_mode,
             "section_name": self.section_name,
             "response_format": self.response_format,
             "fetched": self.fetched,
@@ -140,6 +143,7 @@ def build_naver_news_request_specs(target_date: date) -> list[NaverNewsRequestSp
                 f"{NAVER_FOCUS_NEWS_API_URL}?sid=401&page=1&pageSize=20&date={date_param}"
             ),
             target_date=target_date,
+            source_fetch_mode="date_api",
             section_name="시황·전망",
             response_format="focus_json",
         ),
@@ -149,6 +153,7 @@ def build_naver_news_request_specs(target_date: date) -> list[NaverNewsRequestSp
                 f"{NAVER_FOCUS_NEWS_API_URL}?sid=402&page=1&pageSize=20&date={date_param}"
             ),
             target_date=target_date,
+            source_fetch_mode="date_api",
             section_name="기업·종목분석",
             response_format="focus_json",
         ),
@@ -380,6 +385,7 @@ def collect_naver_news_preview(
                 page_url=spec.page_url,
                 target_date=spec.target_date,
                 collection_mode=spec.collection_mode,
+                source_fetch_mode=spec.source_fetch_mode,
                 section_name=spec.section_name,
                 response_format=spec.response_format,
                 fetched=fetched,

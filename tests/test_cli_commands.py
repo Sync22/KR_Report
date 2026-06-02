@@ -2662,10 +2662,12 @@ def test_news_intelligence_preview_cli_reports_empty_fetched_source_lanes(
     assert payload["empty_source_lanes"] == ["flashnews", "mainnews", "ranknews"]
     assert payload["source_coverage"]["effective_source_count"] == 2
     assert payload["source_coverage"]["empty_source_lanes"] == ["flashnews", "mainnews", "ranknews"]
-    assert "일부 source lane이 파싱 기여 없음" in payload["warnings"]
+    assert "일부 source lane이 해당 mode/date에서 파싱 기여 없음" in payload["warnings"]
+    assert payload["sources"][0]["source_fetch_mode"] == "latest_rendered_page_date_filter"
+    assert payload["sources"][3]["source_fetch_mode"] == "date_api"
     assert notes["source_coverage"]["effective_source_count"] == 2
     assert notes["source_coverage"]["empty_source_lanes"] == ["flashnews", "mainnews", "ranknews"]
-    assert "일부 source lane이 파싱 기여 없음" in notes["decision_note_ko"]
+    assert "일부 source lane이 해당 mode/date에서 파싱 기여 없음" in notes["decision_note_ko"]
     assert "추가 확인 필요" in notes["decision_note_ko"]
 
 
