@@ -92,7 +92,7 @@ This surface is not implemented yet. Before implementation, define its route, ac
 - later source-backed flow reference views
 - stored-sample investor-flow trend views
 - stored ETF trend views
-- future stored news-observation summary labels for top-2 priority or observation-tab review, when they are public-safe and score-free
+- stored news-observation summary labels, archive counts, candidate badges, and stock-detail news context when they are public-safe and score-free
 - future approved read-only intraday reference for top-2 observation candidates
 
 `web-view` should not show raw operational internals unless they are intentionally converted into simple public freshness labels.
@@ -164,9 +164,9 @@ The current endpoint contract is GET-only:
 | Endpoint | Purpose | Notes |
 | --- | --- | --- |
 | `GET /health` | Process health only | No secrets, no scheduler data. |
-| `GET /api/archive?limit=20` | Recent business-date archive | Dates, report count, stock count, delivery summary if safe. |
-| `GET /api/daily/{date}` | Daily overview | Date-bound daily summary, public contract metadata, market mood, category rollups, selected-date `krx_context`, recent `krx_recent_flow` with explicit stored reference date, structured `market_briefing` blocks for index/turnover/flow/notable stocks/check points, and read-only investor-flow context when stored samples exist. |
-| `GET /api/daily/{date}/stocks/{stock_code}` | Stock detail | Report details, same-date KRX reference, and read-only stored-sample investor-flow rows when available. |
+| `GET /api/archive?limit=20` | Recent business-date archive | Dates, report count, stock count, delivery summary if safe, and stored news-observation count. |
+| `GET /api/daily/{date}` | Daily overview | Date-bound daily summary, public contract metadata, market mood, category rollups, selected-date `krx_context`, recent `krx_recent_flow` with explicit stored reference date, structured `market_briefing` blocks for index/turnover/flow/notable stocks/check points, read-only investor-flow context when stored samples exist, and stored-data-only `news_observation_summary`. |
+| `GET /api/daily/{date}/stocks/{stock_code}` | Stock detail | Report details, same-date KRX reference, read-only stored-sample investor-flow rows when available, and stored-data-only `news_observation_detail`. |
 | `GET /api/intraday?date={date}` | Intraday history | Batch time, new report count, safe alert outcome summary. |
 | `GET /api/flow-trend?date={date}` | Investor-flow trend | Stored KRX Data Marketplace samples only; no live fetch, no public numeric scoring, no trading recommendation. |
 | `GET /api/etf-trend?date={date}` | ETF trend | Stored KRX ETF snapshots only; no live fetch, no public numeric scoring, no trading recommendation. |
@@ -178,7 +178,7 @@ Daily and category DTOs may include public display labels such as `sector_displa
 
 Daily DTOs may include a public contract block with read-only/source-scope/trading-recommendation/control-exposure flags. This block is user-facing safety copy, not an operator health model. Observation-candidate recommendation is allowed when it is expressed as `오늘의 관찰 후보`, `우선 확인`, `관찰 우선순위`, `관심도 높은 흐름`, or `왜 눈에 띄는지`. The web-view may show graph-like sector/theme breadth bars, a top-2 `우선 확인` observation shortlist, and `순환매 참고 종목`/`순환매 참고 ETF` reference slots when they are stored-data-only and accompanied by missing-information labels where evidence is absent.
 
-Daily or candidate DTOs may later include `news_observation_summary` when it is derived only from stored `news_intelligence_runs` / `report_linked_news_evidence` rows. Empty state should be explicit rather than invisible: `저장된 뉴스 관찰 없음`, `뉴스 근거 부족`, or `추가 확인 필요` is preferable to hiding the block until the model is perfect.
+Daily and candidate DTOs may include public-safe news observation fields when they are derived only from stored `news_intelligence_runs` / `report_linked_news_evidence` rows. The current visible fields are `news_observation_summary`, candidate-row `news_observation_badge`, stock-detail `news_observation_detail`, and archive `news_observation_count`. Empty state should be explicit rather than invisible: `저장된 뉴스 관찰 없음`, `저장 뉴스 근거 없음`, `뉴스 근거 부족`, or `추가 확인 필요` is preferable to hiding the block until the model is perfect.
 
 Investor-flow DTOs must clearly mark that they are stored sample/read-only data, do not trigger live KRX fetches from the user page, and do not provide public numeric scoring or trading recommendations.
 
