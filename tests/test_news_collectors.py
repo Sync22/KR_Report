@@ -143,6 +143,12 @@ def test_build_naver_news_request_specs_defaults_to_date_mode() -> None:
     assert all(spec.collection_mode == "date" for spec in specs)
     assert all(spec.target_date == date(2026, 6, 1) for spec in specs)
     assert specs[0].page_url == "https://stock.naver.com/news/flashnews"
+    assert [spec.source_fetch_mode for spec in specs[:3]] == [
+        "latest_rendered_page_date_filter",
+        "latest_rendered_page_date_filter",
+        "latest_rendered_page_date_filter",
+    ]
+    assert [spec.source_fetch_mode for spec in specs[3:]] == ["date_api", "date_api"]
     assert specs[3].page_url == (
         "https://stock.naver.com/api/domestic/news/focus"
         "?sid=401&page=1&pageSize=20&date=20260601"

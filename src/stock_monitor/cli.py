@@ -2562,7 +2562,7 @@ def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
     source_coverage = _news_intelligence_source_coverage(preview.sources)
     warnings = [*preview.warnings]
     if source_coverage["empty_source_lanes"]:
-        warnings.append("일부 source lane이 파싱 기여 없음")
+        warnings.append("일부 source lane이 해당 mode/date에서 파싱 기여 없음")
     payload.update(
         {
             "sources": [source.to_dict() for source in preview.sources],
@@ -2811,7 +2811,7 @@ def _news_intelligence_decision_note_ko(
     empty_source_lanes = source_coverage.get("empty_source_lanes") or []
     if total_source_count and empty_source_lanes:
         notes.append(
-            f"일부 source lane이 파싱 기여 없음: 유효 {effective_source_count}/{total_source_count}개 lane만 "
+            f"일부 source lane이 해당 mode/date에서 파싱 기여 없음: 유효 {effective_source_count}/{total_source_count}개 lane만 "
             "판단에 반영되어 추가 확인 필요합니다."
         )
     return " ".join(notes)
