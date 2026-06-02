@@ -21364,7 +21364,7 @@ def _render_web_view_html() -> str:
     .candidate-quality-grid .quality-line { display: block; margin-top: 0; min-width: 0; }
     .candidate-quality-grid .quality-line b { display: block; border-bottom: 1px solid rgba(222,216,204,.8); padding-bottom: 5px; margin-bottom: 6px; color: var(--ink); }
     .candidate-quality-grid .quality-chip { margin: 0 6px 5px 0; vertical-align: top; }
-    .candidate-news-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .candidate-news-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; border: 1px solid #e7d8bf; border-radius: 10px; padding: 7px 8px; background: #fff; color: var(--muted); font-size: 12px; line-height: 1.4; }
     .candidate-news-badge b { color: var(--ink); }
     .candidate-metric-list, .target-trail-list { display: grid; gap: 5px; margin-top: 5px; }
     .candidate-metric-line { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 8px; align-items: baseline; }
