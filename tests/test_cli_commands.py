@@ -47,6 +47,15 @@ from stock_monitor.cli import (
 )
 from stock_monitor.config import RuntimeConfig
 from stock_monitor.db.repository import StockMonitorRepository
+from stock_monitor.db.schema import (
+    APP_SETTINGS_MIGRATION,
+    CATEGORY_SNAPSHOT_MIGRATION,
+    KRX_INVESTOR_FLOW_MIGRATION,
+    KRX_MARKET_SNAPSHOT_MIGRATION,
+    SCHEMA_MIGRATIONS_TABLE_STATEMENT,
+    SCHEMA_STATEMENTS,
+    SCHEMA_VERSION,
+)
 from stock_monitor.fetch.naver_stock_quote import StockQuoteSnapshot
 from stock_monitor.notify.control import PendingStockSelectionCandidate, TelegramControlState
 from stock_monitor.fetch.naver_stock_search import StockCodeLookupEntry
@@ -68,6 +77,30 @@ from stock_monitor.models import (
     InvestorNetBuyTopDaily,
     KrxStockMetadataSnapshot,
 )
+
+
+def _create_schema_v5_database(db_path) -> None:
+    with sqlite3.connect(db_path) as connection:
+        for statement in SCHEMA_STATEMENTS:
+            connection.execute(statement)
+        connection.execute(SCHEMA_MIGRATIONS_TABLE_STATEMENT)
+        connection.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
+            (1, "baseline_schema", "2026-06-02T00:00:00+00:00"),
+        )
+        for migration in (
+            KRX_MARKET_SNAPSHOT_MIGRATION,
+            APP_SETTINGS_MIGRATION,
+            KRX_INVESTOR_FLOW_MIGRATION,
+            CATEGORY_SNAPSHOT_MIGRATION,
+        ):
+            for statement in migration.statements:
+                connection.execute(statement)
+            connection.execute(
+                "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
+                (migration.version, migration.name, "2026-06-02T00:00:00+00:00"),
+            )
+        connection.execute("PRAGMA user_version = 5")
 
 
 class _KrxReminderAllowedDateTime(datetime):
@@ -174,7 +207,7 @@ def test_db_migrate_dry_run_prints_schema_status(tmp_path, capsys) -> None:
     assert exit_code == 0
     assert "Would apply database schema migrations." in output
     assert "Current schema version: 0" in output
-    assert "Target schema version: 5" in output
+    assert f"Target schema version: {SCHEMA_VERSION}" in output
     assert "Pending migration versions: (none)" in output
     assert not repository.db_path.exists()
 
@@ -189,7 +222,7 @@ def test_db_verify_prints_integrity_and_table_counts(tmp_path, capsys) -> None:
     assert exit_code == 0
     assert "Database verification" in output
     assert "- integrity_check: ok" in output
-    assert "- schema: 5/5" in output
+    assert f"- schema: {SCHEMA_VERSION}/{SCHEMA_VERSION}" in output
     assert "- foreign key violations: 0" in output
     assert "- orphan intraday batch reports: 0" in output
     assert "- partial KRX daily snapshot dates: 0" in output
@@ -6678,6 +6711,42 @@ def test_db_backup_creates_consistent_sqlite_copy(tmp_path, monkeypatch, capsys)
     assert backups[0].stat().st_size > 0
     assert "Database backup created:" in output
     assert "- integrity_check: ok" in output
+
+
+def test_db_backup_command_does_not_apply_pending_migrations(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    _create_schema_v5_database(config.db_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+
+    _prepare_repository_for_command(repository, Namespace(command="db-backup"))
+    exit_code = _run_db_backup(
+        config,
+        repository,
+        tag="before-migrate",
+        output_dir=tmp_path / "backups",
+        verify=True,
+    )
+
+    capsys.readouterr()
+    backup_path = next((tmp_path / "backups").glob("stock_monitor_*_before-migrate.db"))
+    with sqlite3.connect(config.db_path) as connection:
+        source_version = connection.execute("PRAGMA user_version").fetchone()[0]
+        source_news_table_count = connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'news_intelligence_runs'"
+        ).fetchone()[0]
+    with sqlite3.connect(backup_path) as connection:
+        backup_version = connection.execute("PRAGMA user_version").fetchone()[0]
+        backup_news_table_count = connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'news_intelligence_runs'"
+        ).fetchone()[0]
+
+    assert exit_code == 0
+    assert source_version == 5
+    assert backup_version == 5
+    assert source_news_table_count == 0
+    assert backup_news_table_count == 0
 
 
 def test_db_restore_smoke_verifies_backup_copy_without_retaining_it(tmp_path, monkeypatch, capsys) -> None:
