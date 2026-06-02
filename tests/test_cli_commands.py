@@ -2604,6 +2604,7 @@ def test_news_intelligence_preview_cli_notes_low_coverage_and_market_context(
     assert notes["market_context_count"] == 2
     assert notes["dominant_relevance"] == "market_context"
     assert notes["market_context_heavy"] is True
+    assert notes["observation_quality"]["level"] == "market_context_heavy"
     assert "추가 확인" in notes["decision_note_ko"]
     assert "직접 판단 근거로 과신하지 말 것" in notes["decision_note_ko"]
     assert notes["missing_context"]["report_krx_context"]["evaluated"] is False
@@ -2665,7 +2666,203 @@ def test_news_intelligence_preview_cli_reports_summary_only_match_count(
     assert payload["matched_count"] == 1
     assert notes["indirect_count"] == 1
     assert notes["summary_only_count"] == 1
+    assert notes["observation_quality"]["level"] == "support_only_indirect"
     assert "summary-only" in notes["decision_note_ko"]
+
+
+def test_news_intelligence_preview_cli_reports_no_match_observation_quality(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    scrapling_exe = tmp_path / "scrapling.exe"
+    scrapling_exe.write_text("fake", encoding="utf-8")
+    section_json = json.dumps(
+        {
+            "articles": [
+                {
+                    "officeHName": "Test News",
+                    "title": "LG전자 AI server supply contract",
+                    "subcontent": "The article does not mention the requested stock.",
+                    "date": "20260601101000",
+                    "url": "https://n.news.naver.com/mnews/article/015/0000501",
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, **_kwargs):
+        output_path = command[4]
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(section_json if command[2] == "get" else "")
+        return Result()
+
+    monkeypatch.setattr("stock_monitor.news.collectors.subprocess.run", fake_run)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-preview",
+            "--stock-name",
+            "NAVER",
+            "--stock-code",
+            "035420",
+            "--date",
+            "2026-06-01",
+            "--scrapling-exe",
+            str(scrapling_exe),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    notes = payload["operator_decision_notes"]
+
+    assert exit_code == 0
+    assert payload["matched_count"] == 0
+    assert notes["observation_quality"]["level"] == "no_match"
+    assert notes["observation_quality"]["save_warning"].startswith("no_match:")
+
+
+def test_news_intelligence_preview_cli_reports_low_coverage_observation_quality(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    scrapling_exe = tmp_path / "scrapling.exe"
+    scrapling_exe.write_text("fake", encoding="utf-8")
+    section_json = json.dumps(
+        {
+            "articles": [
+                {
+                    "officeHName": "Test News",
+                    "title": "NAVER cloud AI contract expands",
+                    "subcontent": "NAVER cloud AI contract expands with enterprise customers.",
+                    "date": "20260601101000",
+                    "url": "https://n.news.naver.com/mnews/article/015/0000502",
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, **_kwargs):
+        output_path = command[4]
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(section_json if command[2] == "get" else "")
+        return Result()
+
+    monkeypatch.setattr("stock_monitor.news.collectors.subprocess.run", fake_run)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-preview",
+            "--stock-name",
+            "NAVER",
+            "--stock-code",
+            "035420",
+            "--date",
+            "2026-06-01",
+            "--scrapling-exe",
+            str(scrapling_exe),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    notes = payload["operator_decision_notes"]
+
+    assert exit_code == 0
+    assert payload["matched_count"] == 1
+    assert notes["direct_count"] == 1
+    assert notes["observation_quality"]["level"] == "low_coverage"
+    assert notes["observation_quality"]["save_warning"].startswith("low_coverage:")
+
+
+def test_news_intelligence_preview_cli_reports_direct_evidence_observation_quality(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    scrapling_exe = tmp_path / "scrapling.exe"
+    scrapling_exe.write_text("fake", encoding="utf-8")
+    section_json = json.dumps(
+        {
+            "articles": [
+                {
+                    "officeHName": "Test News",
+                    "title": "NAVER AI contract expands",
+                    "subcontent": "NAVER reported a direct AI contract expansion.",
+                    "date": "20260601101000",
+                    "url": "https://n.news.naver.com/mnews/article/015/0000601",
+                },
+                {
+                    "officeHName": "Test News",
+                    "title": "NAVER cloud launches enterprise product",
+                    "subcontent": "NAVER cloud launches an enterprise AI product.",
+                    "date": "20260601102000",
+                    "url": "https://n.news.naver.com/mnews/article/015/0000602",
+                },
+                {
+                    "officeHName": "Test News",
+                    "title": "NAVER earnings guidance improves",
+                    "subcontent": "NAVER earnings guidance improves after AI demand.",
+                    "date": "20260601103000",
+                    "url": "https://n.news.naver.com/mnews/article/015/0000603",
+                },
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, **_kwargs):
+        output_path = command[4]
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(section_json if command[2] == "get" else "")
+        return Result()
+
+    monkeypatch.setattr("stock_monitor.news.collectors.subprocess.run", fake_run)
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-preview",
+            "--stock-name",
+            "NAVER",
+            "--stock-code",
+            "035420",
+            "--date",
+            "2026-06-01",
+            "--scrapling-exe",
+            str(scrapling_exe),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    notes = payload["operator_decision_notes"]
+
+    assert exit_code == 0
+    assert payload["matched_count"] == 3
+    assert notes["direct_count"] == 3
+    assert notes["observation_quality"] == {
+        "level": "direct_evidence",
+        "matched_count": 3,
+        "direct_count": 3,
+        "summary_only_count": 0,
+        "save_warning": None,
+    }
 
 
 def test_news_intelligence_preview_cli_reports_empty_fetched_source_lanes(
