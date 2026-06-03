@@ -30,7 +30,9 @@ Use this instead of starting from older admin review/progress notes. The older f
 
 ## Boundary
 
-`admin-gui` is the operator control surface.
+`admin-gui` is the operator operations surface.
+
+It should stay focused on operations menu/status/control: scheduler state, pause/no-run controls, safe settings, recovery guidance, DB freshness, operation events, and admin audit.
 
 It must not become the friend-facing shared page. Shared read-only information belongs in `web-view` and must stay GET-only.
 

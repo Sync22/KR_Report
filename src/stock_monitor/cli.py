@@ -23241,7 +23241,7 @@ def _render_web_view_html() -> str:
       const direct = Number(detail.direct_count || 0);
       const caution = Number(detail.caution_count || 0);
       const marketContext = Number(detail.market_context_count || 0);
-      const countLine = `직접 ${number(direct)} · 주의 ${number(caution)} · 시장맥락 ${number(marketContext)} · ${status}`;
+      const countLine = `뉴스 근거 직접 ${number(direct)} · 주의 ${number(caution)} · 시장맥락 ${number(marketContext)} · ${status}`;
       const titles = Array.isArray(detail.top_titles) ? detail.top_titles.slice(0, 3) : [];
       const titleList = titles.length
         ? `<ul class="stock-news-title-list">${titles.map((title) => `<li>${esc(title)}</li>`).join("")}</ul>`

@@ -2,12 +2,13 @@
 
 ## Purpose
 
-This document fixes the product boundary between the operator control surface and the shared read-only information surface.
+This document fixes the product boundary between the operator control surface, the shared read-only information surface, and the future private review surface.
 
 The decision is:
 
-- `admin-gui` is the local operator console.
+- `admin-gui` is the local operator operations console.
 - `web-view` is a separate read-only user page.
+- `operator-review` is a future private review surface for raw judgment and evidence inspection.
 - They may share SQLite, repository queries, and summary logic.
 - They must not share HTTP control endpoints or raw operator status payloads.
 
@@ -17,8 +18,9 @@ This is a permission and API boundary, not just a visual layout boundary.
 
 | Surface | Audience | Purpose | Network boundary | HTTP methods | Capability |
 | --- | --- | --- | --- | --- | --- |
-| `admin-gui` | Operator only | Run diagnostics and local controls | Loopback/local by default | `GET` + guarded `POST` | Scheduler, no-run dates, worker/status, recovery controls |
-| `web-view` | Trusted friends or external read-only viewers | Consume refined market/report information | Loopback by default; shared read-only only through reviewed tunnel/access path | `GET` only, except `/auth/login` | Archive, daily summaries, dated categories, ETF/flow references, market mood, intraday history |
+| `admin-gui` | Operator only | Run operations status, local controls, recovery, settings, and audit | Loopback/local by default | `GET` + guarded `POST` | Scheduler, no-run dates, worker/status, recovery controls, safe settings, admin audit |
+| `web-view` | Trusted friends or external read-only viewers | Consume public-safe stored-data projections | Loopback by default; shared read-only only through reviewed tunnel/access path | `GET` only, except `/auth/login` | Archive, daily summaries, dated categories, ETF/flow references, market mood, intraday history, public-safe candidate/news summaries |
+| `operator-review` | Operator only | Future private review of raw judgment and linked evidence | Not implemented; define separately before use | TBD, preferably read-only first | Raw news observation review, candidate linkage review, internal labels, evidence comparison |
 
 ## Non-Negotiable Rules
 
