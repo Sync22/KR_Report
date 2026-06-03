@@ -11,6 +11,19 @@ from stock_monitor.config import RuntimeConfig
 from stock_monitor.db.repository import StockMonitorRepository
 
 
+ADMIN_GUI_JUDGMENT_REVIEW_FORBIDDEN_TOKENS = (
+    "news-intelligence",
+    "news_observation",
+    "candidate-evidence",
+    "candidate_evidence",
+    "candidate_linkage",
+    "sentiment_score",
+    "stock_impact",
+    "operator_recommendation",
+    "recommendation_support",
+)
+
+
 def test_admin_gui_html_contains_status_shell() -> None:
     html = cli_module._render_admin_gui_html()
 
@@ -79,23 +92,11 @@ def test_admin_gui_html_contains_status_shell() -> None:
 def test_admin_gui_html_excludes_judgment_review_surfaces() -> None:
     html = cli_module._render_admin_gui_html()
 
-    forbidden_tokens = (
-        "news-intelligence",
-        "news_observation",
-        "candidate-evidence",
-        "candidate_evidence",
-        "candidate_linkage",
-        "sentiment_score",
-        "stock_impact",
-        "operator_recommendation",
-        "recommendation_support",
-    )
-
     assert "/api/status" in html
     assert "/api/scheduler/run-now" in html
     assert "/api/settings/set" in html
     assert "audit-log-rows" in html
-    for token in forbidden_tokens:
+    for token in ADMIN_GUI_JUDGMENT_REVIEW_FORBIDDEN_TOKENS:
         assert token not in html
 
 
@@ -152,6 +153,9 @@ def test_admin_gui_server_serves_html_and_status_json(tmp_path, monkeypatch) -> 
     assert any(action["key"] == "create_db_backup" for action in payload["recovery_actions"])
     assert "daily_summary_min_mention_count" in payload["safe_settings"]
     assert payload["recent_admin_audit_logs"] == []
+    payload_text = json.dumps(payload, ensure_ascii=False)
+    for token in ADMIN_GUI_JUDGMENT_REVIEW_FORBIDDEN_TOKENS:
+        assert token not in payload_text
 
 
 def test_admin_gui_access_code_gate_protects_status_until_login(tmp_path, monkeypatch) -> None:
