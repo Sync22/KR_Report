@@ -55,7 +55,7 @@ Scrapling is the preferred active source-probe tool for rendered Naver source in
 
 - `python -m stock_monitor news-intelligence-preview --stock-name NAME [--stock-code CODE] [--alias ALIAS] [--date YYYY-MM-DD]`
 
-This command is manual and operator-only. It emits JSON to stdout, uses temporary files for Scrapling output, deletes those files after reading, and must not write live fetch results into the repository, SQLite, logs, scheduler state, Telegram, or public `web-view` by default. It also does not update `admin-gui` in v1; an `admin-gui` review surface is a future operator-only integration candidate, not a public-surface exception.
+This command is manual and operator-only. It emits JSON to stdout, uses temporary files for Scrapling output, deletes those files after reading, and must not write live fetch results into the repository, SQLite, logs, scheduler state, Telegram, or public `web-view` by default. It also does not update `admin-gui` in v1; a future private `operator-review` surface is the review UI candidate, not an `admin-gui` expansion or a public-surface exception.
 
 Saved operator observations may be reviewed with:
 
@@ -158,7 +158,7 @@ News intelligence is not an isolated news table. Its operator value comes from l
 - KRX investor-flow rows provide stored flow context when available.
 - Candidate-evidence priority may be used as operator-only context, but news evidence must not be copied into public candidate DTOs without a separate public-safe contract.
 
-The report-linked analysis slice remains pure Python. The default `news-intelligence-preview` command must still emit JSON only and must not write DB rows, start schedulers, send Telegram, or expose anything in public `web-view`. It also does not update `admin-gui` in v1; future `admin-gui` use should be documented as an operator-only review surface before implementation. The only v1 DB write exception is the explicit operator-only `--save-observation` path described below.
+The report-linked analysis slice remains pure Python. The default `news-intelligence-preview` command must still emit JSON only and must not write DB rows, start schedulers, send Telegram, or expose anything in public `web-view`. It also does not update `admin-gui` in v1; future private UI review should be documented as an `operator-review` surface before implementation. The only v1 DB write exception is the explicit operator-only `--save-observation` path described below.
 
 Supported operator-only evidence cases:
 
@@ -193,7 +193,7 @@ Storage guardrails:
 
 - DB writes require the explicit operator save option `--save-observation`.
 - The default manual preview remains `writes_db=false`.
-- Stored rows are operator-only observation/evaluation data and must not be copied raw into public `web-view`, Telegram, or scheduler surfaces. The current `web-view` projection is allowed only as a thin stored-data summary that hides internal sentiment scores, impact scores, raw warnings, and operator-only recommendation-support fields. `admin-gui` remains private/operator-only and may later show fuller review rows after a separate operator-review contract.
+- Stored rows are operator-only observation/evaluation data and must not be copied raw into public `web-view`, Telegram, or scheduler surfaces. The current `web-view` projection is allowed only as a thin stored-data summary that hides internal sentiment scores, impact scores, raw warnings, and operator-only recommendation-support fields. `admin-gui` remains operations/status/control only; fuller review rows belong in a future `operator-review` surface after a separate contract.
 - When KRX reference data comes from the nearest prior stored row, the preview/save payload must distinguish exact-date reference from stale fallback reference and warn rather than silently treating stale KRX data as same-day confirmation.
 - The stored lane must not contain broker secrets, order intent, order-routing instructions, or public buy/sell calls.
 

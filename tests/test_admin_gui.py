@@ -70,6 +70,29 @@ def test_admin_gui_html_contains_status_shell() -> None:
     assert "로컬 전용 읽기 화면입니다" not in html
 
 
+def test_admin_gui_html_excludes_judgment_review_surfaces() -> None:
+    html = cli_module._render_admin_gui_html()
+
+    forbidden_tokens = (
+        "news-intelligence",
+        "news_observation",
+        "candidate-evidence",
+        "candidate_evidence",
+        "candidate_linkage",
+        "sentiment_score",
+        "stock_impact",
+        "operator_recommendation",
+        "recommendation_support",
+    )
+
+    assert "/api/status" in html
+    assert "/api/scheduler/run-now" in html
+    assert "/api/settings/set" in html
+    assert "audit-log-rows" in html
+    for token in forbidden_tokens:
+        assert token not in html
+
+
 def test_admin_gui_host_guard_allows_loopback_hosts() -> None:
     assert cli_module._is_loopback_admin_host("127.0.0.1") is True
     assert cli_module._is_loopback_admin_host("localhost") is True
@@ -318,6 +341,13 @@ def test_admin_gui_scheduler_action_invalidates_status_cache(tmp_path, monkeypat
 def test_admin_gui_operator_control_posts_update_state(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     monkeypatch.setattr(cli_module, "_load_scheduler_task_statuses", lambda _prefix="StockMonitor": [])
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 6, 1, 9, 0, 0, tzinfo=tz)
+
+    monkeypatch.setattr(cli_module, "datetime", FixedDatetime)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     config.ensure_runtime_dirs()
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)

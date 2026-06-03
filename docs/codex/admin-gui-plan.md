@@ -30,9 +30,13 @@ Use this instead of starting from older admin review/progress notes. The older f
 
 ## Boundary
 
-`admin-gui` is the operator control surface.
+`admin-gui` is the operator operations surface.
+
+It should stay focused on operations menu/status/control: scheduler state, pause/no-run controls, safe settings, recovery guidance, DB freshness, operation events, and admin audit.
 
 It must not become the friend-facing shared page. Shared read-only information belongs in `web-view` and must stay GET-only.
+
+It also must not become the main judgment review workbench. News intelligence, candidate linkage, raw recommendation-support labels, sentiment/impact internals, and candidate evidence review details belong in the future `operator-review` surface when a private review UI is needed. `admin-gui` may show coarse operational readiness for those lanes, but not the review body.
 
 ## Next Admin Work
 
@@ -54,6 +58,9 @@ No-run date server validation rejects market holidays, env-level no-run dates, a
 - One-click shutdown.
 - Friend-facing read-only mode.
 - Public tunnel exposure.
+- News intelligence raw observation rows.
+- Candidate evidence review workbench.
+- Raw sentiment score, stock impact, recommendation-support, or candidate linkage internals.
 
 ## Verification
 
