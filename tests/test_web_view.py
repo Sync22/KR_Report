@@ -5,7 +5,7 @@ import threading
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime
+from datetime import date, datetime, time as datetime_time
 
 import pytest
 
@@ -4530,6 +4530,93 @@ def test_web_view_api_perf_log_separates_db_time_for_real_builder(tmp_path, monk
     assert records[-1]["cache"] == "miss"
     assert records[-1]["db_ms"] > 0
     assert records[-1]["build_ms"] >= records[-1]["db_ms"]
+
+
+def test_web_view_intraday_market_top_route_reuses_cached_base_daily_snapshot(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = datetime.now().date()
+    now = datetime.combine(business_date, datetime_time(9, 30, 0))
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="Cache Target",
+                stock_code="000001",
+                title="Cache Target Report",
+                broker_name="NH",
+                published_at=now,
+                collected_at=now,
+                business_date=business_date,
+                source_id="intraday-cache-1",
+                identity_key="intraday-cache-1",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    def fake_market_top(market: str, **_kwargs):
+        if market != "KOSPI":
+            return []
+        return [
+            cli_module.NaverMarketTopStock(
+                market="KOSPI",
+                sort_type="PRICE_TOP",
+                stock_code="000001",
+                stock_name="Cache Target",
+                stock_end_type="stock",
+                current_price=10_500,
+                change_price=500,
+                change_percent=5.0,
+                trade_amount=90_000_000_000,
+                trade_volume=1_200_000,
+                market_status="OPEN",
+                trade_time=datetime(2026, 5, 20, 12, 1, 0),
+            )
+        ]
+
+    original_build_daily = cli_module.build_web_view_daily_snapshot
+    include_modes: list[bool] = []
+
+    def wrapped_build_daily(*args, **kwargs):
+        include_intraday = bool(kwargs.get("include_intraday_market_top"))
+        include_modes.append(include_intraday)
+        if include_intraday:
+            raise AssertionError("intraday route should overlay market-top data onto the cached base daily payload")
+        return original_build_daily(*args, **kwargs)
+
+    monkeypatch.setattr(cli_module, "fetch_market_top_stocks", fake_market_top)
+    monkeypatch.setattr(cli_module, "is_business_day", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(cli_module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(cli_module, "build_web_view_daily_snapshot", wrapped_build_daily)
+
+    server = cli_module.create_web_view_server(config, repository, host="127.0.0.1", port=0, limit=5)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        with urllib.request.urlopen(base_url + f"/api/daily/{business_date.isoformat()}", timeout=5) as response:
+            assert response.status == 200
+            json.loads(response.read().decode("utf-8"))
+        with urllib.request.urlopen(
+            base_url
+            + f"/api/daily/{business_date.isoformat()}?intraday_market_top=1"
+            + "&market_top_limit=20&market_top_page_size=20",
+            timeout=5,
+        ) as response:
+            assert response.status == 200
+            payload = json.loads(response.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    reference = payload["market_commentary"]["intraday_market_top_reference"]
+    assert reference["live_fetch"] is True
+    assert reference["items"][0]["stock_code"] == "000001"
+    assert include_modes == [False]
 
 
 def test_web_view_daily_json_compaction_omits_none_fields_on_allowlisted_endpoint() -> None:

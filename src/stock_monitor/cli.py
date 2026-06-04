@@ -4490,7 +4490,8 @@ def _run_api_perf_summary(config: RuntimeConfig, *, log_path: Path | None, as_js
             f"  - {item['path']}: count={item['count']}, p50={item['p50_total_ms']}ms, "
             f"p95={item['p95_total_ms']}ms, p99={item['p99_total_ms']}ms, "
             f"avg_db={item['avg_db_ms']}ms, avg_json={item['avg_json_ms']}ms, "
-            f"bytes_max={item['max_bytes']}, hit/miss={item['cache_hits']}/{item['cache_misses']}"
+            f"bytes_max={item['max_bytes']}, hit/miss={item['cache_hits']}/{item['cache_misses']}, "
+            f"family={item['path_family']}"
         )
     return 0
 
@@ -18692,6 +18693,20 @@ def _make_web_view_handler(
     response_cache_ttl_seconds = 30.0
     api_perf_logger = ApiPerfLogger(config.root_dir / "logs")
 
+    def read_cached_json_payload(cache_key: str) -> dict | None:
+        now_monotonic = time.monotonic()
+        with response_cache_lock:
+            cached = response_cache.get(cache_key)
+            if not cached or now_monotonic - cached[0] > response_cache_ttl_seconds:
+                return None
+            cached_body = cached[1]
+        return json.loads(cached_body.decode("utf-8"))
+
+    def store_cached_json_payload(cache_key: str, payload: dict) -> None:
+        body = json_dumps_bytes(_compact_web_view_json_payload(cache_key, payload))
+        with response_cache_lock:
+            response_cache[cache_key] = (time.monotonic(), body)
+
     def cached_json_payload(cache_key: str, builder: Callable[[], dict]) -> tuple[bytes, str, float, float, float]:
         now_monotonic = time.monotonic()
         with response_cache_lock:
@@ -18709,6 +18724,30 @@ def _make_web_view_handler(
         with response_cache_lock:
             response_cache[cache_key] = (time.monotonic(), body)
         return body, "miss", json_ms, build_ms, metrics.db_ms
+
+    def build_daily_payload_for_route(
+        business_date: date,
+        *,
+        include_intraday_market_top: bool,
+        market_top_limit: int,
+        market_top_page_size: int,
+    ) -> dict:
+        if not include_intraday_market_top:
+            return build_web_view_daily_snapshot(config, repository, business_date=business_date)
+
+        base_cache_key = f"daily:{business_date.isoformat()}"
+        base_payload = read_cached_json_payload(base_cache_key)
+        if base_payload is None:
+            base_payload = build_web_view_daily_snapshot(config, repository, business_date=business_date)
+            store_cached_json_payload(base_cache_key, base_payload)
+        return _overlay_web_view_daily_intraday_market_top(
+            config,
+            repository,
+            base_payload,
+            business_date=business_date,
+            limit=market_top_limit,
+            page_size=market_top_page_size,
+        )
 
     def write_cached_json_response(handler: BaseHTTPRequestHandler, cache_key: str, builder: Callable[[], dict]) -> None:
         total_start = time.perf_counter()
@@ -18893,13 +18932,11 @@ def _make_web_view_handler(
                 write_cached_json_response(
                     self,
                     f"daily:{business_date.isoformat()}{live_key}",
-                    lambda: build_web_view_daily_snapshot(
-                        config,
-                        repository,
+                    lambda: build_daily_payload_for_route(
                         business_date=business_date,
                         include_intraday_market_top=include_intraday_market_top,
-                        intraday_market_top_limit=market_top_limit,
-                        intraday_market_top_page_size=market_top_page_size,
+                        market_top_limit=market_top_limit,
+                        market_top_page_size=market_top_page_size,
                     ),
                 )
                 return
@@ -24513,6 +24550,85 @@ def build_web_view_stock_search_snapshot(
         "items": items,
         "empty_state": "조회된 저장 종목이 없습니다." if not items else None,
     }
+
+def _overlay_web_view_daily_intraday_market_top(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    base_snapshot: dict,
+    *,
+    business_date: date,
+    limit: int,
+    page_size: int,
+) -> dict:
+    current = datetime.now(ZoneInfo(config.timezone))
+    payload = dict(base_snapshot)
+    summaries = _web_view_daily_summaries_from_snapshot(payload, business_date=business_date, generated_at=current)
+    market_commentary = _build_market_commentary_practice_snapshot(
+        config,
+        repository,
+        business_date,
+        summaries=summaries,
+        market_briefing=payload.get("market_briefing") if isinstance(payload.get("market_briefing"), dict) else None,
+        include_intraday_market_top=True,
+        intraday_market_top_limit=limit,
+        intraday_market_top_page_size=page_size,
+        require_current_business_day_for_intraday_market_top=True,
+        current_date_for_intraday_market_top=current.date(),
+        checked_at=current,
+    )
+    payload["now"] = current.isoformat()
+    payload["market_commentary"] = market_commentary
+    return payload
+
+
+def _web_view_daily_summaries_from_snapshot(
+    snapshot: dict,
+    *,
+    business_date: date,
+    generated_at: datetime,
+) -> list[DailyStockSummary]:
+    summaries: list[DailyStockSummary] = []
+    for row in snapshot.get("stocks", []) or []:
+        if not isinstance(row, dict):
+            continue
+        stock_name = str(row.get("stock_name") or "").strip()
+        if not stock_name:
+            continue
+        try:
+            row_date = date.fromisoformat(str(row.get("business_date") or business_date.isoformat()))
+        except ValueError:
+            row_date = business_date
+        summaries.append(
+            DailyStockSummary(
+                business_date=row_date,
+                stock_name=stock_name,
+                stock_code=str(row.get("stock_code") or "").strip() or None,
+                mention_count=_safe_int(row.get("mention_count"), default=0),
+                broker_display=str(row.get("broker_display") or ""),
+                target_price_min=_safe_optional_int(row.get("target_price_min")),
+                target_price_max=_safe_optional_int(row.get("target_price_max")),
+                dominant_opinion=str(row.get("dominant_opinion") or ""),
+                generated_at=generated_at,
+            )
+        )
+    return summaries
+
+
+def _safe_int(value: object, *, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
 
 def build_web_view_daily_snapshot(
     config: RuntimeConfig,

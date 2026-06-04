@@ -174,6 +174,7 @@ def _summarize_api_perf_endpoint(path: str, rows: list[dict[str, Any]]) -> dict[
     byte_values = _numeric_values(rows, "bytes")
     return {
         "path": path,
+        "path_family": _api_perf_path_family(path),
         "count": len(rows),
         "status_codes": sorted({int(row.get("status") or 0) for row in rows}),
         "cache_hits": sum(1 for row in rows if row.get("cache") == "hit"),
@@ -188,6 +189,19 @@ def _summarize_api_perf_endpoint(path: str, rows: list[dict[str, Any]]) -> dict[
         "avg_json_ms": _average(json_values),
         "max_bytes": int(max(byte_values)) if byte_values else 0,
     }
+
+
+def _api_perf_path_family(path: str) -> str:
+    route, _, query = path.partition("?")
+    if route.startswith("/api/daily/") and "/stocks/" in route:
+        return "/api/daily/{date}/stocks/{stock_code}"
+    if route.startswith("/api/daily/"):
+        if "intraday_market_top=1" in query:
+            return "/api/daily/{date}?intraday_market_top=1"
+        return "/api/daily/{date}"
+    if route == "/api/candidate-evidence":
+        return "/api/candidate-evidence"
+    return route or path
 
 
 def _numeric_values(rows: list[dict[str, Any]], key: str) -> list[float]:
