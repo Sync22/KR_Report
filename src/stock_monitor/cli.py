@@ -18931,6 +18931,30 @@ def _make_web_view_handler(
                     ),
                 )
                 return
+            if path == "/api/stocks/search":
+                query_params = url_parse.parse_qs(query)
+                raw_date = query_params.get("date", [None])[0]
+                raw_query = query_params.get("q", [""])[0]
+                search_limit = _query_int(query, "limit", default=8, minimum=1, maximum=20)
+                try:
+                    if not raw_date:
+                        raise ValueError
+                    business_date = date.fromisoformat(raw_date)
+                except ValueError:
+                    _write_http_response(self, HTTPStatus.BAD_REQUEST, "invalid date", content_type="text/plain; charset=utf-8")
+                    return
+                write_cached_json_response(
+                    self,
+                    f"stock-search:{business_date.isoformat()}:{raw_query}:{search_limit}",
+                    lambda: build_web_view_stock_search_snapshot(
+                        config,
+                        repository,
+                        business_date=business_date,
+                        query=raw_query,
+                        limit=search_limit,
+                    ),
+                )
+                return
             if decoded_path.startswith("/api/daily/"):
                 try:
                     business_date = date.fromisoformat(decoded_path.removeprefix("/api/daily/"))
@@ -20157,80 +20181,11 @@ def _render_admin_gui_html() -> str:
       </div>
 
       <div class="table-card full">
-        <h2>시장 분위기 <span class="muted" id="mood-date"></span></h2>
-        <div class="mood-grid">
-          <div class="mood-item"><b>리포트</b><strong id="mood-total-reports">-</strong></div>
-          <div class="mood-item"><b>종목</b><strong id="mood-stock-count">-</strong></div>
-          <div class="mood-item"><b>활성 업종</b><strong id="mood-sector-count">-</strong></div>
-          <div class="mood-item"><b>최다 업종</b><strong id="mood-top-sector">-</strong></div>
-          <div class="mood-item"><b>2건 이상 종목</b><strong id="mood-multi-report">-</strong></div>
-        </div>
-      </div>
-
-      <div class="table-card wide">
-        <h2>최근 리포트/요약</h2>
-        <table>
-          <thead><tr><th>날짜</th><th>리포트</th><th>요약</th></tr></thead>
-          <tbody id="report-rows"></tbody>
-        </table>
-      </div>
-
-      <div class="table-card wide">
         <h2>최근 발송</h2>
         <table>
           <thead><tr><th>시각</th><th>채널</th><th>상태</th><th>내용</th></tr></thead>
           <tbody id="delivery-rows"></tbody>
         </table>
-      </div>
-
-      <div class="table-card full">
-        <h2>섹터 요약 <span class="muted" id="sector-date"></span></h2>
-        <table>
-          <thead><tr><th>섹터</th><th>종목</th><th>리포트</th></tr></thead>
-          <tbody id="sector-rows"></tbody>
-        </table>
-      </div>
-
-      <div class="table-card full">
-        <h2>테마 요약 <span class="muted" id="theme-date"></span></h2>
-        <table>
-          <thead><tr><th>테마</th><th>종목</th><th>리포트</th></tr></thead>
-          <tbody id="theme-rows"></tbody>
-        </table>
-      </div>
-
-      <div class="table-card full">
-        <h2>KRX 시장 데이터 <span class="muted" id="krx-date"></span></h2>
-        <div class="grid">
-          <div class="table-card wide">
-            <h2>KOSPI 거래대금 상위</h2>
-            <table>
-              <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>거래대금</th></tr></thead>
-              <tbody id="krx-kospi-rows"></tbody>
-            </table>
-          </div>
-          <div class="table-card wide">
-            <h2>KOSDAQ 거래대금 상위</h2>
-            <table>
-              <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>거래대금</th></tr></thead>
-              <tbody id="krx-kosdaq-rows"></tbody>
-            </table>
-          </div>
-          <div class="table-card wide">
-            <h2>ETF 거래대금 상위</h2>
-            <table>
-              <thead><tr><th>ETF</th><th>현재가</th><th>등락률</th><th>기초지수</th></tr></thead>
-              <tbody id="krx-etf-rows"></tbody>
-            </table>
-          </div>
-          <div class="table-card wide">
-            <h2>시장 지수</h2>
-            <table>
-              <thead><tr><th>지수</th><th>종가(포인트)</th><th>등락률</th><th>시리즈</th></tr></thead>
-              <tbody id="krx-index-rows"></tbody>
-            </table>
-          </div>
-        </div>
       </div>
 
       <div class="table-card full">
@@ -20376,7 +20331,6 @@ def _render_admin_gui_html() -> str:
         $("backup-status").textContent = data.backup?.exists ? "준비됨" : "없음";
         $("backup-reminder").textContent = data.data_safety_reminders?.[0] || "Run db-verify and db-backup before risky work.";
         renderRecoveryActions(data.recovery_actions || []);
-        renderMarketMood(data.market_mood);
         renderCalendar(data);
 
         $("scheduler-rows").innerHTML = data.scheduler_tasks.length ? data.scheduler_tasks.map((task) => {
@@ -20407,49 +20361,8 @@ def _render_admin_gui_html() -> str:
           ]);
         }).join("") : empty(6);
 
-        $("report-rows").innerHTML = data.reports_by_date.length ? data.reports_by_date.map((item) => {
-          const summary = data.summaries_by_date.find((candidate) => candidate.business_date === item.business_date);
-          return row([esc(item.business_date), esc(item.count), esc(summary ? summary.count : 0)]);
-        }).join("") : empty(3);
-
         $("delivery-rows").innerHTML = data.recent_deliveries.length ? data.recent_deliveries.map((item) => row([
           shortDateTime(item.delivered_at), esc(channelLabel(item.channel)), esc(statusLabel(item.status)), esc(item.detail || "")
-        ])).join("") : empty(4);
-
-        $("sector-date").textContent = data.sector_rollup_date ? `(${data.sector_rollup_date})` : "";
-        $("sector-rows").innerHTML = data.sector_rollups.length ? data.sector_rollups.map((item) => row([
-          esc(item.sector_name), esc(item.stock_count), esc(item.report_count)
-        ])).join("") : empty(3);
-
-        $("theme-date").textContent = data.theme_rollup_date ? `(${data.theme_rollup_date})` : "";
-        $("theme-rows").innerHTML = data.theme_rollups.length ? data.theme_rollups.map((item) => row([
-          esc(item.theme_name), esc(item.stock_count), esc(item.report_count)
-        ])).join("") : empty(3);
-
-        $("krx-date").textContent = data.krx_snapshot_date ? `(${data.krx_snapshot_date})` : "";
-        $("krx-kospi-rows").innerHTML = data.krx_top_kospi_stocks.length ? data.krx_top_kospi_stocks.map((item) => row([
-          `${esc(item.stock_name)}<div class="muted">${esc(item.stock_code)}</div>`,
-          price(item.close_price),
-          percent(item.change_percent),
-          compactTurnover(item.turnover)
-        ])).join("") : empty(4);
-        $("krx-kosdaq-rows").innerHTML = data.krx_top_kosdaq_stocks.length ? data.krx_top_kosdaq_stocks.map((item) => row([
-          `${esc(item.stock_name)}<div class="muted">${esc(item.stock_code)}</div>`,
-          price(item.close_price),
-          percent(item.change_percent),
-          compactTurnover(item.turnover)
-        ])).join("") : empty(4);
-        $("krx-etf-rows").innerHTML = data.krx_top_etfs.length ? data.krx_top_etfs.map((item) => row([
-          `${esc(item.etf_name)}<div class="muted">${esc(item.etf_code)}</div>`,
-          price(item.close_price),
-          percent(item.change_percent),
-          esc(item.underlying_index_name || "-")
-        ])).join("") : empty(4);
-        $("krx-index-rows").innerHTML = data.krx_market_indices.length ? data.krx_market_indices.map((item) => row([
-          esc(item.index_name),
-          number(item.close_index),
-          percent(item.change_percent),
-          esc(item.index_series)
         ])).join("") : empty(4);
 
         renderSafeSettings(data.safe_settings || {});
@@ -20550,16 +20463,6 @@ def _render_admin_gui_html() -> str:
       if (taskName.endsWith("-TelegramCommands")) return "telegram-commands";
       if (taskName.endsWith("-Shutdown")) return "shutdown";
       return "";
-    }
-
-    function renderMarketMood(mood) {
-      const data = mood || {};
-      $("mood-date").textContent = data.business_date ? `(${data.business_date})` : "";
-      $("mood-total-reports").textContent = data.total_reports ?? 0;
-      $("mood-stock-count").textContent = data.stock_count ?? 0;
-      $("mood-sector-count").textContent = data.active_sector_count ?? 0;
-      $("mood-top-sector").textContent = data.top_sector_name || "-";
-      $("mood-multi-report").textContent = data.multi_report_stock_count ?? 0;
     }
 
     function runStatus(data) {
@@ -21280,8 +21183,8 @@ def _render_web_view_html() -> str:
       <div class="hero-tools">
         <nav class="top-tabs" aria-label="상단 탭">
           <div class="stock-search" role="search">
-            <label class="sr-only" for="stock-search-input">현재 날짜 종목 검색</label>
-            <input id="stock-search-input" type="search" autocomplete="off" placeholder="현재 날짜 종목명/코드" aria-describedby="stock-search-status" disabled>
+            <label class="sr-only" for="stock-search-input">저장 종목 검색</label>
+            <input id="stock-search-input" type="search" autocomplete="off" placeholder="전체 저장 종목명/코드" aria-describedby="stock-search-status" disabled>
             <div id="stock-search-results" class="stock-search-results" hidden></div>
           </div>
           <button class="top-tab active" type="button" data-view-tab="main" aria-current="page" aria-pressed="true">메인</button>
@@ -21290,7 +21193,7 @@ def _render_web_view_html() -> str:
           <button class="top-tab" type="button" data-view-tab="market" aria-current="false" aria-pressed="false">시장</button>
           <button class="top-tab" type="button" data-view-tab="rotation" aria-current="false" aria-pressed="false">순환매</button>
         </nav>
-        <p class="stock-search-status" id="stock-search-status" aria-live="polite">날짜를 선택하면 현재 날짜 종목을 찾을 수 있습니다.</p>
+        <p class="stock-search-status" id="stock-search-status" aria-live="polite">날짜를 선택하면 저장 종목을 찾을 수 있습니다.</p>
       </div>
     </header>
     <section class="grid">
@@ -21446,7 +21349,7 @@ def _render_web_view_html() -> str:
         <p class="notice" id="rotation-notice">저장된 리포트 분류 요약 기준입니다.</p>
       </details>
 
-      <div class="card span-12" data-view-panel="watch" hidden>
+      <div class="card span-12" data-view-panel="stock" hidden>
         <div class="section-header">
           <h2>일일 종목 요약 <span class="muted" id="daily-date"></span></h2>
           <div class="summary-actions">
@@ -21506,24 +21409,20 @@ def _render_web_view_html() -> str:
               <div class="scroll-panel compact"><table class="mobile-card-table"><thead><tr><th>종목</th><th>종가</th><th>등락률</th><th>거래대금</th></tr></thead><tbody id="market-kosdaq-rows"><tr><td colspan="4" class="muted">날짜를 선택하세요.</td></tr></tbody></table></div>
             </div>
             <div class="market-block">
-              <h3>ETF 거래대금 상위</h3>
-              <div class="scroll-panel compact"><table class="mobile-card-table"><thead><tr><th>ETF</th><th>종가</th><th>등락률</th><th>거래대금</th></tr></thead><tbody id="market-etf-rows"><tr><td colspan="4" class="muted">날짜를 선택하세요.</td></tr></tbody></table></div>
-            </div>
-            <div class="market-block">
               <h3>주요 지수</h3>
               <div class="scroll-panel compact"><table class="mobile-card-table"><thead><tr><th>지수</th><th>종가</th><th>등락률</th><th>거래대금</th></tr></thead><tbody id="market-index-rows"><tr><td colspan="4" class="muted">날짜를 선택하세요.</td></tr></tbody></table></div>
             </div>
           </div>
-          <p class="notice">선택 날짜 기준입니다.</p>
+          <p class="notice">선택 날짜 기준입니다. ETF는 순환매 탭에서 봅니다.</p>
         </details>
 
         <details class="market-reference-panel" id="etf-trend-panel">
           <summary>KRX 최근 흐름 <span class="muted" id="krx-flow-title"></span></summary>
           <table class="mobile-card-table">
-            <thead><tr><th>날짜</th><th>KOSPI 거래대금 1위</th><th>KOSDAQ 거래대금 1위</th><th>ETF 거래대금 1위</th></tr></thead>
-            <tbody id="krx-flow-rows"><tr><td colspan="4" class="muted">날짜를 선택하세요.</td></tr></tbody>
+            <thead><tr><th>날짜</th><th>KOSPI 거래대금 1위</th><th>KOSDAQ 거래대금 1위</th></tr></thead>
+            <tbody id="krx-flow-rows"><tr><td colspan="3" class="muted">날짜를 선택하세요.</td></tr></tbody>
           </table>
-          <p class="notice" id="krx-flow-notice">선택 날짜를 포함한 최근 저장 데이터 기준입니다.</p>
+          <p class="notice" id="krx-flow-notice">선택 날짜를 포함한 최근 저장 시장 데이터 기준입니다. ETF는 순환매 탭에서 봅니다.</p>
         </details>
 
         <details class="market-reference-panel">
@@ -21689,6 +21588,8 @@ def _render_web_view_html() -> str:
     let flowTrendLoadedDate = null;
     let dailyLoadSequence = 0;
     let stockSearchQuery = "";
+    let stockSearchResults = [];
+    let stockSearchRequestId = 0;
     let activeViewTab = "main";
 
     function setViewTab(tabName) {
@@ -21783,11 +21684,11 @@ def _render_web_view_html() -> str:
     }
 
     function stockSearchDefaultStatus() {
-      if (!selectedDate) return "날짜를 선택하면 현재 날짜 종목을 찾을 수 있습니다.";
+      if (!selectedDate) return "날짜를 선택하면 저장 종목을 찾을 수 있습니다.";
       const stockCount = currentDailyData?.stocks?.length || 0;
       return stockCount
-        ? `${selectedDate} 종목 ${number(stockCount)}개에서 이름이나 코드로 찾을 수 있습니다.`
-        : "선택 날짜에 찾을 종목이 없습니다.";
+        ? `${selectedDate} 리포트 종목 ${number(stockCount)}개와 전체 저장 종목에서 찾을 수 있습니다.`
+        : `${selectedDate} 기준 전체 저장 종목에서 찾을 수 있습니다.`;
     }
 
     function updateStockSearchStatus(message = null) {
@@ -21796,10 +21697,11 @@ def _render_web_view_html() -> str:
 
     function syncStockSearchInput() {
       const input = document.getElementById("stock-search-input");
-      const hasStocks = Boolean(currentDailyData?.stocks?.length);
-      input.disabled = !hasStocks;
-      if (!hasStocks) {
+      const hasDate = Boolean(selectedDate);
+      input.disabled = !hasDate;
+      if (!hasDate) {
         stockSearchQuery = "";
+        stockSearchResults = [];
         input.value = "";
         document.getElementById("stock-search-results").hidden = true;
         document.getElementById("stock-search-results").innerHTML = "";
@@ -21809,8 +21711,8 @@ def _render_web_view_html() -> str:
 
     function stockSearchMatches(query) {
       const normalized = String(query || "").trim().toLowerCase();
-      if (!normalized || !currentDailyData?.stocks?.length) return [];
-      return currentDailyData.stocks.filter((item) => {
+      if (!normalized) return [];
+      return stockSearchResults.filter((item) => {
         const name = String(item.stock_name || "").toLowerCase();
         const code = String(item.stock_code || "").toLowerCase();
         return name.includes(normalized) || code.includes(normalized);
@@ -21829,23 +21731,51 @@ def _render_web_view_html() -> str:
       if (!matches.length) {
         panel.hidden = true;
         panel.innerHTML = "";
-        updateStockSearchStatus(`${selectedDate || "선택 날짜"} 종목 요약에서 일치하는 종목이 없습니다.`);
+        updateStockSearchStatus(`${selectedDate || "선택 날짜"} 저장 종목에서 일치하는 종목이 없습니다.`);
         return;
       }
-      updateStockSearchStatus(`${selectedDate} 종목 ${number(matches.length)}개 일치`);
+      updateStockSearchStatus(`${selectedDate} 저장 종목 ${number(matches.length)}개 일치`);
       panel.hidden = false;
       panel.innerHTML = matches.map((item) => `
         <button class="stock-search-result" type="button" data-stock-search-code="${esc(item.stock_code || "")}">
           <b>${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span></b>
-          <span class="muted">${number(item.mention_count)}건 · ${brokerDisplay(item.broker_display)}</span>
+          <span class="muted">${esc(item.display_status || "저장 자료 확인")}</span>
         </button>
       `).join("");
+    }
+
+    async function loadStockSearchResults() {
+      const normalized = String(stockSearchQuery || "").trim();
+      const requestId = ++stockSearchRequestId;
+      const panel = document.getElementById("stock-search-results");
+      if (!selectedDate || !normalized) {
+        stockSearchResults = [];
+        panel.hidden = true;
+        panel.innerHTML = "";
+        updateStockSearchStatus();
+        return;
+      }
+      updateStockSearchStatus(`${selectedDate} 저장 종목 검색 중`);
+      const params = new URLSearchParams({ date: selectedDate, q: normalized, limit: "8" });
+      try {
+        const data = await fetch(`/api/stocks/search?${params.toString()}`, { cache: "no-store" }).then((response) => response.json());
+        if (requestId !== stockSearchRequestId) return;
+        stockSearchResults = Array.isArray(data.items) ? data.items : [];
+        renderStockSearchResults();
+      } catch (error) {
+        if (requestId !== stockSearchRequestId) return;
+        stockSearchResults = [];
+        panel.hidden = true;
+        panel.innerHTML = "";
+        updateStockSearchStatus(`종목 검색 오류: ${error}`);
+      }
     }
 
     function selectStockFromSearch(stockCode) {
       if (!selectedDate || !stockCode) return;
       document.getElementById("stock-search-results").hidden = true;
-      const picked = (currentDailyData?.stocks || []).find((item) => item.stock_code === stockCode);
+      const picked = stockSearchResults.find((item) => item.stock_code === stockCode)
+        || (currentDailyData?.stocks || []).find((item) => item.stock_code === stockCode);
       if (picked) {
         document.getElementById("stock-search-input").value = `${picked.stock_name || "-"} ${picked.stock_code || ""}`.trim();
         updateStockSearchStatus(`${picked.stock_name || "-"} ${picked.stock_code || ""}`.trim() + " 선택");
@@ -21993,6 +21923,8 @@ def _render_web_view_html() -> str:
       selectedCategoryDisplayName = null;
       selectedCategoryLabel = null;
       selectedCategorySource = null;
+      stockSearchResults = [];
+      stockSearchRequestId += 1;
       dailyFlowExpanded = false;
       updateSelectionStatus();
       if (validDate(date)) {
@@ -22948,7 +22880,7 @@ def _render_web_view_html() -> str:
         ? (hideNoOpinionReports
           ? `의견없음 ${number(hiddenCount)}건 제외 · ${number(visibleReports.length)}건 표시`
           : `전체 ${number(visibleReports.length)}건 표시`)
-        : "해당 종목 리포트가 없습니다.";
+        : (data?.report_empty_state || "해당 종목 리포트가 없습니다.");
       document.getElementById("stock-detail").innerHTML = visibleReports.length ? `
         ${visibleReports.map((item) => `
           <div class="detail-item">
@@ -22956,7 +22888,7 @@ def _render_web_view_html() -> str:
             <span class="detail-meta">${esc(item.broker_name)} · ${esc(publishedLabel(item.published_at))} · ${esc(item.target_price_display || `목표가 ${price(item.target_price_value)}`)} · ${esc(item.opinion_display || opinion(item.opinion_normalized))}</span>
           </div>
         `).join("")}
-      ` : `<span class="muted">${reports.length ? "의견없음 제외 조건에 표시할 리포트가 없습니다." : "해당 종목 리포트가 없습니다."}</span>`;
+      ` : `<span class="muted">${reports.length ? "의견없음 제외 조건에 표시할 리포트가 없습니다." : (data?.report_empty_state || "해당 종목 리포트가 없습니다.")}</span>`;
     }
 
     async function loadCategoryDetail(date, categoryType, publicCategoryId, displayName, options = {}) {
@@ -23576,7 +23508,6 @@ def _render_web_view_html() -> str:
       if (!context || !context.available) {
         document.getElementById("market-kospi-rows").innerHTML = emptyRow;
         document.getElementById("market-kosdaq-rows").innerHTML = emptyRow;
-        document.getElementById("market-etf-rows").innerHTML = emptyRow;
         document.getElementById("market-index-rows").innerHTML = emptyRow;
         return;
       }
@@ -23588,12 +23519,6 @@ def _render_web_view_html() -> str:
       ])).join("") : empty(4);
       document.getElementById("market-kosdaq-rows").innerHTML = context.top_kosdaq_by_turnover.length ? context.top_kosdaq_by_turnover.map((item) => row([
         labeled("종목", `${esc(item.stock_name)}<div class="muted">${esc(item.stock_code)}</div>`),
-        labeled("종가", price(item.close_price)),
-        labeled("등락률", percent(item.change_percent)),
-        labeled("거래대금", compactTurnover(item.turnover))
-      ])).join("") : empty(4);
-      document.getElementById("market-etf-rows").innerHTML = context.top_etfs_by_turnover.length ? context.top_etfs_by_turnover.map((item) => row([
-        labeled("ETF", `${esc(item.etf_name)}<div class="muted">${esc(item.etf_code)} · ${esc(item.underlying_index_name || "-")}</div>`),
         labeled("종가", price(item.close_price)),
         labeled("등락률", percent(item.change_percent)),
         labeled("거래대금", compactTurnover(item.turnover))
@@ -23620,16 +23545,15 @@ def _render_web_view_html() -> str:
           ? `(최근 저장 ${referenceDate} · 선택 ${selectedDateText})`
           : `(기준 ${referenceDate})`)
         : "";
-      document.getElementById("krx-flow-notice").textContent = displayNotice(flow?.notice || "선택 날짜를 포함한 최근 저장 데이터 기준입니다.");
+      document.getElementById("krx-flow-notice").textContent = `${displayNotice(flow?.notice || "선택 날짜를 포함한 최근 저장 데이터 기준입니다.")} ETF는 순환매 탭에서 봅니다.`;
       if (!flow || !flow.available || !flow.items.length) {
-        document.getElementById("krx-flow-rows").innerHTML = '<tr><td colspan="4" class="muted">최근 KRX 흐름 데이터가 없습니다.</td></tr>';
+        document.getElementById("krx-flow-rows").innerHTML = '<tr><td colspan="3" class="muted">최근 KRX 흐름 데이터가 없습니다.</td></tr>';
         return;
       }
       document.getElementById("krx-flow-rows").innerHTML = flow.items.map((item) => row([
         labeled("날짜", esc(item.business_date)),
         labeled("KOSPI", flowItem(item.kospi_top_by_turnover, "stock_name", "stock_code")),
-        labeled("KOSDAQ", flowItem(item.kosdaq_top_by_turnover, "stock_name", "stock_code")),
-        labeled("ETF", flowItem(item.etf_top_by_turnover, "etf_name", "etf_code"))
+        labeled("KOSDAQ", flowItem(item.kosdaq_top_by_turnover, "stock_name", "stock_code"))
       ])).join("");
     }
 
@@ -23668,7 +23592,7 @@ def _render_web_view_html() -> str:
     function compactEtfTrend(items) {
       const picked = (items || []).slice(0, 5);
       if (!picked.length) return '<span class="muted">-</span>';
-      return picked.map((item) => `${esc(item.etf_name)}<span class="muted"> ${esc(item.etf_code)} · ${percent(item.change_percent)} · ${compactTurnover(item.turnover)}</span>`).join("<br>");
+      return picked.map((item) => `${esc(item.etf_name)}<span class="muted"> ${esc(item.etf_code)} · ${percent(item.change_percent)} · ${esc(item.evidence_label || compactTurnover(item.turnover))}</span>`).join("<br>");
     }
 
     function renderEtfTrend(flow) {
@@ -23679,9 +23603,9 @@ def _render_web_view_html() -> str:
           ? `(최근 저장 ${referenceDate} · 선택 ${selectedDateText})`
           : `(기준 ${referenceDate})`)
         : (selectedDateText ? `(선택 ${selectedDateText})` : "");
-      const notice = flow?.exact_date_available === false
-        ? `선택 날짜의 ETF 저장값이 없어 ${referenceDate || "최근 저장일"} 기준 흐름만 표시합니다.`
-        : displayNotice(flow?.notice || "저장된 ETF 데이터 기준입니다.");
+      const notice = flow?.reference_status === "stale" || flow?.exact_date_available === false
+        ? `선택 날짜의 ETF 저장값이 없어 ${referenceDate || "최근 저장일"} 기준 흐름만 표시합니다. 구성종목이 아닌 KRX ETF 일별매매정보 기준입니다.`
+        : String(flow?.notice || "저장된 ETF 데이터 기준입니다.");
       document.getElementById("etf-tab-title").textContent = title;
       document.getElementById("etf-tab-notice").textContent = notice;
       if (!flow || !flow.available || !flow.items.length) {
@@ -23741,12 +23665,6 @@ def _render_web_view_html() -> str:
       ])).join("") : empty(4);
       document.getElementById("market-kosdaq-rows").innerHTML = data.krx_top_kosdaq_stocks.length ? data.krx_top_kosdaq_stocks.map((item) => row([
         labeled("종목", `${esc(item.stock_name)}<div class="muted">${esc(item.stock_code)}</div>`),
-        labeled("종가", price(item.close_price)),
-        labeled("등락률", percent(item.change_percent)),
-        labeled("거래대금", compactTurnover(item.turnover))
-      ])).join("") : empty(4);
-      document.getElementById("market-etf-rows").innerHTML = data.krx_top_etfs.length ? data.krx_top_etfs.map((item) => row([
-        labeled("ETF", `${esc(item.etf_name)}<div class="muted">${esc(item.etf_code)}</div>`),
         labeled("종가", price(item.close_price)),
         labeled("등락률", percent(item.change_percent)),
         labeled("거래대금", compactTurnover(item.turnover))
@@ -23849,7 +23767,7 @@ def _render_web_view_html() -> str:
     });
     document.getElementById("stock-search-input").addEventListener("input", (event) => {
       stockSearchQuery = event.target.value;
-      renderStockSearchResults();
+      loadStockSearchResults();
     });
     document.getElementById("stock-search-input").addEventListener("keydown", (event) => {
       if (event.key !== "Enter") return;
@@ -24305,6 +24223,176 @@ def _web_view_news_observation_counts_by_date(
             tuple(item.isoformat() for item in business_dates),
         ).fetchall()
     return {date.fromisoformat(str(row["target_date"])): int(row["run_count"] or 0) for row in rows}
+
+
+def build_web_view_stock_search_snapshot(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    business_date: date,
+    query: str,
+    limit: int = 8,
+    now: datetime | None = None,
+) -> dict:
+    current = now or datetime.now(ZoneInfo(config.timezone))
+    normalized_query = (query or "").strip()
+    max_limit = max(1, min(limit, 20))
+    if not normalized_query:
+        return {
+            "now": current.isoformat(),
+            "timezone": config.timezone,
+            "surface": "web-view",
+            "read_only": True,
+            "business_date": business_date.isoformat(),
+            "source": "stored_stock_universe",
+            "live_fetch": False,
+            "available": False,
+            "query": normalized_query,
+            "items": [],
+            "empty_state": "검색어를 입력하세요.",
+        }
+
+    like_query = f"%{normalized_query}%"
+    exact_query = normalized_query
+    with repository.connect() as connection:
+        rows = connection.execute(
+            """
+            WITH latest_krx AS (
+                SELECT
+                    k.stock_code,
+                    k.stock_name,
+                    k.market
+                FROM krx_stock_metadata k
+                JOIN (
+                    SELECT stock_code, MAX(business_date) AS business_date
+                    FROM krx_stock_metadata
+                    GROUP BY stock_code
+                ) latest
+                  ON latest.stock_code = k.stock_code
+                 AND latest.business_date = k.business_date
+            ),
+            candidates AS (
+                SELECT stock_code, stock_name, NULL AS market, 0 AS source_rank
+                FROM daily_stock_summaries
+                WHERE business_date = ?
+                  AND stock_code IS NOT NULL
+                UNION ALL
+                SELECT stock_code, stock_name, market, 1 AS source_rank
+                FROM latest_krx
+                WHERE stock_code IS NOT NULL
+                UNION ALL
+                SELECT stock_code, stock_name, NULL AS market, 2 AS source_rank
+                FROM stock_metadata
+                WHERE stock_code IS NOT NULL
+                UNION ALL
+                SELECT stock_code, stock_name, NULL AS market, 3 AS source_rank
+                FROM reports
+                WHERE stock_code IS NOT NULL
+            ),
+            matched AS (
+                SELECT
+                    TRIM(stock_code) AS stock_code,
+                    TRIM(COALESCE(stock_name, '')) AS stock_name,
+                    NULLIF(TRIM(COALESCE(market, '')), '') AS market,
+                    source_rank
+                FROM candidates
+                WHERE TRIM(COALESCE(stock_code, '')) <> ''
+                  AND (
+                    stock_code LIKE ? COLLATE NOCASE
+                    OR stock_name LIKE ? COLLATE NOCASE
+                  )
+            ),
+            ranked AS (
+                SELECT
+                    stock_code,
+                    stock_name,
+                    market,
+                    source_rank,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY stock_code
+                        ORDER BY source_rank ASC, stock_name ASC
+                    ) AS row_number
+                FROM matched
+            )
+            SELECT stock_code, stock_name, market
+            FROM ranked
+            WHERE row_number = 1
+            ORDER BY
+                CASE WHEN stock_code = ? THEN 0 ELSE 1 END,
+                stock_name ASC,
+                stock_code ASC
+            LIMIT ?
+            """,
+            (business_date.isoformat(), like_query, like_query, exact_query, max_limit),
+        ).fetchall()
+        stock_codes = [str(row["stock_code"] or "") for row in rows if row["stock_code"]]
+        report_codes = {
+            str(row["stock_code"] or "")
+            for row in connection.execute(
+                f"""
+                SELECT DISTINCT stock_code
+                FROM reports
+                WHERE business_date = ?
+                  AND stock_code IN ({", ".join("?" for _ in stock_codes)})
+                """
+                if stock_codes
+                else "SELECT NULL AS stock_code WHERE 0",
+                (business_date.isoformat(), *stock_codes) if stock_codes else (),
+            ).fetchall()
+        }
+        news_codes = {
+            str(row["stock_code"] or "")
+            for row in connection.execute(
+                f"""
+                SELECT DISTINCT stock_code
+                FROM report_linked_news_evidence
+                WHERE target_date = ?
+                  AND stock_code IN ({", ".join("?" for _ in stock_codes)})
+                """
+                if stock_codes
+                else "SELECT NULL AS stock_code WHERE 0",
+                (business_date.isoformat(), *stock_codes) if stock_codes else (),
+            ).fetchall()
+        }
+    krx_codes = {
+        item.stock_code
+        for item in repository.list_stock_market_daily_for_codes(business_date, stock_codes)
+    }
+    items = []
+    for row in rows:
+        stock_code = str(row["stock_code"] or "")
+        has_report = stock_code in report_codes
+        has_krx = stock_code in krx_codes
+        has_news = stock_code in news_codes
+        status_parts = [
+            "당일 리포트 있음" if has_report else "당일 리포트 없음",
+            "저장 KRX 있음" if has_krx else "저장 KRX 없음",
+            "뉴스 근거 있음" if has_news else "뉴스 근거 없음",
+        ]
+        items.append(
+            {
+                "stock_code": stock_code,
+                "stock_name": str(row["stock_name"] or stock_code),
+                "market": row["market"],
+                "has_selected_date_report": has_report,
+                "has_selected_date_krx": has_krx,
+                "has_news_observation": has_news,
+                "display_status": " · ".join(status_parts),
+            }
+        )
+    return {
+        "now": current.isoformat(),
+        "timezone": config.timezone,
+        "surface": "web-view",
+        "read_only": True,
+        "business_date": business_date.isoformat(),
+        "source": "stored_stock_universe",
+        "live_fetch": False,
+        "available": bool(items),
+        "query": normalized_query,
+        "items": items,
+        "empty_state": "조회된 저장 종목이 없습니다." if not items else None,
+    }
 
 
 def build_web_view_daily_snapshot(
@@ -27340,6 +27428,32 @@ def _web_view_market_briefing_turnover_item(item: StockMarketDailySnapshot) -> d
     return payload
 
 
+def _format_web_view_nav(value: float | None) -> str | None:
+    if value is None:
+        return None
+    return f"{value:,.1f}"
+
+
+def _web_view_etf_evidence_label(item: EtfDailySnapshot) -> str:
+    parts = []
+    if item.turnover is not None:
+        parts.append(f"거래대금 {_format_krx_flow_amount(item.turnover)}")
+    nav_display = _format_web_view_nav(item.nav)
+    if nav_display:
+        parts.append(f"NAV {nav_display}")
+    if item.underlying_index_name:
+        parts.append(f"기초지수 {item.underlying_index_name}")
+    return " · ".join(parts) if parts else "저장 ETF 일별매매정보"
+
+
+def _web_view_etf_reference_status(reference_date: date | None, business_date: date) -> str:
+    if reference_date == business_date:
+        return "exact"
+    if reference_date is not None:
+        return "stale"
+    return "missing"
+
+
 def _web_view_etf_item(item: EtfDailySnapshot) -> dict:
     return {
         "business_date": item.business_date.isoformat(),
@@ -27351,6 +27465,8 @@ def _web_view_etf_item(item: EtfDailySnapshot) -> dict:
         "volume": item.volume,
         "turnover": item.turnover,
         "underlying_index_name": item.underlying_index_name,
+        "evidence_label": _web_view_etf_evidence_label(item),
+        "rotation_reference": "저장 ETF 거래대금/NAV/기초지수 기준",
     }
 
 
@@ -27814,6 +27930,8 @@ def build_web_view_etf_trend_snapshot(
 ) -> dict:
     current = now or datetime.now(ZoneInfo(config.timezone))
     snapshot_dates = repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=limit)
+    reference_date = snapshot_dates[0] if snapshot_dates else None
+    reference_status = _web_view_etf_reference_status(reference_date, business_date)
     items = []
     for snapshot_date in snapshot_dates:
         top_etfs = repository.list_etf_daily_by_turnover(snapshot_date, limit=5)
@@ -27829,16 +27947,23 @@ def build_web_view_etf_trend_snapshot(
         "surface": "web-view",
         "read_only": True,
         "business_date": business_date.isoformat(),
-        "reference_date": snapshot_dates[0].isoformat() if snapshot_dates else None,
-        "exact_date_available": bool(snapshot_dates and snapshot_dates[0] == business_date),
+        "reference_date": reference_date.isoformat() if reference_date else None,
+        "reference_status": reference_status,
+        "exact_date_available": reference_status == "exact",
         "available": bool(items),
         "source": "krx" if items else None,
         "data_scope": "stored_krx_snapshot",
+        "basis": "KRX ETF 일별매매정보",
+        "display_label": "ETF 순환매 참고" if items else "ETF 저장값 없음",
+        "constituents_available": False,
+        "composition_scope": "구성종목 미포함",
         "live_fetch": False,
         "scoring": False,
         "notice": (
-            "선택 날짜 이하 최근 KRX 저장 스냅샷의 ETF 거래대금 상위 흐름입니다. 저장 데이터 기반 확인용입니다."
-            if items
+            "선택 날짜 이하 최근 KRX 저장 스냅샷의 ETF 거래대금/NAV/기초지수 흐름입니다. 구성종목이 아닌 KRX ETF 일별매매정보 기준입니다."
+            if items and reference_status == "exact"
+            else f"선택 날짜의 ETF 저장값이 없어 {reference_date.isoformat()} 기준 ETF 흐름만 표시합니다. 구성종목이 아닌 KRX ETF 일별매매정보 기준입니다."
+            if items and reference_date
             else "선택 날짜 이전 또는 해당 날짜의 ETF 저장 스냅샷이 없습니다."
         ),
         "items": items,
@@ -28086,7 +28211,19 @@ def build_web_view_stock_detail_snapshot(
     reports = repository.list_reports_for_stock_on_business_date(business_date, stock_code)
     market_refs = repository.list_stock_market_daily_for_codes(business_date, [stock_code])
     market_reference = market_refs[0] if market_refs else None
-    stock_name = reports[0].stock_name if reports else None
+    krx_metadata = repository.get_latest_krx_stock_metadata(stock_code)
+    stock_metadata = repository.get_stock_metadata(stock_code)
+    stock_name = (
+        reports[0].stock_name
+        if reports
+        else market_reference.stock_name
+        if market_reference
+        else krx_metadata.stock_name
+        if krx_metadata
+        else stock_metadata.stock_name
+        if stock_metadata
+        else None
+    )
     return {
         "now": current.isoformat(),
         "timezone": config.timezone,
@@ -28095,6 +28232,8 @@ def build_web_view_stock_detail_snapshot(
         "business_date": business_date.isoformat(),
         "stock_code": stock_code,
         "stock_name": stock_name,
+        "has_selected_date_report": bool(reports),
+        "report_empty_state": "선택 날짜에 등록된 리포트가 없습니다." if not reports else None,
         "market_reference": _web_view_stock_market_reference(market_reference),
         "target_price_trail": _build_web_view_target_price_trail(repository, business_date, stock_code),
         "related_context": _build_web_view_stock_related_context(

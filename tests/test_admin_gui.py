@@ -30,17 +30,23 @@ def test_admin_gui_html_contains_status_shell() -> None:
     assert "Stock Monitor Admin" in html
     assert "/api/status" in html
     assert "스케줄러 작업" in html
-    assert "섹터 요약" in html
-    assert "sector-rows" in html
-    assert "시장 분위기" in html
-    assert "mood-total-reports" in html
-    assert "테마 요약" in html
-    assert "theme-rows" in html
-    assert "KRX 시장 데이터" in html
-    assert "krx-kospi-rows" in html
-    assert "krx-kosdaq-rows" in html
-    assert "krx-etf-rows" in html
-    assert "krx-index-rows" in html
+    assert "시장 분위기" not in html
+    assert "mood-total-reports" not in html
+    assert "최근 리포트/요약" not in html
+    assert "report-rows" not in html
+    assert "섹터 요약" not in html
+    assert "sector-rows" not in html
+    assert "테마 요약" not in html
+    assert "theme-rows" not in html
+    assert "KRX 시장 데이터" not in html
+    assert "KOSPI 거래대금 상위" not in html
+    assert "KOSDAQ 거래대금 상위" not in html
+    assert "ETF 거래대금 상위" not in html
+    assert "시장 지수" not in html
+    assert "krx-kospi-rows" not in html
+    assert "krx-kosdaq-rows" not in html
+    assert "krx-etf-rows" not in html
+    assert "krx-index-rows" not in html
     assert "안전 설정" in html
     assert "safe-setting-rows" in html
     assert "설정 변경 이력" in html
@@ -69,7 +75,7 @@ def test_admin_gui_html_contains_status_shell() -> None:
     assert "복구 안내" in html
     assert "recovery-action-rows" in html
     assert "detail_display" in html
-    assert "종가(포인트)" in html
+    assert "종가(포인트)" not in html
     assert "데스크톱 검증" in html
     assert "scheduled wrapper" not in html
     assert "실행 제외 달력" in html
