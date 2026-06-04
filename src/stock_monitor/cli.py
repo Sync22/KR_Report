@@ -20181,80 +20181,11 @@ def _render_admin_gui_html() -> str:
       </div>
 
       <div class="table-card full">
-        <h2>시장 분위기 <span class="muted" id="mood-date"></span></h2>
-        <div class="mood-grid">
-          <div class="mood-item"><b>리포트</b><strong id="mood-total-reports">-</strong></div>
-          <div class="mood-item"><b>종목</b><strong id="mood-stock-count">-</strong></div>
-          <div class="mood-item"><b>활성 업종</b><strong id="mood-sector-count">-</strong></div>
-          <div class="mood-item"><b>최다 업종</b><strong id="mood-top-sector">-</strong></div>
-          <div class="mood-item"><b>2건 이상 종목</b><strong id="mood-multi-report">-</strong></div>
-        </div>
-      </div>
-
-      <div class="table-card wide">
-        <h2>최근 리포트/요약</h2>
-        <table>
-          <thead><tr><th>날짜</th><th>리포트</th><th>요약</th></tr></thead>
-          <tbody id="report-rows"></tbody>
-        </table>
-      </div>
-
-      <div class="table-card wide">
         <h2>최근 발송</h2>
         <table>
           <thead><tr><th>시각</th><th>채널</th><th>상태</th><th>내용</th></tr></thead>
           <tbody id="delivery-rows"></tbody>
         </table>
-      </div>
-
-      <div class="table-card full">
-        <h2>섹터 요약 <span class="muted" id="sector-date"></span></h2>
-        <table>
-          <thead><tr><th>섹터</th><th>종목</th><th>리포트</th></tr></thead>
-          <tbody id="sector-rows"></tbody>
-        </table>
-      </div>
-
-      <div class="table-card full">
-        <h2>테마 요약 <span class="muted" id="theme-date"></span></h2>
-        <table>
-          <thead><tr><th>테마</th><th>종목</th><th>리포트</th></tr></thead>
-          <tbody id="theme-rows"></tbody>
-        </table>
-      </div>
-
-      <div class="table-card full">
-        <h2>KRX 시장 데이터 <span class="muted" id="krx-date"></span></h2>
-        <div class="grid">
-          <div class="table-card wide">
-            <h2>KOSPI 거래대금 상위</h2>
-            <table>
-              <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>거래대금</th></tr></thead>
-              <tbody id="krx-kospi-rows"></tbody>
-            </table>
-          </div>
-          <div class="table-card wide">
-            <h2>KOSDAQ 거래대금 상위</h2>
-            <table>
-              <thead><tr><th>종목</th><th>현재가</th><th>등락률</th><th>거래대금</th></tr></thead>
-              <tbody id="krx-kosdaq-rows"></tbody>
-            </table>
-          </div>
-          <div class="table-card wide">
-            <h2>ETF 거래대금 상위</h2>
-            <table>
-              <thead><tr><th>ETF</th><th>현재가</th><th>등락률</th><th>기초지수</th></tr></thead>
-              <tbody id="krx-etf-rows"></tbody>
-            </table>
-          </div>
-          <div class="table-card wide">
-            <h2>시장 지수</h2>
-            <table>
-              <thead><tr><th>지수</th><th>종가(포인트)</th><th>등락률</th><th>시리즈</th></tr></thead>
-              <tbody id="krx-index-rows"></tbody>
-            </table>
-          </div>
-        </div>
       </div>
 
       <div class="table-card full">
@@ -20400,7 +20331,6 @@ def _render_admin_gui_html() -> str:
         $("backup-status").textContent = data.backup?.exists ? "준비됨" : "없음";
         $("backup-reminder").textContent = data.data_safety_reminders?.[0] || "Run db-verify and db-backup before risky work.";
         renderRecoveryActions(data.recovery_actions || []);
-        renderMarketMood(data.market_mood);
         renderCalendar(data);
 
         $("scheduler-rows").innerHTML = data.scheduler_tasks.length ? data.scheduler_tasks.map((task) => {
@@ -20431,49 +20361,8 @@ def _render_admin_gui_html() -> str:
           ]);
         }).join("") : empty(6);
 
-        $("report-rows").innerHTML = data.reports_by_date.length ? data.reports_by_date.map((item) => {
-          const summary = data.summaries_by_date.find((candidate) => candidate.business_date === item.business_date);
-          return row([esc(item.business_date), esc(item.count), esc(summary ? summary.count : 0)]);
-        }).join("") : empty(3);
-
         $("delivery-rows").innerHTML = data.recent_deliveries.length ? data.recent_deliveries.map((item) => row([
           shortDateTime(item.delivered_at), esc(channelLabel(item.channel)), esc(statusLabel(item.status)), esc(item.detail || "")
-        ])).join("") : empty(4);
-
-        $("sector-date").textContent = data.sector_rollup_date ? `(${data.sector_rollup_date})` : "";
-        $("sector-rows").innerHTML = data.sector_rollups.length ? data.sector_rollups.map((item) => row([
-          esc(item.sector_name), esc(item.stock_count), esc(item.report_count)
-        ])).join("") : empty(3);
-
-        $("theme-date").textContent = data.theme_rollup_date ? `(${data.theme_rollup_date})` : "";
-        $("theme-rows").innerHTML = data.theme_rollups.length ? data.theme_rollups.map((item) => row([
-          esc(item.theme_name), esc(item.stock_count), esc(item.report_count)
-        ])).join("") : empty(3);
-
-        $("krx-date").textContent = data.krx_snapshot_date ? `(${data.krx_snapshot_date})` : "";
-        $("krx-kospi-rows").innerHTML = data.krx_top_kospi_stocks.length ? data.krx_top_kospi_stocks.map((item) => row([
-          `${esc(item.stock_name)}<div class="muted">${esc(item.stock_code)}</div>`,
-          price(item.close_price),
-          percent(item.change_percent),
-          compactTurnover(item.turnover)
-        ])).join("") : empty(4);
-        $("krx-kosdaq-rows").innerHTML = data.krx_top_kosdaq_stocks.length ? data.krx_top_kosdaq_stocks.map((item) => row([
-          `${esc(item.stock_name)}<div class="muted">${esc(item.stock_code)}</div>`,
-          price(item.close_price),
-          percent(item.change_percent),
-          compactTurnover(item.turnover)
-        ])).join("") : empty(4);
-        $("krx-etf-rows").innerHTML = data.krx_top_etfs.length ? data.krx_top_etfs.map((item) => row([
-          `${esc(item.etf_name)}<div class="muted">${esc(item.etf_code)}</div>`,
-          price(item.close_price),
-          percent(item.change_percent),
-          esc(item.underlying_index_name || "-")
-        ])).join("") : empty(4);
-        $("krx-index-rows").innerHTML = data.krx_market_indices.length ? data.krx_market_indices.map((item) => row([
-          esc(item.index_name),
-          number(item.close_index),
-          percent(item.change_percent),
-          esc(item.index_series)
         ])).join("") : empty(4);
 
         renderSafeSettings(data.safe_settings || {});
@@ -20574,16 +20463,6 @@ def _render_admin_gui_html() -> str:
       if (taskName.endsWith("-TelegramCommands")) return "telegram-commands";
       if (taskName.endsWith("-Shutdown")) return "shutdown";
       return "";
-    }
-
-    function renderMarketMood(mood) {
-      const data = mood || {};
-      $("mood-date").textContent = data.business_date ? `(${data.business_date})` : "";
-      $("mood-total-reports").textContent = data.total_reports ?? 0;
-      $("mood-stock-count").textContent = data.stock_count ?? 0;
-      $("mood-sector-count").textContent = data.active_sector_count ?? 0;
-      $("mood-top-sector").textContent = data.top_sector_name || "-";
-      $("mood-multi-report").textContent = data.multi_report_stock_count ?? 0;
     }
 
     function runStatus(data) {
@@ -21470,7 +21349,7 @@ def _render_web_view_html() -> str:
         <p class="notice" id="rotation-notice">저장된 리포트 분류 요약 기준입니다.</p>
       </details>
 
-      <div class="card span-12" data-view-panel="watch" hidden>
+      <div class="card span-12" data-view-panel="stock" hidden>
         <div class="section-header">
           <h2>일일 종목 요약 <span class="muted" id="daily-date"></span></h2>
           <div class="summary-actions">
@@ -21530,24 +21409,20 @@ def _render_web_view_html() -> str:
               <div class="scroll-panel compact"><table class="mobile-card-table"><thead><tr><th>종목</th><th>종가</th><th>등락률</th><th>거래대금</th></tr></thead><tbody id="market-kosdaq-rows"><tr><td colspan="4" class="muted">날짜를 선택하세요.</td></tr></tbody></table></div>
             </div>
             <div class="market-block">
-              <h3>ETF 거래대금 상위</h3>
-              <div class="scroll-panel compact"><table class="mobile-card-table"><thead><tr><th>ETF</th><th>종가</th><th>등락률</th><th>거래대금</th></tr></thead><tbody id="market-etf-rows"><tr><td colspan="4" class="muted">날짜를 선택하세요.</td></tr></tbody></table></div>
-            </div>
-            <div class="market-block">
               <h3>주요 지수</h3>
               <div class="scroll-panel compact"><table class="mobile-card-table"><thead><tr><th>지수</th><th>종가</th><th>등락률</th><th>거래대금</th></tr></thead><tbody id="market-index-rows"><tr><td colspan="4" class="muted">날짜를 선택하세요.</td></tr></tbody></table></div>
             </div>
           </div>
-          <p class="notice">선택 날짜 기준입니다.</p>
+          <p class="notice">선택 날짜 기준입니다. ETF는 순환매 탭에서 봅니다.</p>
         </details>
 
         <details class="market-reference-panel" id="etf-trend-panel">
           <summary>KRX 최근 흐름 <span class="muted" id="krx-flow-title"></span></summary>
           <table class="mobile-card-table">
-            <thead><tr><th>날짜</th><th>KOSPI 거래대금 1위</th><th>KOSDAQ 거래대금 1위</th><th>ETF 거래대금 1위</th></tr></thead>
-            <tbody id="krx-flow-rows"><tr><td colspan="4" class="muted">날짜를 선택하세요.</td></tr></tbody>
+            <thead><tr><th>날짜</th><th>KOSPI 거래대금 1위</th><th>KOSDAQ 거래대금 1위</th></tr></thead>
+            <tbody id="krx-flow-rows"><tr><td colspan="3" class="muted">날짜를 선택하세요.</td></tr></tbody>
           </table>
-          <p class="notice" id="krx-flow-notice">선택 날짜를 포함한 최근 저장 데이터 기준입니다.</p>
+          <p class="notice" id="krx-flow-notice">선택 날짜를 포함한 최근 저장 시장 데이터 기준입니다. ETF는 순환매 탭에서 봅니다.</p>
         </details>
 
         <details class="market-reference-panel">
@@ -23633,7 +23508,6 @@ def _render_web_view_html() -> str:
       if (!context || !context.available) {
         document.getElementById("market-kospi-rows").innerHTML = emptyRow;
         document.getElementById("market-kosdaq-rows").innerHTML = emptyRow;
-        document.getElementById("market-etf-rows").innerHTML = emptyRow;
         document.getElementById("market-index-rows").innerHTML = emptyRow;
         return;
       }
@@ -23645,12 +23519,6 @@ def _render_web_view_html() -> str:
       ])).join("") : empty(4);
       document.getElementById("market-kosdaq-rows").innerHTML = context.top_kosdaq_by_turnover.length ? context.top_kosdaq_by_turnover.map((item) => row([
         labeled("종목", `${esc(item.stock_name)}<div class="muted">${esc(item.stock_code)}</div>`),
-        labeled("종가", price(item.close_price)),
-        labeled("등락률", percent(item.change_percent)),
-        labeled("거래대금", compactTurnover(item.turnover))
-      ])).join("") : empty(4);
-      document.getElementById("market-etf-rows").innerHTML = context.top_etfs_by_turnover.length ? context.top_etfs_by_turnover.map((item) => row([
-        labeled("ETF", `${esc(item.etf_name)}<div class="muted">${esc(item.etf_code)} · ${esc(item.evidence_label || item.underlying_index_name || "-")}</div>`),
         labeled("종가", price(item.close_price)),
         labeled("등락률", percent(item.change_percent)),
         labeled("거래대금", compactTurnover(item.turnover))
@@ -23677,16 +23545,15 @@ def _render_web_view_html() -> str:
           ? `(최근 저장 ${referenceDate} · 선택 ${selectedDateText})`
           : `(기준 ${referenceDate})`)
         : "";
-      document.getElementById("krx-flow-notice").textContent = displayNotice(flow?.notice || "선택 날짜를 포함한 최근 저장 데이터 기준입니다.");
+      document.getElementById("krx-flow-notice").textContent = `${displayNotice(flow?.notice || "선택 날짜를 포함한 최근 저장 데이터 기준입니다.")} ETF는 순환매 탭에서 봅니다.`;
       if (!flow || !flow.available || !flow.items.length) {
-        document.getElementById("krx-flow-rows").innerHTML = '<tr><td colspan="4" class="muted">최근 KRX 흐름 데이터가 없습니다.</td></tr>';
+        document.getElementById("krx-flow-rows").innerHTML = '<tr><td colspan="3" class="muted">최근 KRX 흐름 데이터가 없습니다.</td></tr>';
         return;
       }
       document.getElementById("krx-flow-rows").innerHTML = flow.items.map((item) => row([
         labeled("날짜", esc(item.business_date)),
         labeled("KOSPI", flowItem(item.kospi_top_by_turnover, "stock_name", "stock_code")),
-        labeled("KOSDAQ", flowItem(item.kosdaq_top_by_turnover, "stock_name", "stock_code")),
-        labeled("ETF", flowItem(item.etf_top_by_turnover, "etf_name", "etf_code"))
+        labeled("KOSDAQ", flowItem(item.kosdaq_top_by_turnover, "stock_name", "stock_code"))
       ])).join("");
     }
 
@@ -23798,12 +23665,6 @@ def _render_web_view_html() -> str:
       ])).join("") : empty(4);
       document.getElementById("market-kosdaq-rows").innerHTML = data.krx_top_kosdaq_stocks.length ? data.krx_top_kosdaq_stocks.map((item) => row([
         labeled("종목", `${esc(item.stock_name)}<div class="muted">${esc(item.stock_code)}</div>`),
-        labeled("종가", price(item.close_price)),
-        labeled("등락률", percent(item.change_percent)),
-        labeled("거래대금", compactTurnover(item.turnover))
-      ])).join("") : empty(4);
-      document.getElementById("market-etf-rows").innerHTML = data.krx_top_etfs.length ? data.krx_top_etfs.map((item) => row([
-        labeled("ETF", `${esc(item.etf_name)}<div class="muted">${esc(item.etf_code)}</div>`),
         labeled("종가", price(item.close_price)),
         labeled("등락률", percent(item.change_percent)),
         labeled("거래대금", compactTurnover(item.turnover))

@@ -4573,6 +4573,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "현재 선택" not in html
     assert "선택 상태" not in html
     assert "stock-single-toggle" in html
+    assert '<div class="card span-12" data-view-panel="stock" hidden>\n        <div class="section-header">\n          <h2>일일 종목 요약' in html
     assert "1건 포함" in html
     assert "stock-show-more" in html
     assert "const DAILY_STOCK_DEFAULT_LIMIT = 6" in html
@@ -4595,7 +4596,11 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "compactTurnover(item.market_reference.turnover)" in html
     assert "거래대금 ${compactTurnover(entry.horizon_turnover)}" in html
     assert "${esc(item.evidence_label || compactTurnover(item.turnover))}</span>" in html
-    assert html.count('labeled("거래대금", compactTurnover(item.turnover))') >= 8
+    assert html.count('labeled("거래대금", compactTurnover(item.turnover))') >= 6
+    assert "market-etf-rows" not in html
+    assert "ETF 거래대금 상위" not in html
+    assert "ETF는 순환매 탭에서 봅니다." in html
+    assert "ETF는 순환매 탭에서 봅니다." in html
     assert 'labeled("거래대금", compactAmount(item.turnover))' not in html
     assert "${compactTurnover(item.turnover)} · ${percent(item.change_percent)}" in html
     assert 'String(flow?.notice || "저장된 ETF 데이터 기준입니다.")' in html

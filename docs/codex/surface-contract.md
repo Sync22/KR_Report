@@ -59,6 +59,8 @@ This is a permission and API boundary, not just a visual layout boundary.
 
 `admin-gui` should not become the review workbench for raw judgment layers. News intelligence review rows, candidate linkage evaluation internals, sentiment scores, raw `stock_impact`, operator recommendation-support labels, and other decision-support payloads belong in `operator-review` if they need a private UI. The admin console may link to a future `operator-review` surface or show coarse operational readiness, but it should not host the review body.
 
+`admin-gui` should also avoid read-only daily briefing and market-info duplication. Market mood, recent reports, sector/theme rollups, KRX market reference tables, ETF reference rows, stored news evidence badges, and candidate evidence rows are not admin screen body content. They belong in `web-view` when public-safe or `operator-review` when raw/private.
+
 ## Operator Review Surface
 
 `operator-review` is reserved for future private review workflows that need more detail than public `web-view` may show and more judgment context than `admin-gui` should carry.
@@ -96,6 +98,8 @@ This surface is not implemented yet. Before implementation, define its route, ac
 - future approved read-only intraday reference for top-2 observation candidates
 
 `web-view` should not show raw operational internals unless they are intentionally converted into simple public freshness labels.
+
+Current screen organization keeps stock-level daily summary in the `stock` tab, keeps the full candidate-evidence lane in the `watch` tab, keeps broad KOSPI/KOSDAQ/index and investor-flow references in the `market` tab, and keeps ETF/rotation evidence in the `rotation` tab. This is React-ready information architecture, but the current implementation remains the Python-rendered static page until a separate frontend build decision is made.
 
 Allowed examples:
 
