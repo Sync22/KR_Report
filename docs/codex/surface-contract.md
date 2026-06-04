@@ -99,6 +99,8 @@ This surface is not implemented yet. Before implementation, define its route, ac
 
 Current screen organization keeps stock-level daily summary in the `stock` tab, keeps the full candidate-evidence lane in the `watch` tab, keeps broad KOSPI/KOSDAQ/index and investor-flow references in the `market` tab, and keeps ETF/rotation evidence in the `rotation` tab. This is React-ready information architecture, but the current implementation remains the Python-rendered static page until a separate frontend build decision is made.
 
+`GET /v2` is the first preview route for the next `web-view` information architecture. It must keep the same read-only API boundary as `/`, reuse stored-data DTOs, and make the distinction between market flow, observation candidates, evidence layers, stock detail, and rotation/ETF context easier to see. It is a review surface for the shared page, not an `admin-gui` or `operator-review` route.
+
 Allowed examples:
 
 - `최근 갱신: 26.05.07 16:30 KST`
@@ -297,5 +299,7 @@ Cloudflare Tunnel rule:
 - Historical sector/theme responses use dated snapshots when available and label the latest stored category classification only when no prior snapshot exists.
 - Selected-date daily pages must not silently fall back to the latest KRX snapshot when that date has no KRX data.
 - Missing category placeholders such as internal `N/A` must use public labels in the user page.
-- `web-view-browser-smoke` must pass before treating mobile/browser review as locally clean: desktop/tablet/large-mobile/mobile render without major horizontal overflow, the exact top-tab order is `메인`/`관찰`/`종목`/`시장`/`순환매`, each non-main tab opens its representative panel, stock search exists, write methods stay blocked, and `/api/status` remains unavailable.
+- Stored news-observation projection must remain read-only and public-safe: no live news fetch, no `--save-observation` trigger, no internal sentiment score, no numeric impact, no raw `stock_impact`, no operator recommendation-support field, and no buy/sell/trading-call wording.
+- Public-safe wording QA is context-based. It may allow explanatory copy such as `추천 판단 아님`, `점수 없이 저장 근거만 확인`, `등급 없음`, `리포트 의견 참고`, and `뉴스 근거`; it must block explicit trading-call or scored labels such as `매수 추천`, `매수 기회`, `전략 제안`, `점수: 92`, and `등급: A`.
+- `web-view-browser-smoke` must pass before treating mobile/browser review as locally clean: desktop/tablet/large-mobile/mobile render without major horizontal overflow, the exact top-tab order is `메인`/`관찰`/`종목`/`시장`/`순환매`, each non-main tab opens its representative panel, stock search exists, write methods stay blocked, and `/api/status` remains unavailable. The `/v2` preview route should be browser-checked separately while it is experimental.
 - `external-web-view-smoke --record-success` must pass against the final Cloudflare/Tailscale URL before the URL is shared. If the access-code or Cloudflare Access gate blocks unauthenticated user data routes with `401`/`403` or a recognizable Cloudflare Access HTML/login page, that is acceptable; `/api/status` and admin scheduler/operator/settings POST routes must never return a public admin/control payload.
