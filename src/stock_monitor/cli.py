@@ -7,6 +7,7 @@ import getpass
 import hashlib
 import hmac
 import html
+from html.parser import HTMLParser
 import ipaddress
 import json
 import math
@@ -204,6 +205,7 @@ READ_ONLY_SCHEMA_CURRENT_COMMANDS = {
     "web-view-browser-smoke",
     "web-view-startup-fallback-check",
     "web-view-value-qa",
+    "x-browser-recap-probe",
 }
 SCHEMA_PRESERVING_EXISTING_DB_COMMANDS = {
     "db-backup",
@@ -411,6 +413,22 @@ def build_parser() -> argparse.ArgumentParser:
     news_daily_brief_parser.add_argument("--limit", type=int, default=50)
     news_daily_brief_parser.add_argument("--format", choices=("json", "text"), default="text")
     news_daily_brief_parser.add_argument("--db-path", type=Path)
+    x_recap_parser = subparsers.add_parser(
+        "x-browser-recap-probe",
+        help="Probe a public X profile with an isolated no-login browser context.",
+    )
+    x_recap_profile_group = x_recap_parser.add_mutually_exclusive_group(required=True)
+    x_recap_profile_group.add_argument("--profile-url")
+    x_recap_profile_group.add_argument("--handle")
+    x_recap_parser.add_argument("--date", type=date.fromisoformat)
+    x_recap_parser.add_argument("--limit", type=int, default=20)
+    x_recap_parser.add_argument("--scrolls", type=int, default=3)
+    x_recap_parser.add_argument("--format", choices=("json", "text"), default="text")
+    x_recap_parser.add_argument(
+        "--screenshot-dir",
+        type=Path,
+        help="Optional explicit directory for a diagnostic screenshot when the page blocks or renders empty.",
+    )
 
     poll_parser = subparsers.add_parser("manual-poll", help="Fetch reports and save unseen rows into SQLite.")
     poll_parser.add_argument("--limit", type=int, default=50)
@@ -1723,6 +1741,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_news_intelligence_observations(args)
     if args.command == "news-intelligence-daily-brief":
         return _run_news_intelligence_daily_brief(args)
+    if args.command == "x-browser-recap-probe":
+        return _run_x_browser_recap_probe(args)
 
     config = RuntimeConfig.from_env(headless=not getattr(args, "headed", False))
     config.ensure_runtime_dirs()
@@ -3016,6 +3036,308 @@ def _format_news_intelligence_daily_brief_text(payload: dict[str, object]) -> st
                     lines.append(f"  - [{row.get('source_lane', '-')}] {row.get('title', '-')}")
             else:
                 lines.append("  - top evidence 없음")
+    return "\n".join(lines) + "\n"
+
+
+class _XRenderedPostHtmlParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.posts: list[dict[str, object]] = []
+        self._article_depth = 0
+        self._current: dict[str, object] | None = None
+        self._text_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attrs_dict = dict(attrs)
+        if tag == "article":
+            if self._article_depth == 0:
+                self._current = {"url": None, "published_at": None}
+                self._text_parts = []
+            self._article_depth += 1
+            return
+        if self._article_depth <= 0 or self._current is None:
+            return
+        if tag == "time" and not self._current.get("published_at"):
+            published_at = attrs_dict.get("datetime")
+            if published_at:
+                self._current["published_at"] = published_at
+        if tag == "a" and not self._current.get("url"):
+            href = attrs_dict.get("href")
+            if href and "/status/" in href:
+                self._current["url"] = url_parse.urljoin("https://x.com", href)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag != "article" or self._article_depth <= 0:
+            return
+        self._article_depth -= 1
+        if self._article_depth > 0 or self._current is None:
+            return
+        text = _compact_x_post_text(" ".join(self._text_parts))
+        post = {
+            "url": self._current.get("url"),
+            "published_at": self._current.get("published_at"),
+            "text": text,
+        }
+        if text or post["url"]:
+            self.posts.append(post)
+        self._current = None
+        self._text_parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._article_depth <= 0:
+            return
+        text = data.strip()
+        if not text or text in {"open", "Show more", "Show this thread", "더 보기"}:
+            return
+        self._text_parts.append(text)
+
+
+def _compact_x_post_text(value: str) -> str:
+    return re.sub(r"\s+", " ", html.unescape(value)).strip()
+
+
+def _resolve_x_browser_recap_target(
+    *,
+    profile_url: str | None,
+    handle: str | None,
+) -> tuple[str, str | None]:
+    if handle:
+        normalized_handle = handle.strip().lstrip("@")
+        if not normalized_handle:
+            raise ValueError("handle is empty")
+        return f"https://x.com/{url_parse.quote(normalized_handle)}", normalized_handle
+    if not profile_url:
+        raise ValueError("profile_url or handle is required")
+    parsed = url_parse.urlparse(profile_url.strip())
+    if parsed.scheme not in {"http", "https"} or parsed.netloc.lower() not in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"}:
+        raise ValueError("profile-url must be an x.com or twitter.com profile URL")
+    path_parts = [part for part in parsed.path.split("/") if part]
+    normalized_handle = path_parts[0].lstrip("@") if path_parts else None
+    if not normalized_handle:
+        raise ValueError("profile-url must include a profile handle")
+    return f"https://x.com/{url_parse.quote(normalized_handle)}", normalized_handle
+
+
+def _parse_x_post_datetime(value: object, timezone: str) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo(timezone))
+    return parsed.astimezone(ZoneInfo(timezone))
+
+
+def _build_x_browser_recap_payload_from_html(
+    rendered_html: str,
+    *,
+    profile_url: str,
+    handle: str | None,
+    target_date: date | None,
+    limit: int,
+    timezone: str = "Asia/Seoul",
+    screenshot_path: Path | None = None,
+    error: str | None = None,
+) -> dict[str, object]:
+    parser = _XRenderedPostHtmlParser()
+    parser.feed(rendered_html)
+    posts: list[dict[str, object]] = []
+    seen_keys: set[str] = set()
+    for raw_post in parser.posts:
+        published_at = _parse_x_post_datetime(raw_post.get("published_at"), timezone)
+        if target_date is not None and (published_at is None or published_at.date() != target_date):
+            continue
+        text = _compact_x_post_text(str(raw_post.get("text") or ""))
+        url = str(raw_post.get("url") or "")
+        seen_key = url or text
+        if not seen_key or seen_key in seen_keys:
+            continue
+        seen_keys.add(seen_key)
+        posts.append(
+            {
+                "published_at": published_at.isoformat() if published_at else None,
+                "published_date": published_at.date().isoformat() if published_at else None,
+                "url": url or None,
+                "text": text,
+            }
+        )
+        if len(posts) >= max(1, limit):
+            break
+    blocked_reason = None
+    if not posts:
+        blocked_reason = _detect_x_recap_blocked_reason(rendered_html) or "no_public_posts_found"
+    payload: dict[str, object] = {
+        "surface": "x-browser-recap-probe",
+        "profile_url": profile_url,
+        "handle": handle,
+        "target_date": target_date.isoformat() if target_date else None,
+        "timezone": timezone,
+        "post_count": len(posts),
+        "posts": posts,
+        "blocked_reason": blocked_reason,
+        "uses_x_api": False,
+        "uses_logged_in_profile": False,
+        "uses_persistent_browser_profile": False,
+        "reads_env": False,
+        "reads_secrets": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "connects_admin_gui": False,
+        "connects_web_view": False,
+        "live_fetch": True,
+        "read_only": True,
+    }
+    if screenshot_path is not None:
+        payload["screenshot_path"] = str(screenshot_path)
+    if error:
+        payload["error"] = error
+    return payload
+
+
+def _detect_x_recap_blocked_reason(rendered_html: str) -> str | None:
+    lowered = rendered_html.lower()
+    login_markers = (
+        "sign in to x",
+        "log in",
+        "login",
+        "로그인",
+        "가입하기",
+        "sign up",
+    )
+    if any(marker in lowered for marker in login_markers):
+        return "login_required"
+    blocked_markers = (
+        "something went wrong",
+        "rate limit",
+        "temporarily restricted",
+        "not available",
+    )
+    if any(marker in lowered for marker in blocked_markers):
+        return "blocked_or_unavailable"
+    return None
+
+
+def _probe_x_browser_recap_with_playwright(
+    *,
+    profile_url: str,
+    handle: str | None,
+    target_date: date | None,
+    limit: int,
+    scrolls: int,
+    screenshot_dir: Path | None,
+) -> dict[str, object]:
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:  # pragma: no cover - depends on local lab runtime.
+        return _build_x_browser_recap_payload_from_html(
+            "",
+            profile_url=profile_url,
+            handle=handle,
+            target_date=target_date,
+            limit=limit,
+            error=f"Playwright is not importable: {exc}",
+        ) | {"blocked_reason": "playwright_unavailable"}
+
+    timeout_ms = 15_000
+    screenshot_path: Path | None = None
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                context = browser.new_context(
+                    viewport={"width": 1280, "height": 900},
+                    locale="ko-KR",
+                    timezone_id="Asia/Seoul",
+                )
+                page = context.new_page()
+                page.goto(profile_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                page.wait_for_timeout(1_000)
+                for _index in range(max(0, scrolls)):
+                    page.evaluate("window.scrollBy(0, Math.max(window.innerHeight, 700))")
+                    page.wait_for_timeout(700)
+                rendered_html = page.content()
+                if screenshot_dir is not None:
+                    screenshot_dir.mkdir(parents=True, exist_ok=True)
+                    safe_handle = re.sub(r"[^0-9A-Za-z_.-]+", "_", handle or "x_profile")
+                    date_suffix = target_date.isoformat() if target_date else "all"
+                    screenshot_path = screenshot_dir / f"x-recap-{safe_handle}-{date_suffix}.png"
+                    page.screenshot(path=str(screenshot_path), full_page=True)
+            finally:
+                browser.close()
+    except Exception as exc:  # pragma: no cover - lab browser runtime/network dependent.
+        return _build_x_browser_recap_payload_from_html(
+            "",
+            profile_url=profile_url,
+            handle=handle,
+            target_date=target_date,
+            limit=limit,
+            screenshot_path=screenshot_path,
+            error=str(exc),
+        ) | {"blocked_reason": "browser_probe_failed"}
+    return _build_x_browser_recap_payload_from_html(
+        rendered_html,
+        profile_url=profile_url,
+        handle=handle,
+        target_date=target_date,
+        limit=limit,
+        screenshot_path=screenshot_path,
+    )
+
+
+def _run_x_browser_recap_probe(args: argparse.Namespace) -> int:
+    try:
+        profile_url, handle = _resolve_x_browser_recap_target(profile_url=args.profile_url, handle=args.handle)
+    except ValueError as exc:
+        print(f"x-browser-recap-probe error: {exc}", file=sys.stderr)
+        return 2
+    payload = _probe_x_browser_recap_with_playwright(
+        profile_url=profile_url,
+        handle=handle,
+        target_date=args.date,
+        limit=max(1, args.limit),
+        scrolls=max(0, args.scrolls),
+        screenshot_dir=args.screenshot_dir,
+    )
+    if args.format == "json":
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(_format_x_browser_recap_text(payload), end="")
+    return 0
+
+
+def _format_x_browser_recap_text(payload: dict[str, object]) -> str:
+    lines = [
+        "X browser recap probe",
+        f"profile: {payload.get('profile_url')}",
+        f"target_date: {payload.get('target_date') or 'all'}",
+        "mode: no X API, no logged-in profile, no saved cookies, read-only browser probe",
+    ]
+    blocked_reason = payload.get("blocked_reason")
+    if blocked_reason:
+        lines.append(f"blocked: {blocked_reason}")
+    if payload.get("error"):
+        lines.append(f"error: {payload.get('error')}")
+    posts = payload.get("posts")
+    if not isinstance(posts, list) or not posts:
+        lines.append("posts: 0")
+        return "\n".join(lines) + "\n"
+    lines.append(f"posts: {len(posts)}")
+    for index, post in enumerate(posts, start=1):
+        if not isinstance(post, dict):
+            continue
+        title = str(post.get("text") or "").strip()
+        if len(title) > 180:
+            title = f"{title[:177]}..."
+        lines.append(f"{index}. {post.get('published_at') or '-'}")
+        lines.append(f"   {title}")
+        if post.get("url"):
+            lines.append(f"   {post.get('url')}")
     return "\n".join(lines) + "\n"
 
 

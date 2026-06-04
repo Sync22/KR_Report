@@ -3423,6 +3423,185 @@ def test_news_intelligence_daily_brief_parser_accepts_operator_filters() -> None
     assert str(args.db_path).endswith("news-intelligence.db")
 
 
+def test_x_browser_recap_probe_parser_accepts_no_login_filters() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "x-browser-recap-probe",
+            "--handle",
+            "@market_reader",
+            "--date",
+            "2026-06-04",
+            "--limit",
+            "5",
+            "--scrolls",
+            "2",
+            "--format",
+            "json",
+        ]
+    )
+
+    assert args.command == "x-browser-recap-probe"
+    assert args.handle == "@market_reader"
+    assert args.date == date(2026, 6, 4)
+    assert args.limit == 5
+    assert args.scrolls == 2
+    assert args.format == "json"
+
+
+def test_x_browser_recap_extracts_public_posts_from_rendered_html() -> None:
+    rendered_html = """
+    <main>
+      <article>
+        <a href="/market_reader/status/1001">open</a>
+        <time datetime="2026-06-04T01:20:00.000Z"></time>
+        <div>장전 수급은 반도체보다 자동차가 먼저 움직이는 느낌.</div>
+      </article>
+      <article>
+        <a href="/market_reader/status/1000">open</a>
+        <time datetime="2026-06-03T07:00:00.000Z"></time>
+        <div>전일 복기.</div>
+      </article>
+    </main>
+    """
+
+    payload = cli_module._build_x_browser_recap_payload_from_html(
+        rendered_html,
+        profile_url="https://x.com/market_reader",
+        handle="market_reader",
+        target_date=date(2026, 6, 4),
+        limit=10,
+    )
+
+    assert payload["blocked_reason"] is None
+    assert payload["post_count"] == 1
+    assert payload["posts"][0]["url"] == "https://x.com/market_reader/status/1001"
+    assert payload["posts"][0]["published_date"] == "2026-06-04"
+    assert "장전 수급" in payload["posts"][0]["text"]
+    assert payload["uses_x_api"] is False
+    assert payload["uses_logged_in_profile"] is False
+    assert payload["writes_db"] is False
+    assert payload["sends_telegram"] is False
+    assert payload["registers_scheduler"] is False
+    assert payload["connects_admin_gui"] is False
+    assert payload["connects_web_view"] is False
+
+
+def test_x_browser_recap_reports_login_wall_without_writes() -> None:
+    payload = cli_module._build_x_browser_recap_payload_from_html(
+        "<html><body><span>Sign in to X</span><span>Log in</span></body></html>",
+        profile_url="https://x.com/market_reader",
+        handle="market_reader",
+        target_date=date(2026, 6, 4),
+        limit=10,
+    )
+
+    assert payload["post_count"] == 0
+    assert payload["blocked_reason"] == "login_required"
+    assert payload["writes_db"] is False
+    assert payload["sends_telegram"] is False
+
+
+def test_x_browser_recap_cli_outputs_json_from_isolated_probe(monkeypatch, capsys) -> None:
+    def fake_probe(
+        *,
+        profile_url: str,
+        handle: str | None,
+        target_date: date | None,
+        limit: int,
+        scrolls: int,
+        screenshot_dir: Path | None,
+    ) -> dict[str, object]:
+        assert profile_url == "https://x.com/market_reader"
+        assert handle == "market_reader"
+        assert target_date == date(2026, 6, 4)
+        assert limit == 5
+        assert scrolls == 1
+        assert screenshot_dir is None
+        return cli_module._build_x_browser_recap_payload_from_html(
+            """
+            <article>
+              <a href="/market_reader/status/1002">open</a>
+              <time datetime="2026-06-04T02:00:00.000Z"></time>
+              <div>오늘 특징주 복기 후보.</div>
+            </article>
+            """,
+            profile_url=profile_url,
+            handle=handle,
+            target_date=target_date,
+            limit=limit,
+        )
+
+    monkeypatch.setattr(cli_module, "_probe_x_browser_recap_with_playwright", fake_probe)
+
+    exit_code = cli_module.main(
+        [
+            "x-browser-recap-probe",
+            "--handle",
+            "market_reader",
+            "--date",
+            "2026-06-04",
+            "--limit",
+            "5",
+            "--scrolls",
+            "1",
+            "--format",
+            "json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["post_count"] == 1
+    assert payload["posts"][0]["text"] == "오늘 특징주 복기 후보."
+    assert payload["uses_logged_in_profile"] is False
+    assert payload["connects_web_view"] is False
+
+
+def test_x_browser_recap_cli_outputs_operator_text(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "_probe_x_browser_recap_with_playwright",
+        lambda **kwargs: {
+            "surface": "x-browser-recap-probe",
+            "profile_url": kwargs["profile_url"],
+            "handle": kwargs["handle"],
+            "target_date": "2026-06-04",
+            "post_count": 0,
+            "posts": [],
+            "blocked_reason": "login_required",
+            "uses_x_api": False,
+            "uses_logged_in_profile": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_admin_gui": False,
+            "connects_web_view": False,
+        },
+    )
+
+    exit_code = cli_module.main(
+        [
+            "x-browser-recap-probe",
+            "--profile-url",
+            "https://x.com/market_reader",
+            "--date",
+            "2026-06-04",
+            "--format",
+            "text",
+        ]
+    )
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "X browser recap probe" in output
+    assert "blocked: login_required" in output
+    assert "no logged-in profile" in output
+
+
 def test_news_intelligence_observations_outputs_read_only_run_comparison(
     tmp_path,
     capsys,
