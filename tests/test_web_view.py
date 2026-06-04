@@ -1432,6 +1432,8 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
                     "volume": 5_000,
                     "turnover": 300,
                     "underlying_index_name": "코스피 200",
+                    "evidence_label": "거래대금 300원 · NAV 40,100.5 · 기초지수 코스피 200",
+                    "rotation_reference": "저장 ETF 거래대금/NAV/기초지수 기준",
                 },
             },
             {
@@ -3090,6 +3092,8 @@ def test_web_view_daily_krx_context_is_exact_date_and_does_not_fallback_to_lates
         "volume": 5_000,
         "turnover": 300,
         "underlying_index_name": "코스피 200",
+        "evidence_label": "거래대금 300원 · NAV 40,100.5 · 기초지수 코스피 200",
+        "rotation_reference": "저장 ETF 거래대금/NAV/기초지수 기준",
     }
     assert context["indices"][0]["index_name"] == "코스피"
     assert "scheduler_tasks" not in context
@@ -3097,6 +3101,81 @@ def test_web_view_daily_krx_context_is_exact_date_and_does_not_fallback_to_lates
     assert "db_path" not in context
     _assert_public_safe_payload(missing_context_snapshot)
     _assert_public_safe_payload(exact_context_snapshot)
+
+
+def test_web_view_etf_trend_snapshot_exposes_rotation_evidence_scope(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    repository.upsert_etf_daily_snapshots(
+        [
+            EtfDailySnapshot(
+                business_date=date(2026, 5, 8),
+                etf_code="396500",
+                etf_name="TIGER 반도체TOP10",
+                close_price=12_345,
+                change_percent=2.4,
+                nav=12_400.5,
+                turnover=98_765_432_100,
+                underlying_index_name="FnGuide 반도체 TOP10",
+                fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+            )
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_etf_trend_snapshot(
+        config,
+        repository,
+        business_date=date(2026, 5, 8),
+        now=datetime(2026, 5, 8, 21, 0, 0),
+    )
+
+    assert snapshot["reference_status"] == "exact"
+    assert snapshot["basis"] == "KRX ETF 일별매매정보"
+    assert snapshot["constituents_available"] is False
+    assert snapshot["composition_scope"] == "구성종목 미포함"
+    assert snapshot["display_label"] == "ETF 순환매 참고"
+    first = snapshot["items"][0]["top_etfs_by_turnover"][0]
+    assert first["evidence_label"] == "거래대금 988억 · NAV 12,400.5 · 기초지수 FnGuide 반도체 TOP10"
+    assert first["rotation_reference"] == "저장 ETF 거래대금/NAV/기초지수 기준"
+    _assert_public_safe_payload(snapshot)
+
+
+def test_web_view_etf_trend_snapshot_marks_stale_reference_date(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    repository.upsert_etf_daily_snapshots(
+        [
+            EtfDailySnapshot(
+                business_date=date(2026, 5, 7),
+                etf_code="069500",
+                etf_name="KODEX 200",
+                close_price=40_000,
+                change_percent=-0.3,
+                nav=40_050.0,
+                turnover=1_000_000_000,
+                underlying_index_name="코스피 200",
+                fetched_at=datetime(2026, 5, 7, 20, 0, 0),
+            )
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_etf_trend_snapshot(
+        config,
+        repository,
+        business_date=date(2026, 5, 8),
+        now=datetime(2026, 5, 8, 21, 0, 0),
+    )
+
+    assert snapshot["reference_status"] == "stale"
+    assert snapshot["reference_date"] == "2026-05-07"
+    assert snapshot["notice"] == "선택 날짜의 ETF 저장값이 없어 2026-05-07 기준 ETF 흐름만 표시합니다. 구성종목이 아닌 KRX ETF 일별매매정보 기준입니다."
+    _assert_public_safe_payload(snapshot)
 
 
 def test_web_view_recent_krx_flow_exposes_actual_reference_date_when_fallback(tmp_path, monkeypatch) -> None:
@@ -4366,10 +4445,11 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "const compactTurnover = (value, unit = \"원\")" in html
     assert "compactTurnover(item.market_reference.turnover)" in html
     assert "거래대금 ${compactTurnover(entry.horizon_turnover)}" in html
-    assert "${compactTurnover(item.turnover)}</span>" in html
+    assert "${esc(item.evidence_label || compactTurnover(item.turnover))}</span>" in html
     assert html.count('labeled("거래대금", compactTurnover(item.turnover))') >= 8
     assert 'labeled("거래대금", compactAmount(item.turnover))' not in html
     assert "${compactTurnover(item.turnover)} · ${percent(item.change_percent)}" in html
+    assert 'String(flow?.notice || "저장된 ETF 데이터 기준입니다.")' in html
     assert "publishedLabel(item.published_at)" in html
     assert "timePart !== \"00:00\"" in html
     assert "100000000" not in html
@@ -4406,6 +4486,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "mobile-card-table" in html
     assert "URLSearchParams" in html
     assert "history.replaceState" in html
+    assert "item.evidence_label" in html
+    assert "구성종목이 아닌 KRX ETF 일별매매정보 기준" in html
     assert "장중 흐름" not in html
     assert "loadIntradayMarketTopForSelectedDate" in html
     assert "intraday_market_top=1&market_top_limit=100&market_top_page_size=20" in html
