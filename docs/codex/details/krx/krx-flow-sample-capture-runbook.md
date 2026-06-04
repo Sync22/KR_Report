@@ -1,4 +1,4 @@
-﻿# KRX Flow Sample Capture Runbook
+# KRX Flow Sample Capture Runbook
 
 This runbook fixes the manual capture process for KRX Data Marketplace investor-flow samples.
 It is for validation only. Do not store credentials, cookies, tokens, or personal login payloads.
@@ -117,7 +117,7 @@ It does not copy sample JSON files, so `krx-flow-sample-status` should report `s
 It compares normalized row values and ignores volatile fields such as fetch time/source.
 Use `--allow-right-extra-top-rows` for `[12010]` because the visible grid can contain only rendered rows while the raw response contains the full ranked list. This option is valid only when visible rows match the raw rows as an ordered prefix.
 If this command reports mismatches or missing manifests, keep broad scheduled ingest disabled and inspect the sample pair manually. The narrow same-day mentioned-stock `[12009]` task remains the only automatic exception.
-For staged execution, treat raw body capture as `Stage 1`, strict raw validation as `Stage 2`, and visible-grid/raw parity comparison as `Stage 3` in [krx-flow-execution-stages.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/details/krx/krx-flow-execution-stages.md).
+For staged execution, treat raw body capture as `Stage 1`, strict raw validation as `Stage 2`, and visible-grid/raw parity comparison as `Stage 3` in [krx-flow-execution-stages.md](/docs/codex/details/krx/krx-flow-execution-stages.md).
 
 ## Promotion Criteria
 

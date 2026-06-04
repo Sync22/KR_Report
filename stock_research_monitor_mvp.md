@@ -249,7 +249,7 @@ Telegram은 개인 운영용 알림과 명령 처리 채널이다.
 - entry-code gate는 가벼운 1차 보호로 사용 가능
 - 외부 공유 전 `external-web-view-sharing-plan --json`으로 read-only 공유 순서를 확인
 - Cloudflare provider URL이 생기면 `verify_cloudflare_web_view_tunnel.ps1 -Url https://YOUR-WEB-VIEW-URL`로 최종 검증
-- Tunnel target은 `http://127.0.0.1:8780` 같은 loopback `web-view` 포트만 허용
+- Tunnel target은 `{LOCAL_WEB_VIEW_TARGET}` 같은 loopback `web-view` 포트만 허용
 - 최종 URL smoke에서 Cloudflare Access 로그인 HTML은 차단 응답으로 허용하지만, `admin-gui`처럼 보이는 응답은 항상 실패 처리
 
 ## 현재 불안정/관찰 필요

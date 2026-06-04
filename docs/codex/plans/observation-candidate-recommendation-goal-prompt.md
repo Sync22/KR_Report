@@ -3,7 +3,7 @@
 Use this prompt when starting the next implementation pass for stored-data based observation-candidate recommendation.
 
 ```text
-/goal C:\Users\MING\Codex\02.Stock_Moniter only.
+/goal {PROJECT_ROOT} only.
 
 AGENTS.md와 docs/codex/documentation-index.md를 먼저 읽고, 현재 canonical 문서 기준으로만 작업해줘.
 이 폴더 밖의 다른 프로젝트나 과거 문서는 참조하지 마.

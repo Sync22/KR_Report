@@ -21,10 +21,10 @@
 
 ## Scope
 
-이 handoff는 `C:\Users\MING\Codex\02.Stock_Moniter`에만 적용된다.
+이 handoff는 `{PROJECT_ROOT}`에만 적용된다.
 
-- 프로젝트 루트: `C:\Users\MING\Codex\02.Stock_Moniter`
-- 문서 루트: `C:\Users\MING\Codex\02.Stock_Moniter\docs\codex`
+- 프로젝트 루트: `{PROJECT_ROOT}`
+- 문서 루트: `{PROJECT_ROOT}\docs\codex`
 
 다른 폴더나 과거 경로를 기준으로 상태를 추론하지 않는다.
 
@@ -98,7 +98,7 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
 
 ## CodeGraph
 
-이 프로젝트는 `C:\Users\MING\Codex\02.Stock_Moniter\.codegraph` 인덱스를 이미 갖고 있다.
+이 프로젝트는 `{PROJECT_ROOT}\.codegraph` 인덱스를 이미 갖고 있다.
 `codegraph`는 runtime dependency가 아니라 로컬 코드 탐색 도구다.
 
 우선 사용이 맞는 경우:

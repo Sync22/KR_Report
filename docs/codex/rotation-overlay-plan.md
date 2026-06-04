@@ -1,4 +1,4 @@
-﻿# Rotation Overlay Plan
+# Rotation Overlay Plan
 
 ## Purpose
 
@@ -6,7 +6,7 @@ This document defines the sector-first rotation overlay based on `example/Cycle.
 
 The overlay is a descriptive review view. It can support observation-candidate recommendation, but not prediction, public numeric score, investment grade, or trading recommendation.
 
-The first alias-mapping boundary for the image text is fixed in [candidate-evidence-contract.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/contracts/candidate-evidence-contract.md).
+The first alias-mapping boundary for the image text is fixed in [candidate-evidence-contract.md](/docs/codex/contracts/candidate-evidence-contract.md).
 
 ## Current State
 

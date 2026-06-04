@@ -59,7 +59,7 @@ Do not use it for public numeric scores, trading recommendations, Telegram alert
 
 ## CodeGraph MCP
 
-`codegraph` is available for this project and already initialized under `C:\Users\MING\Codex\02.Stock_Moniter\.codegraph`.
+`codegraph` is available for this project and already initialized under `{PROJECT_ROOT}\.codegraph`.
 Treat it as a code-navigation backend for existing agents, not as a new product dependency.
 
 Prefer it first when the task is about:
@@ -116,10 +116,10 @@ Practical rule:
 
 Always include:
 
-- Scope is only `C:\Users\MING\Codex\02.Stock_Moniter`.
+- Scope is only `{PROJECT_ROOT}`.
 - Read `AGENTS.md`.
-- Check [data-quality-checklist.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/data-quality-checklist.md) before data-display or parsing work.
-- Preserve `admin-gui` vs `web-view` boundary from [surface-contract.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/surface-contract.md).
+- Check [data-quality-checklist.md](/docs/codex/data-quality-checklist.md) before data-display or parsing work.
+- Preserve `admin-gui` vs `web-view` boundary from [surface-contract.md](/docs/codex/surface-contract.md).
 - Do not enable KRX Data Marketplace scheduled ingest without explicit approval.
 
 ## Closure Rule

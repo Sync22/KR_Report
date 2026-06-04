@@ -1,10 +1,10 @@
-﻿# Project Map
+# Project Map
 
 ## Scope
 
 This map describes only:
 
-- `C:\Users\MING\Codex\02.Stock_Moniter`
+- `{PROJECT_ROOT}`
 
 No assumptions should be made from any path outside this folder.
 
@@ -19,46 +19,46 @@ with KRX market reference, investor-flow reference, and observation evidence.
 
 Project root:
 
-- `C:\Users\MING\Codex\02.Stock_Moniter`
+- `{PROJECT_ROOT}`
 
 Current files:
 
-- [AGENTS.md](/c:/Users/MING/Codex/02.Stock_Moniter/AGENTS.md)
-- [README.md](/c:/Users/MING/Codex/02.Stock_Moniter/README.md)
-- [CHANGELOG.md](/c:/Users/MING/Codex/02.Stock_Moniter/CHANGELOG.md)
-- [pyproject.toml](/c:/Users/MING/Codex/02.Stock_Moniter/pyproject.toml)
-- [stock_research_monitor_mvp.md](/c:/Users/MING/Codex/02.Stock_Moniter/stock_research_monitor_mvp.md)
-- [docs/codex/project-map.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/project-map.md)
-- [docs/codex/current-work.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/current-work.md)
-- [docs/codex/next-phase.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/next-phase.md)
-- [docs/codex/module-ownership.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/module-ownership.md)
-- [docs/codex/decision-log.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/decision-log.md)
-- [docs/codex/documentation-index.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/documentation-index.md)
-- [docs/codex/execution-roadmap.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/execution-roadmap.md)
-- [docs/codex/admin-gui-plan.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/admin-gui-plan.md)
-- [docs/codex/surface-contract.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/surface-contract.md)
-- [docs/codex/data-source-policy.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/data-source-policy.md)
-- [docs/codex/data-rebaseline-plan.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/data-rebaseline-plan.md)
-- [docs/codex/plans/candidate-evidence-plan.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/plans/candidate-evidence-plan.md)
-- [docs/codex/contracts/candidate-evidence-contract.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/contracts/candidate-evidence-contract.md)
-- [docs/codex/plans/target-price-progress-plan.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/plans/target-price-progress-plan.md)
-- [docs/codex/plans/backtest-observation-plan.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/plans/backtest-observation-plan.md)
-- [docs/codex/plans/scoring-draft-plan.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/plans/scoring-draft-plan.md)
-- [docs/codex/plans/telegram-briefing-plan.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/plans/telegram-briefing-plan.md)
-- [docs/codex/krx-market-data-runbook.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/krx-market-data-runbook.md)
-- [docs/codex/details/krx/etf-flow-source-study.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/details/krx/etf-flow-source-study.md)
-- [docs/codex/details/krx/krx-api-field-validation.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/details/krx/krx-api-field-validation.md)
-- [docs/codex/details/krx/krx-flow-execution-stages.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/details/krx/krx-flow-execution-stages.md)
-- [docs/codex/details/krx/krx-flow-sample-capture-runbook.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/details/krx/krx-flow-sample-capture-runbook.md)
-- [docs/codex/details/krx/krx-investor-flow-source-plan.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/details/krx/krx-investor-flow-source-plan.md)
-- [docs/codex/details/krx/krx-investor-flow-schema.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/details/krx/krx-investor-flow-schema.md)
-- [docs/codex/data-quality-checklist.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/data-quality-checklist.md)
-- [docs/codex/mini-pc-migration-handoff.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/mini-pc-migration-handoff.md)
-- [docs/codex/history/mini-pc-restore-change-log-2026-05-16.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/history/mini-pc-restore-change-log-2026-05-16.md)
-- [docs/codex/agent-guide.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/agent-guide.md)
-- [docs/codex/agent-reassessment.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/agent-reassessment.md)
-- [docs/codex/rotation-overlay-plan.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/rotation-overlay-plan.md)
-- Use [docs/codex/documentation-index.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/documentation-index.md) to find canonical documents and cleanup rules.
+- [AGENTS.md](/AGENTS.md)
+- [README.md](/README.md)
+- [CHANGELOG.md](/CHANGELOG.md)
+- [pyproject.toml](/pyproject.toml)
+- [stock_research_monitor_mvp.md](/stock_research_monitor_mvp.md)
+- [docs/codex/project-map.md](/docs/codex/project-map.md)
+- [docs/codex/current-work.md](/docs/codex/current-work.md)
+- [docs/codex/next-phase.md](/docs/codex/next-phase.md)
+- [docs/codex/module-ownership.md](/docs/codex/module-ownership.md)
+- [docs/codex/decision-log.md](/docs/codex/decision-log.md)
+- [docs/codex/documentation-index.md](/docs/codex/documentation-index.md)
+- [docs/codex/execution-roadmap.md](/docs/codex/execution-roadmap.md)
+- [docs/codex/admin-gui-plan.md](/docs/codex/admin-gui-plan.md)
+- [docs/codex/surface-contract.md](/docs/codex/surface-contract.md)
+- [docs/codex/data-source-policy.md](/docs/codex/data-source-policy.md)
+- [docs/codex/data-rebaseline-plan.md](/docs/codex/data-rebaseline-plan.md)
+- [docs/codex/plans/candidate-evidence-plan.md](/docs/codex/plans/candidate-evidence-plan.md)
+- [docs/codex/contracts/candidate-evidence-contract.md](/docs/codex/contracts/candidate-evidence-contract.md)
+- [docs/codex/plans/target-price-progress-plan.md](/docs/codex/plans/target-price-progress-plan.md)
+- [docs/codex/plans/backtest-observation-plan.md](/docs/codex/plans/backtest-observation-plan.md)
+- [docs/codex/plans/scoring-draft-plan.md](/docs/codex/plans/scoring-draft-plan.md)
+- [docs/codex/plans/telegram-briefing-plan.md](/docs/codex/plans/telegram-briefing-plan.md)
+- [docs/codex/krx-market-data-runbook.md](/docs/codex/krx-market-data-runbook.md)
+- [docs/codex/details/krx/etf-flow-source-study.md](/docs/codex/details/krx/etf-flow-source-study.md)
+- [docs/codex/details/krx/krx-api-field-validation.md](/docs/codex/details/krx/krx-api-field-validation.md)
+- [docs/codex/details/krx/krx-flow-execution-stages.md](/docs/codex/details/krx/krx-flow-execution-stages.md)
+- [docs/codex/details/krx/krx-flow-sample-capture-runbook.md](/docs/codex/details/krx/krx-flow-sample-capture-runbook.md)
+- [docs/codex/details/krx/krx-investor-flow-source-plan.md](/docs/codex/details/krx/krx-investor-flow-source-plan.md)
+- [docs/codex/details/krx/krx-investor-flow-schema.md](/docs/codex/details/krx/krx-investor-flow-schema.md)
+- [docs/codex/data-quality-checklist.md](/docs/codex/data-quality-checklist.md)
+- [docs/codex/mini-pc-migration-handoff.md](/docs/codex/mini-pc-migration-handoff.md)
+- [docs/codex/history/mini-pc-restore-change-log-2026-05-16.md](/docs/codex/history/mini-pc-restore-change-log-2026-05-16.md)
+- [docs/codex/agent-guide.md](/docs/codex/agent-guide.md)
+- [docs/codex/agent-reassessment.md](/docs/codex/agent-reassessment.md)
+- [docs/codex/rotation-overlay-plan.md](/docs/codex/rotation-overlay-plan.md)
+- Use [docs/codex/documentation-index.md](/docs/codex/documentation-index.md) to find canonical documents and cleanup rules.
 
 Current directories:
 
@@ -79,9 +79,9 @@ Current directories:
 
 ## Core Paths
 
-- Project root: `C:\Users\MING\Codex\02.Stock_Moniter`
-- Requirements anchor: `C:\Users\MING\Codex\02.Stock_Moniter\stock_research_monitor_mvp.md`
-- Codex handoff docs: `C:\Users\MING\Codex\02.Stock_Moniter\docs\codex`
+- Project root: `{PROJECT_ROOT}`
+- Requirements anchor: `{PROJECT_ROOT}\stock_research_monitor_mvp.md`
+- Codex handoff docs: `{PROJECT_ROOT}\docs\codex`
 
 ## Current Reality
 
@@ -131,7 +131,7 @@ Current implementation layout:
 
 Local-only intake files:
 
-- [data/krx_api_intake.local.md](/c:/Users/MING/Codex/02.Stock_Moniter/data/krx_api_intake.local.md)
+- [data/krx_api_intake.local.md](/data/krx_api_intake.local.md)
 
 Important currently observed modules:
 

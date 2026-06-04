@@ -1,4 +1,4 @@
-﻿# Candidate Evidence Plan
+# Candidate Evidence Plan
 
 ## Purpose
 
@@ -6,7 +6,7 @@ This document defines the safe path from current report/flow/reference data to f
 
 It approves observation-candidate recommendation and priority ordering, but it does not approve trading recommendations, public numeric scoring, investment grades, or buy/sell judgment.
 
-The exact CE-1 DTO and alias-mapping contract is fixed in [candidate-evidence-contract.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/contracts/candidate-evidence-contract.md).
+The exact CE-1 DTO and alias-mapping contract is fixed in [candidate-evidence-contract.md](/docs/codex/contracts/candidate-evidence-contract.md).
 
 Current rule:
 

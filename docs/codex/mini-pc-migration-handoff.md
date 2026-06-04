@@ -11,7 +11,7 @@ Use this as the migration checklist before copying the project, registering sche
 Project folder:
 
 ```text
-C:\Users\MING\Codex\02.Stock_Moniter
+{PROJECT_ROOT}
 ```
 
 Do not infer state from sibling folders.
@@ -34,12 +34,12 @@ Current snapshot as of `2026-05-17 17:02 KST`:
 | --- | --- | --- |
 | Core app | Runnable local Python MVP restored on the mini PC | Keep working inside this project folder and reinstall dependencies only if the venv is rebuilt. |
 | DB | SQLite production DB lives under `data/stock_monitor.db` | Restored on the mini PC; keep backing up before KRX/data-changing work. |
-| Latest verified backup | `data/backups/stock_monitor_20260517_0818_after_krx_20260515_success.db` | Created after the successful guarded `2026-05-15` KRX Open API retry and restore-smoked successfully. Create another fresh backup before future data-changing work. |
+| Latest verified backup | `data/backups/stock_monitor_{timestamp}_{tag}.db` | Created after the successful guarded `2026-05-15` KRX Open API retry and restore-smoked successfully. Create another fresh backup before future data-changing work. |
 | Latest verified dry-run archive | `data/Stock_Moniter_migration_dryrun.zip` plus sidecar `data/Stock_Moniter_migration_dryrun.zip.sha256` | Verify the current sidecar with `verify_migration_archive.ps1`; do not pin the hash inside this file because the archive includes this document. The archive excludes `.env`, `data/access_code.json`, backups, generated archives, caches, logs, and experimental venvs. Recreate it after more data/code changes before the actual copy. |
 | KRX Open API latest snapshot | Stored through `2026-05-15`; `krx-baseline-analysis` reports `missing_daily_snapshots=0` | The previous latest-date empty-row blocker was cleared by the backed-up `2026-05-17 08:17 KST` retry. |
 | KRX Data Marketplace flow | Narrow automatic `[12009]` anchor-day mentioned-stock 31-day path exists | In normal live operation the anchor is the current business day; after restore or prefilled report ingestion, anchor to the latest report-mentioned business date. Broad all-stock/top-ranking scheduled ingest remains forbidden without separate approval. |
 | Scheduler registration | Six default mini-PC tasks are registered/enabled, including hourly `StockMonitor-WebViewHourlyRestart` for the loopback web-view target | Elevated local `verify_task_scheduler_registration.ps1` passed after registration; `StockMonitor-Shutdown` is intentionally absent for always-on operation. Non-elevated shells may still show Task Scheduler `access_denied`. |
-| External sharing | Cloudflare provider smoke passed for `https://report.kr-stock.site` | The `2026-05-17 17:46 KST` post-provider verification recorded success after checking `13` HTTP routes and `5` public JSON routes. `/health` returned `200`; unauthenticated user routes returned `401`; write/control routes stayed blocked with `405` or gated responses. Share only `web-view`, never `admin-gui`; keep the provider target on `http://127.0.0.1:8780` and keep the access-code/allow-list gate enabled. |
+| External sharing | Cloudflare provider smoke passed for `https://web-view.example.invalid` | The `2026-05-17 17:46 KST` post-provider verification recorded success after checking `13` HTTP routes and `5` public JSON routes. `/health` returned `200`; unauthenticated user routes returned `401`; write/control routes stayed blocked with `405` or gated responses. Share only `web-view`, never `admin-gui`; keep the provider target on `{LOCAL_WEB_VIEW_TARGET}` and keep the access-code/allow-list gate enabled. |
 
 ## Current Operating Contract
 
@@ -51,17 +51,17 @@ Current snapshot as of `2026-05-17 17:02 KST`:
 | `StockMonitor-KrxMentionedFlowBackfill` | `16:00` KST on Korean business days; fills recent 31-day KRX Data Marketplace `[12009]` stock investor-flow rows for stocks mentioned in the anchor day's reports. In normal live operation the anchor is that day; after restore or prefilled report ingestion, use the latest report-mentioned business date as the anchor and repeat until dry-run shows no remaining calls. |
 | `StockMonitor-KrxFlowLoginReminder` | Optional `16:45` KST validation reminder. Keep disabled during normal operation unless a deliberate manual validation day needs it. |
 | `StockMonitor-TelegramCommands` | Hidden worker starts at `08:00`, checks Telegram commands every 1 minute, exits at `16:30`, and skips market holidays/no-run dates. |
-| `StockMonitor-WebViewHourlyRestart` | Hourly restart, default first run `00:05`, for the read-only loopback `web-view` target on `127.0.0.1:8780`. |
+| `StockMonitor-WebViewHourlyRestart` | Hourly restart, default first run `00:05`, for the read-only loopback `web-view` target on `{LOCAL_WEB_VIEW_TARGET}`. |
 | `StockMonitor-Shutdown` | Desktop-validation only. It is not registered by the mini-PC scheduler wrapper and should remain absent during always-on operation. |
 
 External `web-view` runtime note:
 
-- The Cloudflare target is the read-only `web-view` on `http://127.0.0.1:8780`.
+- The Cloudflare target is the read-only `web-view` on `{LOCAL_WEB_VIEW_TARGET}`.
 - `scripts/run_web_view.ps1 -HostAddress 127.0.0.1 -Port 8780` is the canonical local runner.
 - `scripts/restart_web_view.ps1 -HostAddress 127.0.0.1 -Port 8780` is the canonical scheduler restart helper; it stops the current port listener and starts only the read-only `web-view`.
 - `StockMonitor-WebViewHourlyRestart` is registered by default by the mini-PC scheduler wrapper so Cloudflare keeps a fresh local target.
 - `scripts/create_web_view_startup_shortcut.ps1` remains a logon fallback. The Startup shortcut starts only the `web-view` runner at logon; it must not point to `admin-gui`.
-- On this mini PC, the Startup shortcut was created at `2026-05-17 18:00 KST`, and a follow-up external smoke for `https://report.kr-stock.site` returned issue count `0`.
+- On this mini PC, the Startup shortcut was created at `2026-05-17 18:00 KST`, and a follow-up external smoke for `https://web-view.example.invalid` returned issue count `0`.
 
 Current important behavior:
 
@@ -80,7 +80,7 @@ Keep the initial candidate set narrow:
 | Candidate | Use | Decision note |
 | --- | --- | --- |
 | Tailscale | Owner-only remote access to the mini PC and local services. | Good first option for personal remote checking/control after migration. Friend access may require too much onboarding. |
-| Cloudflare Tunnel | Shareable URL candidate for read-only `web-view`, mapped only to the local web-view port `127.0.0.1:8780`. | Domain purchase, provider binding, and final smoke for `https://report.kr-stock.site` are done. Keep the local `access-code` gate enabled, keep any provider allow-list/Access policy in place, and do not map `admin-gui`. |
+| Cloudflare Tunnel | Shareable URL candidate for read-only `web-view`, mapped only to the local web-view port `{LOCAL_WEB_VIEW_TARGET}`. | Domain purchase, provider binding, and final smoke for `https://web-view.example.invalid` are done. Keep the local `access-code` gate enabled, keep any provider allow-list/Access policy in place, and do not map `admin-gui`. |
 | Docker | Not used for the current Windows N100 deployment. | Defer until Linux/VPS, repeated multi-host deployment, Postgres/service split, or similar operational pressure appears. |
 
 Do not expose `admin-gui` through a public URL.
@@ -92,7 +92,7 @@ Before any external URL is shared, confirm `python -m stock_monitor access-code 
 Run from the current desktop before creating the migration archive:
 
 ```powershell
-cd C:\Users\MING\Codex\02.Stock_Moniter
+cd {PROJECT_ROOT}
 
 python -m pytest -q
 python -m stock_monitor db-verify
@@ -157,7 +157,7 @@ Recommended sensitive handling:
 Run from the project folder after the before-copy checks pass:
 
 ```powershell
-cd C:\Users\MING\Codex\02.Stock_Moniter
+cd {PROJECT_ROOT}
 .\scripts\create_migration_archive.ps1
 ```
 
@@ -177,7 +177,7 @@ Options:
 ```powershell
 .\scripts\create_migration_archive.ps1 -IncludeEnv
 .\scripts\create_migration_archive.ps1 -IncludeBackups
-.\scripts\create_migration_archive.ps1 -DestinationPath C:\Users\MING\Codex\Stock_Moniter_migration_manual.zip
+.\scripts\create_migration_archive.ps1 -DestinationPath {MIGRATION_ARCHIVE_PATH}
 ```
 
 If the zip includes `.env` or `data/stock_monitor.db`, treat it as sensitive and do not upload it to public storage.
@@ -186,7 +186,7 @@ If the zip includes `.env` or `data/stock_monitor.db`, treat it as sensitive and
 Verify the archive after copying it to the target host:
 
 ```powershell
-.\scripts\verify_migration_archive.ps1 -ArchivePath C:\Users\MING\Codex\Stock_Moniter_migration_manual.zip -FailOnSensitiveEntries
+.\scripts\verify_migration_archive.ps1 -ArchivePath {MIGRATION_ARCHIVE_PATH} -FailOnSensitiveEntries
 ```
 
 The command reads the adjacent `.sha256` sidecar by default and fails if the copied zip does not match.
@@ -198,13 +198,13 @@ Use `-FailOnSensitiveEntries` when validating a manually created archive or any 
 Expected target path on mini PC:
 
 ```text
-C:\Users\MING\Codex\02.Stock_Moniter
+{PROJECT_ROOT}
 ```
 
 After extracting:
 
 ```powershell
-cd C:\Users\MING\Codex\02.Stock_Moniter
+cd {PROJECT_ROOT}
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_mini_pc_environment.ps1
 ```
@@ -360,7 +360,7 @@ Web-view restart policy:
 
 - `register_mini_pc_scheduler_tasks.ps1` registers `StockMonitor-WebViewHourlyRestart` by default.
 - The default trigger is hourly, starting at `00:05`.
-- The task must run `scripts/restart_web_view.ps1` and keep the server bound to `127.0.0.1:8780`.
+- The task must run `scripts/restart_web_view.ps1` and keep the server bound to `{LOCAL_WEB_VIEW_TARGET}`.
 - A healthy run should leave `/health` returning `200 ok` and `verify_task_scheduler_registration.ps1` showing `restart_web_view.ps1` for the task action.
 
 Mini PC shutdown policy:
@@ -409,7 +409,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\restart_web_vi
 Cloudflare Tunnel target candidate:
 
 ```text
-HTTP -> http://127.0.0.1:8780
+HTTP -> {LOCAL_WEB_VIEW_TARGET}
 ```
 
 External sharing preflight:
@@ -432,7 +432,7 @@ Cloudflare Tunnel connection sequence:
 2. Run `python -m stock_monitor external-web-view-sharing-plan --json` to print the read-only operator sequence without changing Cloudflare, scheduler state, DB state, or secrets.
 3. Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify_external_web_view_readiness.ps1 -PythonExe .\.venv\Scripts\python.exe` before touching the provider.
 4. Start only the user page locally through the safe wrapper: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_web_view.ps1 -PythonExe .\.venv\Scripts\python.exe -HostAddress 127.0.0.1 -Port 8780`.
-5. In Cloudflare, point the public hostname only to `http://127.0.0.1:8780`.
+5. In Cloudflare, point the public hostname only to `{LOCAL_WEB_VIEW_TARGET}`.
 6. Do not map the hostname, tunnel, or any fallback route to `admin-gui`, `/api/status`, scheduler, settings, DB, `.env`, Telegram, or shell/control endpoints.
 7. Keep Cloudflare Access or an equivalent allow-list enabled before sharing the URL.
 8. Register or verify `StockMonitor-WebViewHourlyRestart` so the local tunnel target is refreshed hourly.
@@ -442,7 +442,7 @@ Cloudflare Tunnel connection sequence:
 Required external sharing state:
 
 - Access-code gate is enabled before a URL is shared.
-- Tunnel target is only the `web-view` port, normally `http://127.0.0.1:8780`.
+- Tunnel target is only the `web-view` port, normally `{LOCAL_WEB_VIEW_TARGET}`.
 - The local `web-view` process stays bound to `127.0.0.1`. Non-loopback binding requires `--allow-non-loopback` and should not be the default sharing path.
 - `admin-gui` remains local/private and is not tunneled.
 - No raw router port forwarding is used as the default exposure path.
@@ -453,7 +453,7 @@ Required external sharing state:
 - `verify_external_web_view_readiness.ps1` also runs the public-safe web-view value QA, the local browser/mobile smoke gate, and prints the required tunnel target.
 - `verify_cloudflare_web_view_tunnel.ps1 -Url https://YOUR-WEB-VIEW-URL` is the post-provider wrapper. It rejects HTTP, localhost/loopback, and path/query/fragment URLs, always checks `.env` presence, latest backup presence, the mini-PC profile, and enabled access-code gate, reruns full local external readiness unless skipped, runs `external-web-view-smoke --record-success`, and then reruns `next-phase-readiness`.
 - `external-web-view-smoke --url https://YOUR-WEB-VIEW-URL --date YYYY-MM-DD --record-success --json` is the final provider URL check after Cloudflare/Tailscale is configured. Pass only the provider origin, such as `https://view.example.com`, with no path, query, or fragment. It does not accept or print the access-code; unauthenticated `401`/`403` or a recognizable Cloudflare Access HTML/login page for protected user routes is acceptable, but `/api/status` must be absent or blocked and write methods must not be public. `--record-success` writes a non-secret operation event only if the smoke has zero issues against a non-loopback HTTPS provider origin; this is the evidence used by `next-phase-readiness.external_web_view_provider_smoke`.
-- `web-view-startup-fallback-check --json` verifies the current-user `StockMonitor-WebView.lnk` Startup fallback and local `/health` without changing Cloudflare or exposing secrets. After a real Windows logon/reboot check, run `python -m stock_monitor web-view-startup-fallback-check --record-success --json` to record the non-secret Startup fallback observation used by `next-phase-readiness.web_view_startup_fallback`.
+- `web-view-startup-fallback-check --json` verifies the current-user `{WEB_VIEW_STARTUP_SHORTCUT}` Startup fallback and local `/health` without changing Cloudflare or exposing secrets. After a real Windows logon/reboot check, run `python -m stock_monitor web-view-startup-fallback-check --record-success --json` to record the non-secret Startup fallback observation used by `next-phase-readiness.web_view_startup_fallback`.
 - `verify_next_phase_closeout.ps1 -Date YYYY-MM-DD` is the final repeatable closeout wrapper. It combines DB verification, Startup fallback health, optional `-RecordStartupFallbackSuccess`, operator health, scheduler registration verification, market-day observation, direct `observation-summary-audit` feature-availability review, direct `observation-reaction-distribution` reaction-window coverage review, direct `candidate-evidence-readiness` target-progress review, direct `market-briefing-readiness` phone-readability/scheduling-gate review, direct web-view value QA, direct web-view browser smoke, direct external web-view sharing plan review, direct category snapshot status/plan review, direct rotation mapping audit, direct KRX baseline analysis, and `next-phase-readiness` without sending Telegram, registering tasks, configuring Cloudflare, fetching live KRX data, or exposing `admin-gui`. The reaction-distribution command can derive the stored summary baseline when dates are omitted, so the wrapper does not hardcode the current report range; `-Date` is only for market-day observation, while rotation mapping uses its own latest stored-date default.
 - If a response body also looks like `admin-gui`, admin markers win over Cloudflare Access wording and the provider smoke must fail.
 - The actual Cloudflare/Tailscale tunnel target and allow-list must still be verified in the tunnel provider UI.
@@ -494,7 +494,7 @@ Current DB retention/backup policy:
 | Core source data | Keep `reports` and delivery safety state. Do not cleanup yet. |
 | Derived summaries | Rebuild from `reports` when needed. |
 | KRX snapshots | Keep 6 months; use 3 months as default flow window. |
-| KRX missing backfill | Use [data-rebaseline-plan.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/data-rebaseline-plan.md) before migration. Normal operation uses 5-date batches; migration rebaseline may use 10-date batches only after backup, dry-run review, and `--allow-large-batch`. |
+| KRX missing backfill | Use [data-rebaseline-plan.md](/docs/codex/data-rebaseline-plan.md) before migration. Normal operation uses 5-date batches; migration rebaseline may use 10-date batches only after backup, dry-run review, and `--allow-large-batch`. |
 | Backup cadence | Twice daily target after automation: after the early KRX retry window and around `16:35`. Manual backup before migration/backfill/cleanup. |
 | Backup pruning | Keep at least 30 recent backups initially; prune only after `--dry-run` review. |
 | Restore smoke | Use `python -m stock_monitor db-restore-smoke <backup.db>` to verify a backup copy without touching production DB. |
@@ -519,7 +519,7 @@ Before leaving the mini PC unattended, decide and record:
 Paste this into the new mini PC Codex session:
 
 ```text
-C:\Users\MING\Codex\02.Stock_Moniter only.
+{PROJECT_ROOT} only.
 This is the Stock Monitor project moved from the desktop to the mini PC.
 Read AGENTS.md, docs/codex/current-work.md, docs/codex/execution-roadmap.md, docs/codex/surface-contract.md, docs/codex/mini-pc-migration-handoff.md, docs/codex/data-source-policy.md, docs/codex/data-rebaseline-plan.md, and CHANGELOG.md first.
 
@@ -528,7 +528,7 @@ Current operating contract:
 - Poll: 08:30~16:30 every 30 minutes on Korean business days.
 - Telegram command worker: 08:00~16:30, 1-minute loop.
 - KRX Open API daily retry: StockMonitor-KrxDailyBackfill checks previous-business-day/recent missing stock/ETF/index snapshots at 08:10 on Korean business days, after the officially confirmed next-business-day 08:00 publication window.
-- Web-view hourly restart: StockMonitor-WebViewHourlyRestart refreshes only 127.0.0.1:8780 every hour.
+- Web-view hourly restart: StockMonitor-WebViewHourlyRestart refreshes only {LOCAL_WEB_VIEW_TARGET} every hour.
 - Shutdown: desktop validation only. For mini PC always-on operation, use scripts/register_mini_pc_scheduler_tasks.ps1 so StockMonitor-Shutdown is not registered.
 
 Do not expose admin-gui publicly.

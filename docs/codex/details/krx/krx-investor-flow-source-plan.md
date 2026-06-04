@@ -1,4 +1,4 @@
-﻿# KRX Investor Flow Source Plan
+# KRX Investor Flow Source Plan
 
 ## Purpose
 
@@ -425,8 +425,8 @@ investor_net_buy_top_daily(
 - Run collection after the data delay window, not immediately at the regular market close.
 - Preserve source units because KRX screens can switch between shares/thousand shares and KRW/thousand/million/billion KRW.
 - If a screen condition cannot be reproduced programmatically, stop at manual validation and do not silently approximate it.
-- Use [krx-flow-sample-capture-runbook.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/details/krx/krx-flow-sample-capture-runbook.md) and `data/krx_samples/templates/*.json` before promoting any raw sample to an ingest reference.
-- Use [krx-investor-flow-schema.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/details/krx/krx-investor-flow-schema.md) as the table contract and `db-verify` quality gate reference before enabling any scheduled ingest.
+- Use [krx-flow-sample-capture-runbook.md](/docs/codex/details/krx/krx-flow-sample-capture-runbook.md) and `data/krx_samples/templates/*.json` before promoting any raw sample to an ingest reference.
+- Use [krx-investor-flow-schema.md](/docs/codex/details/krx/krx-investor-flow-schema.md) as the table contract and `db-verify` quality gate reference before enabling any scheduled ingest.
 
 Dry-run commands:
 

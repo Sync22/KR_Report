@@ -34,4 +34,4 @@ Refine the public `web-view` main page into a faster briefing surface without ch
 
 - Implemented in `src/stock_monitor/cli.py`.
 - Regression coverage updated in `tests/test_web_view.py`.
-- Local `web-view` was restarted on `127.0.0.1:8780` after verification.
+- Local `web-view` was restarted on `{LOCAL_WEB_VIEW_TARGET}` after verification.

@@ -1,4 +1,4 @@
-﻿# ETF / Flow Source Study
+# ETF / Flow Source Study
 
 ## Purpose
 
@@ -50,7 +50,7 @@ That is acceptable for a later implementation step, but it means ingest code sho
 
 The approved KRX Open API specs do not include investor-category flow fields, but the logged-in KRX Data Marketplace screen exposes the needed investor-flow tables.
 
-Confirmed screens are tracked in [krx-investor-flow-source-plan.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/details/krx/krx-investor-flow-source-plan.md):
+Confirmed screens are tracked in [krx-investor-flow-source-plan.md](/docs/codex/details/krx/krx-investor-flow-source-plan.md):
 
 | Screen | Use |
 | --- | --- |
@@ -134,7 +134,7 @@ stock_flow_daily(
 )
 ```
 
-Actual KRX Data Marketplace flow migrations should use the more explicit candidate shapes in [krx-investor-flow-source-plan.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/details/krx/krx-investor-flow-source-plan.md), including separate stock-level, market-level, and top-net-buy tables.
+Actual KRX Data Marketplace flow migrations should use the more explicit candidate shapes in [krx-investor-flow-source-plan.md](/docs/codex/details/krx/krx-investor-flow-source-plan.md), including separate stock-level, market-level, and top-net-buy tables.
 
 Keep `stock_market_daily` and investor-flow tables separate at first.
 Some sources may provide price/volume without investor categories, while others may provide investor trend without the preferred close/turnover fields.
@@ -194,4 +194,4 @@ Do a narrow source validation batch:
 4. trace KRX Data Marketplace `[12009]`, then `[12008]` and `[12010]`
 5. only then add migrations and a manual `fetch-market-daily` style CLI
 
-The field-validation checklist is tracked separately in [krx-api-field-validation.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/details/krx/krx-api-field-validation.md).
+The field-validation checklist is tracked separately in [krx-api-field-validation.md](/docs/codex/details/krx/krx-api-field-validation.md).

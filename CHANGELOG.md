@@ -166,9 +166,9 @@
 - `candidate_evidence`에 저장 데이터 기반 `target_price_progress`를 추가. `관찰` 탭에서 목표가 범위 대비 `괴리`와 첫 목표가 리포트 기준 `진행`을 표시하되, 추천/점수/매수 후보 표현은 계속 차단.
 - `report-backfill-preview`와 `report-backfill-manual` CLI를 추가. preview는 네트워크/DB 쓰기 없이 커버리지만 계산하고, manual 실수집은 `--confirm --i-backed-up` 없이는 DB에 쓰지 못하도록 guard를 둠.
 - `docs/codex/target-price-progress-plan.md`를 추가해 목표가 괴리율/진행률 기준과 리포트 backfill 경계를 문서화.
-- DB 백업(`data/backups/stock_monitor_20260511_2208_manual.db`) 후 `2026-04-21`~`2026-04-23` 리포트 82건을 수동 backfill. 날짜별 요약은 `2026-04-21=4`, `2026-04-22=41`, `2026-04-23=21`개로 재생성.
-- DB 백업(`data/backups/stock_monitor_20260511_2211_manual.db`) 후 `2026-04-13`~`2026-04-17` 리포트 246건을 5영업일 단위로 수동 backfill. 기본 20페이지 한도에서는 과거 날짜가 잡히지 않아 60페이지/3000건 dry-run 후 진행.
-- DB 백업(`data/backups/stock_monitor_20260511_2213_manual.db`) 후 남은 `2026-04-10`, `2026-04-20` 리포트 74건을 추가 backfill. `2026-04-10`~`2026-05-11` 20영업일 리포트 coverage가 `20/20`으로 채워짐.
+- DB 백업(`data/backups/stock_monitor_{timestamp}_{tag}.db`) 후 `2026-04-21`~`2026-04-23` 리포트 82건을 수동 backfill. 날짜별 요약은 `2026-04-21=4`, `2026-04-22=41`, `2026-04-23=21`개로 재생성.
+- DB 백업(`data/backups/stock_monitor_{timestamp}_{tag}.db`) 후 `2026-04-13`~`2026-04-17` 리포트 246건을 5영업일 단위로 수동 backfill. 기본 20페이지 한도에서는 과거 날짜가 잡히지 않아 60페이지/3000건 dry-run 후 진행.
+- DB 백업(`data/backups/stock_monitor_{timestamp}_{tag}.db`) 후 남은 `2026-04-10`, `2026-04-20` 리포트 74건을 추가 backfill. `2026-04-10`~`2026-05-11` 20영업일 리포트 coverage가 `20/20`으로 채워짐.
 - `report-backfill-manual`에 `--api-max-pages`, `--page-delay-seconds` 옵션을 추가해 과거 리포트 backfill 시 페이지 깊이와 요청 간 딜레이를 명령에서 직접 제어할 수 있게 함.
 - 권장 분석선인 `2026-02-09`~`2026-05-11` 리포트 coverage를 `60/60` 영업일로 확장. 페이지 딜레이 `0.2~0.4초`, 단계별 DB 백업, dry-run 후 confirm 방식으로 진행했고 최종 `reports=2585`, `daily_stock_summaries=1708`, `pytest=314 passed`, `db-verify` 정상 확인.
 - `admin-gui`와 사용자용 `web-view`에 공통 1차 입장코드 게이트를 추가. `python -m stock_monitor access-code set`으로 켜고, 코드는 평문이 아니라 `data/access_code.json`의 PBKDF2-SHA256 salt/hash로 보관한다.
@@ -379,7 +379,7 @@
 - SQLite schema v4로 `stock_investor_flow_daily`, `market_investor_flow_daily`, `investor_net_buy_top_daily` 테이블과 repository upsert/list 테스트를 추가. 테이블은 additive migration이며, 운영 DB scheduled ingest 적용은 raw endpoint 샘플과 단위 매핑 확인 전까지 보류한다.
 - `db-verify`에 수급 테이블 품질 검사를 추가해 잘못된 종목코드, 누락 단위, 숫자 수급값 없는 행, 잘못된 순위가 들어오면 운영 검증에서 실패하도록 보강.
 - `docs/codex/krx-investor-flow-schema.md`를 추가해 수급 테이블 계약, 단위 보존 정책, `db-verify` 품질 게이트, scheduled ingest 승격 조건을 문서화.
-- 운영 DB가 schema `4/4` 상태임을 `db-verify`로 확인했고, 신규 수급 테이블 3종은 모두 `0건` 상태로 유지. 사후 백업 `data/backups/stock_monitor_20260509_2112_post-investor-flow-v4.db`를 생성하고 integrity `ok` 확인.
+- 운영 DB가 schema `4/4` 상태임을 `db-verify`로 확인했고, 신규 수급 테이블 3종은 모두 `0건` 상태로 유지. 사후 백업 `data/backups/stock_monitor_{timestamp}_{tag}.db`를 생성하고 integrity `ok` 확인.
 - `krx-flow-dry-run --sample-file <json>`을 추가해 Chrome/DevTools 등으로 저장한 KRX Data Marketplace raw JSON을 로그인·네트워크·DB 쓰기 없이 정규화 검증할 수 있도록 보강.
 - `krx-flow-dry-run`에 `--volume-unit`, `--amount-unit`을 추가해 KRX 화면 캡처 당시 단위를 정규화 결과에 그대로 보존하도록 보강. 값 스케일링은 자동 추정하지 않는다.
 - `krx-flow-dry-run --sample-manifest <json>`을 추가해 raw sample 파일, 화면 번호, 기준일, 종목/시장/투자자 조건, 단위를 sidecar manifest로 묶어 반복 검증할 수 있도록 정리.
@@ -399,7 +399,7 @@
 - 사용자용 `web-view` 수급 DTO에 표시 라벨을 추가해 내부 market/investor 코드(`STK`, `foreign`)가 화면 기준 라벨(`KOSPI`, `외국인`)로 정규화되도록 보강하고, 외국인/기관/개인 우선 정렬을 적용.
 - `2026-05-08` 기준 leadership 후보에서 KRX 수급 sample manifest 7개를 생성. `[12009]` 종목 5개, `[12008]` 시장 1개, `[12010]` 순매수상위 1개이며, raw sample 파일은 아직 비어 있어 batch validation은 대기 상태.
 - 로그인된 KRX Data Marketplace visible grid 기준으로 `2026-05-08` 수급 샘플 7개를 캡처. `[12009]` 종목 5개, `[12008]` 시장 1개, `[12010]` 외국인 순매수상위 1개 모두 strict 검증 `quality=ok` 통과.
-- 수급 샘플 import 전 `data/backups/stock_monitor_20260510_0020_pre-visible-grid-flow-import.db` 백업을 생성하고 integrity `ok` 확인. 이후 수동 import로 `stock_investor_flow_daily 65건`, `market_investor_flow_daily 13건`, `investor_net_buy_top_daily 72건`을 저장.
+- 수급 샘플 import 전 `data/backups/stock_monitor_{timestamp}_{tag}.db` 백업을 생성하고 integrity `ok` 확인. 이후 수동 import로 `stock_investor_flow_daily 65건`, `market_investor_flow_daily 13건`, `investor_net_buy_top_daily 72건`을 저장.
 - 수동 import 후 `db-verify`에서 schema `4/4`, foreign key violations `0`, investor-flow quality issues `0`을 확인하고, 사용자용 `web-view` API에서 `2026-05-08` 일일 수급 및 `329180` 종목 수급 노출을 확인.
 - `krx-flow-compare-samples` 명령을 추가해 visible-grid 샘플과 향후 raw-network 샘플을 정규화 후 비교할 수 있도록 구성. 이 명령은 로그인/네트워크/DB 쓰기 없이 parity를 확인하며, scheduled ingest 승격 전 필수 게이트로 문서화.
 - `krx-flow-raw-sample-scaffold` 명령을 추가해 visible-grid manifest 기준으로 raw-network manifest placeholder를 만들 수 있도록 구성. `data\krx_samples_raw`에 7개 manifest를 생성했으며 raw JSON 본문은 아직 비어 있어 status가 `sample=N`으로 표시되는 상태가 정상이다.
@@ -419,7 +419,7 @@
 - `db-backup-prune` CLI를 추가해 오래된 백업 삭제 대상을 `--dry-run`으로 확인하고, 실제 삭제는 `--confirm`이 있어야 진행되도록 보호.
 - `db-cleanup` CLI를 추가해 오래된 KRX snapshot 정리 대상을 `--dry-run`으로 확인하고, 실제 삭제는 영향 row가 있을 때 `--confirm`이 있어야 진행되도록 보호.
 - `db-cleanup` 삭제 대상은 `stock_market_daily`, `etf_daily_snapshots`, `market_index_daily`로 제한하고, `reports`, `daily_stock_summaries`, `delivery_log`, 전일 요약 delivery run/fragment는 보호 대상으로 명시.
-- 첫 수동 백업 `data/backups/stock_monitor_20260509_1309_pre-cleanup-policy.db`를 생성하고 integrity check `ok` 확인.
+- 첫 수동 백업 `data/backups/stock_monitor_{timestamp}_{tag}.db`를 생성하고 integrity check `ok` 확인.
 - 운영 DB 기준 `python -m stock_monitor db-cleanup --dry-run --retention-days 183` 실행 결과 삭제 대상 `0건` 확인.
 - `krx-backfill-missing` CLI를 추가해 3개월 흐름 확인용 KRX 누락 영업일/endpoint를 최신 영업일부터 찾아 `krx-fetch-snapshot` 경로로 순차 수집할 수 있도록 구성.
 - 기본 `daily` backfill 대상은 ETF, KOSPI/KOSDAQ 주식 일별, KRX/KOSPI/KOSDAQ 지수 일별로 제한하고, 종목기본정보 endpoint는 명시 선택 시에만 포함되도록 분리.
@@ -861,5 +861,5 @@
 ## 메모
 
 - 이 문서는 실제 변경 사항 중심으로 유지합니다.
-- 판단 이유와 운영 원칙은 [docs/codex/decision-log.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/decision-log.md)에 남깁니다.
-- 현재 상태와 다음 작업은 [docs/codex/current-work.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/current-work.md)에서 이어갑니다.
+- 판단 이유와 운영 원칙은 [docs/codex/decision-log.md](/docs/codex/decision-log.md)에 남깁니다.
+- 현재 상태와 다음 작업은 [docs/codex/current-work.md](/docs/codex/current-work.md)에서 이어갑니다.

@@ -1,4 +1,4 @@
-﻿# KRX API Field Validation
+# KRX API Field Validation
 
 ## Purpose
 
@@ -142,7 +142,7 @@ For every approved endpoint, capture:
 ### Investor Flow Data
 
 The approved KRX Open API specs do not expose it, but KRX Data Marketplace screens do.
-Use [krx-investor-flow-source-plan.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/details/krx/krx-investor-flow-source-plan.md) as the source-boundary document.
+Use [krx-investor-flow-source-plan.md](/docs/codex/details/krx/krx-investor-flow-source-plan.md) as the source-boundary document.
 
 | Project field | Needed | Notes |
 | --- | --- | --- |

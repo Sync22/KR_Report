@@ -1,4 +1,4 @@
-﻿# Mini PC Restore Change Log - 2026-05-16
+# Mini PC Restore Change Log - 2026-05-16
 
 ## Purpose
 
@@ -12,7 +12,7 @@ It intentionally does not include `.env` values, Telegram tokens, KRX keys, acce
 Project folder only:
 
 ```text
-C:\Users\MING\Codex\02.Stock_Moniter
+{PROJECT_ROOT}
 ```
 
 Source-of-truth documents read before work:
@@ -76,7 +76,7 @@ External sharing state:
 - Access-code gate is enabled.
 - `admin-gui` must remain local/private.
 - Only `web-view` is a future external-sharing candidate.
-- Candidate tunnel target remains `http://127.0.0.1:8780`.
+- Candidate tunnel target remains `{LOCAL_WEB_VIEW_TARGET}`.
 
 ## Runtime and Setup Work
 
@@ -97,13 +97,13 @@ Secret values were not displayed or copied into chat.
 Post-restore backup:
 
 ```text
-data\backups\stock_monitor_20260516_0056_post-restore.db
+data\backups\stock_monitor_{timestamp}_{tag}.db
 ```
 
 Additional backup before latest mentioned-flow catch-up:
 
 ```text
-data\backups\stock_monitor_20260516_0130_before_latest_mentioned_flow_31d_fill.db
+data\backups\stock_monitor_{timestamp}_{tag}.db
 ```
 
 ## Code Changes
@@ -313,7 +313,7 @@ If the original desktop/source-managed copy should also carry the mini PC DB sta
 Use this for the next operator/Codex session:
 
 ```text
-C:\Users\MING\Codex\02.Stock_Moniter only.
+{PROJECT_ROOT} only.
 Read AGENTS.md and docs/codex/documentation-index.md first, then follow only the canonical docs.
 
 Current mini PC state:
@@ -413,7 +413,7 @@ The full restored-history `[12009]` catch-up was completed on the mini PC with t
 - Report range audited: `2026-01-02` through `2026-05-15`.
 - Policy: each stock's latest report-mentioned date, then that stock's recent 31 calendar-day window filtered to Korean business days.
 - Starting missing stock/date calls: `13,940`.
-- Backup before live execution: `data\backups\stock_monitor_20260516_1100_before_latest_anchor_mentioned_flow_fill.db`.
+- Backup before live execution: `data\backups\stock_monitor_{timestamp}_{tag}.db`.
 - Completed live coverage: `13,940` stock/date calls and `181,220` stored `[12009]` rows.
 - Batch shape: `46` full 300-call batches plus one final 140-call batch. One 300-call batch hit the shell timeout after DB writes; it left no completion event, but follow-up dry-run showed those rows were present and the next run resumed from the remaining stock/date calls.
 - Final dry-run: `raw_call_count=0`, `planned_call_count=0`, `anchor_dates_with_missing_count=0`.

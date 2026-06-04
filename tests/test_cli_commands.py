@@ -2094,7 +2094,7 @@ def test_mini_pc_preflight_snapshot_reports_latest_backup(tmp_path) -> None:
     repository.initialize()
     backup_dir = config.data_dir / "backups"
     backup_dir.mkdir(parents=True)
-    backup_path = backup_dir / "stock_monitor_20260515_2100_before_mini_pc_migration.db"
+    backup_path = backup_dir / "stock_monitor_sample_before_mini_pc_migration.db"
     backup_path.write_bytes(b"backup")
 
     snapshot = _build_mini_pc_preflight_snapshot(

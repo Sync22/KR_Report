@@ -15,7 +15,7 @@ Use this before touching KRX Open API snapshots, KRX Data Marketplace investor-f
 | Investor flow `[12008]`, `[12009]`, `[12010]` | KRX Data Marketplace | Stored sample/read-only flow reference. |
 | 업종/테마 | Naver taxonomy for now | Category rollups and dated snapshots; do not call this KRX-owned taxonomy yet. |
 
-Display naming follows [data-source-policy.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/data-source-policy.md).
+Display naming follows [data-source-policy.md](/docs/codex/data-source-policy.md).
 
 ## Skill / Agent Use
 
@@ -131,7 +131,7 @@ Main-PC evidence from `2026-05-20 00:59~09:17 KST`:
 | --- | --- |
 | `2026-05-15` | 6/6 endpoints reachable; ETF/KOSPI/KOSDAQ parsed above minimum with filtered extra raw rows, and index endpoints fully available. Backfilled successfully after backup/restore-smoke. |
 | `2026-05-18` | 6/6 endpoints reachable with the same available/partial pattern. Backfilled successfully after backup/restore-smoke. |
-| `2026-05-19` | 6/6 endpoints were `not_published` through unrestricted-network `07:28:32`; at unrestricted-network `08:28:38`, ETF/stock endpoints became `partial` and index endpoints became `available`, with reference date `2026-05-19`, raw rows `4011`, and parsed rows `3701`. At `09:17 KST`, after `db-verify`, backup `stock_monitor_20260520_0916_before_krx_20260519_backfill.db`, and restore-smoke success, a bounded live `krx-backfill-missing daily --to-date 2026-05-19 --max-dates 1` stored ETF `874`, KOSPI stock `923`, KOSDAQ stock `1777`, KRX index `36`, KOSPI index `51`, and KOSDAQ index `40` rows with `incomplete_endpoints=0`. |
+| `2026-05-19` | 6/6 endpoints were `not_published` through unrestricted-network `07:28:32`; at unrestricted-network `08:28:38`, ETF/stock endpoints became `partial` and index endpoints became `available`, with reference date `2026-05-19`, raw rows `4011`, and parsed rows `3701`. At `09:17 KST`, after `db-verify`, backup `stock_monitor_{timestamp}_{tag}.db`, and restore-smoke success, a bounded live `krx-backfill-missing daily --to-date 2026-05-19 --max-dates 1` stored ETF `874`, KOSPI stock `923`, KOSDAQ stock `1777`, KRX index `36`, KOSPI index `51`, and KOSDAQ index `40` rows with `incomplete_endpoints=0`. |
 | `2026-05-20` | 6/6 endpoints HTTP/API success but raw/parsed rows were `0`; recorded as `not_published` at `01:01`, `01:28`, unrestricted-network `02:28:43`, unrestricted-network `03:28:36`, unrestricted-network `04:28:46`, unrestricted-network `05:28:45`, unrestricted-network `06:28:41`, unrestricted-network `07:28:33`, unrestricted-network `08:28:42`, `17:09`, `18:09`, and `19:09` with no row-count delta. This is now treated as expected behavior because the official rule is next-business-day `08:00`, not same-day publication. |
 
 Interpretation: KRX Open API is daily provider evidence, not a real-time market mood source. At the observed `08:28 KST` window it exposed the previous business day `2026-05-19` rows, and the guarded `09:17 KST` backfill stored them successfully. The official operating rule is now next-business-day `08:00` publication followed by the `08:10` scheduled backfill; same-day `not_published` is normal and should not keep a probe automation running. Sandboxed `02:28 KST` through `09:16 KST` probes/backfill attempts recorded local socket-access errors; treat those as environment evidence only, not as KRX publication status.
@@ -213,7 +213,7 @@ Current 18-month rebaseline progress:
 
 | Date | Result |
 | --- | --- |
-| `2026-05-15` | Latest backed-up mini PC retry at `2026-05-17T08:17` KST used `data/backups/stock_monitor_20260517_0815_before_krx_20260515_retry_5.db`, reached all 6 daily endpoints, and stored ETF 874 rows, stock 2701 rows, and index 127 rows with `incomplete_endpoints=0`. Post-success backup `data/backups/stock_monitor_20260517_0818_after_krx_20260515_success.db` was restore-smoked successfully. Earlier backed-up retries at `06:40`, `01:19`, and `00:52` returned empty rows. |
+| `2026-05-15` | Latest backed-up mini PC retry at `2026-05-17T08:17` KST used `data/backups/stock_monitor_{timestamp}_{tag}.db`, reached all 6 daily endpoints, and stored ETF 874 rows, stock 2701 rows, and index 127 rows with `incomplete_endpoints=0`. Post-success backup `data/backups/stock_monitor_{timestamp}_{tag}.db` was restore-smoked successfully. Earlier backed-up retries at `06:40`, `01:19`, and `00:52` returned empty rows. |
 | `2024-11-08`~`2026-05-15` | Stock/ETF/index daily snapshots stored. The extra `2024-11-08` row is harmless and sits just before the dynamic target window. |
 | `krx-baseline-analysis` | Reports `missing_daily_snapshots=0` after the successful `2026-05-15` fill. It also includes `recent_backfill_observations` so operators can see recent `success`, `empty`, or `partial` KRX Open API attempts before retrying future missing dates. |
 | `2025-12-30`, `2025-12-29`, `2025-12-26` | Loaded successfully. |
@@ -265,7 +265,7 @@ Current policy:
 - Existing stock/date keys are skipped by default unless `--no-skip-existing` is explicit.
 - Scheduled investor-flow ingest remains disabled until separately approved.
 
-Detailed capture history remains in the original KRX detail documents listed from [documentation-index.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/documentation-index.md).
+Detailed capture history remains in the original KRX detail documents listed from [documentation-index.md](/docs/codex/documentation-index.md).
 
 ## Non-Negotiables
 

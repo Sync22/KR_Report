@@ -95,8 +95,8 @@ Disallowed examples:
 
 The user page is an archive/review surface, not a delivery mirror.
 
-Detailed data-quality rules are maintained in [data-quality-checklist.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/data-quality-checklist.md).
-Source ownership and Korean display naming are fixed in [data-source-policy.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/data-source-policy.md).
+Detailed data-quality rules are maintained in [data-quality-checklist.md](/docs/codex/data-quality-checklist.md).
+Source ownership and Korean display naming are fixed in [data-source-policy.md](/docs/codex/data-source-policy.md).
 
 | Item | Contract |
 | --- | --- |
@@ -149,7 +149,7 @@ Before any Cloudflare Tunnel URL is shared, confirm this checklist:
 
 | Check | Required State |
 | --- | --- |
-| Target port | Only the `web-view` port, for example `127.0.0.1:8780`. |
+| Target port | Only the `web-view` port, for example `{LOCAL_WEB_VIEW_TARGET}`. |
 | Local bind | Keep `web-view` bound to `127.0.0.1` unless a deliberate private-network exception uses `--allow-non-loopback`. |
 | HTTP methods | `GET` only for user data routes; write methods return `405`. `/auth/login` is the only allowed POST exception. |
 | Admin separation | `admin-gui`, `/api/status`, scheduler/operator/settings POST routes, shutdown controls, `.env`, DB files, and Telegram secrets are not exposed. |
@@ -214,7 +214,7 @@ These candidates must not start servers, expose `admin-gui`, or perform write/co
 | Candidate | Allowed target | Intended audience | Notes |
 | --- | --- | --- | --- |
 | Tailscale | Local services on the mini PC, primarily owner access | Owner devices first | Good for private remote operation. Friend sharing is possible but creates onboarding overhead. |
-| Cloudflare Tunnel | `web-view` only, for example `http://127.0.0.1:8780` | Small trusted friend group | Best fit for a convenient friend-facing HTTPS URL after local validation and the local entry-code gate is enabled. |
+| Cloudflare Tunnel | `web-view` only, for example `{LOCAL_WEB_VIEW_TARGET}` | Small trusted friend group | Best fit for a convenient friend-facing HTTPS URL after local validation and the local entry-code gate is enabled. |
 | Docker | None for the current Windows N100 path | Not a sharing mechanism | Deferred. Direct Python + Windows Task Scheduler is the operating target unless the host moves to Linux/VPS or multi-service deployment. |
 
 `admin-gui` must not be exposed through either candidate as a public/friend-facing surface.
