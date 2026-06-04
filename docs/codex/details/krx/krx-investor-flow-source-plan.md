@@ -344,7 +344,7 @@ Important implementation risk:
 - `[12009]` candidate params use `isuCd`, which appears to be an ISIN-style issue code rather than the 6-digit stock code.
 - Do not call `[12009]` directly from `stock_code` until a 6-digit code to `isuCd` mapping is confirmed from approved KRX metadata or a Data Marketplace lookup response.
 - If the dry-run cannot reproduce the screen output without session-specific or hidden browser state, keep this as a manual validation source and do not add scheduled ingestion.
-- For UI login fallback, prefer the direct `login.jsp?site=mdc` page over the wrapper iframe page. Browser UI login is for validation/debug only; the `.env` raw fetch path is the standard sample-capture path while credentials remain local-only.
+- For UI login fallback, prefer the direct `{KRX_LOGIN_FALLBACK_PATH}` page over the wrapper iframe page. Browser UI login is for validation/debug only; the `.env` raw fetch path is the standard sample-capture path while credentials remain local-only.
 - Do not automate Chrome saved-password, PIN, Windows Hello, or other OS/native security prompts. These remain manual operator actions.
 
 ## Initial Data Model Candidates

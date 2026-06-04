@@ -53,7 +53,7 @@ SQLite에 저장한 뒤 Telegram, 관리자 화면, 사용자용 웹뷰로 읽�
 
 ### Naver 리포트
 
-수집 대상은 `https://stock.naver.com/research/company`의 국내종목 리포트다.
+수집 대상은 `{NAVER_RESEARCH_URL}`의 국내종목 리포트다.
 다른 탭은 아직 기본 운영 범위가 아니다.
 
 리포트는 아래 식별값을 최대한 안정적으로 조합해 중복 저장을 방지한다.

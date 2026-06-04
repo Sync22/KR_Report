@@ -43,7 +43,7 @@
 - `operator-status` 텍스트 출력에도 strict health 해석 줄을 추가했다. 이제 `access_denied` 상태에서 당일 실행 흔적이 같이 보여도, 해당 흔적이 스케줄러 메타데이터 검증을 대체하지 않는다는 점이 바로 보인다.
 - 정상 운영에서 꺼두는 optional `StockMonitor-KrxFlowLoginReminder`는 metadata `access_denied`를 core scheduler fail이 아니라 warning으로 분리했다. Notify/Poll/KRX daily backfill/KRX mentioned flow/TelegramCommands 같은 핵심 작업의 `access_denied`는 계속 fail이다.
 - `sector_catalog_not_refreshable` 경고의 의미를 README에 명확히 했다. `source=naver_quote` 업종 row는 화면 표시/cache용 분류이며, 검증된 `source=naver_industry` 또는 `source=naver_upjong` row만 `refresh-industries` 대상이다.
-- `refresh-industry`가 구형 모바일 `front-api` 404 시 현재 Naver PC 업종 API(`upjong/{no}/info`, `upjong/{no}/stocklist`)로 fallback하도록 보강했다. `refresh-industry 307 --dry-run`으로 `전자제품` 업종 preview가 DB 쓰기 없이 동작함을 확인했다.
+- `refresh-industry`가 구형 모바일 API 경로 실패 시 현재 Naver PC 업종 API로 fallback하도록 보강했다. `refresh-industry --dry-run`으로 업종 preview가 DB 쓰기 없이 동작함을 확인했다.
 - `category-catalog discover-industries`를 추가했다. 현재 Naver PC 업종 catalog를 DB 쓰기 없이 조회하고, 각 후보별 `category-catalog add sector ... --source naver_industry` 명령을 출력해 업종 fallback 축소 작업이 브라우저 수동 추적에 의존하지 않게 했다.
 - `category-catalog discover-industries` 출력에 기존 sector catalog 표시명 매칭 정보를 추가했다. 예를 들어 현재 후보 `광고`는 기존 `12/naver_quote`와 같은 표시명으로 `existing=Y(12/naver_quote)`가 표시되어, 검증된 `naver_industry` row를 새로 추가할지 기존 display/cache row와 충돌하는지 먼저 볼 수 있다.
 - 검증된 Naver PC upjong 후보 8개를 기존 `naver_quote` row와 별도로 `source=naver_industry` catalog에 추가했다. 대상은 `가정용품(297)`, `광고(310)`, `방송과엔터테인먼트(285)`, `상업서비스와공급품(324)`, `섬유,의류,신발,호화품(274)`, `손해보험(315)`, `전문소매(328)`, `전자제품(307)`이다. DB 백업 후 `refresh-industries --enabled --snapshot-date 2026-05-15 --confirm`으로 234개 dated sector membership row를 저장했고, `db-verify`의 `sector_catalog_not_refreshable` 경고가 사라졌다.
@@ -406,7 +406,7 @@
 - Stage 1 raw-network capture 자동화를 점검. Chrome 확장 탭에서는 KRX 로그인 세션이 보이지만 현재 브라우저 자동화 표면은 raw network response body를 노출하지 않고, 비로그인 직접 POST는 KRX가 `LOGOUT`으로 거부함을 확인. `krx-flow-execution-stages.md`에 Stage 1 필수 파일과 blocker를 명시.
 - 로컬 `.env`에 등록된 KRX Data Marketplace 로그인값으로 `2026-05-08` raw-network JSON 7개를 `data\krx_samples_raw`에 저장. raw sample status가 `ready_for_batch_validation: Y`가 되었고, strict raw validation 7/7 통과.
 - `krx-flow-compare-samples --allow-right-extra-top-rows` 옵션을 추가. `[12010]` raw 응답은 846행, visible-grid는 72행으로 raw가 더 많지만 visible rows가 raw prefix와 일치하는 compatible superset으로 판정되도록 분리. `2026-05-08` Stage 1-3 통과.
-- KRX 로그인 UI 자동화 재검토. wrapper iframe 경로보다 direct `login.jsp?site=mdc` 탭이 안정적으로 DOM 필드를 노출하며, 실제 세션 교체 로그인도 확인. 다만 브라우저 UI 로그인은 fallback/debug 경로로 두고, 표준 raw sample capture는 `.env` 기반 raw fetch로 유지하기로 정리.
+- KRX 로그인 UI 자동화 재검토. wrapper iframe 경로보다 direct `{KRX_LOGIN_FALLBACK_PATH}` 탭이 안정적으로 DOM 필드를 노출하며, 실제 세션 교체 로그인도 확인. 다만 브라우저 UI 로그인은 fallback/debug 경로로 두고, 표준 raw sample capture는 `.env` 기반 raw fetch로 유지하기로 정리.
 - `2026-05-07` 기준 KRX 수급 raw-network 샘플 7개를 `data\krx_samples_raw_20260507`에 저장하고 strict raw validation 7/7 통과.
 - 같은 날짜 visible-grid baseline 7개를 `data\krx_samples_visible_20260507`에 저장하고 strict validation 7/7 통과. `[12008]`은 ETF/ETN/ELW 추가항목을 해제한 KOSPI 기준으로 맞췄고, `[12010]`은 우선주 코드처럼 6자리 숫자가 아닌 코드도 누락하지 않도록 캡처를 보정.
 - `krx-flow-compare-samples --left-manifest-dir data\krx_samples_visible_20260507 --right-manifest-dir data\krx_samples_raw_20260507 --allow-right-extra-top-rows` 통과. `2026-05-08`, `2026-05-07` 두 영업일 모두 raw/visible-grid parity가 확인되어 Stage 4 완료. scheduled ingest는 Stage 6 설계와 별도 승인 전까지 계속 비활성.
@@ -484,7 +484,7 @@
 - `.env.example`에 KRX placeholder (`STOCK_MONITOR_KRX_AUTH_KEY`, `STOCK_MONITOR_KRX_BASE_URL`, `STOCK_MONITOR_KRX_TIMEOUT_SECONDS`)를 추가.
 - `current-work`, `project-map`, `execution-roadmap`, `etf-flow-source-study`에 KRX P2 범위 신청 완료와 세부 field capture 대기 상태를 반영.
 - `data/API_Specification/*.docx` 8개 명세서를 확인해 KRX endpoint, request parameter, response field를 `data/krx_api_intake.local.md`와 `docs/codex/krx-api-field-validation.md`에 반영.
-- KRX base URL placeholder를 명세서 기준 `https://data-dbg.krx.co.kr`로 조정.
+- KRX base URL placeholder를 명세서 기준 `{KRX_OPENAPI_BASE_URL}`로 조정.
 - KRX 8개 endpoint를 `AUTH_KEY` header + `POST` + JSON body로 `basDd=20260507` dry-run 검증. ETF, 유가증권/코스닥 일별매매정보, 종목기본정보, KRX/KOSPI/KOSDAQ 지수 일별시세정보가 모두 응답함.
 - KRX dry-run의 endpoint별 row count와 첫 row 샘플을 `data/krx_api_dry_run_samples.local.json`에 저장.
 - 외부 접속 후보를 Tailscale(본인 원격관리)과 Cloudflare Tunnel(친구용 read-only `web-view` 공유)로 좁혀 `execution-roadmap`, `surface-contract`, `mini-pc-migration-handoff`, `operator_memos`에 기록.
