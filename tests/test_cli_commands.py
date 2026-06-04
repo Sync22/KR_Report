@@ -5740,6 +5740,8 @@ def test_market_briefing_message_qa_blocks_decision_and_raw_missing_copy() -> No
                 "오늘의 시장 분위기 · 26.05.14",
                 "확인 포인트",
                 "- 반도체 추가 하락 시 매수 기회 포착",
+                "- 관심도 점수: 92",
+                "- 투자 등급: A",
                 "- 수급 참고 N/A",
                 "- 전략 제안",
             ]
@@ -5750,6 +5752,21 @@ def test_market_briefing_message_qa_blocks_decision_and_raw_missing_copy() -> No
         "market_briefing_decision_wording",
         "market_briefing_raw_missing_marker",
     }
+
+
+def test_market_briefing_message_qa_allows_non_call_safety_wording() -> None:
+    issues = _collect_market_briefing_message_issues(
+        "\n".join(
+            [
+                "국장 점심 브리핑 · 2026.06.04",
+                "시황 해설: 추천 판단이 아니라 리포트 의견과 뉴스 근거를 구분합니다.",
+                "- 점수 없이 저장 근거만 확인",
+                "- 등급 없음, 수급 참고만 표시",
+            ]
+        )
+    )
+
+    assert issues == []
 
 
 def test_market_briefing_message_qa_allows_flow_buy_dominance_wording() -> None:
