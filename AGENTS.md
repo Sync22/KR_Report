@@ -94,7 +94,7 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
   - use `--ai-targeted` for Scrapling CLI extraction commands
   - production DB writes, Telegram, scheduler, admin-gui, and public `web-view` integration remain blocked
 - `kronos-market-forecast`
-  - stored KRX OHLCV 기반 research-only forecast 실험 전용
+  - not in the current active global baseline; treat old results as historical research-only references unless explicitly re-enabled
   - public score, recommendation, Telegram trading alert 연결 금지
 - `codex-complexity-optimizer`
   - local complexity/performance review 전용
@@ -186,6 +186,8 @@ Stock Monitor-specific rule:
 - SchemaSpy remains lab-only / repeatable-lab candidate after jars are staged.
 - QuantDinger remains hold.
 - OpenAlgo remains future-lab only.
+- HeroUI is for future React/Next UI work only; do not apply it to the current Python/admin/web-view surfaces without an explicit frontend rewrite.
+- Exa remains hold unless normal web/docs lookup repeatedly proves insufficient.
 - If any old role is restored later, `market-data-engineer` is the first likely candidate, but only after repeated KRX/Data Marketplace/source-semantics work proves the global layer is insufficient.
 
 Reference:

@@ -45,6 +45,8 @@ These files remain useful as detailed history or implementation notes, but they 
 | `details/krx/*` | `krx-market-data-runbook.md` |
 | `contracts/*` | `surface-contract.md`, `data-quality-checklist.md`, `data-source-policy.md`, and the relevant canonical runbook |
 | `contracts/news-intelligence-contract.md` | `stock_research_monitor_mvp.md`, `surface-contract.md`, and `next-phase.md` for the operator-only news intelligence, explicit observation save/readback boundary, and future public-safe stored `web-view` projection. |
+| `contracts/toss-openapi-official-api-inventory.md` | `contracts/toss-openapi-readonly-lab-contract.md` for local memory of the official Toss endpoint/schema/auth/rate-limit/model surface before runtime use. |
+| `contracts/toss-openapi-readonly-lab-contract.md` | `surface-contract.md`, `data-source-policy.md`, `current-work.md`, and `next-phase.md` for future Toss Securities OpenAPI read-only lab work, pre-key restrictions, secret/account/order boundaries, and public-surface exclusions. |
 | `plans/*` | `current-work.md`, `next-phase.md`, and `execution-roadmap.md` |
 | `plans/observation-candidate-recommendation-goal-prompt.md` | Goal prompt for the next `오늘의 관찰 후보` implementation pass; keep the product boundary in `current-work.md`, `next-phase.md`, and `surface-contract.md`. |
 | `history/mini-pc-restore-change-log-2026-05-16.md` | `mini-pc-migration-handoff.md`, `current-work.md`, and `krx-market-data-runbook.md` for ongoing policy; keep this file as the source-sync record for the mini PC restore session. |
