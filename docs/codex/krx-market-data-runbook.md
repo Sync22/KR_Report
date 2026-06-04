@@ -23,10 +23,10 @@ Display naming follows [data-source-policy.md](/C:/Users/MING/Codex/02.Stock_Mon
 | Work | Skill | Agent | Rule |
 | --- | --- | --- | --- |
 | Stock/ETF/index daily KRX Open API rows | none | `market-data-engineer`, `backend-developer`, `sql-pro` | Use existing Open API backfill and repository paths. Do not use browser probes for this lane. |
-| KRX Data Marketplace session, LOGOUT, detection, or screen access | `botasaurus-stock-monitor` if a browser-gated probe is needed | `market-data-engineer`, `debugger` | Probe only. Do not wire probe output into production tables without the normal import/review path. |
+| KRX Data Marketplace session, LOGOUT, detection, or screen access | Existing request/login/sample validation first; `scrapling-official` only for bounded browser/source probes when needed | `market-data-engineer`, `debugger` | Scrapling is the active probe lane. Botasaurus is archived reference only. Do not wire probe output into production tables without the normal import/review path. |
 | Investor-flow sample validation/import | none by default | `market-data-engineer`, `sql-pro`, `test-engineer` | Use manifest validation, compare, import-preview, guarded import, and `db-verify`. |
-| Flow/ETF/user display | `browser-use:browser` only for local visual check | `web-ui-engineer`, `security-hardening` | GET-only and public-safe boundary remain mandatory. |
-| OHLCV forecasting comparison | `kronos-market-forecast` | `market-data-engineer`, `reviewer` | Research-only. No Telegram, scheduler, public numeric score, or trading-recommendation output. |
+| Flow/ETF/user display | Browser/Chrome plugin for ordinary local visual checks; Playwright MCP only for repeatable lab/E2E-style checks | `web-ui-engineer`, `security-hardening` | GET-only and public-safe boundary remain mandatory. |
+| OHLCV forecasting comparison | none by default; historical Kronos lane only if explicitly re-enabled | `market-data-engineer`, `reviewer` | Research-only. No Telegram, scheduler, public numeric score, or trading-recommendation output. |
 
 ## Current State
 
