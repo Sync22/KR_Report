@@ -15773,17 +15773,42 @@ def _collect_market_briefing_message_issues(message: str) -> list[dict[str, obje
 
 
 def _has_market_briefing_decision_wording(line: str) -> bool:
+    normalized = re.sub(r"\s+", " ", line.strip()).lower()
     blocked_phrases = (
-        "추천",
-        "점수",
-        "등급",
-        "전략 제안",
-        "매수 기회",
+        "매수 추천",
+        "매도 추천",
+        "매수추천",
+        "매도추천",
+        "추천 종목",
+        "추천 후보",
+        "추천주",
         "매수 후보",
-        "매도 신호",
         "매도 후보",
+        "매수 기회",
+        "매도 기회",
+        "전략 제안",
+        "진입가",
+        "청산가",
+        "익절가",
+        "손절가",
+        "목표 수익률",
+        "확신도",
+        "buy signal",
+        "sell signal",
+        "trading call",
+        "order routing",
     )
-    return any(phrase in line for phrase in blocked_phrases)
+    if any(phrase in normalized for phrase in blocked_phrases):
+        return True
+    decision_patterns = (
+        r"매수\s*(신호|타이밍|구간|진입|제안|권고|추천)",
+        r"매도\s*(신호|타이밍|구간|진입|제안|권고|추천)",
+        r"(신규|추가)\s*매수\b",
+        r"(점수|score)\s*[:=]\s*[-+]?\d",
+        r"(등급|grade)\s*[:=]\s*[0-9a-z가-힣]",
+        r"(투자\s*)?등급\s*(상향|하향|a|b|c|1|2|3)",
+    )
+    return any(re.search(pattern, normalized, flags=re.IGNORECASE) for pattern in decision_patterns)
 
 
 def _has_market_briefing_raw_missing_marker(line: str) -> bool:

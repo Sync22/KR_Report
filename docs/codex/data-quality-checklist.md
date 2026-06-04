@@ -23,6 +23,8 @@ For user-facing work, first decide whether the value helps a daily briefing, not
 | Evidence drilldown | Compact source-backed reasons and missing-state labels | Full validation chains, scheduler state, raw manifests, debug-only flags |
 | Admin/operator | Raw process state and diagnostics when useful | Secrets, tokens, uncontrolled external exposure |
 
+Wording QA is context-based, not a raw keyword ban. User-facing briefings may say things like `시황 해설`, `추천 판단 아님`, `점수 없이 저장 근거만 확인`, `등급 없음`, `리포트 의견 참고`, and `뉴스 근거` when they clarify limits or evidence. Keep blocking explicit trading-call wording such as `매수 추천`, `매도 추천`, `추천 종목`, `매수 기회`, `전략 제안`, `진입가`, `청산가`, numeric score labels like `점수: 92`, and grade labels like `등급: A`.
+
 User-facing visual summaries such as sector/theme breadth bars, top-2 observation candidates, and rotation ETF/stock reference slots are allowed only when the underlying values are stored facts. Missing category mappings, ETF snapshots, KRX rows, or flow rows must be shown as `부족한 정보` or equivalent empty-state text, not converted into negative evidence or hidden success.
 
 Observation recommendation is allowed. Do not weaken it into vague copy when the evidence supports a clear `우선 확인` ordering. The blocked boundary is trading advice, public numeric scoring, broker execution, or automated strategy wording. If a future approved real-time source is added, its values may strengthen or weaken observation priority, but the source/freshness and read-only limits must be explicit.
