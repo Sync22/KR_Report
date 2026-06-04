@@ -315,8 +315,10 @@ Latest-day retry note (`2026-05-17 08:17 KST`, updated `2026-05-19 01:25 KST`): 
 
 ## Suggested Execution Order
 
+Development branch rule: keep feature/lab branches small for isolated work, but merge review-ready visible slices back into `dev` so the current experimental product state can be inspected in one place before any operating-PC application.
+
 1. Finish operational closeout checks while real market data continues to arrive.
-2. Keep user `web-view` stock search and tab split stable.
+2. Keep user `web-view` stock search and tab split stable, and use `GET /v2` as the first preview route for the clearer next web-view information architecture.
 3. Review `candidate_evidence` visible rows across stored dates without scoring.
 4. Review stored `target_price_progress` rows across several dates and keep wording as `괴리율/진행률`, `관찰 후보`, or `우선 확인`, not trading recommendation.
 5. Build non-operational enhancement metrics first: report concentration, `[12009]` flow windows, price/volume position, sector breadth, and display-ready observation summary blocks.

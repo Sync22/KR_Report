@@ -240,6 +240,40 @@ def test_web_view_main_layout_first_pass_static_markup() -> None:
     assert "호출 ${number(calls)}회" in html
 
 
+def test_web_view_v2_preview_static_markup_reuses_public_read_only_apis() -> None:
+    html = cli_module._render_web_view_v2_html()
+
+    assert 'id="surface-v2-app"' in html
+    assert 'data-v2-section="flow"' in html
+    assert 'data-v2-section="candidates"' in html
+    assert 'data-v2-section="evidence"' in html
+    assert 'data-v2-section="stock-detail"' in html
+    assert "기존 화면으로" in html
+    assert "/api/archive?limit=80" in html
+    assert "/api/daily/${encodeURIComponent(date)}" in html
+    assert "/api/candidate-evidence?date=${encodeURIComponent(date)}&limit=8" in html
+    assert "/api/etf-trend?date=${encodeURIComponent(date)}&limit=4" in html
+    assert "/api/daily/${encodeURIComponent(state.selectedDate)}/stocks/" in html
+    assert "저장 뉴스 근거 없음" in html
+    assert "직접 뉴스" in html
+    assert "주의 뉴스" in html
+    assert "시장맥락 위주" in html
+    assert "/api/status" not in html
+    assert "/api/scheduler" not in html
+    assert "/api/settings" not in html
+    assert "admin_audit" not in html
+    for forbidden in (
+        "sentiment_score",
+        "stock_impact",
+        "operator_recommendation",
+        "recommendation_support",
+        "investment grade",
+        "trading call",
+        "order-routing",
+    ):
+        assert forbidden not in html
+
+
 def test_web_view_daily_snapshot_exposes_news_observation_empty_state(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
@@ -4244,6 +4278,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
         base_url = f"http://127.0.0.1:{server.server_port}"
         with urllib.request.urlopen(base_url + "/", timeout=5) as response:
             html = response.read().decode("utf-8")
+        with urllib.request.urlopen(base_url + "/v2", timeout=5) as response:
+            v2_html = response.read().decode("utf-8")
         with urllib.request.urlopen(base_url + "/api/archive", timeout=5) as response:
             payload = json.loads(response.read().decode("utf-8"))
         with urllib.request.urlopen(base_url + "/api/daily/2026-05-08", timeout=5) as response:
@@ -4309,6 +4345,13 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
             post_status = exc.code
         else:
             post_status = 200
+        v2_request = urllib.request.Request(base_url + "/v2", data=b"{}", method="POST")
+        try:
+            urllib.request.urlopen(v2_request, timeout=5)
+        except urllib.error.HTTPError as exc:
+            v2_post_status = exc.code
+        else:
+            v2_post_status = 200
 
         forbidden_control_route_statuses = {}
         for route, method, body in (
@@ -4332,6 +4375,9 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
 
     assert "<h1>KR-Stock</h1>" in html
     assert "Daily Report" in html
+    assert "KR-Stock V2 Preview" in v2_html
+    assert 'id="surface-v2-app"' in v2_html
+    assert 'data-v2-section="candidates"' in v2_html
     assert 'data-view-tab="main"' in html
     assert 'data-view-tab="watch"' in html
     assert 'data-view-tab="stock"' in html
@@ -4824,6 +4870,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     ):
         _assert_public_safe_payload(public_payload)
     assert post_status == 405
+    assert v2_post_status == 405
     assert forbidden_control_route_statuses == {
         ("GET", "/api/status"): 404,
         ("POST", "/api/scheduler/run-now"): 405,

@@ -18839,6 +18839,14 @@ def _make_web_view_handler(
                     content_type="text/html; charset=utf-8",
                 )
                 return
+            if path in {"/v2", "/v2/"}:
+                _write_http_response(
+                    self,
+                    HTTPStatus.OK,
+                    _render_web_view_v2_html(),
+                    content_type="text/html; charset=utf-8",
+                )
+                return
             if path == "/assets/cycle.jpg":
                 image_config, _coordinates = _load_rotation_overlay_config(config)
                 image_path = Path(str(image_config.get("path") or _ROTATION_OVERLAY_IMAGE["path"]))
@@ -20781,6 +20789,374 @@ def _render_admin_gui_html() -> str:
         refreshInFlight = false;
       });
     }, 30000);
+  </script>
+</body>
+</html>
+"""
+
+
+def _render_web_view_v2_html() -> str:
+    return """<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KR-Stock Web View V2</title>
+  <style>
+    :root {
+      --bg: #f4f2ed;
+      --panel: #fffdf8;
+      --ink: #1f2723;
+      --muted: #66736d;
+      --line: #ddd4c6;
+      --accent: #285c4d;
+      --accent-2: #6f7f3f;
+      --warn: #9b4f1d;
+      --soft: #eef4ee;
+      --shadow: 0 14px 34px rgba(31,39,35,.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: linear-gradient(135deg, #faf7f0 0%, #eef4ee 100%);
+      color: var(--ink);
+      font-family: "Noto Sans KR", "Pretendard", "Apple SD Gothic Neo", sans-serif;
+    }
+    main { width: min(1180px, calc(100vw - 28px)); margin: 0 auto; padding: 24px 0 42px; }
+    .v2-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
+    .v2-hero h1 { margin: 0; font-size: 34px; letter-spacing: 0; }
+    .v2-hero p { margin: 6px 0 0; color: var(--muted); }
+    .v2-link { color: var(--accent); font-weight: 900; text-decoration: none; }
+    .v2-date-rail { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 14px; }
+    .v2-date-button {
+      flex: 0 0 auto;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fffaf1;
+      color: var(--ink);
+      cursor: pointer;
+      font: inherit;
+      padding: 8px 12px;
+    }
+    .v2-date-button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .v2-layout { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(360px, .95fr); gap: 14px; align-items: start; }
+    .v2-column { display: grid; gap: 14px; min-width: 0; }
+    .v2-card {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255,253,248,.95);
+      box-shadow: var(--shadow);
+      padding: 16px;
+    }
+    .v2-card h2 { margin: 0 0 10px; font-size: 18px; letter-spacing: 0; }
+    .v2-card h3 { margin: 0; font-size: 15px; }
+    .v2-muted { color: var(--muted); }
+    .v2-status-row { display: flex; flex-wrap: wrap; gap: 7px; margin: 8px 0; }
+    .v2-chip {
+      display: inline-flex;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fffaf1;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      padding: 5px 9px;
+      white-space: nowrap;
+    }
+    .v2-chip.strong { border-color: rgba(40,92,77,.28); background: var(--soft); color: var(--accent); }
+    .v2-chip.warn { border-color: rgba(155,79,29,.26); background: #fff0df; color: var(--warn); }
+    .v2-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .v2-list li, .v2-evidence-row {
+      border-top: 1px solid rgba(221,212,198,.9);
+      padding-top: 8px;
+      color: var(--ink);
+      font-size: 13px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+    .v2-list li:first-child, .v2-evidence-row:first-child { border-top: 0; padding-top: 0; }
+    .v2-candidate-list { display: grid; gap: 10px; }
+    .v2-candidate-card {
+      display: grid;
+      gap: 7px;
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fffaf1;
+      color: var(--ink);
+      cursor: pointer;
+      font: inherit;
+      padding: 12px;
+      text-align: left;
+    }
+    .v2-candidate-card:hover, .v2-candidate-card:focus { border-color: var(--accent); outline: 3px solid rgba(40,92,77,.14); }
+    .v2-candidate-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+    .v2-candidate-head b { min-width: 0; font-size: 15px; overflow-wrap: anywhere; }
+    .v2-news-line { color: var(--ink); font-size: 13px; line-height: 1.45; }
+    .v2-reason { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+    .v2-detail { display: grid; gap: 10px; }
+    .v2-detail-title { margin: 0; font-size: 18px; font-weight: 900; }
+    .v2-evidence-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .v2-evidence-row { border: 1px solid var(--line); border-radius: 12px; background: #fffaf1; padding: 10px; }
+    .v2-evidence-row b { display: block; margin-bottom: 5px; color: var(--accent); font-size: 12px; }
+    .v2-error { color: var(--warn); font-size: 13px; }
+    @media (max-width: 900px) {
+      .v2-hero { flex-direction: column; }
+      .v2-layout { grid-template-columns: 1fr; }
+      .v2-evidence-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main id="surface-v2-app">
+    <header class="v2-hero">
+      <div>
+        <h1>KR-Stock V2 Preview</h1>
+        <p>저장 데이터 기준으로 흐름, 후보, 근거, 상세를 분리해서 보는 실험 화면입니다.</p>
+      </div>
+      <a class="v2-link" href="/">기존 화면으로</a>
+    </header>
+
+    <nav class="v2-date-rail" id="v2-date-rail" aria-label="날짜 선택">
+      <span class="v2-muted">날짜를 불러오는 중입니다.</span>
+    </nav>
+
+    <section class="v2-layout">
+      <div class="v2-column">
+        <section class="v2-card" data-v2-section="flow" aria-label="오늘의 흐름">
+          <h2>오늘의 흐름 <span class="v2-muted" id="v2-flow-date"></span></h2>
+          <p class="v2-reason" id="v2-flow-headline">날짜를 선택하면 저장된 리포트/KRX 기준 흐름을 보여줍니다.</p>
+          <div class="v2-status-row" id="v2-flow-chips"></div>
+          <ul class="v2-list" id="v2-flow-points"></ul>
+        </section>
+
+        <section class="v2-card" data-v2-section="candidates" aria-label="볼 종목">
+          <h2>볼 종목</h2>
+          <p class="v2-reason">후보 카드의 뉴스 줄은 저장된 observation만 사용합니다.</p>
+          <div class="v2-candidate-list" id="v2-candidate-list">
+            <span class="v2-muted">날짜를 선택하세요.</span>
+          </div>
+        </section>
+      </div>
+
+      <div class="v2-column">
+        <section class="v2-card" data-v2-section="evidence" aria-label="근거 레이어">
+          <h2>근거 레이어</h2>
+          <div class="v2-evidence-grid" id="v2-evidence-grid">
+            <div class="v2-evidence-row"><b>리포트</b><span class="v2-muted">대기 중</span></div>
+            <div class="v2-evidence-row"><b>뉴스</b><span class="v2-muted">대기 중</span></div>
+            <div class="v2-evidence-row"><b>KRX/수급</b><span class="v2-muted">대기 중</span></div>
+            <div class="v2-evidence-row"><b>순환매/ETF</b><span class="v2-muted">대기 중</span></div>
+          </div>
+        </section>
+
+        <section class="v2-card" data-v2-section="stock-detail" aria-label="종목 상세">
+          <h2>종목 상세</h2>
+          <div class="v2-detail" id="v2-stock-detail">
+            <span class="v2-muted">볼 종목 카드를 누르면 리포트와 뉴스 관찰 상세를 불러옵니다.</span>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const state = { selectedDate: "", selectedStockCode: "" };
+    const $ = (id) => document.getElementById(id);
+    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[ch]));
+    const number = (value) => Number(value || 0).toLocaleString("ko-KR");
+    const dateOf = (item) => item?.business_date || item?.date || "";
+    const validDate = (value) => /^\\d{4}-\\d{2}-\\d{2}$/.test(String(value || ""));
+    const validStockCode = (value) => /^\\d{6}$/.test(String(value || ""));
+
+    async function fetchJson(path) {
+      const response = await fetch(path, { cache: "no-store" });
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      return response.json();
+    }
+
+    function setUrl(date, stockCode = "") {
+      const url = new URL(window.location.href);
+      if (date) url.searchParams.set("date", date);
+      if (stockCode) url.searchParams.set("stock", stockCode);
+      else url.searchParams.delete("stock");
+      history.replaceState(null, "", url);
+    }
+
+    function renderDateRail(archive, selectedDate) {
+      const dates = Array.isArray(archive?.dates) ? archive.dates : [];
+      $("v2-date-rail").innerHTML = dates.slice(0, 18).map((item) => {
+        const value = dateOf(item);
+        const label = item.news_observation_count
+          ? `${value} · 뉴스 ${number(item.news_observation_count)}`
+          : value;
+        return `<button class="v2-date-button ${value === selectedDate ? "active" : ""}" type="button" data-date="${esc(value)}">${esc(label)}</button>`;
+      }).join("") || '<span class="v2-muted">저장된 날짜가 없습니다.</span>';
+      document.querySelectorAll("[data-date]").forEach((button) => {
+        button.addEventListener("click", () => loadDate(button.dataset.date || ""));
+      });
+    }
+
+    function renderFlow(daily) {
+      const briefing = daily?.market_briefing || {};
+      const mood = daily?.market_mood || {};
+      const reportCount = mood.total_reports || daily?.stocks?.length || 0;
+      const stockCount = mood.stock_count || daily?.stocks?.length || 0;
+      $("v2-flow-date").textContent = daily?.business_date ? `(${daily.business_date})` : "";
+      $("v2-flow-headline").textContent = reportCount
+        ? `리포트 ${number(reportCount)}건, ${number(stockCount)}개 종목 기준으로 읽습니다.`
+        : "선택 날짜에 저장된 리포트 요약이 없습니다.";
+      $("v2-flow-chips").innerHTML = [
+        '<span class="v2-chip strong">저장 데이터</span>',
+        '<span class="v2-chip">GET-only</span>',
+        briefing?.source ? `<span class="v2-chip">${esc(briefing.source)}</span>` : "",
+      ].filter(Boolean).join("");
+      const points = [
+        ...(Array.isArray(briefing.check_points) ? briefing.check_points : []),
+        ...(Array.isArray(briefing.market_reference_lines) ? briefing.market_reference_lines : []),
+      ].slice(0, 5);
+      $("v2-flow-points").innerHTML = points.length
+        ? points.map((point) => `<li>${esc(point)}</li>`).join("")
+        : '<li class="v2-muted">저장된 확인 포인트가 없습니다.</li>';
+    }
+
+    function newsKindLabel(badge) {
+      if (!badge || badge.available !== true) return "저장 뉴스 근거 없음";
+      if (Number(badge.direct_count || 0) > 0) return "직접 뉴스";
+      if (Number(badge.caution_count || 0) > 0) return "주의 뉴스";
+      if (Number(badge.market_context_count || 0) > 0) return "시장맥락 위주";
+      return badge.display_label || "뉴스 근거 있음";
+    }
+
+    function renderCandidateNewsLine(badge) {
+      const label = newsKindLabel(badge);
+      if (!badge || badge.available !== true) {
+        return `<span class="v2-chip warn">${esc(label)}</span><span class="v2-news-line">${esc(badge?.reason || "같은 종목의 저장 뉴스 관찰이 없습니다.")}</span>`;
+      }
+      const krx = badge.krx_reference_status || "missing";
+      const title = badge.top_title || badge.reason || "";
+      return [
+        `<span class="v2-chip strong">${esc(label)}</span>`,
+        `<span class="v2-chip">직접 ${number(badge.direct_count)} · 주의 ${number(badge.caution_count)} · 시장맥락 ${number(badge.market_context_count)}</span>`,
+        `<span class="v2-chip ${krx === "stale" ? "warn" : ""}">KRX ${esc(krx)}</span>`,
+        title ? `<span class="v2-news-line">${esc(title)}</span>` : "",
+      ].filter(Boolean).join("");
+    }
+
+    function renderCandidates(evidence) {
+      const rows = Array.isArray(evidence?.rows) ? evidence.rows : [];
+      if (!rows.length) {
+        $("v2-candidate-list").innerHTML = '<span class="v2-muted">오늘의 관찰 후보가 없습니다.</span>';
+        return;
+      }
+      $("v2-candidate-list").innerHTML = rows.slice(0, 8).map((item, index) => {
+        const badge = item.news_observation_badge || {};
+        const reason = item.public_reason || item.reason || item.observation_reason || "";
+        return `<button class="v2-candidate-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
+          <span class="v2-candidate-head"><b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="v2-muted">${esc(item.stock_code || "")}</span></b><span class="v2-chip">${esc(item.observation_priority || "관찰 후보")}</span></span>
+          <span class="v2-status-row">${renderCandidateNewsLine(badge)}</span>
+          <span class="v2-reason">${esc(reason || "리포트/KRX/뉴스 근거를 함께 확인합니다.")}</span>
+        </button>`;
+      }).join("");
+      document.querySelectorAll(".v2-candidate-card").forEach((button) => {
+        button.addEventListener("click", () => {
+          const code = button.getAttribute("data-stock-code") || "";
+          if (validStockCode(code)) loadStockDetail(code);
+        });
+      });
+    }
+
+    function renderEvidenceGrid(daily, evidence, etfTrend) {
+      const summary = daily?.news_observation_summary || {};
+      const rows = Array.isArray(evidence?.rows) ? evidence.rows : [];
+      const firstEtf = (Array.isArray(etfTrend?.items) ? etfTrend.items : [])
+        .flatMap((item) => Array.isArray(item.top_etfs_by_turnover) ? item.top_etfs_by_turnover : [])
+        .filter(Boolean)[0];
+      const reportLine = `${number(daily?.market_mood?.total_reports || 0)}건 · ${number(daily?.market_mood?.stock_count || daily?.stocks?.length || 0)}종목`;
+      const newsLine = summary.available
+        ? `${esc(summary.display_label)} · 직접 ${number(summary.direct_count)} · 주의 ${number(summary.caution_count)} · 시장맥락 ${number(summary.market_context_count)}`
+        : esc(summary.empty_state || "저장 뉴스 근거 없음");
+      const krxLine = daily?.market_briefing?.index_summary?.reference_date
+        ? `지수 기준 ${esc(daily.market_briefing.index_summary.reference_date)}`
+        : "저장 KRX 기준 확인 필요";
+      const etfLine = firstEtf
+        ? `${esc(firstEtf.etf_name || firstEtf.etf_code || "ETF")} · ${esc(firstEtf.evidence_label || "순환매 참고")}`
+        : "저장 ETF 순환매 근거 없음";
+      $("v2-evidence-grid").innerHTML = [
+        ["리포트", reportLine],
+        ["뉴스", newsLine],
+        ["KRX/수급", krxLine],
+        ["순환매/ETF", etfLine],
+      ].map(([title, body]) => `<div class="v2-evidence-row"><b>${esc(title)}</b><span>${body}</span></div>`).join("");
+    }
+
+    async function loadStockDetail(stockCode) {
+      if (!validDate(state.selectedDate) || !validStockCode(stockCode)) return;
+      state.selectedStockCode = stockCode;
+      setUrl(state.selectedDate, stockCode);
+      $("v2-stock-detail").innerHTML = '<span class="v2-muted">종목 상세를 불러오는 중입니다.</span>';
+      try {
+        const detail = await fetchJson(`/api/daily/${encodeURIComponent(state.selectedDate)}/stocks/${encodeURIComponent(stockCode)}`);
+        const stock = detail.stock || detail.summary || {};
+        const reports = Array.isArray(detail.reports) ? detail.reports : [];
+        const news = detail.news_observation_detail || {};
+        const newsTitles = [
+          ...(Array.isArray(news.top_titles) ? news.top_titles : []),
+          news.top_title || "",
+        ].filter(Boolean).slice(0, 3);
+        $("v2-stock-detail").innerHTML = `<p class="v2-detail-title">${esc(stock.stock_name || detail.stock_name || stockCode)} <span class="v2-muted">${esc(stock.stock_code || stockCode)}</span></p>
+          <div class="v2-status-row">${renderCandidateNewsLine(news)}</div>
+          <ul class="v2-list">
+            ${newsTitles.length ? newsTitles.map((title) => `<li>${esc(title)}</li>`).join("") : '<li class="v2-muted">저장 뉴스 관찰 상세가 없습니다.</li>'}
+            ${reports.slice(0, 3).map((report) => `<li>${esc(report.title || report.report_title || "리포트 제목 없음")}</li>`).join("")}
+          </ul>`;
+      } catch (error) {
+        $("v2-stock-detail").innerHTML = `<span class="v2-error">종목 상세 오류: ${esc(error.message || error)}</span>`;
+      }
+    }
+
+    async function loadDate(date, initialStockCode = "") {
+      if (!validDate(date)) return;
+      state.selectedDate = date;
+      state.selectedStockCode = "";
+      setUrl(date, validStockCode(initialStockCode) ? initialStockCode : "");
+      $("v2-candidate-list").innerHTML = '<span class="v2-muted">후보를 불러오는 중입니다.</span>';
+      $("v2-stock-detail").innerHTML = '<span class="v2-muted">볼 종목 카드를 누르면 상세를 불러옵니다.</span>';
+      try {
+        const [daily, evidence, etfTrend] = await Promise.all([
+          fetchJson(`/api/daily/${encodeURIComponent(date)}`),
+          fetchJson(`/api/candidate-evidence?date=${encodeURIComponent(date)}&limit=8`),
+          fetchJson(`/api/etf-trend?date=${encodeURIComponent(date)}&limit=4`).catch(() => ({ items: [] })),
+        ]);
+        renderFlow(daily);
+        renderCandidates(evidence);
+        renderEvidenceGrid(daily, evidence, etfTrend);
+        document.querySelectorAll("[data-date]").forEach((button) => {
+          button.classList.toggle("active", button.getAttribute("data-date") === date);
+        });
+        if (validStockCode(initialStockCode)) await loadStockDetail(initialStockCode);
+      } catch (error) {
+        $("v2-candidate-list").innerHTML = `<span class="v2-error">불러오기 오류: ${esc(error.message || error)}</span>`;
+      }
+    }
+
+    async function bootstrap() {
+      const params = new URLSearchParams(window.location.search);
+      const archive = await fetchJson("/api/archive?limit=80");
+      const dates = Array.isArray(archive?.dates) ? archive.dates : [];
+      const requestedDate = params.get("date") || "";
+      const firstDate = dates.map(dateOf).find(Boolean) || "";
+      const selectedDate = validDate(requestedDate) ? requestedDate : firstDate;
+      renderDateRail(archive, selectedDate);
+      if (selectedDate) await loadDate(selectedDate, params.get("stock") || "");
+    }
+
+    bootstrap().catch((error) => {
+      $("v2-date-rail").innerHTML = `<span class="v2-error">초기화 오류: ${esc(error.message || error)}</span>`;
+    });
   </script>
 </body>
 </html>
