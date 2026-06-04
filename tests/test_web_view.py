@@ -4458,7 +4458,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "loadCandidateEvidence(date)" in html
     assert 'document.getElementById("main-priority-rows").innerHTML = message;' in html
     assert 'if (activeViewTab === "main") {\n        await loadCandidateEvidence(date);' in html
-    load_daily_body = html.split("async function loadDaily(date, options = {})", 1)[1].split(
+    load_daily_body = html.split("async function loadDaily(date)", 1)[1].split(
         "function renderDailyBriefing", 1
     )[0]
     assert "loadBacktestObservation(date)" not in load_daily_body
