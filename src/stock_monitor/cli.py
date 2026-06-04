@@ -23416,7 +23416,7 @@ def _render_web_view_html() -> str:
         labeled("거래대금", compactTurnover(item.turnover))
       ])).join("") : empty(4);
       document.getElementById("market-etf-rows").innerHTML = context.top_etfs_by_turnover.length ? context.top_etfs_by_turnover.map((item) => row([
-        labeled("ETF", `${esc(item.etf_name)}<div class="muted">${esc(item.etf_code)} · ${esc(item.underlying_index_name || "-")}</div>`),
+        labeled("ETF", `${esc(item.etf_name)}<div class="muted">${esc(item.etf_code)} · ${esc(item.evidence_label || item.underlying_index_name || "-")}</div>`),
         labeled("종가", price(item.close_price)),
         labeled("등락률", percent(item.change_percent)),
         labeled("거래대금", compactTurnover(item.turnover))
@@ -23491,7 +23491,7 @@ def _render_web_view_html() -> str:
     function compactEtfTrend(items) {
       const picked = (items || []).slice(0, 5);
       if (!picked.length) return '<span class="muted">-</span>';
-      return picked.map((item) => `${esc(item.etf_name)}<span class="muted"> ${esc(item.etf_code)} · ${percent(item.change_percent)} · ${compactTurnover(item.turnover)}</span>`).join("<br>");
+      return picked.map((item) => `${esc(item.etf_name)}<span class="muted"> ${esc(item.etf_code)} · ${percent(item.change_percent)} · ${esc(item.evidence_label || compactTurnover(item.turnover))}</span>`).join("<br>");
     }
 
     function renderEtfTrend(flow) {
@@ -23502,9 +23502,9 @@ def _render_web_view_html() -> str:
           ? `(최근 저장 ${referenceDate} · 선택 ${selectedDateText})`
           : `(기준 ${referenceDate})`)
         : (selectedDateText ? `(선택 ${selectedDateText})` : "");
-      const notice = flow?.exact_date_available === false
-        ? `선택 날짜의 ETF 저장값이 없어 ${referenceDate || "최근 저장일"} 기준 흐름만 표시합니다.`
-        : displayNotice(flow?.notice || "저장된 ETF 데이터 기준입니다.");
+      const notice = flow?.reference_status === "stale" || flow?.exact_date_available === false
+        ? `선택 날짜의 ETF 저장값이 없어 ${referenceDate || "최근 저장일"} 기준 흐름만 표시합니다. 구성종목이 아닌 KRX ETF 일별매매정보 기준입니다.`
+        : String(flow?.notice || "저장된 ETF 데이터 기준입니다.");
       document.getElementById("etf-tab-title").textContent = title;
       document.getElementById("etf-tab-notice").textContent = notice;
       if (!flow || !flow.available || !flow.items.length) {
@@ -27068,6 +27068,32 @@ def _web_view_market_briefing_turnover_item(item: StockMarketDailySnapshot) -> d
     return payload
 
 
+def _format_web_view_nav(value: float | None) -> str | None:
+    if value is None:
+        return None
+    return f"{value:,.1f}"
+
+
+def _web_view_etf_evidence_label(item: EtfDailySnapshot) -> str:
+    parts = []
+    if item.turnover is not None:
+        parts.append(f"거래대금 {_format_krx_flow_amount(item.turnover)}")
+    nav_display = _format_web_view_nav(item.nav)
+    if nav_display:
+        parts.append(f"NAV {nav_display}")
+    if item.underlying_index_name:
+        parts.append(f"기초지수 {item.underlying_index_name}")
+    return " · ".join(parts) if parts else "저장 ETF 일별매매정보"
+
+
+def _web_view_etf_reference_status(reference_date: date | None, business_date: date) -> str:
+    if reference_date == business_date:
+        return "exact"
+    if reference_date is not None:
+        return "stale"
+    return "missing"
+
+
 def _web_view_etf_item(item: EtfDailySnapshot) -> dict:
     return {
         "business_date": item.business_date.isoformat(),
@@ -27079,6 +27105,8 @@ def _web_view_etf_item(item: EtfDailySnapshot) -> dict:
         "volume": item.volume,
         "turnover": item.turnover,
         "underlying_index_name": item.underlying_index_name,
+        "evidence_label": _web_view_etf_evidence_label(item),
+        "rotation_reference": "저장 ETF 거래대금/NAV/기초지수 기준",
     }
 
 
@@ -27542,6 +27570,8 @@ def build_web_view_etf_trend_snapshot(
 ) -> dict:
     current = now or datetime.now(ZoneInfo(config.timezone))
     snapshot_dates = repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=limit)
+    reference_date = snapshot_dates[0] if snapshot_dates else None
+    reference_status = _web_view_etf_reference_status(reference_date, business_date)
     items = []
     for snapshot_date in snapshot_dates:
         top_etfs = repository.list_etf_daily_by_turnover(snapshot_date, limit=5)
@@ -27557,16 +27587,23 @@ def build_web_view_etf_trend_snapshot(
         "surface": "web-view",
         "read_only": True,
         "business_date": business_date.isoformat(),
-        "reference_date": snapshot_dates[0].isoformat() if snapshot_dates else None,
-        "exact_date_available": bool(snapshot_dates and snapshot_dates[0] == business_date),
+        "reference_date": reference_date.isoformat() if reference_date else None,
+        "reference_status": reference_status,
+        "exact_date_available": reference_status == "exact",
         "available": bool(items),
         "source": "krx" if items else None,
         "data_scope": "stored_krx_snapshot",
+        "basis": "KRX ETF 일별매매정보",
+        "display_label": "ETF 순환매 참고" if items else "ETF 저장값 없음",
+        "constituents_available": False,
+        "composition_scope": "구성종목 미포함",
         "live_fetch": False,
         "scoring": False,
         "notice": (
-            "선택 날짜 이하 최근 KRX 저장 스냅샷의 ETF 거래대금 상위 흐름입니다. 저장 데이터 기반 확인용입니다."
-            if items
+            "선택 날짜 이하 최근 KRX 저장 스냅샷의 ETF 거래대금/NAV/기초지수 흐름입니다. 구성종목이 아닌 KRX ETF 일별매매정보 기준입니다."
+            if items and reference_status == "exact"
+            else f"선택 날짜의 ETF 저장값이 없어 {reference_date.isoformat()} 기준 ETF 흐름만 표시합니다. 구성종목이 아닌 KRX ETF 일별매매정보 기준입니다."
+            if items and reference_date
             else "선택 날짜 이전 또는 해당 날짜의 ETF 저장 스냅샷이 없습니다."
         ),
         "items": items,
