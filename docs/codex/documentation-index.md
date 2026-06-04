@@ -21,7 +21,7 @@ Implementation-heavy follow-up work should use this map to avoid adding duplicat
 | Next phase | [next-phase.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/next-phase.md) | Next execution axes and non-goals from the current state. |
 | Progress and roadmap | [execution-roadmap.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/execution-roadmap.md) | Progress percentages, P0/P1/P2, 100% definition. |
 | Project file map | [project-map.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/project-map.md) | Where important code/data/docs live. |
-| Surface boundary | [surface-contract.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/surface-contract.md) | `admin-gui` vs read-only `web-view` contract. |
+| Surface boundary | [surface-contract.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/surface-contract.md) | `admin-gui`, read-only `web-view`, and future `operator-review` contract. |
 | Data quality | [data-quality-checklist.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/data-quality-checklist.md) | Raw, parsed, aggregate, and display value rules. |
 | Source ownership | [data-source-policy.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/data-source-policy.md) | Naver/KRX/taxonomy ownership and naming. |
 | KRX and flow | [krx-market-data-runbook.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/krx-market-data-runbook.md) | KRX Open API, Data Marketplace, ETF, flow, stages, and guards in one place. |

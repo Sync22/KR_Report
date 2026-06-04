@@ -26,13 +26,17 @@ Use this instead of starting from older admin review/progress notes. The older f
 | Read-only recovery guidance | Implemented |
 | DB backup/verify reminders | Implemented |
 | Recent event readable summaries | Implemented |
-| KRX/admin display cards | First pass |
+| Operations-only screen trim | Implemented |
 
 ## Boundary
 
 `admin-gui` is the operator control surface.
 
 It must not become the friend-facing shared page. Shared read-only information belongs in `web-view` and must stay GET-only.
+
+It also must not become the main judgment review workbench. News intelligence, candidate linkage, raw recommendation-support labels, sentiment/impact internals, and candidate evidence review details belong in the future `operator-review` surface when a private review UI is needed. `admin-gui` may show coarse operational readiness for those lanes, but not the review body.
+
+Market mood, recent report/category rollups, KRX market reference tables, ETF reference rows, and daily briefing content are intentionally not admin screen content. They belong in the public-safe stored-data `web-view` projection, CLI review output, or a future private `operator-review` surface depending on detail level.
 
 ## Next Admin Work
 
@@ -54,6 +58,10 @@ No-run date server validation rejects market holidays, env-level no-run dates, a
 - One-click shutdown.
 - Friend-facing read-only mode.
 - Public tunnel exposure.
+- News intelligence raw observation rows.
+- Candidate evidence review workbench.
+- Raw sentiment score, stock impact, recommendation-support, or candidate linkage internals.
+- Market mood, recent report, sector/theme, KRX market, or ETF reference tables.
 
 ## Verification
 
