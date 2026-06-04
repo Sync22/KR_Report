@@ -18841,6 +18841,30 @@ def _make_web_view_handler(
                     ),
                 )
                 return
+            if path == "/api/stocks/search":
+                query_params = url_parse.parse_qs(query)
+                raw_date = query_params.get("date", [None])[0]
+                raw_query = query_params.get("q", [""])[0]
+                search_limit = _query_int(query, "limit", default=8, minimum=1, maximum=20)
+                try:
+                    if not raw_date:
+                        raise ValueError
+                    business_date = date.fromisoformat(raw_date)
+                except ValueError:
+                    _write_http_response(self, HTTPStatus.BAD_REQUEST, "invalid date", content_type="text/plain; charset=utf-8")
+                    return
+                write_cached_json_response(
+                    self,
+                    f"stock-search:{business_date.isoformat()}:{raw_query}:{search_limit}",
+                    lambda: build_web_view_stock_search_snapshot(
+                        config,
+                        repository,
+                        business_date=business_date,
+                        query=raw_query,
+                        limit=search_limit,
+                    ),
+                )
+                return
             if decoded_path.startswith("/api/daily/"):
                 try:
                     business_date = date.fromisoformat(decoded_path.removeprefix("/api/daily/"))
@@ -21174,8 +21198,8 @@ def _render_web_view_html() -> str:
       <div class="hero-tools">
         <nav class="top-tabs" aria-label="상단 탭">
           <div class="stock-search" role="search">
-            <label class="sr-only" for="stock-search-input">현재 날짜 종목 검색</label>
-            <input id="stock-search-input" type="search" autocomplete="off" placeholder="현재 날짜 종목명/코드" aria-describedby="stock-search-status" disabled>
+            <label class="sr-only" for="stock-search-input">저장 종목 검색</label>
+            <input id="stock-search-input" type="search" autocomplete="off" placeholder="전체 저장 종목명/코드" aria-describedby="stock-search-status" disabled>
             <div id="stock-search-results" class="stock-search-results" hidden></div>
           </div>
           <button class="top-tab active" type="button" data-view-tab="main" aria-current="page" aria-pressed="true">메인</button>
@@ -21184,7 +21208,7 @@ def _render_web_view_html() -> str:
           <button class="top-tab" type="button" data-view-tab="market" aria-current="false" aria-pressed="false">시장</button>
           <button class="top-tab" type="button" data-view-tab="rotation" aria-current="false" aria-pressed="false">순환매</button>
         </nav>
-        <p class="stock-search-status" id="stock-search-status" aria-live="polite">날짜를 선택하면 현재 날짜 종목을 찾을 수 있습니다.</p>
+        <p class="stock-search-status" id="stock-search-status" aria-live="polite">날짜를 선택하면 저장 종목을 찾을 수 있습니다.</p>
       </div>
     </header>
     <section class="grid">
@@ -21580,6 +21604,8 @@ def _render_web_view_html() -> str:
     let flowTrendLoadedDate = null;
     let dailyLoadSequence = 0;
     let stockSearchQuery = "";
+    let stockSearchResults = [];
+    let stockSearchRequestId = 0;
     let activeViewTab = "main";
 
     function setViewTab(tabName) {
@@ -21674,11 +21700,11 @@ def _render_web_view_html() -> str:
     }
 
     function stockSearchDefaultStatus() {
-      if (!selectedDate) return "날짜를 선택하면 현재 날짜 종목을 찾을 수 있습니다.";
+      if (!selectedDate) return "날짜를 선택하면 저장 종목을 찾을 수 있습니다.";
       const stockCount = currentDailyData?.stocks?.length || 0;
       return stockCount
-        ? `${selectedDate} 종목 ${number(stockCount)}개에서 이름이나 코드로 찾을 수 있습니다.`
-        : "선택 날짜에 찾을 종목이 없습니다.";
+        ? `${selectedDate} 리포트 종목 ${number(stockCount)}개와 전체 저장 종목에서 찾을 수 있습니다.`
+        : `${selectedDate} 기준 전체 저장 종목에서 찾을 수 있습니다.`;
     }
 
     function updateStockSearchStatus(message = null) {
@@ -21687,10 +21713,11 @@ def _render_web_view_html() -> str:
 
     function syncStockSearchInput() {
       const input = document.getElementById("stock-search-input");
-      const hasStocks = Boolean(currentDailyData?.stocks?.length);
-      input.disabled = !hasStocks;
-      if (!hasStocks) {
+      const hasDate = Boolean(selectedDate);
+      input.disabled = !hasDate;
+      if (!hasDate) {
         stockSearchQuery = "";
+        stockSearchResults = [];
         input.value = "";
         document.getElementById("stock-search-results").hidden = true;
         document.getElementById("stock-search-results").innerHTML = "";
@@ -21700,8 +21727,8 @@ def _render_web_view_html() -> str:
 
     function stockSearchMatches(query) {
       const normalized = String(query || "").trim().toLowerCase();
-      if (!normalized || !currentDailyData?.stocks?.length) return [];
-      return currentDailyData.stocks.filter((item) => {
+      if (!normalized) return [];
+      return stockSearchResults.filter((item) => {
         const name = String(item.stock_name || "").toLowerCase();
         const code = String(item.stock_code || "").toLowerCase();
         return name.includes(normalized) || code.includes(normalized);
@@ -21720,23 +21747,51 @@ def _render_web_view_html() -> str:
       if (!matches.length) {
         panel.hidden = true;
         panel.innerHTML = "";
-        updateStockSearchStatus(`${selectedDate || "선택 날짜"} 종목 요약에서 일치하는 종목이 없습니다.`);
+        updateStockSearchStatus(`${selectedDate || "선택 날짜"} 저장 종목에서 일치하는 종목이 없습니다.`);
         return;
       }
-      updateStockSearchStatus(`${selectedDate} 종목 ${number(matches.length)}개 일치`);
+      updateStockSearchStatus(`${selectedDate} 저장 종목 ${number(matches.length)}개 일치`);
       panel.hidden = false;
       panel.innerHTML = matches.map((item) => `
         <button class="stock-search-result" type="button" data-stock-search-code="${esc(item.stock_code || "")}">
           <b>${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span></b>
-          <span class="muted">${number(item.mention_count)}건 · ${brokerDisplay(item.broker_display)}</span>
+          <span class="muted">${esc(item.display_status || "저장 자료 확인")}</span>
         </button>
       `).join("");
+    }
+
+    async function loadStockSearchResults() {
+      const normalized = String(stockSearchQuery || "").trim();
+      const requestId = ++stockSearchRequestId;
+      const panel = document.getElementById("stock-search-results");
+      if (!selectedDate || !normalized) {
+        stockSearchResults = [];
+        panel.hidden = true;
+        panel.innerHTML = "";
+        updateStockSearchStatus();
+        return;
+      }
+      updateStockSearchStatus(`${selectedDate} 저장 종목 검색 중`);
+      const params = new URLSearchParams({ date: selectedDate, q: normalized, limit: "8" });
+      try {
+        const data = await fetch(`/api/stocks/search?${params.toString()}`, { cache: "no-store" }).then((response) => response.json());
+        if (requestId !== stockSearchRequestId) return;
+        stockSearchResults = Array.isArray(data.items) ? data.items : [];
+        renderStockSearchResults();
+      } catch (error) {
+        if (requestId !== stockSearchRequestId) return;
+        stockSearchResults = [];
+        panel.hidden = true;
+        panel.innerHTML = "";
+        updateStockSearchStatus(`종목 검색 오류: ${error}`);
+      }
     }
 
     function selectStockFromSearch(stockCode) {
       if (!selectedDate || !stockCode) return;
       document.getElementById("stock-search-results").hidden = true;
-      const picked = (currentDailyData?.stocks || []).find((item) => item.stock_code === stockCode);
+      const picked = stockSearchResults.find((item) => item.stock_code === stockCode)
+        || (currentDailyData?.stocks || []).find((item) => item.stock_code === stockCode);
       if (picked) {
         document.getElementById("stock-search-input").value = `${picked.stock_name || "-"} ${picked.stock_code || ""}`.trim();
         updateStockSearchStatus(`${picked.stock_name || "-"} ${picked.stock_code || ""}`.trim() + " 선택");
@@ -21878,6 +21933,8 @@ def _render_web_view_html() -> str:
       selectedCategoryDisplayName = null;
       selectedCategoryLabel = null;
       selectedCategorySource = null;
+      stockSearchResults = [];
+      stockSearchRequestId += 1;
       dailyFlowExpanded = false;
       updateSelectionStatus();
       if (validDate(date)) {
@@ -22742,7 +22799,7 @@ def _render_web_view_html() -> str:
         ? (hideNoOpinionReports
           ? `의견없음 ${number(hiddenCount)}건 제외 · ${number(visibleReports.length)}건 표시`
           : `전체 ${number(visibleReports.length)}건 표시`)
-        : "해당 종목 리포트가 없습니다.";
+        : (data?.report_empty_state || "해당 종목 리포트가 없습니다.");
       document.getElementById("stock-detail").innerHTML = visibleReports.length ? `
         ${visibleReports.map((item) => `
           <div class="detail-item">
@@ -22750,7 +22807,7 @@ def _render_web_view_html() -> str:
             <span class="detail-meta">${esc(item.broker_name)} · ${esc(publishedLabel(item.published_at))} · ${esc(item.target_price_display || `목표가 ${price(item.target_price_value)}`)} · ${esc(item.opinion_display || opinion(item.opinion_normalized))}</span>
           </div>
         `).join("")}
-      ` : `<span class="muted">${reports.length ? "의견없음 제외 조건에 표시할 리포트가 없습니다." : "해당 종목 리포트가 없습니다."}</span>`;
+      ` : `<span class="muted">${reports.length ? "의견없음 제외 조건에 표시할 리포트가 없습니다." : (data?.report_empty_state || "해당 종목 리포트가 없습니다.")}</span>`;
     }
 
     async function loadCategoryDetail(date, categoryType, publicCategoryId, displayName, options = {}) {
@@ -23615,7 +23672,7 @@ def _render_web_view_html() -> str:
     });
     document.getElementById("stock-search-input").addEventListener("input", (event) => {
       stockSearchQuery = event.target.value;
-      renderStockSearchResults();
+      loadStockSearchResults();
     });
     document.getElementById("stock-search-input").addEventListener("keydown", (event) => {
       if (event.key !== "Enter") return;
@@ -24050,6 +24107,175 @@ def build_web_view_archive_snapshot(
         "dates": dates,
     }
 
+
+def build_web_view_stock_search_snapshot(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    business_date: date,
+    query: str,
+    limit: int = 8,
+    now: datetime | None = None,
+) -> dict:
+    current = now or datetime.now(ZoneInfo(config.timezone))
+    normalized_query = (query or "").strip()
+    max_limit = max(1, min(limit, 20))
+    if not normalized_query:
+        return {
+            "now": current.isoformat(),
+            "timezone": config.timezone,
+            "surface": "web-view",
+            "read_only": True,
+            "business_date": business_date.isoformat(),
+            "source": "stored_stock_universe",
+            "live_fetch": False,
+            "available": False,
+            "query": normalized_query,
+            "items": [],
+            "empty_state": "검색어를 입력하세요.",
+        }
+
+    like_query = f"%{normalized_query}%"
+    exact_query = normalized_query
+    with repository.connect() as connection:
+        rows = connection.execute(
+            """
+            WITH latest_krx AS (
+                SELECT
+                    k.stock_code,
+                    k.stock_name,
+                    k.market
+                FROM krx_stock_metadata k
+                JOIN (
+                    SELECT stock_code, MAX(business_date) AS business_date
+                    FROM krx_stock_metadata
+                    GROUP BY stock_code
+                ) latest
+                  ON latest.stock_code = k.stock_code
+                 AND latest.business_date = k.business_date
+            ),
+            candidates AS (
+                SELECT stock_code, stock_name, NULL AS market, 0 AS source_rank
+                FROM daily_stock_summaries
+                WHERE business_date = ?
+                  AND stock_code IS NOT NULL
+                UNION ALL
+                SELECT stock_code, stock_name, market, 1 AS source_rank
+                FROM latest_krx
+                WHERE stock_code IS NOT NULL
+                UNION ALL
+                SELECT stock_code, stock_name, NULL AS market, 2 AS source_rank
+                FROM stock_metadata
+                WHERE stock_code IS NOT NULL
+                UNION ALL
+                SELECT stock_code, stock_name, NULL AS market, 3 AS source_rank
+                FROM reports
+                WHERE stock_code IS NOT NULL
+            ),
+            matched AS (
+                SELECT
+                    TRIM(stock_code) AS stock_code,
+                    TRIM(COALESCE(stock_name, '')) AS stock_name,
+                    NULLIF(TRIM(COALESCE(market, '')), '') AS market,
+                    source_rank
+                FROM candidates
+                WHERE TRIM(COALESCE(stock_code, '')) <> ''
+                  AND (
+                    stock_code LIKE ? COLLATE NOCASE
+                    OR stock_name LIKE ? COLLATE NOCASE
+                  )
+            ),
+            ranked AS (
+                SELECT
+                    stock_code,
+                    stock_name,
+                    market,
+                    source_rank,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY stock_code
+                        ORDER BY source_rank ASC, stock_name ASC
+                    ) AS row_number
+                FROM matched
+            )
+            SELECT stock_code, stock_name, market
+            FROM ranked
+            WHERE row_number = 1
+            ORDER BY
+                CASE WHEN stock_code = ? THEN 0 ELSE 1 END,
+                stock_name ASC,
+                stock_code ASC
+            LIMIT ?
+            """,
+            (business_date.isoformat(), like_query, like_query, exact_query, max_limit),
+        ).fetchall()
+        stock_codes = [str(row["stock_code"] or "") for row in rows if row["stock_code"]]
+        report_codes = {
+            str(row["stock_code"] or "")
+            for row in connection.execute(
+                f"""
+                SELECT DISTINCT stock_code
+                FROM reports
+                WHERE business_date = ?
+                  AND stock_code IN ({", ".join("?" for _ in stock_codes)})
+                """
+                if stock_codes
+                else "SELECT NULL AS stock_code WHERE 0",
+                (business_date.isoformat(), *stock_codes) if stock_codes else (),
+            ).fetchall()
+        }
+        news_codes = {
+            str(row["stock_code"] or "")
+            for row in connection.execute(
+                f"""
+                SELECT DISTINCT stock_code
+                FROM report_linked_news_evidence
+                WHERE target_date = ?
+                  AND stock_code IN ({", ".join("?" for _ in stock_codes)})
+                """
+                if stock_codes
+                else "SELECT NULL AS stock_code WHERE 0",
+                (business_date.isoformat(), *stock_codes) if stock_codes else (),
+            ).fetchall()
+        }
+    krx_codes = {
+        item.stock_code
+        for item in repository.list_stock_market_daily_for_codes(business_date, stock_codes)
+    }
+    items = []
+    for row in rows:
+        stock_code = str(row["stock_code"] or "")
+        has_report = stock_code in report_codes
+        has_krx = stock_code in krx_codes
+        has_news = stock_code in news_codes
+        status_parts = [
+            "당일 리포트 있음" if has_report else "당일 리포트 없음",
+            "저장 KRX 있음" if has_krx else "저장 KRX 없음",
+            "뉴스 근거 있음" if has_news else "뉴스 근거 없음",
+        ]
+        items.append(
+            {
+                "stock_code": stock_code,
+                "stock_name": str(row["stock_name"] or stock_code),
+                "market": row["market"],
+                "has_selected_date_report": has_report,
+                "has_selected_date_krx": has_krx,
+                "has_news_observation": has_news,
+                "display_status": " · ".join(status_parts),
+            }
+        )
+    return {
+        "now": current.isoformat(),
+        "timezone": config.timezone,
+        "surface": "web-view",
+        "read_only": True,
+        "business_date": business_date.isoformat(),
+        "source": "stored_stock_universe",
+        "live_fetch": False,
+        "available": bool(items),
+        "query": normalized_query,
+        "items": items,
+        "empty_state": "조회된 저장 종목이 없습니다." if not items else None,
+    }
 
 def build_web_view_daily_snapshot(
     config: RuntimeConfig,
@@ -27588,7 +27814,19 @@ def build_web_view_stock_detail_snapshot(
     reports = repository.list_reports_for_stock_on_business_date(business_date, stock_code)
     market_refs = repository.list_stock_market_daily_for_codes(business_date, [stock_code])
     market_reference = market_refs[0] if market_refs else None
-    stock_name = reports[0].stock_name if reports else None
+    krx_metadata = repository.get_latest_krx_stock_metadata(stock_code)
+    stock_metadata = repository.get_stock_metadata(stock_code)
+    stock_name = (
+        reports[0].stock_name
+        if reports
+        else market_reference.stock_name
+        if market_reference
+        else krx_metadata.stock_name
+        if krx_metadata
+        else stock_metadata.stock_name
+        if stock_metadata
+        else None
+    )
     return {
         "now": current.isoformat(),
         "timezone": config.timezone,
@@ -27597,6 +27835,8 @@ def build_web_view_stock_detail_snapshot(
         "business_date": business_date.isoformat(),
         "stock_code": stock_code,
         "stock_name": stock_name,
+        "has_selected_date_report": bool(reports),
+        "report_empty_state": "선택 날짜에 등록된 리포트가 없습니다." if not reports else None,
         "market_reference": _web_view_stock_market_reference(market_reference),
         "target_price_trail": _build_web_view_target_price_trail(repository, business_date, stock_code),
         "related_context": _build_web_view_stock_related_context(

@@ -18,6 +18,7 @@ from stock_monitor.models import (
     CategoryMembershipSnapshot,
     EtfDailySnapshot,
     InvestorNetBuyTopDaily,
+    KrxStockMetadataSnapshot,
     MarketIndexDailySnapshot,
     MarketInvestorFlowDaily,
     NewsIntelligenceRun,
@@ -95,6 +96,8 @@ def _web_view_news_evidence(
     run_id: str = "news-web-view-run-1",
     evidence_key: str = "news-evidence-1",
     title: str = "삼성전자, AI 반도체 공급 계약 체결",
+    stock_code: str | None = "005930",
+    stock_name: str = "삼성전자",
     relevance: str = "direct",
     sentiment: str = "Positive",
     stock_impact: str = "Strong Positive",
@@ -106,8 +109,8 @@ def _web_view_news_evidence(
         run_id=run_id,
         evidence_key=evidence_key,
         target_date=target_date,
-        stock_code="005930",
-        stock_name="삼성전자",
+        stock_code=stock_code,
+        stock_name=stock_name,
         related_report_count=2,
         related_report_source_ids=("92001", "92002"),
         daily_summary_presence=True,
@@ -299,6 +302,152 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
     assert "sentiment_score" not in json.dumps(summary, ensure_ascii=False)
     assert "stock_impact" not in json.dumps(summary, ensure_ascii=False)
     assert "operator_recommendation" not in json.dumps(summary, ensure_ascii=False)
+    _assert_public_safe_payload(snapshot)
+
+
+def test_web_view_stock_search_includes_stored_universe_without_same_day_report(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 2)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="Alpha Electronics",
+                stock_code="005930",
+                title="Alpha Electronics report",
+                broker_name="NH",
+                published_at=datetime(2026, 6, 2, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 2, 9, 0, 30),
+                target_price_value=100_000,
+                opinion_normalized="buy",
+                source_id="stock-search-report-a",
+                identity_key="stock-search-report-a",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.upsert_krx_stock_metadata(
+        [
+            KrxStockMetadataSnapshot(
+                business_date=business_date,
+                standard_code="KR7000660001",
+                stock_code="000660",
+                stock_name="Beta Memory",
+                market="KOSPI",
+                fetched_at=datetime(2026, 6, 2, 18, 0, 0),
+            )
+        ]
+    )
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="000660",
+                stock_name="Beta Memory",
+                market="KOSPI",
+                close_price=200_000,
+                change_percent=1.2,
+                turnover=123_000_000,
+                fetched_at=datetime(2026, 6, 2, 18, 0, 0),
+            )
+        ]
+    )
+    repository.save_news_intelligence_observation(
+        _web_view_news_run(
+            run_id="stock-search-news-run",
+            target_date=business_date,
+            stock_name="Beta Memory",
+            stock_code="000660",
+        ),
+        [
+            _web_view_news_evidence(
+                run_id="stock-search-news-run",
+                evidence_key="stock-search-news-evidence",
+                title="Beta Memory expands AI memory supply",
+                stock_code="000660",
+                stock_name="Beta Memory",
+                target_date=business_date,
+            )
+        ],
+    )
+
+    snapshot = cli_module.build_web_view_stock_search_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        query="Beta",
+        now=datetime(2026, 6, 2, 10, 0, 0),
+    )
+
+    assert snapshot["surface"] == "web-view"
+    assert snapshot["read_only"] is True
+    assert snapshot["live_fetch"] is False
+    assert snapshot["available"] is True
+    assert snapshot["items"] == [
+        {
+            "stock_code": "000660",
+            "stock_name": "Beta Memory",
+            "market": "KOSPI",
+            "has_selected_date_report": False,
+            "has_selected_date_krx": True,
+            "has_news_observation": True,
+            "display_status": "당일 리포트 없음 · 저장 KRX 있음 · 뉴스 근거 있음",
+        }
+    ]
+    _assert_public_safe_payload(snapshot)
+
+
+def test_web_view_stock_detail_uses_stored_name_when_selected_date_has_no_report(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 2)
+    repository.upsert_krx_stock_metadata(
+        [
+            KrxStockMetadataSnapshot(
+                business_date=business_date,
+                standard_code="KR7000660001",
+                stock_code="000660",
+                stock_name="Beta Memory",
+                market="KOSPI",
+                fetched_at=datetime(2026, 6, 2, 18, 0, 0),
+            )
+        ]
+    )
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="000660",
+                stock_name="Beta Memory",
+                market="KOSPI",
+                close_price=200_000,
+                change_percent=1.2,
+                turnover=123_000_000,
+                fetched_at=datetime(2026, 6, 2, 18, 0, 0),
+            )
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_stock_detail_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        stock_code="000660",
+        now=datetime(2026, 6, 2, 10, 0, 0),
+    )
+
+    assert snapshot["stock_name"] == "Beta Memory"
+    assert snapshot["has_selected_date_report"] is False
+    assert snapshot["report_empty_state"] == "선택 날짜에 등록된 리포트가 없습니다."
+    assert snapshot["reports"] == []
+    assert snapshot["market_reference"]["close_price"] == 200_000
     _assert_public_safe_payload(snapshot)
 
 
@@ -3842,8 +3991,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "stock-search-input" in html
     assert "stock-search-results" in html
     assert "stock-search-status" in html
-    assert "현재 날짜 종목명/코드" in html
-    assert "날짜를 선택하면 현재 날짜 종목을 찾을 수 있습니다." in html
+    assert "전체 저장 종목명/코드" in html
+    assert "날짜를 선택하면 저장 종목을 찾을 수 있습니다." in html
     assert "stockSearchDefaultStatus" in html
     assert "syncStockSearchInput" in html
     assert "renderStockSearchResults" in html
