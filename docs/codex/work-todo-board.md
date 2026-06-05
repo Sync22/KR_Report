@@ -19,8 +19,8 @@
 
 | Order | Todo ID | Why Now |
 | --- | --- | --- |
-| 1 | `TODO-OPS` | `ops-sync-preview` exists, but default DB schema approval/handling and final operating-PC batch verification remain separate. |
-| 2 | `TODO-DATA` | web-view and Telegram source freshness exist, but Toss/X lab feasibility and ETF constituent/source checks remain. |
+| 1 | `TODO-DATA` | web-view and Telegram source freshness exist, but Toss/X lab feasibility and ETF constituent/source checks remain. |
+| 2 | `TODO-OPS` | `ops-sync-preview` now emits an operating-PC handoff prompt, but default DB schema approval/handling and final operating-PC batch verification remain separate. |
 
 ## Todo Board
 
@@ -199,6 +199,9 @@ KRX/ETF/flow/Toss/X 같은 외부 데이터 축을 실제 동작 가능한 sourc
 
 **Progress Note:**
 2026-06-05 dev commits `77a2321`/`02f13f7`에서 read-only `ops-sync-preview` CLI를 추가했다. 이 출력은 `origin/main..dev` commit subjects, changed file groups, conflict watch paths, `data/` untracked 분리, batch 제외 경로, 별도 승인 필요 작업, 검증 명령을 JSON/text로 보여준다. 기본 DB schema가 target보다 오래된 경우 stack trace 대신 `default_db_schema_not_current` blocker로 표시한다. fixture DB 기준 `web-view-value-qa` issue/warning `0`, `web-view-browser-smoke` issue `0`, `api-perf-summary` 읽기 성공, 전체 pytest `720 passed`를 확인했다. 남은 범위는 기본 DB migration 승인/처리 여부 결정, 실제 운영 적용 batch 검증, 운영 관측에서 나온 perf/UI 항목 환류다.
+
+**Progress Note:**
+2026-06-05 dev commits `4b4f2e2`/`6cc9973`에서 `ops-sync-preview --json`에 `operating_pc_handoff`를 추가했다. handoff prompt의 첫 줄은 운영/개발 경계 규칙에 맞춰 `운영 PC용`이며, 비교 범위, source sync readiness, `data/` untracked 제외 안내, 커밋 요약, 변경 파일 그룹, 충돌 주의 경로, 검증 명령, 현재 blocker, 별도 승인 전 금지 작업, 적용 batch 제외 항목을 한 번에 출력한다. 이 기능은 read-only이며 DB write, scheduler 변경, Telegram 실발송, admin-gui 프로세스 조작을 하지 않는다. `python -m pytest tests\test_cli_commands.py -q -k ops_sync_preview` (`3 passed`)와 실제 `ops-sync-preview --base origin/main --head dev --json` handoff prompt 생성을 확인했다. 기본 DB schema blocker와 실제 운영 PC batch 검증은 여전히 별도 승인/운영 세션 범위다.
 
 ### [x] TODO-ADMIN: Admin / Web-View / Operator-Review Boundary
 
