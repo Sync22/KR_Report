@@ -781,6 +781,23 @@ def test_admin_boundary_audit_parser_accepts_limit_and_json() -> None:
     assert args.json is True
 
 
+def test_docs_hygiene_audit_parser_accepts_path_and_json() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "docs-hygiene-audit",
+            "--path",
+            "README.md",
+            "--json",
+        ]
+    )
+
+    assert args.command == "docs-hygiene-audit"
+    assert args.paths == [Path("README.md")]
+    assert args.json is True
+
+
 def test_web_view_browser_smoke_parser_accepts_date_and_json() -> None:
     parser = cli_module.build_parser()
 
@@ -9213,6 +9230,45 @@ def test_admin_boundary_audit_reports_schema_blocker_without_status_stacktrace(
     assert payload["status_payload"]["schema_status"]["status"] == "migration_required"
     assert payload["issues"][0]["code"] == "default_db_schema_not_current"
     assert payload["admin_gui"]["html_forbidden_token_count"] == 0
+
+
+def test_docs_hygiene_audit_redacts_sensitive_values(tmp_path) -> None:
+    public_doc = tmp_path / "public.md"
+    public_doc.write_text(
+        "\n".join(
+            [
+                "[doc](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/current-work.md)",
+                "shared origin https://demo.kr-stock.site",
+                "STOCK_MONITOR_TELEGRAM_BOT_TOKEN=abc123",
+                "access_code=2468",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    payload = cli_module._build_docs_hygiene_audit_payload(tmp_path, paths=(public_doc,))
+    payload_text = json.dumps(payload, ensure_ascii=False)
+
+    assert payload["surface"] == "docs-hygiene-audit"
+    assert payload["read_only"] is True
+    assert payload["issue_count"] == 4
+    assert {issue["code"] for issue in payload["issues"]} == {
+        "local_absolute_path",
+        "external_provider_url",
+        "secret_like_assignment",
+        "raw_access_code",
+    }
+    assert "demo.kr-stock.site" not in payload_text
+    assert "abc123" not in payload_text
+    assert "2468" not in payload_text
+    assert "C:/Users/MING" not in payload_text
+
+
+def test_docs_hygiene_audit_current_public_docs_are_clean() -> None:
+    payload = cli_module._build_docs_hygiene_audit_payload(Path.cwd())
+
+    assert payload["issue_count"] == 0
+    assert payload["ready"] is True
 
 
 def test_next_phase_readiness_groups_latest_krx_openapi_probe_batch(tmp_path) -> None:
