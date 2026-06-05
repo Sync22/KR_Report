@@ -19,11 +19,10 @@
 
 | Order | Todo ID | Why Now |
 | --- | --- | --- |
-| 1 | `TODO-ADMIN` | 운영 싱크 전 admin-gui와 shared web-view/operator-review 경계가 유지되는지 재확인할 필요가 있다. |
-| 2 | `TODO-DOC` | dev에서 바뀐 public surface, source freshness, ops sync preview를 README/canonical docs에 반영해야 한다. |
-| 3 | `TODO-NI` | public news connection label은 들어갔지만 save-observation readback/CLI 비교와 source-mode coverage 잔여가 있다. |
-| 4 | `TODO-DATA` | web-view source freshness는 들어갔지만 Toss/X lab feasibility와 Telegram freshness 연결은 잔여다. |
-| 5 | `TODO-OPS` | `ops-sync-preview`가 생겼지만 기본 DB schema blocker와 최종 운영 적용 batch 검증은 아직 남아 있다. |
+| 1 | `TODO-DOC` | public docs now need to reflect completed web-view, source freshness, ops sync preview, and admin boundary audit outputs without leaking local/private details. |
+| 2 | `TODO-NI` | public news connection labels exist, but saved-observation readback, CLI compare output, and source-mode coverage still need a real evidence-layer pass. |
+| 3 | `TODO-DATA` | web-view source freshness exists, but Toss/X lab feasibility, ETF source checks, and Telegram freshness wording remain. |
+| 4 | `TODO-OPS` | `ops-sync-preview` exists, but default DB schema approval/handling and final operating-PC batch verification remain separate. |
 
 ## Todo Board
 
@@ -197,7 +196,7 @@ KRX/ETF/flow/Toss/X 같은 외부 데이터 축을 실제 동작 가능한 sourc
 **Progress Note:**
 2026-06-05 dev commits `77a2321`/`02f13f7`에서 read-only `ops-sync-preview` CLI를 추가했다. 이 출력은 `origin/main..dev` commit subjects, changed file groups, conflict watch paths, `data/` untracked 분리, batch 제외 경로, 별도 승인 필요 작업, 검증 명령을 JSON/text로 보여준다. 기본 DB schema가 target보다 오래된 경우 stack trace 대신 `default_db_schema_not_current` blocker로 표시한다. fixture DB 기준 `web-view-value-qa` issue/warning `0`, `web-view-browser-smoke` issue `0`, `api-perf-summary` 읽기 성공, 전체 pytest `720 passed`를 확인했다. 남은 범위는 기본 DB migration 승인/처리 여부 결정, 실제 운영 적용 batch 검증, 운영 관측에서 나온 perf/UI 항목 환류다.
 
-### [ ] TODO-ADMIN: Admin / Web-View / Operator-Review Boundary
+### [x] TODO-ADMIN: Admin / Web-View / Operator-Review Boundary
 
 **Goal:**
 admin-gui는 운영 상태/제어/복구/설정/audit만 담당하고, 판단 화면은 web-view projection 또는 future operator-review로 분리한다.
@@ -222,6 +221,9 @@ admin-gui는 운영 상태/제어/복구/설정/audit만 담당하고, 판단 �
 - `docs/codex/surface-contract.md`
 - `docs/codex/admin-gui-plan.md`
 - `tests/test_admin_gui.py`
+
+**Completion Note:**
+2026-06-05 dev commits `72312a3`/`3de33c4` added a read-only `admin-boundary-audit` CLI and tests. The audit emits a concrete JSON/text boundary report for `admin-gui`, `web-view`, and future `operator-review`: no live fetch, no DB write, no Telegram send, no scheduler registration, admin HTML judgment-review token count, public-content token count, operator status payload availability, web-view `/api/status` expected 404, and operator-review reserved/unimplemented state. Default DB remains untouched; when its schema is stale the command returns `default_db_schema_not_current` as a blocker instead of a stack trace. Fixture DB verification returned `ready=true`, `html_forbidden_token_count=0`, `html_public_content_token_count=0`, `status_payload.forbidden_token_count=0`, and `operator_review.route_present_in_admin_html=false`. Verified with `python -m stock_monitor admin-boundary-audit --json`, fixture `admin-boundary-audit --json`, `python -m pytest tests\test_admin_gui.py tests\test_operator_status.py tests\test_cli_commands.py -q -k "admin_boundary_audit or admin_gui or operator_status"` (`65 passed`), and full `python -m pytest -q` (`723 passed`).
 
 ### [ ] TODO-DOC: Public Documentation And Information Hygiene
 
