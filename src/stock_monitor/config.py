@@ -64,6 +64,8 @@ DEFAULT_MARKET_HOLIDAYS_2026 = frozenset(
         date(2026, 5, 1),
         date(2026, 5, 5),
         date(2026, 5, 25),
+        date(2026, 6, 3),
+        date(2026, 7, 17),
         date(2026, 8, 17),
         date(2026, 9, 24),
         date(2026, 9, 25),

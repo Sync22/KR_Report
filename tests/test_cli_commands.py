@@ -8405,6 +8405,27 @@ def test_db_verify_fails_on_partial_krx_daily_snapshot(tmp_path, capsys) -> None
     assert "2026-05-08: missing etf-daily, stock-kospi-daily" in output
 
 
+def test_db_verify_allows_partial_krx_daily_snapshot_on_market_holiday(tmp_path, capsys) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+    repository.upsert_etf_daily_snapshots(
+        [
+            EtfDailySnapshot(
+                business_date=date(2026, 6, 3),
+                etf_code="069500",
+                etf_name="KODEX 200",
+                fetched_at=datetime(2026, 6, 5, 8, 10, 0),
+            )
+        ]
+    )
+
+    exit_code = _run_db_verify(repository, as_json=False, holiday_overrides={date(2026, 6, 3)})
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "- partial KRX daily snapshot dates: 0" in output
+
+
 def test_db_backup_creates_consistent_sqlite_copy(tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)

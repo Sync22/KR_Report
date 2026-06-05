@@ -2589,7 +2589,7 @@ def main(argv: list[str] | None = None) -> int:
                 confirm=args.confirm,
             )
         if args.command == "db-verify":
-            return _run_db_verify(repository, as_json=args.json)
+            return _run_db_verify(repository, as_json=args.json, holiday_overrides=config.holiday_overrides)
         if args.command == "ops-readiness":
             return _run_ops_readiness(
                 config,
@@ -4739,7 +4739,11 @@ def _run_mini_pc_preflight(
     return 0 if snapshot["exit_ready"] else 1
 
 
-def _build_db_verify_payload(repository: StockMonitorRepository) -> dict[str, object]:
+def _build_db_verify_payload(
+    repository: StockMonitorRepository,
+    *,
+    holiday_overrides: set[date] | frozenset[date] | None = None,
+) -> dict[str, object]:
     if not repository.db_path.exists():
         raise FileNotFoundError(f"Database does not exist: {repository.db_path}")
     status = repository.get_schema_migration_status()
@@ -4782,7 +4786,11 @@ def _build_db_verify_payload(repository: StockMonitorRepository) -> dict[str, ob
                OR report.identity_key IS NULL
             """
         ).fetchone()[0] if {"intraday_alert_batch_reports", "intraday_alert_batches", "reports"}.issubset(tables) else 0
-        partial_krx_snapshot_dates = _partial_krx_daily_snapshot_dates(connection, tables)
+        partial_krx_snapshot_dates = _partial_krx_daily_snapshot_dates(
+            connection,
+            tables,
+            holiday_overrides=holiday_overrides,
+        )
         investor_flow_quality_issues = _investor_flow_quality_issue_counts(connection, tables)
         investor_flow_quality_issue_total = sum(investor_flow_quality_issues.values())
         category_quality_issues = _category_quality_issue_counts(connection, tables)
@@ -4830,8 +4838,13 @@ def _db_verify_payload_ready(payload: dict[str, object]) -> bool:
     )
 
 
-def _run_db_verify(repository: StockMonitorRepository, *, as_json: bool) -> int:
-    payload = _build_db_verify_payload(repository)
+def _run_db_verify(
+    repository: StockMonitorRepository,
+    *,
+    as_json: bool,
+    holiday_overrides: set[date] | frozenset[date] | None = None,
+) -> int:
+    payload = _build_db_verify_payload(repository, holiday_overrides=holiday_overrides)
     if as_json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
@@ -6418,10 +6431,16 @@ def _database_table_counts(connection: sqlite3.Connection) -> dict[str, int]:
     return {row[0]: int(connection.execute(f'SELECT COUNT(*) FROM "{row[0]}"').fetchone()[0]) for row in rows}
 
 
-def _partial_krx_daily_snapshot_dates(connection: sqlite3.Connection, tables: dict[str, int]) -> list[dict]:
+def _partial_krx_daily_snapshot_dates(
+    connection: sqlite3.Connection,
+    tables: dict[str, int],
+    *,
+    holiday_overrides: set[date] | frozenset[date] | None = None,
+) -> list[dict]:
     required_tables = {"stock_market_daily", "etf_daily_snapshots", "market_index_daily"}
     if not required_tables.issubset(tables):
         return []
+    holidays = holiday_overrides if holiday_overrides is not None else DEFAULT_MARKET_HOLIDAYS
     date_rows = connection.execute(
         """
         SELECT business_date
@@ -6438,6 +6457,8 @@ def _partial_krx_daily_snapshot_dates(connection: sqlite3.Connection, tables: di
     partial_dates: list[dict] = []
     for row in date_rows:
         business_date = row["business_date"]
+        if not is_business_day(date.fromisoformat(str(business_date)), holidays):
+            continue
         counts = {
             "etf-daily": int(
                 connection.execute(
