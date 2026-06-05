@@ -19,9 +19,8 @@
 
 | Order | Todo ID | Why Now |
 | --- | --- | --- |
-| 1 | `TODO-NI` | public news connection labels exist, but saved-observation readback, CLI compare output, and source-mode coverage still need a real evidence-layer pass. |
-| 2 | `TODO-DATA` | web-view source freshness exists, but Toss/X lab feasibility, ETF source checks, and Telegram freshness wording remain. |
-| 3 | `TODO-OPS` | `ops-sync-preview` exists, but default DB schema approval/handling and final operating-PC batch verification remain separate. |
+| 1 | `TODO-DATA` | web-view source freshness exists, but Toss/X lab feasibility, ETF source checks, and Telegram freshness wording remain. |
+| 2 | `TODO-OPS` | `ops-sync-preview` exists, but default DB schema approval/handling and final operating-PC batch verification remain separate. |
 
 ## Todo Board
 
@@ -94,7 +93,7 @@
 **Completion Note:**
 2026-06-05 dev commit `e48eeab`에서 개발 검증 기준으로 완료 처리했다. fixture DB 기준 `market-briefing --slot mood|lunch|preclose`, `--json` read-only preview, public-safe issue count `0`, stored news evidence 포함, `market-briefing-readiness` preview 경로를 확인했다. Telegram 실발송, 수동 review send 카운트 적립, phone review acceptance, scheduler 자동 등록은 별도 승인 전까지 운영 범위로 남긴다.
 
-### [ ] TODO-NI: News Intelligence Evidence Layer
+### [x] TODO-NI: News Intelligence Evidence Layer
 
 **Goal:**
 news intelligence를 독립 뉴스 수집기가 아니라 report/KRX/candidate evidence를 보강하는 판단 근거 레이어로 완성한다.
@@ -126,6 +125,9 @@ news intelligence를 독립 뉴스 수집기가 아니라 report/KRX/candidate e
 
 **Progress Note:**
 2026-06-05 dev commit `24cff27`에서 daily web-view의 news observation summary, candidate badge, stock detail, `/v2` rendering에 public-safe connection label/reason을 추가했다. `tests/test_web_view.py`, `tests/test_cli_commands.py`, fixture `web-view-value-qa`, `web-view-browser-smoke`, 전체 pytest가 통과했다. raw sentiment/impact/internal recommendation은 public payload에 노출하지 않았다. 남은 범위는 저장 observation readback, CLI 비교 출력, source-mode coverage 정리다.
+
+**Completion Note:**
+2026-06-05 dev commits `c8a4a67`/`2fe1d80`에서 저장 observation readback과 CLI 비교 출력을 완료했다. `news-intelligence-observations`는 저장 run 전체의 `source_mode_coverage`를 JSON으로 내보내며 source mode, source lane, direct/indirect/market-context 합계, match scope, KRX exact/stale/missing/none 상태, candidate-linkage label, operator recommendation-support label, read-only/operator-only 경계 플래그를 한 번에 비교할 수 있다. text 출력도 per-run evidence 앞에 같은 coverage 요약을 표시한다. `news-intelligence-daily-brief` JSON/text에도 표시 대상 saved-run 그룹 기준 coverage가 추가됐다. RED/GREEN 테스트, `python -m pytest tests\test_cli_commands.py tests\test_news_intelligence.py -q -k news_intelligence` (`29 passed`), 전체 CLI 테스트 (`323 passed`), temp DB CLI smoke에서 `source-mode coverage`, `source_modes: naver_5_lane_preview=2`, `labels: stale_krx_check_first=1, strengthen_existing_candidate=1`, KRX exact/stale 집계를 확인했다. public web-view raw sentiment/impact/internal recommendation 노출 금지는 기존 public projection 테스트로 유지했고 public route는 변경하지 않았다.
 
 ### [ ] TODO-DATA: Market Data, ETF, And Source Freshness
 
@@ -222,7 +224,7 @@ admin-gui는 운영 상태/제어/복구/설정/audit만 담당하고, 판단 �
 - `tests/test_admin_gui.py`
 
 **Completion Note:**
-2026-06-05 dev commits `72312a3`/`3de33c4` added a read-only `admin-boundary-audit` CLI and tests. The audit emits a concrete JSON/text boundary report for `admin-gui`, `web-view`, and future `operator-review`: no live fetch, no DB write, no Telegram send, no scheduler registration, admin HTML judgment-review token count, public-content token count, operator status payload availability, web-view `/api/status` expected 404, and operator-review reserved/unimplemented state. Default DB remains untouched; when its schema is stale the command returns `default_db_schema_not_current` as a blocker instead of a stack trace. Fixture DB verification returned `ready=true`, `html_forbidden_token_count=0`, `html_public_content_token_count=0`, `status_payload.forbidden_token_count=0`, and `operator_review.route_present_in_admin_html=false`. Verified with `python -m stock_monitor admin-boundary-audit --json`, fixture `admin-boundary-audit --json`, `python -m pytest tests\test_admin_gui.py tests\test_operator_status.py tests\test_cli_commands.py -q -k "admin_boundary_audit or admin_gui or operator_status"` (`65 passed`), and full `python -m pytest -q` (`723 passed`).
+2026-06-05 dev commits `72312a3`/`3de33c4` added a read-only `admin-boundary-audit` CLI and tests. The audit emits a concrete JSON/text boundary report for `admin-gui`, `web-view`, and future `operator-review`: no live fetch, no DB write, no Telegram send, no scheduler registration, admin HTML judgment-review token count, public-content token count, operator status payload availability, web-view `/api/status` expected 404, and operator-review reserved/unimplemented state. Default DB remains untouched; when its schema is stale the command returns `default_db_schema_not_current` as a blocker instead of a stack trace. Fixture DB verification returned `ready=true`, zero admin HTML judgment-review matches, zero admin HTML public-content matches, zero operator status forbidden matches, and `operator_review.route_present_in_admin_html=false`. Verified with `python -m stock_monitor admin-boundary-audit --json`, fixture `admin-boundary-audit --json`, `python -m pytest tests\test_admin_gui.py tests\test_operator_status.py tests\test_cli_commands.py -q -k "admin_boundary_audit or admin_gui or operator_status"` (`65 passed`), and full `python -m pytest -q` (`723 passed`).
 
 ### [x] TODO-DOC: Public Documentation And Information Hygiene
 
@@ -271,7 +273,7 @@ README, roadmap, contracts, changelog가 현재 main/dev 현실과 맞고, 공�
 Use this when starting a todo item:
 
 ```text
-C:\Users\MING\Codex\02.Stock_Moniter 범위에서 dev 브랜치 기준으로 진행해줘.
+<project root> 범위에서 dev 브랜치 기준으로 진행해줘.
 
 목표:
 <TODO-ID>를 진행한다. docs/codex/work-todo-board.md의 해당 항목을 기준으로,
