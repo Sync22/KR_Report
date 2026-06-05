@@ -19,9 +19,9 @@
 
 | Order | Todo ID | Why Now |
 | --- | --- | --- |
-| 1 | TODO2-OPS-REAL | Dev-side TODOs are complete, but operating-PC sync, real DB migration approval, and scheduler/Telegram/admin boundaries still need an explicit operating handoff. |
-| 2 | TODO2-TG-LIVE-DRYRUN | Telegram output is preview-verified; the next risk is real operating data, paging/retry/outbox behavior, and final no-send dry-run evidence before any live send. |
-| 3 | TODO2-WV-CONTENT-QA | Web-view flow is fixture/browser-smoke verified; the next product risk is recent-date content quality, public-safe wording, and mobile/tablet scan quality on operating-like data. |
+| 1 | TODO2-TG-LIVE-DRYRUN | Telegram output is preview-verified; the next risk is real operating data, paging/retry/outbox behavior, and final no-send dry-run evidence before any live send. |
+| 2 | TODO2-WV-CONTENT-QA | Web-view flow is fixture/browser-smoke verified; the next product risk is recent-date content quality, public-safe wording, and mobile/tablet scan quality on operating-like data. |
+| 3 | TODO2-DATA-FRESHNESS-LIVE | Operating sync is ready; the next data risk is keeping recent KRX/ETF/flow freshness evidence honest across CLI, web-view, and Telegram preview. |
 
 ## Todo Board
 
@@ -287,7 +287,7 @@ README, roadmap, contracts, changelog가 현재 main/dev 현실과 맞고, 공�
 
 ## Second Todo Board
 
-### [ ] TODO2-OPS-REAL: Operating-PC Sync And Real Migration Handoff
+### [x] TODO2-OPS-REAL: Operating-PC Sync And Real Migration Handoff
 
 **Goal:**
 Turn the dev-verified closeout into a controlled operating-PC handoff without silently performing production DB writes, scheduler changes, Telegram real sends, or admin-gui process operations.
@@ -326,6 +326,9 @@ Turn the dev-verified closeout into a controlled operating-PC handoff without si
 
 **Progress Note:**
 2026-06-05 dev fix added `2026-06-03` and `2026-07-17` to the default 2026 KRX holiday calendar, passed configured holidays into the direct `db-verify` CLI path, and changed the partial KRX daily snapshot check to skip configured non-business days. Regression coverage now asserts those 2026 holidays are in `RuntimeConfig`, confirms `db-verify` still fails for a real business-day partial snapshot, confirms it allows the `2026-06-03` holiday ETF-only snapshot, and updates operator-control next-business-day output from `2026-06-03` to `2026-06-04`. Verified with focused tests and full `python -m pytest -q` (`737 passed`). Operating PC should sync this before rerunning `db-verify`; no extra KRX retry or cleanup is the next default action.
+
+**Completion Note:**
+2026-06-05 operating-PC sync and readiness finished at dev commit `2fa1efc`. The operating worktree is `dev...origin/dev`, tracked clean, with only `data/` untracked and untouched. `db-verify --json` is ready with integrity `ok`, schema `7/7`, no pending migrations, FK violations `0`, and quality issue totals `0`; `db-migration-rehearsal --json` returned `ready=true`; `ops-sync-preview --base origin/main --head dev --json` returned `source_sync_ready=true` with empty blockers. No additional KRX retry, cleanup/delete/import, real `db-migrate`, scheduler registration/change, Telegram real send, admin-gui process operation, broker/order routing, or secret output was performed.
 
 ### [ ] TODO2-TG-LIVE-DRYRUN: Telegram Real-Data No-Send Dry Run
 
