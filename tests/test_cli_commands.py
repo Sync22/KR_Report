@@ -764,6 +764,23 @@ def test_ops_sync_preview_parser_accepts_base_head_max_commits_and_json() -> Non
     assert args.json is True
 
 
+def test_admin_boundary_audit_parser_accepts_limit_and_json() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "admin-boundary-audit",
+            "--limit",
+            "7",
+            "--json",
+        ]
+    )
+
+    assert args.command == "admin-boundary-audit"
+    assert args.limit == 7
+    assert args.json is True
+
+
 def test_web_view_browser_smoke_parser_accepts_date_and_json() -> None:
     parser = cli_module.build_parser()
 
@@ -9136,6 +9153,66 @@ def test_ops_sync_preview_reports_schema_blocker_without_failing_json(
     }
     assert payload["source_sync_ready"] is False
     assert payload["blockers"][0]["code"] == "default_db_schema_not_current"
+
+
+def test_admin_boundary_audit_json_reports_surface_split_without_leaking_status(
+    tmp_path, capsys
+) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path)
+    repository.initialize()
+
+    assert cli_module._run_admin_boundary_audit(config, repository, limit=2, as_json=True) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    payload_text = json.dumps(payload, ensure_ascii=False)
+    assert payload["surface"] == "admin-boundary-audit"
+    assert payload["read_only"] is True
+    assert payload["live_fetch"] is False
+    assert payload["writes_db"] is False
+    assert payload["sends_telegram"] is False
+    assert payload["registers_scheduler"] is False
+    assert payload["ready"] is True
+    assert payload["admin_gui"]["html_forbidden_token_count"] == 0
+    assert payload["admin_gui"]["html_public_content_token_count"] == 0
+    assert payload["admin_gui"]["host_guard"] == "loopback_required_by_default"
+    assert payload["status_payload"]["available"] is True
+    assert payload["status_payload"]["forbidden_token_count"] == 0
+    assert payload["web_view"]["separate_handler"] is True
+    assert payload["web_view"]["expected_api_status"] == 404
+    assert payload["operator_review"]["implemented"] is False
+    assert payload["operator_review"]["route_present_in_admin_html"] is False
+    assert any("web-view-browser-smoke" in command for command in payload["verification_commands"])
+    assert "db_path" not in payload_text
+
+
+def test_admin_boundary_audit_reports_schema_blocker_without_status_stacktrace(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path)
+    repository.initialize()
+
+    monkeypatch.setattr(
+        repository,
+        "get_schema_migration_status",
+        lambda: SchemaMigrationStatus(
+            current_version=5,
+            target_version=7,
+            applied_versions=(1, 2, 3, 4, 5),
+            pending_versions=(6, 7),
+        ),
+    )
+
+    assert cli_module._run_admin_boundary_audit(config, repository, limit=2, as_json=True) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready"] is False
+    assert payload["status_payload"]["available"] is False
+    assert payload["status_payload"]["schema_status"]["status"] == "migration_required"
+    assert payload["issues"][0]["code"] == "default_db_schema_not_current"
+    assert payload["admin_gui"]["html_forbidden_token_count"] == 0
 
 
 def test_next_phase_readiness_groups_latest_krx_openapi_probe_batch(tmp_path) -> None:
