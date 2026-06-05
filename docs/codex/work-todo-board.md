@@ -211,6 +211,9 @@ KRX/ETF/flow/Toss/X 같은 외부 데이터 축을 실제 동작 가능한 sourc
 **Progress Note:**
 2026-06-05 dev commits `01d27d1`/`ffddffb` added `schema_action_plan` to `ops-sync-preview --json` and the generated `operating_pc_handoff.prompt`. The handoff now separates pre-approval checks (`ops-sync-preview`, `db-migrate --dry-run`, `db-verify --json`) from post-approval commands (`db-backup --tag pre-schema-migration`, `db-migrate`, `db-verify --json`, `ops-readiness --json`) and repeats the forbidden-without-approval list including `schema migration on operating PC`. Actual default-DB smoke returned `source_sync_ready=false`, `schema_status=migration_required`, `approval_required=true`, `pre_approval_count=3`, `post_approval_count=4`, and prompt markers for `Schema action plan` and `post-approval`. Verified `python -m pytest tests\test_cli_commands.py -q -k ops_sync_preview` (`3 passed`), full CLI tests (`328 passed`), and full `python -m pytest -q` (`734 passed`). Remaining scope is the explicit approval decision and actual operating-PC batch verification.
 
+**Progress Note:**
+2026-06-05 dev commits `087cfcd`/`413ce3f` added `db-migration-rehearsal`, which uses a temporary SQLite backup copy to apply migrations and run verification without writing the source DB. Actual default-DB smoke with a `%TEMP%` work dir returned `ready=true`, `read_only_source=true`, `writes_source_db=false`, `copy_retained=false`, source schema `5/7` before and after, copy schema `5/7 -> 7/7`, `copy_verify_ready=true`, and `blocker_count=0`. Verified focused rehearsal tests (`2 passed`), full CLI tests (`330 passed`), and full `python -m pytest -q` (`736 passed`). Remaining scope is not technical rehearsal anymore; it is explicit approval for the real default/operating-PC DB migration and the actual operating-PC batch verification.
+
 ### [x] TODO-ADMIN: Admin / Web-View / Operator-Review Boundary
 
 **Goal:**
