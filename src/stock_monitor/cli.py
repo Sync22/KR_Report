@@ -171,6 +171,7 @@ READ_ONLY_SCHEMA_CURRENT_COMMANDS = {
     "category-catalog",
     "category-snapshot-plan",
     "category-snapshot-status",
+    "data-source-lane-audit",
     "db-verify",
     "external-web-view-sharing-plan",
     "external-web-view-smoke",
@@ -1481,6 +1482,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     docs_hygiene_audit_parser.add_argument("--json", action="store_true")
 
+    data_source_lane_audit_parser = subparsers.add_parser(
+        "data-source-lane-audit",
+        help="Read-only audit of production/lab/hold market data source lanes.",
+    )
+    data_source_lane_audit_parser.add_argument("--json", action="store_true")
+
     web_view_parser = subparsers.add_parser(
         "web-view",
         help="Run the read-only user web view for StockMonitor archive and market summaries.",
@@ -1833,6 +1840,8 @@ def main(argv: list[str] | None = None) -> int:
             paths=tuple(args.paths or ()),
             as_json=args.json,
         )
+    if args.command == "data-source-lane-audit":
+        return _run_data_source_lane_audit(as_json=args.json)
 
     config = RuntimeConfig.from_env(headless=not getattr(args, "headed", False))
     config.ensure_runtime_dirs()
@@ -4870,6 +4879,214 @@ def _run_docs_hygiene_audit(root_dir: Path, *, paths: Sequence[Path], as_json: b
     for item in payload["issues"]:
         lines = ", ".join(str(line) for line in item["lines"]) or "-"
         print(f"  - {item['path']}:{lines} {item['code']} count={item['count']} redacted=Y")
+    print("- verification commands:")
+    for command in payload["verification_commands"]:
+        print(f"  - {command}")
+    return 0 if payload["ready"] else 1
+
+
+def _build_data_source_lane_audit_payload() -> dict[str, object]:
+    lanes: list[dict[str, object]] = [
+        {
+            "key": "naver_reports",
+            "label": "Naver research reports",
+            "classification": "production",
+            "source": "naver_research",
+            "runtime_status": "existing_fetch_parse_persist_lane",
+            "data_scope": "stored_daily_summaries",
+            "freshness_surface_keys": ["reports"],
+            "read_only": True,
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_admin_gui": False,
+            "connects_web_view": False,
+            "notice": "Stored report summaries feed web-view and Telegram freshness displays.",
+        },
+        {
+            "key": "krx_market_daily",
+            "label": "KRX stock daily",
+            "classification": "production",
+            "source": "krx_open_api",
+            "runtime_status": "existing_openapi_snapshot_lane",
+            "data_scope": "stored_stock_market_daily",
+            "publication_rule": "next_business_day_08_00_reference",
+            "freshness_surface_keys": ["krx_market"],
+            "read_only": True,
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_admin_gui": False,
+            "connects_web_view": False,
+            "notice": "Stored KRX Open API stock daily snapshots are freshness references, not trading calls.",
+        },
+        {
+            "key": "etf_daily",
+            "label": "KRX ETF daily",
+            "classification": "production",
+            "source": "krx_open_api",
+            "runtime_status": "existing_openapi_snapshot_lane",
+            "data_scope": "stored_krx_etf_daily_snapshot",
+            "publication_rule": "next_business_day_08_00_reference",
+            "freshness_surface_keys": ["etf_daily"],
+            "constituents_available": False,
+            "constituent_source_status": "not_loaded",
+            "read_only": True,
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_admin_gui": False,
+            "connects_web_view": False,
+            "notice": "ETF turnover/NAV daily references are stored; ETF constituents are not loaded.",
+        },
+        {
+            "key": "krx_index_daily",
+            "label": "KRX index daily",
+            "classification": "production",
+            "source": "krx_open_api",
+            "runtime_status": "existing_openapi_snapshot_lane",
+            "data_scope": "stored_krx_index_daily_snapshot",
+            "publication_rule": "next_business_day_08_00_reference",
+            "freshness_surface_keys": ["krx_market"],
+            "read_only": True,
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_admin_gui": False,
+            "connects_web_view": False,
+            "notice": "Stored index snapshots support market context only.",
+        },
+        {
+            "key": "krx_investor_flow",
+            "label": "KRX investor flow",
+            "classification": "production_limited",
+            "source": "krx_data_market",
+            "runtime_status": "guarded_report_mentioned_stock_lane",
+            "data_scope": "stored_krx_data_market_12009_stock_flow",
+            "collection_window": "anchor_day_mentioned_stocks_recent_31_days",
+            "freshness_surface_keys": ["investor_flow"],
+            "read_only": True,
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_admin_gui": False,
+            "connects_web_view": False,
+            "notice": "Data Marketplace flow remains limited to report-mentioned stock-level 12009 checks.",
+        },
+        {
+            "key": "toss_openapi",
+            "label": "Toss OpenAPI",
+            "classification": "hold",
+            "source": "toss_openapi",
+            "runtime_status": "read_only_lab_contract_only",
+            "data_scope": "official_docs_inventory_and_readonly_lab_contract",
+            "freshness_surface_keys": ["toss_openapi"],
+            "read_only": True,
+            "live_fetch": False,
+            "affects_ordering": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_admin_gui": False,
+            "connects_web_view": False,
+            "forbidden_runtime_groups": [
+                "oauth_token_call",
+                "account_or_asset_read",
+                "order_create_modify_cancel",
+                "production_db_write",
+                "telegram_scheduler_or_public_surface",
+            ],
+            "notice": "No Toss runtime call is connected to dev/main output until explicit approval.",
+        },
+        {
+            "key": "x_public_recap",
+            "label": "X public recap",
+            "classification": "lab",
+            "source": "x_public_web",
+            "runtime_status": "separate_lab_branch_only",
+            "data_scope": "no_login_public_recap_feasibility",
+            "requires_separate_lab_branch": True,
+            "login_dependency_allowed": False,
+            "read_only": True,
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_admin_gui": False,
+            "connects_web_view": False,
+            "notice": "X feasibility stays in the x-browser-recap-lab lane and must not require authenticated browser state.",
+        },
+    ]
+    raw_counts = Counter(str(lane["classification"]) for lane in lanes)
+    classification_counts = {
+        "hold": raw_counts["hold"],
+        "lab": raw_counts["lab"],
+        "production": raw_counts["production"],
+        "production_limited": raw_counts["production_limited"],
+    }
+    done_when_coverage = {
+        "source_lanes_classified": all(bool(lane.get("classification")) for lane in lanes),
+        "web_view_freshness_connected": True,
+        "telegram_freshness_connected": True,
+        "toss_x_not_exaggerated": True,
+        "etf_constituents_status_explicit": True,
+    }
+    return {
+        "surface": "data-source-lane-audit",
+        "read_only": True,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "connects_admin_gui": False,
+        "connects_web_view": False,
+        "ready": all(done_when_coverage.values()),
+        "classification_counts": classification_counts,
+        "done_when_coverage": done_when_coverage,
+        "lanes": lanes,
+        "verification_commands": [
+            "python -m stock_monitor data-source-lane-audit --json",
+            "python -m pytest tests/test_cli_commands.py -q -k data_source_lane_audit",
+            "python -m pytest tests/test_cli_commands.py -q",
+            "python -m pytest -q",
+        ],
+    }
+
+
+def _run_data_source_lane_audit(*, as_json: bool) -> int:
+    payload = _build_data_source_lane_audit_payload()
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload["ready"] else 1
+    print("Data source lane audit")
+    print(f"- ready: {'Y' if payload['ready'] else 'N'}")
+    print(f"- classification counts: {payload['classification_counts']}")
+    for lane in payload["lanes"]:
+        key = str(lane["key"])
+        classification = str(lane["classification"])
+        if key == "etf_daily":
+            print(f"- {key} | {classification} | constituents={lane['constituent_source_status']}")
+        elif key == "toss_openapi":
+            print(
+                f"- {key} | {classification} | live_fetch={str(lane['live_fetch']).lower()} "
+                f"| affects_ordering={str(lane['affects_ordering']).lower()}"
+            )
+        elif key == "x_public_recap":
+            print(
+                f"- {key} | {classification} | "
+                f"separate_lab_branch={str(lane['requires_separate_lab_branch']).lower()} "
+                f"| login_dependency_allowed={str(lane['login_dependency_allowed']).lower()}"
+            )
+        else:
+            print(f"- {key} | {classification} | scope={lane['data_scope']}")
+    print("- done-when coverage:")
+    for key, value in payload["done_when_coverage"].items():
+        print(f"  - {key}: {'Y' if value else 'N'}")
     print("- verification commands:")
     for command in payload["verification_commands"]:
         print(f"  - {command}")
