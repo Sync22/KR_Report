@@ -132,7 +132,7 @@ Browser UI login remains a fallback/debug path only:
 
 | Path | Decision |
 | --- | --- |
-| Direct `login.jsp?site=mdc` tab | Preferred browser fallback. It exposes the login fields without the wrapper iframe. |
+| Direct `{KRX_LOGIN_FALLBACK_PATH}` tab | Preferred browser fallback. It exposes the login fields without the wrapper iframe. |
 | Wrapper `MDCCOMS001.cmd` iframe | Works, but is less stable and not needed when direct login page is available. |
 | Chrome saved-password/PIN/Windows Hello | Manual-only. Do not automate OS/native security prompts. |
 | Browser raw network capture | Not available in the current browser automation surface. |

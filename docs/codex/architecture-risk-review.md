@@ -11,7 +11,7 @@ Use it when starting broad investigation across:
 - `admin-gui` and read-only `web-view`
 - replay, migration, data-source, public-safe, and performance boundaries
 
-This is an investigation reference, not an implementation plan. Before changing parser, summary, notification, admin-gui, or web-view behavior, still check [data-quality-checklist.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/data-quality-checklist.md), [surface-contract.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/surface-contract.md), and [data-source-policy.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/data-source-policy.md).
+This is an investigation reference, not an implementation plan. Before changing parser, summary, notification, admin-gui, or web-view behavior, still check [data-quality-checklist.md](/docs/codex/data-quality-checklist.md), [surface-contract.md](/docs/codex/surface-contract.md), and [data-source-policy.md](/docs/codex/data-source-policy.md).
 
 ## Snapshot
 
@@ -19,7 +19,7 @@ Date: `2026-05-20`
 
 Scope:
 
-- Local project only: `C:\Users\MING\Codex\02.Stock_Moniter`
+- Local project only: `{PROJECT_ROOT}`
 - Investigation only; no code edits were made during the review.
 - CodeGraph was checked first for structure, but the index did not include the highest-risk `src/stock_monitor/cli.py` file at the time of review, so results were corrected against real file contents.
 
@@ -32,31 +32,31 @@ Working-tree note:
 
 | Area | Current shape |
 | --- | --- |
-| CLI entry | `python -m stock_monitor` enters [__main__.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/__main__.py) and dispatches through [cli.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/cli.py). |
-| Fetch / parse | Naver report collection lives in [fetch/naver_research.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/fetch/naver_research.py). It prefers captured API items and falls back to candidate DOM rows. |
-| Persist | SQLite access is centralized in [db/repository.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/db/repository.py). Schema and migrations are in [db/schema.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/db/schema.py). |
-| Summarize | Daily report summaries are built in [summary.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/summary.py). |
-| Notify | Telegram formatting and control state are under [notify/](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/notify). Scheduled/manual delivery orchestration is in [cli.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/cli.py). |
-| Scheduler | PowerShell wrappers in [scripts/](/C:/Users/MING/Codex/02.Stock_Moniter/scripts) call CLI scheduled commands. Python-side guards enforce business-day, no-run, time-window, and operation-profile rules. |
-| Admin surface | `admin-gui` is a local/operator control surface with GET and guarded POST routes inside [cli.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/cli.py). |
+| CLI entry | `python -m stock_monitor` enters [__main__.py](/src/stock_monitor/__main__.py) and dispatches through [cli.py](/src/stock_monitor/cli.py). |
+| Fetch / parse | Naver report collection lives in [fetch/naver_research.py](/src/stock_monitor/fetch/naver_research.py). It prefers captured API items and falls back to candidate DOM rows. |
+| Persist | SQLite access is centralized in [db/repository.py](/src/stock_monitor/db/repository.py). Schema and migrations are in [db/schema.py](/src/stock_monitor/db/schema.py). |
+| Summarize | Daily report summaries are built in [summary.py](/src/stock_monitor/summary.py). |
+| Notify | Telegram formatting and control state are under [notify/](/src/stock_monitor/notify). Scheduled/manual delivery orchestration is in [cli.py](/src/stock_monitor/cli.py). |
+| Scheduler | PowerShell wrappers in [scripts/](/scripts) call CLI scheduled commands. Python-side guards enforce business-day, no-run, time-window, and operation-profile rules. |
+| Admin surface | `admin-gui` is a local/operator control surface with GET and guarded POST routes inside [cli.py](/src/stock_monitor/cli.py). |
 | User surface | `web-view` is a separate GET-only/read-only surface, with `/auth/login` as the only POST exception and all other write methods returning `405`. |
-| Market data | KRX Open API and KRX Data Marketplace fetch/parse helpers live in [fetch/krx_api.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/fetch/krx_api.py). KRX scheduling and display orchestration is mostly in [cli.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/cli.py). |
+| Market data | KRX Open API and KRX Data Marketplace fetch/parse helpers live in [fetch/krx_api.py](/src/stock_monitor/fetch/krx_api.py). KRX scheduling and display orchestration is mostly in [cli.py](/src/stock_monitor/cli.py). |
 
 ## Key Paths
 
 | Concern | Path |
 | --- | --- |
-| Report fetch entry | [fetch/naver_research.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/fetch/naver_research.py) |
-| Report identity | [models.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/models.py) |
-| Report insert / intraday queue | [db/repository.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/db/repository.py) |
-| Daily summary build | [summary.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/summary.py) |
-| Daily delivery fragments | [db/schema.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/db/schema.py), [db/repository.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/db/repository.py) |
-| Scheduled poll / notify | [scripts/run_scheduled_poll.ps1](/C:/Users/MING/Codex/02.Stock_Moniter/scripts/run_scheduled_poll.ps1), [scripts/run_scheduled_notify.ps1](/C:/Users/MING/Codex/02.Stock_Moniter/scripts/run_scheduled_notify.ps1), [cli.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/cli.py) |
-| KRX daily backfill | [scripts/run_scheduled_krx_daily_backfill.ps1](/C:/Users/MING/Codex/02.Stock_Moniter/scripts/run_scheduled_krx_daily_backfill.ps1), [fetch/krx_api.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/fetch/krx_api.py), [cli.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/cli.py) |
-| KRX mentioned-stock flow | [scripts/run_scheduled_krx_mentioned_flow_backfill.ps1](/C:/Users/MING/Codex/02.Stock_Moniter/scripts/run_scheduled_krx_mentioned_flow_backfill.ps1), [cli.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/cli.py) |
-| Admin GUI handler | [cli.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/cli.py) |
-| Web-view handler / DTOs | [cli.py](/C:/Users/MING/Codex/02.Stock_Moniter/src/stock_monitor/cli.py) |
-| Public-safe smoke / QA | [tests/test_web_view.py](/C:/Users/MING/Codex/02.Stock_Moniter/tests/test_web_view.py), [tests/test_cli_commands.py](/C:/Users/MING/Codex/02.Stock_Moniter/tests/test_cli_commands.py) |
+| Report fetch entry | [fetch/naver_research.py](/src/stock_monitor/fetch/naver_research.py) |
+| Report identity | [models.py](/src/stock_monitor/models.py) |
+| Report insert / intraday queue | [db/repository.py](/src/stock_monitor/db/repository.py) |
+| Daily summary build | [summary.py](/src/stock_monitor/summary.py) |
+| Daily delivery fragments | [db/schema.py](/src/stock_monitor/db/schema.py), [db/repository.py](/src/stock_monitor/db/repository.py) |
+| Scheduled poll / notify | [scripts/run_scheduled_poll.ps1](/scripts/run_scheduled_poll.ps1), [scripts/run_scheduled_notify.ps1](/scripts/run_scheduled_notify.ps1), [cli.py](/src/stock_monitor/cli.py) |
+| KRX daily backfill | [scripts/run_scheduled_krx_daily_backfill.ps1](/scripts/run_scheduled_krx_daily_backfill.ps1), [fetch/krx_api.py](/src/stock_monitor/fetch/krx_api.py), [cli.py](/src/stock_monitor/cli.py) |
+| KRX mentioned-stock flow | [scripts/run_scheduled_krx_mentioned_flow_backfill.ps1](/scripts/run_scheduled_krx_mentioned_flow_backfill.ps1), [cli.py](/src/stock_monitor/cli.py) |
+| Admin GUI handler | [cli.py](/src/stock_monitor/cli.py) |
+| Web-view handler / DTOs | [cli.py](/src/stock_monitor/cli.py) |
+| Public-safe smoke / QA | [tests/test_web_view.py](/tests/test_web_view.py), [tests/test_cli_commands.py](/tests/test_cli_commands.py) |
 
 ## Confirmed Findings
 

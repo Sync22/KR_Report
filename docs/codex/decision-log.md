@@ -1,8 +1,8 @@
-﻿# Decision Log
+# Decision Log
 
 ## Scope Constraint
 
-- All decisions here apply only to `C:\Users\MING\Codex\02.Stock_Moniter`.
+- All decisions here apply only to `{PROJECT_ROOT}`.
 - No external folder state should be treated as part of this project.
 
 ## 2026-04-24 to 2026-04-25
@@ -82,7 +82,7 @@
 - Report identity is based on `source_id` or `identity_key`, not display text.
 - `broker_display` is display-only derived text; do not parse it back as canonical broker data.
 - `published_at`, `business_date`, and `collected_at` have separate meanings; archive and summary grouping use `business_date`.
-- The persistent checklist is [data-quality-checklist.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/data-quality-checklist.md).
+- The persistent checklist is [data-quality-checklist.md](/docs/codex/data-quality-checklist.md).
 
 ### Technical Direction
 

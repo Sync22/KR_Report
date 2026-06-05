@@ -58,7 +58,7 @@ SQLite에 저장한 뒤 Telegram, 관리자 화면, 사용자용 웹뷰로 읽�
 
 ### Naver 리포트
 
-수집 대상은 `https://stock.naver.com/research/company`의 국내종목 리포트다.
+수집 대상은 `{NAVER_RESEARCH_URL}`의 국내종목 리포트다.
 다른 탭은 아직 기본 운영 범위가 아니다.
 
 리포트는 아래 식별값을 최대한 안정적으로 조합해 중복 저장을 방지한다.
@@ -262,7 +262,7 @@ Future Toss Securities Open API or another approved intraday source can make thi
 - entry-code gate는 가벼운 1차 보호로 사용 가능
 - 외부 공유 전 `external-web-view-sharing-plan --json`으로 read-only 공유 순서를 확인
 - Cloudflare provider URL이 생기면 `verify_cloudflare_web_view_tunnel.ps1 -Url https://YOUR-WEB-VIEW-URL`로 최종 검증
-- Tunnel target은 `http://127.0.0.1:8780` 같은 loopback `web-view` 포트만 허용
+- Tunnel target은 `{LOCAL_WEB_VIEW_TARGET}` 같은 loopback `web-view` 포트만 허용
 - 최종 URL smoke에서 Cloudflare Access 로그인 HTML은 차단 응답으로 허용하지만, `admin-gui`처럼 보이는 응답은 항상 실패 처리
 
 ## 현재 불안정/관찰 필요

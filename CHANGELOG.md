@@ -43,7 +43,7 @@
 - `operator-status` 텍스트 출력에도 strict health 해석 줄을 추가했다. 이제 `access_denied` 상태에서 당일 실행 흔적이 같이 보여도, 해당 흔적이 스케줄러 메타데이터 검증을 대체하지 않는다는 점이 바로 보인다.
 - 정상 운영에서 꺼두는 optional `StockMonitor-KrxFlowLoginReminder`는 metadata `access_denied`를 core scheduler fail이 아니라 warning으로 분리했다. Notify/Poll/KRX daily backfill/KRX mentioned flow/TelegramCommands 같은 핵심 작업의 `access_denied`는 계속 fail이다.
 - `sector_catalog_not_refreshable` 경고의 의미를 README에 명확히 했다. `source=naver_quote` 업종 row는 화면 표시/cache용 분류이며, 검증된 `source=naver_industry` 또는 `source=naver_upjong` row만 `refresh-industries` 대상이다.
-- `refresh-industry`가 구형 모바일 `front-api` 404 시 현재 Naver PC 업종 API(`upjong/{no}/info`, `upjong/{no}/stocklist`)로 fallback하도록 보강했다. `refresh-industry 307 --dry-run`으로 `전자제품` 업종 preview가 DB 쓰기 없이 동작함을 확인했다.
+- `refresh-industry`가 구형 모바일 API 경로 실패 시 현재 Naver PC 업종 API로 fallback하도록 보강했다. `refresh-industry --dry-run`으로 업종 preview가 DB 쓰기 없이 동작함을 확인했다.
 - `category-catalog discover-industries`를 추가했다. 현재 Naver PC 업종 catalog를 DB 쓰기 없이 조회하고, 각 후보별 `category-catalog add sector ... --source naver_industry` 명령을 출력해 업종 fallback 축소 작업이 브라우저 수동 추적에 의존하지 않게 했다.
 - `category-catalog discover-industries` 출력에 기존 sector catalog 표시명 매칭 정보를 추가했다. 예를 들어 현재 후보 `광고`는 기존 `12/naver_quote`와 같은 표시명으로 `existing=Y(12/naver_quote)`가 표시되어, 검증된 `naver_industry` row를 새로 추가할지 기존 display/cache row와 충돌하는지 먼저 볼 수 있다.
 - 검증된 Naver PC upjong 후보 8개를 기존 `naver_quote` row와 별도로 `source=naver_industry` catalog에 추가했다. 대상은 `가정용품(297)`, `광고(310)`, `방송과엔터테인먼트(285)`, `상업서비스와공급품(324)`, `섬유,의류,신발,호화품(274)`, `손해보험(315)`, `전문소매(328)`, `전자제품(307)`이다. DB 백업 후 `refresh-industries --enabled --snapshot-date 2026-05-15 --confirm`으로 234개 dated sector membership row를 저장했고, `db-verify`의 `sector_catalog_not_refreshable` 경고가 사라졌다.
@@ -166,9 +166,9 @@
 - `candidate_evidence`에 저장 데이터 기반 `target_price_progress`를 추가. `관찰` 탭에서 목표가 범위 대비 `괴리`와 첫 목표가 리포트 기준 `진행`을 표시하되, 추천/점수/매수 후보 표현은 계속 차단.
 - `report-backfill-preview`와 `report-backfill-manual` CLI를 추가. preview는 네트워크/DB 쓰기 없이 커버리지만 계산하고, manual 실수집은 `--confirm --i-backed-up` 없이는 DB에 쓰지 못하도록 guard를 둠.
 - `docs/codex/target-price-progress-plan.md`를 추가해 목표가 괴리율/진행률 기준과 리포트 backfill 경계를 문서화.
-- DB 백업(`data/backups/stock_monitor_20260511_2208_manual.db`) 후 `2026-04-21`~`2026-04-23` 리포트 82건을 수동 backfill. 날짜별 요약은 `2026-04-21=4`, `2026-04-22=41`, `2026-04-23=21`개로 재생성.
-- DB 백업(`data/backups/stock_monitor_20260511_2211_manual.db`) 후 `2026-04-13`~`2026-04-17` 리포트 246건을 5영업일 단위로 수동 backfill. 기본 20페이지 한도에서는 과거 날짜가 잡히지 않아 60페이지/3000건 dry-run 후 진행.
-- DB 백업(`data/backups/stock_monitor_20260511_2213_manual.db`) 후 남은 `2026-04-10`, `2026-04-20` 리포트 74건을 추가 backfill. `2026-04-10`~`2026-05-11` 20영업일 리포트 coverage가 `20/20`으로 채워짐.
+- DB 백업(`data/backups/stock_monitor_{timestamp}_{tag}.db`) 후 `2026-04-21`~`2026-04-23` 리포트 82건을 수동 backfill. 날짜별 요약은 `2026-04-21=4`, `2026-04-22=41`, `2026-04-23=21`개로 재생성.
+- DB 백업(`data/backups/stock_monitor_{timestamp}_{tag}.db`) 후 `2026-04-13`~`2026-04-17` 리포트 246건을 5영업일 단위로 수동 backfill. 기본 20페이지 한도에서는 과거 날짜가 잡히지 않아 60페이지/3000건 dry-run 후 진행.
+- DB 백업(`data/backups/stock_monitor_{timestamp}_{tag}.db`) 후 남은 `2026-04-10`, `2026-04-20` 리포트 74건을 추가 backfill. `2026-04-10`~`2026-05-11` 20영업일 리포트 coverage가 `20/20`으로 채워짐.
 - `report-backfill-manual`에 `--api-max-pages`, `--page-delay-seconds` 옵션을 추가해 과거 리포트 backfill 시 페이지 깊이와 요청 간 딜레이를 명령에서 직접 제어할 수 있게 함.
 - 권장 분석선인 `2026-02-09`~`2026-05-11` 리포트 coverage를 `60/60` 영업일로 확장. 페이지 딜레이 `0.2~0.4초`, 단계별 DB 백업, dry-run 후 confirm 방식으로 진행했고 최종 `reports=2585`, `daily_stock_summaries=1708`, `pytest=314 passed`, `db-verify` 정상 확인.
 - `admin-gui`와 사용자용 `web-view`에 공통 1차 입장코드 게이트를 추가. `python -m stock_monitor access-code set`으로 켜고, 코드는 평문이 아니라 `data/access_code.json`의 PBKDF2-SHA256 salt/hash로 보관한다.
@@ -379,7 +379,7 @@
 - SQLite schema v4로 `stock_investor_flow_daily`, `market_investor_flow_daily`, `investor_net_buy_top_daily` 테이블과 repository upsert/list 테스트를 추가. 테이블은 additive migration이며, 운영 DB scheduled ingest 적용은 raw endpoint 샘플과 단위 매핑 확인 전까지 보류한다.
 - `db-verify`에 수급 테이블 품질 검사를 추가해 잘못된 종목코드, 누락 단위, 숫자 수급값 없는 행, 잘못된 순위가 들어오면 운영 검증에서 실패하도록 보강.
 - `docs/codex/krx-investor-flow-schema.md`를 추가해 수급 테이블 계약, 단위 보존 정책, `db-verify` 품질 게이트, scheduled ingest 승격 조건을 문서화.
-- 운영 DB가 schema `4/4` 상태임을 `db-verify`로 확인했고, 신규 수급 테이블 3종은 모두 `0건` 상태로 유지. 사후 백업 `data/backups/stock_monitor_20260509_2112_post-investor-flow-v4.db`를 생성하고 integrity `ok` 확인.
+- 운영 DB가 schema `4/4` 상태임을 `db-verify`로 확인했고, 신규 수급 테이블 3종은 모두 `0건` 상태로 유지. 사후 백업 `data/backups/stock_monitor_{timestamp}_{tag}.db`를 생성하고 integrity `ok` 확인.
 - `krx-flow-dry-run --sample-file <json>`을 추가해 Chrome/DevTools 등으로 저장한 KRX Data Marketplace raw JSON을 로그인·네트워크·DB 쓰기 없이 정규화 검증할 수 있도록 보강.
 - `krx-flow-dry-run`에 `--volume-unit`, `--amount-unit`을 추가해 KRX 화면 캡처 당시 단위를 정규화 결과에 그대로 보존하도록 보강. 값 스케일링은 자동 추정하지 않는다.
 - `krx-flow-dry-run --sample-manifest <json>`을 추가해 raw sample 파일, 화면 번호, 기준일, 종목/시장/투자자 조건, 단위를 sidecar manifest로 묶어 반복 검증할 수 있도록 정리.
@@ -399,14 +399,14 @@
 - 사용자용 `web-view` 수급 DTO에 표시 라벨을 추가해 내부 market/investor 코드(`STK`, `foreign`)가 화면 기준 라벨(`KOSPI`, `외국인`)로 정규화되도록 보강하고, 외국인/기관/개인 우선 정렬을 적용.
 - `2026-05-08` 기준 leadership 후보에서 KRX 수급 sample manifest 7개를 생성. `[12009]` 종목 5개, `[12008]` 시장 1개, `[12010]` 순매수상위 1개이며, raw sample 파일은 아직 비어 있어 batch validation은 대기 상태.
 - 로그인된 KRX Data Marketplace visible grid 기준으로 `2026-05-08` 수급 샘플 7개를 캡처. `[12009]` 종목 5개, `[12008]` 시장 1개, `[12010]` 외국인 순매수상위 1개 모두 strict 검증 `quality=ok` 통과.
-- 수급 샘플 import 전 `data/backups/stock_monitor_20260510_0020_pre-visible-grid-flow-import.db` 백업을 생성하고 integrity `ok` 확인. 이후 수동 import로 `stock_investor_flow_daily 65건`, `market_investor_flow_daily 13건`, `investor_net_buy_top_daily 72건`을 저장.
+- 수급 샘플 import 전 `data/backups/stock_monitor_{timestamp}_{tag}.db` 백업을 생성하고 integrity `ok` 확인. 이후 수동 import로 `stock_investor_flow_daily 65건`, `market_investor_flow_daily 13건`, `investor_net_buy_top_daily 72건`을 저장.
 - 수동 import 후 `db-verify`에서 schema `4/4`, foreign key violations `0`, investor-flow quality issues `0`을 확인하고, 사용자용 `web-view` API에서 `2026-05-08` 일일 수급 및 `329180` 종목 수급 노출을 확인.
 - `krx-flow-compare-samples` 명령을 추가해 visible-grid 샘플과 향후 raw-network 샘플을 정규화 후 비교할 수 있도록 구성. 이 명령은 로그인/네트워크/DB 쓰기 없이 parity를 확인하며, scheduled ingest 승격 전 필수 게이트로 문서화.
 - `krx-flow-raw-sample-scaffold` 명령을 추가해 visible-grid manifest 기준으로 raw-network manifest placeholder를 만들 수 있도록 구성. `data\krx_samples_raw`에 7개 manifest를 생성했으며 raw JSON 본문은 아직 비어 있어 status가 `sample=N`으로 표시되는 상태가 정상이다.
 - Stage 1 raw-network capture 자동화를 점검. Chrome 확장 탭에서는 KRX 로그인 세션이 보이지만 현재 브라우저 자동화 표면은 raw network response body를 노출하지 않고, 비로그인 직접 POST는 KRX가 `LOGOUT`으로 거부함을 확인. `krx-flow-execution-stages.md`에 Stage 1 필수 파일과 blocker를 명시.
 - 로컬 `.env`에 등록된 KRX Data Marketplace 로그인값으로 `2026-05-08` raw-network JSON 7개를 `data\krx_samples_raw`에 저장. raw sample status가 `ready_for_batch_validation: Y`가 되었고, strict raw validation 7/7 통과.
 - `krx-flow-compare-samples --allow-right-extra-top-rows` 옵션을 추가. `[12010]` raw 응답은 846행, visible-grid는 72행으로 raw가 더 많지만 visible rows가 raw prefix와 일치하는 compatible superset으로 판정되도록 분리. `2026-05-08` Stage 1-3 통과.
-- KRX 로그인 UI 자동화 재검토. wrapper iframe 경로보다 direct `login.jsp?site=mdc` 탭이 안정적으로 DOM 필드를 노출하며, 실제 세션 교체 로그인도 확인. 다만 브라우저 UI 로그인은 fallback/debug 경로로 두고, 표준 raw sample capture는 `.env` 기반 raw fetch로 유지하기로 정리.
+- KRX 로그인 UI 자동화 재검토. wrapper iframe 경로보다 direct `{KRX_LOGIN_FALLBACK_PATH}` 탭이 안정적으로 DOM 필드를 노출하며, 실제 세션 교체 로그인도 확인. 다만 브라우저 UI 로그인은 fallback/debug 경로로 두고, 표준 raw sample capture는 `.env` 기반 raw fetch로 유지하기로 정리.
 - `2026-05-07` 기준 KRX 수급 raw-network 샘플 7개를 `data\krx_samples_raw_20260507`에 저장하고 strict raw validation 7/7 통과.
 - 같은 날짜 visible-grid baseline 7개를 `data\krx_samples_visible_20260507`에 저장하고 strict validation 7/7 통과. `[12008]`은 ETF/ETN/ELW 추가항목을 해제한 KOSPI 기준으로 맞췄고, `[12010]`은 우선주 코드처럼 6자리 숫자가 아닌 코드도 누락하지 않도록 캡처를 보정.
 - `krx-flow-compare-samples --left-manifest-dir data\krx_samples_visible_20260507 --right-manifest-dir data\krx_samples_raw_20260507 --allow-right-extra-top-rows` 통과. `2026-05-08`, `2026-05-07` 두 영업일 모두 raw/visible-grid parity가 확인되어 Stage 4 완료. scheduled ingest는 Stage 6 설계와 별도 승인 전까지 계속 비활성.
@@ -419,7 +419,7 @@
 - `db-backup-prune` CLI를 추가해 오래된 백업 삭제 대상을 `--dry-run`으로 확인하고, 실제 삭제는 `--confirm`이 있어야 진행되도록 보호.
 - `db-cleanup` CLI를 추가해 오래된 KRX snapshot 정리 대상을 `--dry-run`으로 확인하고, 실제 삭제는 영향 row가 있을 때 `--confirm`이 있어야 진행되도록 보호.
 - `db-cleanup` 삭제 대상은 `stock_market_daily`, `etf_daily_snapshots`, `market_index_daily`로 제한하고, `reports`, `daily_stock_summaries`, `delivery_log`, 전일 요약 delivery run/fragment는 보호 대상으로 명시.
-- 첫 수동 백업 `data/backups/stock_monitor_20260509_1309_pre-cleanup-policy.db`를 생성하고 integrity check `ok` 확인.
+- 첫 수동 백업 `data/backups/stock_monitor_{timestamp}_{tag}.db`를 생성하고 integrity check `ok` 확인.
 - 운영 DB 기준 `python -m stock_monitor db-cleanup --dry-run --retention-days 183` 실행 결과 삭제 대상 `0건` 확인.
 - `krx-backfill-missing` CLI를 추가해 3개월 흐름 확인용 KRX 누락 영업일/endpoint를 최신 영업일부터 찾아 `krx-fetch-snapshot` 경로로 순차 수집할 수 있도록 구성.
 - 기본 `daily` backfill 대상은 ETF, KOSPI/KOSDAQ 주식 일별, KRX/KOSPI/KOSDAQ 지수 일별로 제한하고, 종목기본정보 endpoint는 명시 선택 시에만 포함되도록 분리.
@@ -484,7 +484,7 @@
 - `.env.example`에 KRX placeholder (`STOCK_MONITOR_KRX_AUTH_KEY`, `STOCK_MONITOR_KRX_BASE_URL`, `STOCK_MONITOR_KRX_TIMEOUT_SECONDS`)를 추가.
 - `current-work`, `project-map`, `execution-roadmap`, `etf-flow-source-study`에 KRX P2 범위 신청 완료와 세부 field capture 대기 상태를 반영.
 - `data/API_Specification/*.docx` 8개 명세서를 확인해 KRX endpoint, request parameter, response field를 `data/krx_api_intake.local.md`와 `docs/codex/krx-api-field-validation.md`에 반영.
-- KRX base URL placeholder를 명세서 기준 `https://data-dbg.krx.co.kr`로 조정.
+- KRX base URL placeholder를 명세서 기준 `{KRX_OPENAPI_BASE_URL}`로 조정.
 - KRX 8개 endpoint를 `AUTH_KEY` header + `POST` + JSON body로 `basDd=20260507` dry-run 검증. ETF, 유가증권/코스닥 일별매매정보, 종목기본정보, KRX/KOSPI/KOSDAQ 지수 일별시세정보가 모두 응답함.
 - KRX dry-run의 endpoint별 row count와 첫 row 샘플을 `data/krx_api_dry_run_samples.local.json`에 저장.
 - 외부 접속 후보를 Tailscale(본인 원격관리)과 Cloudflare Tunnel(친구용 read-only `web-view` 공유)로 좁혀 `execution-roadmap`, `surface-contract`, `mini-pc-migration-handoff`, `operator_memos`에 기록.
@@ -861,5 +861,5 @@
 ## 메모
 
 - 이 문서는 실제 변경 사항 중심으로 유지합니다.
-- 판단 이유와 운영 원칙은 [docs/codex/decision-log.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/decision-log.md)에 남깁니다.
-- 현재 상태와 다음 작업은 [docs/codex/current-work.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/current-work.md)에서 이어갑니다.
+- 판단 이유와 운영 원칙은 [docs/codex/decision-log.md](/docs/codex/decision-log.md)에 남깁니다.
+- 현재 상태와 다음 작업은 [docs/codex/current-work.md](/docs/codex/current-work.md)에서 이어갑니다.

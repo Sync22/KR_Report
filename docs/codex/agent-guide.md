@@ -53,7 +53,7 @@ If the global skill `$scrapling-official` is installed, use it as an active sour
 - browser-gated or anti-bot-sensitive source checks
 - bounded source comparison before deciding whether a source should remain probe-only, become fallback, or be proposed for later integration
 
-For Scrapling CLI extraction commands, include `--ai-targeted`. The installed shared runtime is `C:\Users\MING\Codex\_tools\scrapling\.venv\Scripts\scrapling.exe`. Do not wire Scrapling into production DB writes, Telegram automation, scheduler tasks, `admin-gui`, or public `web-view`. KRX/Data Marketplace should still prefer existing request/login/sample validation paths first; use Scrapling only for bounded source probing when those paths are insufficient or the source is new/unstable.
+For Scrapling CLI extraction commands, include `--ai-targeted`. Use the configured shared Scrapling runtime path, represented in public docs as `{SCRAPLING_EXE}`. Do not wire Scrapling into production DB writes, Telegram automation, scheduler tasks, `admin-gui`, or public `web-view`. KRX/Data Marketplace should still prefer existing request/login/sample validation paths first; use Scrapling only for bounded source probing when those paths are insufficient or the source is new/unstable.
 
 If the global skill `$kronos-market-forecast` is installed, use it only for:
 
@@ -65,7 +65,7 @@ Do not use it for public numeric scores, trading recommendations, Telegram alert
 
 ## CodeGraph MCP
 
-`codegraph` is available for this project and already initialized under `C:\Users\MING\Codex\02.Stock_Moniter\.codegraph`.
+`codegraph` is available for this project and already initialized under `{PROJECT_ROOT}\.codegraph`.
 Treat it as a code-navigation backend for existing agents, not as a new product dependency.
 
 Prefer it first when the task is about:
@@ -124,10 +124,10 @@ Practical rule:
 
 Always include:
 
-- Scope is only `C:\Users\MING\Codex\02.Stock_Moniter`.
+- Scope is only `{PROJECT_ROOT}`.
 - Read `AGENTS.md`.
-- Check [data-quality-checklist.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/data-quality-checklist.md) before data-display or parsing work.
-- Preserve `admin-gui` vs `web-view` boundary from [surface-contract.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/surface-contract.md).
+- Check [data-quality-checklist.md](/docs/codex/data-quality-checklist.md) before data-display or parsing work.
+- Preserve `admin-gui` vs `web-view` boundary from [surface-contract.md](/docs/codex/surface-contract.md).
 - Do not enable KRX Data Marketplace scheduled ingest without explicit approval.
 
 ## Closure Rule

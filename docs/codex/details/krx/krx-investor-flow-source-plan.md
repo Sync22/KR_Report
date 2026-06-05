@@ -1,8 +1,8 @@
-﻿# KRX Investor Flow Source Plan
+# KRX Investor Flow Source Plan
 
 ## Purpose
 
-This document fixes the source boundary for investor-flow data discovered on `data.krx.co.kr`.
+This document fixes the source boundary for investor-flow data discovered on the KRX Data Marketplace host.
 It is a planning and validation note, not an ingest implementation.
 
 The goal is to add source-backed supply/demand context without mixing it into the existing Naver report tables.
@@ -344,7 +344,7 @@ Important implementation risk:
 - `[12009]` candidate params use `isuCd`, which appears to be an ISIN-style issue code rather than the 6-digit stock code.
 - Do not call `[12009]` directly from `stock_code` until a 6-digit code to `isuCd` mapping is confirmed from approved KRX metadata or a Data Marketplace lookup response.
 - If the dry-run cannot reproduce the screen output without session-specific or hidden browser state, keep this as a manual validation source and do not add scheduled ingestion.
-- For UI login fallback, prefer the direct `login.jsp?site=mdc` page over the wrapper iframe page. Browser UI login is for validation/debug only; the `.env` raw fetch path is the standard sample-capture path while credentials remain local-only.
+- For UI login fallback, prefer the direct `{KRX_LOGIN_FALLBACK_PATH}` page over the wrapper iframe page. Browser UI login is for validation/debug only; the `.env` raw fetch path is the standard sample-capture path while credentials remain local-only.
 - Do not automate Chrome saved-password, PIN, Windows Hello, or other OS/native security prompts. These remain manual operator actions.
 
 ## Initial Data Model Candidates
@@ -425,8 +425,8 @@ investor_net_buy_top_daily(
 - Run collection after the data delay window, not immediately at the regular market close.
 - Preserve source units because KRX screens can switch between shares/thousand shares and KRW/thousand/million/billion KRW.
 - If a screen condition cannot be reproduced programmatically, stop at manual validation and do not silently approximate it.
-- Use [krx-flow-sample-capture-runbook.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/details/krx/krx-flow-sample-capture-runbook.md) and `data/krx_samples/templates/*.json` before promoting any raw sample to an ingest reference.
-- Use [krx-investor-flow-schema.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/details/krx/krx-investor-flow-schema.md) as the table contract and `db-verify` quality gate reference before enabling any scheduled ingest.
+- Use [krx-flow-sample-capture-runbook.md](/docs/codex/details/krx/krx-flow-sample-capture-runbook.md) and `data/krx_samples/templates/*.json` before promoting any raw sample to an ingest reference.
+- Use [krx-investor-flow-schema.md](/docs/codex/details/krx/krx-investor-flow-schema.md) as the table contract and `db-verify` quality gate reference before enabling any scheduled ingest.
 
 Dry-run commands:
 

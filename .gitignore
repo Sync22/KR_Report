@@ -1,6 +1,8 @@
 # Local editor / Codex state
 .codex/
+.codex-remote-attachments/
 .codegraph/
+.playwright-mcp/
 .vscode/
 .idea/
 *.code-workspace
@@ -66,12 +68,16 @@ test-results/
 _tmp_webview/
 
 # Local handoff/sync scratch artifacts
+docs/codex/operations/
 handoff/mini_pc_changes/*.zip
 handoff/mini_pc_changes/*_snapshot/
 handoff/mini_pc_changes/origin_main_snapshot/
 handoff/mini_pc_changes/README.md
 handoff/mini_pc_changes/documentation-index.md
 handoff/mini_pc_changes/mini-pc-restore-change-log-*.md
+/*web-view*.png
+/*WebView*.png
+/*evidence*.png
 
 # Superseded local copies after docs/codex role reorganization.
 # Canonical homes are under docs/codex/plans, docs/codex/contracts, or docs/codex/details/krx.

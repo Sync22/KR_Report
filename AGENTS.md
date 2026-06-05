@@ -21,10 +21,10 @@
 
 ## Scope
 
-이 handoff는 `C:\Users\MING\Codex\02.Stock_Moniter`에만 적용된다.
+이 handoff는 `{PROJECT_ROOT}`에만 적용된다.
 
-- 프로젝트 루트: `C:\Users\MING\Codex\02.Stock_Moniter`
-- 문서 루트: `C:\Users\MING\Codex\02.Stock_Moniter\docs\codex`
+- 프로젝트 루트: `{PROJECT_ROOT}`
+- 문서 루트: `{PROJECT_ROOT}\docs\codex`
 
 다른 폴더나 과거 경로를 기준으로 상태를 추론하지 않는다.
 
@@ -102,7 +102,7 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
 
 ## CodeGraph
 
-이 프로젝트는 `C:\Users\MING\Codex\02.Stock_Moniter\.codegraph` 인덱스를 이미 갖고 있다.
+이 프로젝트는 `{PROJECT_ROOT}\.codegraph` 인덱스를 이미 갖고 있다.
 `codegraph`는 runtime dependency가 아니라 로컬 코드 탐색 도구다.
 
 우선 사용이 맞는 경우:
@@ -163,11 +163,11 @@ Use the global Codex agent/skill layer before considering project-local agents.
 
 Current decision:
 
-- Keep `C:\Users\MING\Codex\02.Stock_Moniter\.codex\agents` absent.
+- Keep `{PROJECT_ROOT}/.codex/agents` absent.
 - Do not recreate or bulk-restore the old local agent set.
 - Use global agents/skills plus CodeGraph first.
 - Restore a project-local agent only after repeated Stock Monitor work proves a specific gap.
-- If a restore is needed, restore only the one exact role from `C:\Users\MING\Codex\_lab\_shared\backups\agent-skill-reset-2026-05-29`.
+- If a restore is needed, restore only the one exact role from `{GLOBAL_AGENT_BACKUP_ROOT}/agent-skill-reset-2026-05-29`.
 
 Global mapping:
 
@@ -190,7 +190,7 @@ Stock Monitor-specific rule:
 
 Reference:
 
-- `C:\Users\MING\Codex\_lab\_shared\results\post-global-layer-project-survey-2026-05-29.md`
+- `{GLOBAL_LAB_RESULTS_ROOT}/post-global-layer-project-survey-2026-05-29.md`
 
 ## Superpowers Rule 2026-05-29
 

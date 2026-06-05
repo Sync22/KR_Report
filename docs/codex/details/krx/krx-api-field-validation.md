@@ -1,4 +1,4 @@
-﻿# KRX API Field Validation
+# KRX API Field Validation
 
 ## Purpose
 
@@ -18,7 +18,7 @@ It is intentionally a field-contract document, not an ingest implementation.
 | Manual ingest/upsert | First pass done | `python -m stock_monitor krx-fetch-snapshot <endpoint|all> --date YYYY-MM-DD` parses and upserts KRX snapshots. |
 | Read/query methods | First pass done | `krx-query-snapshot` can read stored stock, ETF, and index snapshots by date. |
 | Admin display | First pass done | `operator-status` and `admin-gui` expose latest KRX KOSPI/KOSDAQ/ETF/index snapshot tables from stored data. |
-| KRX Data Marketplace investor-flow screen check | Screen validated | Logged-in `data.krx.co.kr` screen confirms `[12008]`, `[12009]`, and `[12010]`; request contract still needs tracing before code. |
+| KRX Data Marketplace investor-flow screen check | Screen validated | Logged-in KRX Data Marketplace screen confirms `[12008]`, `[12009]`, and `[12010]`; request contract still needs tracing before code. |
 | Data Marketplace dry-run CLI | First pass done | `krx-flow-dry-run` can call `[12009]` candidate requests without DB writes after `isuCd` is provided or resolved from stored KRX metadata. |
 
 ## Local Intake File
@@ -36,8 +36,8 @@ Use `.env` only:
 
 ```env
 STOCK_MONITOR_KRX_AUTH_KEY=
-STOCK_MONITOR_KRX_BASE_URL=https://data-dbg.krx.co.kr
-STOCK_MONITOR_KRX_DATA_MARKET_BASE_URL=https://data.krx.co.kr
+STOCK_MONITOR_KRX_BASE_URL={KRX_OPENAPI_BASE_URL}
+STOCK_MONITOR_KRX_DATA_MARKET_BASE_URL={KRX_DATA_MARKET_BASE_URL}
 STOCK_MONITOR_KRX_DATA_MARKET_ID=
 STOCK_MONITOR_KRX_DATA_MARKET_PASSWORD=
 STOCK_MONITOR_KRX_TIMEOUT_SECONDS=30
@@ -142,7 +142,7 @@ For every approved endpoint, capture:
 ### Investor Flow Data
 
 The approved KRX Open API specs do not expose it, but KRX Data Marketplace screens do.
-Use [krx-investor-flow-source-plan.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/details/krx/krx-investor-flow-source-plan.md) as the source-boundary document.
+Use [krx-investor-flow-source-plan.md](/docs/codex/details/krx/krx-investor-flow-source-plan.md) as the source-boundary document.
 
 | Project field | Needed | Notes |
 | --- | --- | --- |

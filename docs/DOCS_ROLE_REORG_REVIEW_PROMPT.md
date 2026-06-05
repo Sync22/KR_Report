@@ -1,9 +1,9 @@
 # Docs Role Reorganization Review Prompt
 
-Use this prompt before moving or splitting files under `C:\Users\MING\Codex\02.Stock_Moniter\docs`.
+Use this prompt before moving or splitting files under `{PROJECT_ROOT}\docs`.
 
 ```text
-C:\Users\MING\Codex\02.Stock_Moniter만 기준으로 작업해줘.
+{PROJECT_ROOT}만 기준으로 작업해줘.
 
 AGENTS.md와 docs/codex/documentation-index.md를 먼저 읽고, 현재 canonical 문서 기준으로만 판단해줘.
 이 폴더 밖의 다른 프로젝트나 과거 문서는 참조하지 마.

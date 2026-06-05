@@ -1202,8 +1202,8 @@ def test_operator_status_recent_events_add_readable_restore_smoke_detail(tmp_pat
             status="success",
             business_date=None,
             detail=(
-                "backup=stock_monitor_20260517_0118_test.db; "
-                "copied=restore_smoke_20260517_043326.db; copy_retained=N; exit_code=0"
+                "backup=stock_monitor_sample_test.db; "
+                "copied=restore_smoke_sample.db; copy_retained=N; exit_code=0"
             ),
         )
     )
@@ -1218,7 +1218,7 @@ def test_operator_status_recent_events_add_readable_restore_smoke_detail(tmp_pat
 
     assert (
         snapshot["recent_events"][0]["detail_display"]
-        == "restore-smoke: backup stock_monitor_20260517_0118_test.db, exit 0, copy_retained N"
+        == "restore-smoke: backup stock_monitor_sample_test.db, exit 0, copy_retained N"
     )
 
 

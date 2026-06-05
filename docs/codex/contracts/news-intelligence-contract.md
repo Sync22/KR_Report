@@ -37,8 +37,8 @@ Supported source lanes:
 - `https://stock.naver.com/news/flashnews`
 - `https://stock.naver.com/news/mainnews`
 - `https://stock.naver.com/news/ranknews`
-- `https://stock.naver.com/api/domestic/news/focus?sid=401&page=1&pageSize=20&date=YYYYMMDD` for `시황·전망`
-- `https://stock.naver.com/api/domestic/news/focus?sid=402&page=1&pageSize=20&date=YYYYMMDD` for `기업·종목분석`
+- `{NAVER_STOCK_NEWS_FOCUS_API}` with section `401` for `시황·전망`
+- `{NAVER_STOCK_NEWS_FOCUS_API}` with section `402` for `기업·종목분석`
 
 The default collection mode is date mode, not latest mode. The default target date is Asia/Seoul today. Latest-mode views may hide older same-day items, so v1 request specs should represent a full target-date collection intent per source lane.
 

@@ -219,11 +219,11 @@ Run a local timing probe for latest report date and record:
 
 - [x] **Step 5: Restart runtime**
 
-Restart only the local `web-view` runtime on `127.0.0.1:8780`, then verify:
+Restart only the local `web-view` runtime on `{LOCAL_WEB_VIEW_TARGET}`, then verify:
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8780/health
-.venv\Scripts\python.exe -m stock_monitor external-web-view-smoke --url https://report.kr-stock.site --date 2026-05-15 --json
+Invoke-WebRequest -UseBasicParsing {LOCAL_WEB_VIEW_TARGET}/health
+.venv\Scripts\python.exe -m stock_monitor external-web-view-smoke --url https://web-view.example.invalid --date 2026-05-15 --json
 ```
 
 Expected: local health `200`, external smoke `issue_count=0`.
@@ -243,5 +243,5 @@ Expected: local health `200`, external smoke `issue_count=0`.
 - Latest mini PC measurement for `2026-05-15`: daily payload about `49KB` / `1.1s`, `candidate-evidence?limit=20` about `95KB` / `0.3s`.
 - `web-view-value-qa --recent-business-days 4 --stock-limit 20 --json`: `issue_count=0`; warnings were expected stored-data coverage notes for `2026-05-18` KRX snapshot availability and stock code `351020` KRX metadata.
 - `web-view-browser-smoke --date latest --json`: `issue_count=0` across desktop, tablet, large mobile, and mobile.
-- Local runtime was restarted on `127.0.0.1:8780` with PID `9016`; `/health` returned `200`.
-- `external-web-view-smoke --url https://report.kr-stock.site --date 2026-05-15 --json`: `issue_count=0`.
+- Local runtime was restarted on `{LOCAL_WEB_VIEW_TARGET}` with PID `9016`; `/health` returned `200`.
+- `external-web-view-smoke --url https://web-view.example.invalid --date 2026-05-15 --json`: `issue_count=0`.
