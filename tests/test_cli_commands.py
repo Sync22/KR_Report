@@ -9557,6 +9557,9 @@ def test_ops_sync_preview_reports_schema_blocker_without_failing_json(
     assert schema_action_plan["approval_required"] is True
     assert schema_action_plan["read_only_until_approval"] is True
     assert "python -m stock_monitor db-migrate --dry-run" in schema_action_plan["pre_approval_commands"]
+    assert "python -m stock_monitor db-migration-rehearsal --json" in schema_action_plan[
+        "pre_approval_commands"
+    ]
     assert "python -m stock_monitor db-backup --tag pre-schema-migration" in schema_action_plan[
         "post_approval_commands"
     ]
@@ -9566,6 +9569,7 @@ def test_ops_sync_preview_reports_schema_blocker_without_failing_json(
     assert handoff["prompt"].startswith("운영 PC용\n")
     assert "Schema action plan" in handoff["prompt"]
     assert "pre-approval" in handoff["prompt"]
+    assert "db-migration-rehearsal --json" in handoff["prompt"]
     assert "post-approval" in handoff["prompt"]
     assert "schema migration on operating PC" in handoff["prompt"]
     assert "현재 blocker" in handoff["prompt"]
