@@ -98,6 +98,7 @@ from stock_monitor.models import (
     DeliveryLog,
     EtfDailySnapshot,
     InvestorNetBuyTopDaily,
+    KrxStockMetadataSnapshot,
     MarketIndexDailySnapshot,
     MarketInvestorFlowDaily,
     OperationEvent,
@@ -208,6 +209,12 @@ READ_ONLY_SCHEMA_CURRENT_COMMANDS = {
 SCHEMA_PRESERVING_EXISTING_DB_COMMANDS = {
     "db-backup",
     "db-restore-smoke",
+    "dev-fixture-db",
+}
+MARKET_BRIEFING_SLOT_LABELS = {
+    "mood": "오늘의 시장 분위기",
+    "lunch": "국장 점심 브리핑",
+    "preclose": "장마감 전 점검",
 }
 WEB_VIEW_STARTUP_SHORTCUT_NAME = "StockMonitor-WebView.lnk"
 MINI_PC_EXPECTED_SCHEDULER_TASK_SUFFIXES = (
@@ -1322,7 +1329,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     market_briefing_parser.add_argument("--date", type=date.fromisoformat, help="Use an explicit business date.")
     market_briefing_parser.add_argument("--limit", type=int, default=5, help="Maximum notable report stocks to include.")
+    market_briefing_parser.add_argument("--slot", choices=tuple(MARKET_BRIEFING_SLOT_LABELS), default="mood")
     market_briefing_parser.add_argument("--send", action="store_true", help="Send the briefing to Telegram instead of printing it.")
+    market_briefing_parser.add_argument("--json", action="store_true")
 
     market_briefing_readiness_parser = subparsers.add_parser(
         "market-briefing-readiness",
@@ -1446,6 +1455,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use the configured access-code gate. Default bypasses the gate only for the temporary local smoke server.",
     )
     web_view_browser_smoke_parser.add_argument("--json", action="store_true")
+
+    dev_fixture_parser = subparsers.add_parser(
+        "dev-fixture-db",
+        help="Create an ignored local fixture DB for visible web-view and briefing checks.",
+    )
+    dev_fixture_parser.add_argument("--scenario", choices=("visible-product-flow",), required=True)
+    dev_fixture_parser.add_argument("--output", type=Path, required=True)
+    dev_fixture_parser.add_argument("--overwrite", action="store_true")
+    dev_fixture_parser.add_argument("--json", action="store_true")
 
     external_web_view_smoke_parser = subparsers.add_parser(
         "external-web-view-smoke",
@@ -1723,6 +1741,13 @@ def main(argv: list[str] | None = None) -> int:
         return _run_news_intelligence_observations(args)
     if args.command == "news-intelligence-daily-brief":
         return _run_news_intelligence_daily_brief(args)
+    if args.command == "dev-fixture-db":
+        return _run_dev_fixture_db(
+            scenario=args.scenario,
+            output_path=args.output,
+            overwrite=args.overwrite,
+            as_json=args.json,
+        )
 
     config = RuntimeConfig.from_env(headless=not getattr(args, "headed", False))
     config.ensure_runtime_dirs()
@@ -2288,6 +2313,8 @@ def main(argv: list[str] | None = None) -> int:
                 explicit_date=args.date,
                 limit=args.limit,
                 send=args.send,
+                slot=args.slot,
+                as_json=args.json,
             )
         if args.command == "market-briefing-readiness":
             return _run_market_briefing_readiness(
@@ -6657,8 +6684,9 @@ def _build_intraday_market_top_reference(
     limit: int,
     page_size: int,
     delay_seconds: float,
-    checked_at: datetime,
+    checked_at: datetime | None = None,
 ) -> dict[str, object]:
+    resolved_checked_at = checked_at or datetime.now(ZoneInfo(config.timezone))
     normalized_limit = min(max(limit, 0), 100)
     normalized_page_size = min(max(page_size, 1), 20)
     normalized_delay = max(delay_seconds, 0.0)
@@ -6704,7 +6732,7 @@ def _build_intraday_market_top_reference(
                         summary,
                         row,
                         rank=rank_offset,
-                        checked_at=checked_at,
+                        checked_at=resolved_checked_at,
                     )
                 )
             if len(rows) < normalized_page_size:
@@ -6725,7 +6753,7 @@ def _build_intraday_market_top_reference(
         "limit": normalized_limit,
         "page_size": normalized_page_size,
         "delay_seconds": normalized_delay,
-        "checked_at": checked_at.isoformat(),
+        "checked_at": resolved_checked_at.isoformat(),
         "calls": call_count,
         "items": items,
         "errors": errors,
@@ -13658,12 +13686,35 @@ def _run_market_briefing(
     explicit_date: date | None,
     limit: int,
     send: bool,
+    slot: str = "mood",
+    as_json: bool = False,
 ) -> int:
+    if as_json and send:
+        raise ValueError("--json cannot be combined with --send for market-briefing.")
     business_date = explicit_date or datetime.now(ZoneInfo(config.timezone)).date()
-    message = _build_market_briefing_message(config, repository, business_date=business_date, limit=limit)
+    message = _build_market_briefing_message(config, repository, business_date=business_date, limit=limit, slot=slot)
+    issues = _collect_market_briefing_message_issues(message)
+    if as_json:
+        payload = {
+            "surface": "market-briefing",
+            "read_only_preview": True,
+            "business_date": business_date.isoformat(),
+            "slot": slot,
+            "slot_label": MARKET_BRIEFING_SLOT_LABELS.get(slot, MARKET_BRIEFING_SLOT_LABELS["mood"]),
+            "limit": limit,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "public_safe_issue_count": len(issues),
+            "public_safe_issues": issues,
+            "news_observation_summary": _build_web_view_news_observation_summary(repository, business_date),
+            "message": message,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 1 if issues else 0
     if not send:
         print(message)
         return 0
+    _ensure_market_briefing_message_public_safe(message)
     _send_market_briefing_message(config, repository, business_date=business_date, message=message, source="manual")
     print(f"Market briefing sent for {business_date.isoformat()}.")
     return 0
@@ -15566,6 +15617,257 @@ def _market_day_notify_delivery_evidence(
     }
 
 
+def _run_dev_fixture_db(
+    *,
+    scenario: str,
+    output_path: Path,
+    overwrite: bool,
+    as_json: bool,
+) -> int:
+    if scenario != "visible-product-flow":
+        raise ValueError(f"Unsupported fixture scenario: {scenario}")
+    resolved_output = output_path.expanduser().resolve()
+    if resolved_output.exists():
+        if not overwrite:
+            raise FileExistsError(f"Fixture DB already exists: {resolved_output}")
+        if not resolved_output.is_file() or resolved_output.suffix.lower() not in {".db", ".sqlite", ".sqlite3"}:
+            raise ValueError(f"--overwrite only supports SQLite fixture files: {resolved_output}")
+        resolved_output.unlink()
+    resolved_output.parent.mkdir(parents=True, exist_ok=True)
+
+    config = RuntimeConfig.from_env(root_dir=Path.cwd(), db_path=resolved_output)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(resolved_output, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 8)
+    _seed_visible_product_flow_fixture(repository, business_date=business_date)
+
+    commands = [
+        f"$env:STOCK_MONITOR_DB_PATH = '{resolved_output}'",
+        f"python -m stock_monitor web-view-value-qa --date {business_date.isoformat()} --stock-limit 20 --json",
+        f"python -m stock_monitor web-view-browser-smoke --date {business_date.isoformat()} --stock-limit 20 --json",
+        f"python -m stock_monitor market-briefing --date {business_date.isoformat()} --slot lunch --limit 5 --json",
+        f"python -m stock_monitor market-briefing --date {business_date.isoformat()} --slot preclose --limit 5",
+        f"python -m stock_monitor market-briefing-readiness --recent-report-dates 1 --limit 5 --json",
+    ]
+    payload = {
+        "surface": "dev-fixture-db",
+        "scenario": scenario,
+        "business_date": business_date.isoformat(),
+        "db_path": str(resolved_output),
+        "writes_production_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "verification_commands": commands,
+    }
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print("Dev fixture DB")
+        print(f"- scenario: {payload['scenario']}")
+        print(f"- business date: {payload['business_date']}")
+        print(f"- db: {payload['db_path']}")
+        for command in commands:
+            print(f"- verify: {command}")
+    return 0
+
+
+def _seed_visible_product_flow_fixture(repository: StockMonitorRepository, *, business_date: date) -> None:
+    fetched_at = datetime(2026, 5, 8, 16, 0, 0)
+    repository.upsert_krx_stock_metadata(
+        [
+            KrxStockMetadataSnapshot(business_date, "KR7005930003", "005930", "삼성전자", "KOSPI", fetched_at),
+            KrxStockMetadataSnapshot(business_date, "KR7000660001", "000660", "Beta Memory", "KOSPI", fetched_at),
+            KrxStockMetadataSnapshot(business_date, "KR7035420009", "035420", "NAVER", "KOSPI", fetched_at),
+            KrxStockMetadataSnapshot(business_date, "KR7035720002", "035720", "카카오", "KOSPI", fetched_at),
+        ]
+    )
+    repository.upsert_category_catalog_items(
+        [
+            CategoryCatalogItem("sector", "semi", "반도체와반도체장비", "fixture", True, fetched_at),
+            CategoryCatalogItem("sector", "it", "IT서비스", "fixture", True, fetched_at),
+            CategoryCatalogItem("theme", "ai", "AI반도체", "fixture", True, fetched_at),
+        ]
+    )
+    repository.upsert_category_membership_snapshots(
+        [
+            CategoryMembershipSnapshot(business_date, "sector", "semi", "반도체와반도체장비", "005930", "삼성전자", fetched_at, "fixture"),
+            CategoryMembershipSnapshot(business_date, "sector", "semi", "반도체와반도체장비", "000660", "Beta Memory", fetched_at, "fixture"),
+            CategoryMembershipSnapshot(business_date, "sector", "it", "IT서비스", "035420", "NAVER", fetched_at, "fixture"),
+            CategoryMembershipSnapshot(business_date, "sector", "it", "IT서비스", "035720", "카카오", fetched_at, "fixture"),
+            CategoryMembershipSnapshot(business_date, "theme", "ai", "AI반도체", "005930", "삼성전자", fetched_at, "fixture"),
+        ]
+    )
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="AI 반도체 수주 흐름 점검",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 5, 8, 9, 0, 0),
+                collected_at=fetched_at,
+                target_price_raw="95000",
+                target_price_value=95_000,
+                opinion_raw="매수",
+                opinion_normalized="buy",
+                source_id="fixture-report-005930-1",
+                identity_key="fixture-report-005930-1",
+                source_url="https://stock.naver.com/research/company/fixture-005930-1",
+            ),
+            Report(
+                business_date=business_date,
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="HBM 공급 확대 확인",
+                broker_name="KB증권",
+                published_at=datetime(2026, 5, 8, 10, 0, 0),
+                collected_at=fetched_at,
+                target_price_raw="98000",
+                target_price_value=98_000,
+                opinion_raw="매수",
+                opinion_normalized="buy",
+                source_id="fixture-report-005930-2",
+                identity_key="fixture-report-005930-2",
+                source_url="https://stock.naver.com/research/company/fixture-005930-2",
+            ),
+            Report(
+                business_date=business_date,
+                stock_name="NAVER",
+                stock_code="035420",
+                title="광고와 커머스 회복 관찰",
+                broker_name="신한투자증권",
+                published_at=datetime(2026, 5, 8, 11, 0, 0),
+                collected_at=fetched_at,
+                target_price_raw="250000",
+                target_price_value=250_000,
+                opinion_raw="중립",
+                opinion_normalized="neutral",
+                source_id="fixture-report-035420-1",
+                identity_key="fixture-report-035420-1",
+                source_url="https://stock.naver.com/research/company/fixture-035420-1",
+            ),
+            Report(
+                business_date=business_date,
+                stock_name="카카오",
+                stock_code="035720",
+                title="플랫폼 비용 구조 점검",
+                broker_name="미래에셋증권",
+                published_at=datetime(2026, 5, 8, 13, 0, 0),
+                collected_at=fetched_at,
+                target_price_raw=None,
+                target_price_value=None,
+                opinion_raw=None,
+                opinion_normalized="N/A",
+                source_id="fixture-report-035720-1",
+                identity_key="fixture-report-035720-1",
+                source_url="https://stock.naver.com/research/company/fixture-035720-1",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(business_date, "005930", "삼성전자", "KOSPI", fetched_at, close_price=74_000, change_percent=1.8, volume=18_500_000, turnover=2_300_000_000_000),
+            StockMarketDailySnapshot(business_date, "000660", "Beta Memory", "KOSPI", fetched_at, close_price=200_000, change_percent=1.2, volume=4_200_000, turnover=830_000_000_000),
+            StockMarketDailySnapshot(business_date, "035420", "NAVER", "KOSPI", fetched_at, close_price=185_000, change_percent=-0.4, volume=910_000, turnover=168_000_000_000),
+            StockMarketDailySnapshot(business_date, "035720", "카카오", "KOSPI", fetched_at, close_price=54_000, change_percent=0.7, volume=1_250_000, turnover=67_000_000_000),
+        ]
+    )
+    repository.upsert_market_index_daily(
+        [
+            MarketIndexDailySnapshot(business_date, "KOSPI", "stock", "코스피", fetched_at, close_index=2745.21, change_percent=0.82, volume=550_000_000, turnover=12_500_000_000_000),
+            MarketIndexDailySnapshot(business_date, "KOSDAQ", "stock", "코스닥", fetched_at, close_index=873.41, change_percent=-0.15, volume=810_000_000, turnover=8_100_000_000_000),
+        ]
+    )
+    repository.upsert_stock_investor_flow_daily(
+        [
+            StockInvestorFlowDaily(business_date, "005930", "삼성전자", "외국인", fetched_at, market="KOSPI", net_buy_volume=1_200_000, volume_unit="주", net_buy_amount=90_000_000_000, amount_unit="원"),
+            StockInvestorFlowDaily(business_date, "005930", "삼성전자", "기관", fetched_at, market="KOSPI", net_buy_volume=350_000, volume_unit="주", net_buy_amount=26_000_000_000, amount_unit="원"),
+            StockInvestorFlowDaily(business_date, "035420", "NAVER", "외국인", fetched_at, market="KOSPI", net_buy_volume=-20_000, volume_unit="주", net_buy_amount=-3_700_000_000, amount_unit="원"),
+        ]
+    )
+    repository.upsert_market_investor_flow_daily(
+        [
+            MarketInvestorFlowDaily(business_date, "KOSPI", "외국인", fetched_at, net_buy_volume=2_200_000, volume_unit="주", net_buy_amount=180_000_000_000, amount_unit="원"),
+            MarketInvestorFlowDaily(business_date, "KOSPI", "기관", fetched_at, net_buy_volume=800_000, volume_unit="주", net_buy_amount=70_000_000_000, amount_unit="원"),
+            MarketInvestorFlowDaily(business_date, "KOSDAQ", "개인", fetched_at, net_buy_volume=1_400_000, volume_unit="주", net_buy_amount=42_000_000_000, amount_unit="원"),
+        ]
+    )
+    repository.upsert_investor_net_buy_top_daily(
+        [
+            InvestorNetBuyTopDaily(business_date, "KOSPI", "foreign", 1, "005930", "삼성전자", fetched_at, net_buy_volume=1_200_000, net_buy_amount=90_000_000_000),
+        ]
+    )
+    repository.upsert_etf_daily_snapshots(
+        [
+            EtfDailySnapshot(business_date, "396500", "TIGER Fn반도체TOP10", fetched_at, close_price=12_450, change_percent=1.1, volume=550_000, turnover=6_800_000_000, underlying_index_name="FnGuide 반도체TOP10"),
+            EtfDailySnapshot(business_date, "091160", "KODEX 반도체", fetched_at, close_price=43_200, change_percent=0.9, volume=470_000, turnover=20_000_000_000, underlying_index_name="KRX 반도체"),
+            EtfDailySnapshot(business_date, "139260", "TIGER 200 IT", fetched_at, close_price=38_500, change_percent=0.4, volume=210_000, turnover=8_000_000_000, underlying_index_name="KOSPI 200 IT"),
+            EtfDailySnapshot(business_date, "266370", "KODEX IT", fetched_at, close_price=19_900, change_percent=0.2, volume=180_000, turnover=3_600_000_000, underlying_index_name="KRX IT"),
+        ]
+    )
+    repository.save_news_intelligence_observation(
+        NewsIntelligenceRun(
+            run_id="fixture-news-005930",
+            target_date=business_date,
+            stock_name="삼성전자",
+            stock_code="005930",
+            aliases=("삼전",),
+            source_mode="manual_fixture",
+            page_limit=1,
+            full_day_complete=False,
+            live_fetch=False,
+            parsed_count=3,
+            deduped_count=3,
+            matched_count=1,
+            operator_summary_snapshot="삼성전자 저장 뉴스 관찰 fixture",
+            warnings=(),
+            created_at=fetched_at,
+        ),
+        [
+            ReportLinkedNewsEvidenceRecord(
+                run_id="fixture-news-005930",
+                evidence_key="fixture-news-005930-1",
+                target_date=business_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                related_report_count=2,
+                related_report_source_ids=("fixture-report-005930-1", "fixture-report-005930-2"),
+                daily_summary_presence=True,
+                candidate_priority_presence=True,
+                candidate_observation_priority="우선 확인",
+                krx_reference_presence=True,
+                krx_reference_date=business_date,
+                krx_turnover=2_300_000_000_000,
+                investor_flow_presence=True,
+                source_lane="fixture",
+                title="삼성전자, AI 반도체 공급 계약 체결",
+                summary="저장 fixture 뉴스 근거입니다.",
+                source="fixture-news",
+                published_at=datetime(2026, 5, 8, 9, 20, 0),
+                url="https://example.com/news/fixture-005930",
+                matched_alias="삼성전자",
+                match_reason="stock_name",
+                match_scope="title",
+                relevance="direct",
+                relevance_reason="종목명이 제목에 직접 등장합니다.",
+                sentiment="Positive",
+                sentiment_score=70,
+                event_types=("Contract",),
+                stock_impact="Positive",
+                impact_explanation="operator-only fixture impact",
+                evidence_case="report_direct_positive_news",
+                operator_recommendation="strengthen_report_candidate",
+                recommendation_reason="operator-only fixture recommendation support",
+                operator_summary_snapshot="삼성전자 저장 뉴스 관찰 fixture",
+                created_at=fetched_at,
+            )
+        ],
+    )
+
+
 def _build_market_briefing_readiness_date(
     config: RuntimeConfig,
     repository: StockMonitorRepository,
@@ -15713,12 +16015,14 @@ def _build_market_briefing_message(
     *,
     business_date: date,
     limit: int,
+    slot: str = "mood",
 ) -> str:
     _ = config
     summaries = repository.list_daily_summaries(business_date)
     if not summaries:
         summaries = repository.rebuild_daily_summaries(business_date)
     report_count = sum(summary.mention_count for summary in summaries)
+    news_observation_lines = _build_market_briefing_news_observation_lines(repository, business_date)
     message = format_market_close_briefing_message(
         business_date,
         report_count=report_count,
@@ -15734,8 +16038,53 @@ def _build_market_briefing_message(
         notable_lines=_build_market_briefing_notable_lines(summaries, limit=limit),
         check_point_lines=_build_market_briefing_check_point_lines(repository, business_date),
     )
+    message = _apply_market_briefing_slot_header(message, business_date=business_date, slot=slot)
+    if news_observation_lines:
+        message = _insert_market_briefing_section_before_check_points(message, news_observation_lines)
     _ensure_market_briefing_message_public_safe(message)
     return message
+
+
+def _apply_market_briefing_slot_header(message: str, *, business_date: date, slot: str) -> str:
+    lines = message.splitlines()
+    if not lines:
+        return message
+    label = MARKET_BRIEFING_SLOT_LABELS.get(slot, MARKET_BRIEFING_SLOT_LABELS["mood"])
+    lines[0] = f"{label} · {business_date.strftime('%y.%m.%d')}"
+    return "\n".join(lines)
+
+
+def _build_market_briefing_news_observation_lines(
+    repository: StockMonitorRepository,
+    business_date: date,
+    *,
+    limit: int = 3,
+) -> list[str]:
+    summary = _build_web_view_news_observation_summary(repository, business_date, limit=limit)
+    if not summary.get("available"):
+        return []
+    lines = ["뉴스 근거"]
+    items = [item for item in summary.get("items", []) if isinstance(item, dict) and item.get("available")]
+    for item in items[: max(1, limit)]:
+        stock = item.get("stock_name") or item.get("stock_code") or "-"
+        label = item.get("display_label") or "뉴스 근거 있음"
+        title = item.get("top_title") or item.get("reason") or ""
+        suffix = f" | {title}" if title else ""
+        lines.append(f"- {stock}: {label}{suffix}")
+    if len(lines) == 1:
+        label = summary.get("display_label") or "뉴스 근거 있음"
+        titles = [str(title) for title in summary.get("top_titles", []) if title]
+        suffix = " | " + " / ".join(titles[:limit]) if titles else ""
+        lines.append(f"- {label}{suffix}")
+    return lines
+
+
+def _insert_market_briefing_section_before_check_points(message: str, section_lines: list[str]) -> str:
+    marker = "\n\n확인 포인트"
+    section = "\n\n" + "\n".join(section_lines)
+    if marker in message:
+        return message.replace(marker, section + marker, 1)
+    return message + section
 
 
 def _ensure_market_briefing_message_public_safe(message: str) -> None:
@@ -17484,6 +17833,7 @@ def _probe_web_view_browser_smoke(
         _collect_web_view_browser_render_smoke_issues(
             config,
             base_url=base_url,
+            business_date=business_date,
             issues=issues,
             viewports=viewports,
         )
@@ -17715,6 +18065,7 @@ def _collect_web_view_browser_render_smoke_issues(
     config: RuntimeConfig,
     *,
     base_url: str,
+    business_date: date,
     issues: list[dict[str, object]],
     viewports: list[dict[str, object]],
 ) -> None:
@@ -17786,6 +18137,48 @@ def _collect_web_view_browser_render_smoke_issues(
                         page.wait_for_timeout(250)
                         stock_panel_visible = page.locator("#stock-context-card").is_visible()
                         stock_tab_current = page.locator('[data-view-tab="stock"]').get_attribute("aria-current") == "page"
+                        stock_search_flow = page.evaluate(
+                            """
+                            async ({ date }) => {
+                              const result = {
+                                queried: true,
+                                matched_no_report_stock: false,
+                                clicked_visible_result: false,
+                                visible_empty_state: false,
+                                stock_detail_empty_state: false,
+                                picked_stock_code: null,
+                                picked_stock_name: null,
+                                report_empty_state: null,
+                              };
+                              const response = await fetch(`/api/stocks/search?date=${encodeURIComponent(date)}&q=Beta&limit=5`, { cache: "no-store" });
+                              const search = await response.json();
+                              const picked = (search.items || []).find((item) => item.has_selected_date_report === false);
+                              if (!picked) return result;
+                              result.matched_no_report_stock = true;
+                              result.picked_stock_code = picked.stock_code || null;
+                              result.picked_stock_name = picked.stock_name || null;
+                              const detailResponse = await fetch(`/api/daily/${encodeURIComponent(date)}/stocks/${encodeURIComponent(picked.stock_code)}`, { cache: "no-store" });
+                              const detail = await detailResponse.json();
+                              result.report_empty_state = detail.report_empty_state || null;
+                              result.stock_detail_empty_state = detail.has_selected_date_report === false && Array.isArray(detail.reports) && detail.reports.length === 0;
+                              return result;
+                            }
+                            """,
+                            {"date": business_date.isoformat()},
+                        )
+                        if isinstance(stock_search_flow, dict) and stock_search_flow.get("matched_no_report_stock"):
+                            picked_name = str(stock_search_flow.get("picked_stock_name") or "Beta")
+                            picked_code = str(stock_search_flow.get("picked_stock_code") or "")
+                            search_input = page.locator("#stock-search-input")
+                            search_input.fill(picked_name, timeout=timeout_ms)
+                            page.wait_for_timeout(350)
+                            result_locator = page.locator(f'[data-stock-search-code="{picked_code}"]').first
+                            if result_locator.count():
+                                result_locator.click(timeout=timeout_ms)
+                                page.wait_for_timeout(350)
+                                stock_search_flow["clicked_visible_result"] = True
+                                detail_text = page.locator("#stock-detail").inner_text(timeout=timeout_ms)
+                                stock_search_flow["visible_empty_state"] = "선택 날짜에 등록된 리포트가 없습니다." in detail_text
                         page.locator('[data-view-tab="market"]').click(timeout=timeout_ms)
                         page.wait_for_timeout(250)
                         market_panel_visible = page.locator("#market-reference-card").is_visible()
@@ -17814,6 +18207,7 @@ def _collect_web_view_browser_render_smoke_issues(
                             "watch_panel_clickable": watch_panel_visible,
                             "watch_observation_summary_visible": watch_observation_summary_visible,
                             "stock_panel_clickable": stock_panel_visible,
+                            "stock_search_flow": stock_search_flow,
                             "market_panel_clickable": market_panel_visible,
                             "rotation_panel_clickable": rotation_panel_visible,
                             "watch_tab_current": watch_tab_current,
@@ -17928,6 +18322,30 @@ def _collect_web_view_browser_render_smoke_issues(
                                     "code": "stock_tab_state_not_current",
                                     "path": f"viewport[{spec['name']}].stock_tab",
                                     "message": "stock tab did not expose current state after click",
+                                }
+                            )
+                        if (
+                            isinstance(stock_search_flow, dict)
+                            and stock_search_flow.get("matched_no_report_stock")
+                            and not stock_search_flow.get("stock_detail_empty_state")
+                        ):
+                            issues.append(
+                                {
+                                    "code": "stock_search_empty_state_api_missing",
+                                    "path": f"viewport[{spec['name']}].stock_search",
+                                    "message": "stored no-report stock did not expose report_empty_state through stock detail API",
+                                }
+                            )
+                        if (
+                            isinstance(stock_search_flow, dict)
+                            and stock_search_flow.get("matched_no_report_stock")
+                            and not stock_search_flow.get("visible_empty_state")
+                        ):
+                            issues.append(
+                                {
+                                    "code": "stock_search_empty_state_not_visible",
+                                    "path": f"viewport[{spec['name']}].stock_search",
+                                    "message": "stored no-report stock search flow did not render the selected-date empty state",
                                 }
                             )
                         if not market_panel_visible:

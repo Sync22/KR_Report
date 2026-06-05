@@ -772,6 +772,73 @@ def test_web_view_browser_smoke_parser_accepts_latest_date_alias() -> None:
     assert args.json is True
 
 
+def test_dev_fixture_db_parser_accepts_visible_product_flow_output_and_overwrite(tmp_path) -> None:
+    parser = cli_module.build_parser()
+    output_path = tmp_path / "visible-product-flow.db"
+
+    args = parser.parse_args(
+        [
+            "dev-fixture-db",
+            "--scenario",
+            "visible-product-flow",
+            "--output",
+            str(output_path),
+            "--overwrite",
+            "--json",
+        ]
+    )
+
+    assert args.command == "dev-fixture-db"
+    assert args.scenario == "visible-product-flow"
+    assert args.output == output_path
+    assert args.overwrite is True
+    assert args.json is True
+
+
+def test_dev_fixture_db_visible_product_flow_creates_browser_and_briefing_fixture(tmp_path, capsys) -> None:
+    output_path = tmp_path / "visible-product-flow.db"
+
+    exit_code = cli_module._run_dev_fixture_db(
+        scenario="visible-product-flow",
+        output_path=output_path,
+        overwrite=False,
+        as_json=True,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert output_path.exists()
+    assert payload["surface"] == "dev-fixture-db"
+    assert payload["scenario"] == "visible-product-flow"
+    assert payload["business_date"] == "2026-05-08"
+    assert payload["writes_production_db"] is False
+    assert payload["sends_telegram"] is False
+    assert payload["registers_scheduler"] is False
+    assert "web-view-browser-smoke --date 2026-05-08" in " ".join(payload["verification_commands"])
+
+    config = RuntimeConfig.from_env(root_dir=tmp_path, db_path=output_path)
+    repository = StockMonitorRepository(output_path, timezone=config.timezone)
+    daily = cli_module.build_web_view_daily_snapshot(config, repository, business_date=date(2026, 5, 8))
+    candidates = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=date(2026, 5, 8),
+        limit=20,
+    )
+    search = cli_module.build_web_view_stock_search_snapshot(
+        config,
+        repository,
+        business_date=date(2026, 5, 8),
+        query="Beta",
+    )
+
+    assert daily["report_count"] >= 4
+    assert daily["news_observation_summary"]["available"] is True
+    assert candidates["rows"]
+    assert any(row["news_observation_badge"]["available"] for row in candidates["rows"])
+    assert search["items"][0]["has_selected_date_report"] is False
+
+
 def test_web_view_browser_api_smoke_checks_intraday_market_top_route(monkeypatch) -> None:
     calls: list[str] = []
 
@@ -4169,7 +4236,30 @@ def test_market_briefing_parser_defaults_to_preview_only() -> None:
     assert args.command == "market-briefing"
     assert args.date == date(2026, 5, 14)
     assert args.limit == 3
+    assert args.slot == "mood"
     assert args.send is False
+    assert args.json is False
+
+
+def test_market_briefing_parser_accepts_slot_and_json_preview() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "market-briefing",
+            "--date",
+            "2026-05-14",
+            "--slot",
+            "lunch",
+            "--limit",
+            "3",
+            "--json",
+        ]
+    )
+
+    assert args.command == "market-briefing"
+    assert args.slot == "lunch"
+    assert args.json is True
 
 
 def test_scheduled_market_briefing_parser_defaults_to_guarded_dry_run_off() -> None:
@@ -4374,6 +4464,91 @@ def test_market_briefing_preview_includes_turnover_reference(tmp_path, capsys) -
     assert "KOSPI: 삼성전자 2.3조" in output
     assert "추천" not in output
     assert "점수" not in output
+
+
+def test_market_briefing_json_preview_includes_slot_and_public_news_observation(tmp_path, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 14)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                close_price=100_000,
+                change_percent=1.2,
+                volume=1000,
+                turnover=2_300_000_000_000,
+                fetched_at=datetime(2026, 5, 14, 16, 0, 0),
+            )
+        ]
+    )
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name="삼성전자",
+                title="삼성전자 AI 반도체 점검",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 5, 14, 9, 0, 0),
+                collected_at=datetime(2026, 5, 14, 16, 0, 0),
+                stock_code="005930",
+                target_price_raw="320000",
+                target_price_value=320_000,
+                opinion_raw="매수",
+                opinion_normalized="buy",
+                source_id="market-briefing-json-1",
+                identity_key="market-briefing-json-1",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.save_news_intelligence_observation(
+        _news_intelligence_cli_run(
+            run_id="market-briefing-news-run",
+            target_date=business_date,
+            stock_name="삼성전자",
+            stock_code="005930",
+        ),
+        [
+            _news_intelligence_cli_evidence(
+                run_id="market-briefing-news-run",
+                evidence_key="market-briefing-news-evidence",
+                relevance="direct",
+                match_scope="title",
+                target_date=business_date,
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="삼성전자, AI 반도체 공급 계약 체결",
+            )
+        ],
+    )
+
+    exit_code = _run_market_briefing(
+        config,
+        repository,
+        explicit_date=business_date,
+        limit=5,
+        send=False,
+        slot="lunch",
+        as_json=True,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["surface"] == "market-briefing"
+    assert payload["read_only_preview"] is True
+    assert payload["slot"] == "lunch"
+    assert payload["sends_telegram"] is False
+    assert payload["public_safe_issue_count"] == 0
+    assert payload["news_observation_summary"]["available"] is True
+    assert "뉴스 근거" in payload["message"]
+    assert "삼성전자, AI 반도체 공급 계약 체결" in payload["message"]
+    assert "sentiment_score" not in json.dumps(payload, ensure_ascii=False)
+    assert "operator_recommendation" not in json.dumps(payload, ensure_ascii=False)
 
 
 def test_market_briefing_uses_stock_flow_reference_when_market_flow_missing(tmp_path, capsys) -> None:

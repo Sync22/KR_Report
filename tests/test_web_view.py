@@ -5157,6 +5157,10 @@ def test_web_view_browser_smoke_checks_tablet_and_large_mobile_viewports() -> No
     assert "watch_observation_summary_visible" in source
     assert "observation_summary_visible_on_main" in source
     assert "watch_observation_summary_missing" in source
+    assert "stock_search_flow" in source
+    assert "q=Beta" in source
+    assert "has_selected_date_report" in source
+    assert "report_empty_state" in source
     assert 'for text in ("오늘 읽을 요약", "오늘의 우선순위")' in source
     assert '"국장 관찰 요약")' not in source
     assert ".is_visible()" in source
