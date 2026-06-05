@@ -14512,6 +14512,10 @@ def _run_market_briefing(
     message = _build_market_briefing_message(config, repository, business_date=business_date, limit=limit, slot=slot)
     issues = _collect_market_briefing_message_issues(message)
     if as_json:
+        source_freshness_summary = _build_market_briefing_source_freshness_summary(
+            repository,
+            business_date,
+        )
         payload = {
             "surface": "market-briefing",
             "read_only_preview": True,
@@ -14524,6 +14528,7 @@ def _run_market_briefing(
             "public_safe_issue_count": len(issues),
             "public_safe_issues": issues,
             "news_observation_summary": _build_web_view_news_observation_summary(repository, business_date),
+            "source_freshness_summary": source_freshness_summary,
             "message": message,
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -16840,6 +16845,11 @@ def _build_market_briefing_message(
         summaries = repository.rebuild_daily_summaries(business_date)
     report_count = sum(summary.mention_count for summary in summaries)
     news_observation_lines = _build_market_briefing_news_observation_lines(repository, business_date)
+    source_freshness_lines = _build_market_briefing_source_freshness_lines(
+        repository,
+        business_date,
+        report_count=report_count,
+    )
     message = format_market_close_briefing_message(
         business_date,
         report_count=report_count,
@@ -16858,8 +16868,81 @@ def _build_market_briefing_message(
     message = _apply_market_briefing_slot_header(message, business_date=business_date, slot=slot)
     if news_observation_lines:
         message = _insert_market_briefing_section_before_check_points(message, news_observation_lines)
+    if source_freshness_lines:
+        message = _insert_market_briefing_section_before_check_points(message, source_freshness_lines)
     _ensure_market_briefing_message_public_safe(message)
     return message
+
+
+def _build_market_briefing_source_freshness_summary(
+    repository: StockMonitorRepository,
+    business_date: date,
+    *,
+    report_count: int | None = None,
+) -> dict:
+    if report_count is None:
+        report_count = sum(summary.mention_count for summary in repository.list_daily_summaries(business_date))
+    return _build_web_view_source_freshness_summary(
+        business_date=business_date,
+        report_count=report_count,
+        recent_krx_snapshot_dates=repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=1),
+        recent_flow_dates=repository.list_recent_investor_flow_dates(on_or_before=business_date, limit=1),
+    )
+
+
+def _build_market_briefing_source_freshness_lines(
+    repository: StockMonitorRepository,
+    business_date: date,
+    *,
+    report_count: int,
+) -> list[str]:
+    summary = _build_market_briefing_source_freshness_summary(
+        repository,
+        business_date,
+        report_count=report_count,
+    )
+    return _market_briefing_source_freshness_lines(summary)
+
+
+def _market_briefing_source_freshness_lines(summary: dict) -> list[str]:
+    items = {
+        str(item.get("key")): item
+        for item in summary.get("items", [])
+        if isinstance(item, dict) and item.get("key")
+    }
+    lines = ["데이터 기준"]
+    for key in ("reports", "krx_market", "etf_daily", "investor_flow", "toss_openapi"):
+        item = items.get(key)
+        if not item:
+            continue
+        label = str(item.get("label") or key)
+        lines.append(f"- {label}: {_market_briefing_source_freshness_item_text(item)}")
+    return lines if len(lines) > 1 else []
+
+
+def _market_briefing_source_freshness_item_text(item: dict[str, object]) -> str:
+    status = _market_briefing_source_freshness_status_text(str(item.get("status") or "missing"))
+    if item.get("key") == "toss_openapi":
+        return f"{status} (호출 없음)"
+    reference_date = _market_briefing_source_reference_date_text(item.get("reference_date"))
+    count = item.get("count")
+    count_suffix = f" ({int(count)}건)" if isinstance(count, int) else ""
+    return f"{status}{(' ' + reference_date) if reference_date else ''}{count_suffix}"
+
+
+def _market_briefing_source_freshness_status_text(status: str) -> str:
+    if status == "lab_hold":
+        return "lab-hold"
+    return status
+
+
+def _market_briefing_source_reference_date_text(value: object) -> str:
+    if not value:
+        return ""
+    try:
+        return date.fromisoformat(str(value)).strftime("%y.%m.%d")
+    except ValueError:
+        return str(value)
 
 
 def _apply_market_briefing_slot_header(message: str, *, business_date: date, slot: str) -> str:
