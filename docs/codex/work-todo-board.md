@@ -315,6 +315,9 @@ Turn the dev-verified closeout into a controlled operating-PC handoff without si
 - `docs/codex/architecture-risk-review.md`
 - `docs/codex/work-todo-board.md`
 
+**Progress Note:**
+2026-06-05 operating-PC pre-approval sync reached dev commit `c99acb1` by fast-forwarding local `dev` to `origin/dev`. No real `db-migrate`, scheduler registration/change, Telegram real send, or admin-gui process operation was run. The operating shell had to use `.venv\Scripts\python.exe -m ...` because system `python -m ...` resolved to the Microsoft Store stub. Pre-approval checks are not ready yet: `ops-sync-preview --base origin/main --head dev --json` failed with `unexpected_untracked_files` for `scripts/experimental/probe_scrapling_import.py` and `scripts/experimental/requirements-scrapling.txt`; `db-migrate --dry-run` passed with schema `7/7` and no pending migrations; `db-verify --json` failed on a partial KRX daily snapshot for `2026-06-03` where `etf-daily=873` exists but stock/index endpoints are empty; `db-migration-rehearsal --json` wrote only a temp copy and failed because db-verify failed on that migrated copy. Next action is not schema migration; it is to resolve or explicitly approve the two operating-PC untracked experimental files and repair/rebaseline the partial KRX daily snapshot after backup/verify discipline.
+
 ### [ ] TODO2-TG-LIVE-DRYRUN: Telegram Real-Data No-Send Dry Run
 
 **Goal:**
