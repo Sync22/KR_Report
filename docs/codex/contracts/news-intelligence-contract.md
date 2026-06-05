@@ -94,6 +94,31 @@ Supported match scopes:
 
 Partial source failures are allowed and should be represented in `sources[*].fetch_error` plus `warnings`. The command should exit non-zero only when Scrapling is unavailable or no articles can be parsed from any source lane.
 
+## News Flow Preview Lane
+
+`news-flow-preview` is a separate operator-only lane for reading the article flow from user-provided news source URLs. It is not a stock top-N enrichment feature, not candidate-evidence linkage, and not a recommendation engine.
+
+Allowed in v1:
+
+- Fixture-backed article flow parsing from an explicit `--source-url` allow-list.
+- Article contract fields: `title`, `date`, `url`, `source`, and `summary`.
+- Per-source diagnostics: requested URL, source name, parsed article count, and warnings for missing or out-of-scope sources.
+- Whole-flow aggregation: repeated stock mentions, sector/theme flow, key issues, caution signals, market mood, text preview, JSON preview, and Telegram draft copy.
+
+Blocked by default:
+
+- Live fetch unless the operator explicitly approves a source-probe pass for the provided URLs.
+- DB writes, scheduler registration, Telegram real sends, `admin-gui`, `web-view`, candidate-evidence mutation, public numeric scoring, buy/sell wording, broker execution, and order routing.
+- Treating repeated mentions as recommendations, ranks, scores, grades, or trading signals.
+
+Supported command:
+
+- `python -m stock_monitor news-flow-preview --source-url URL [--source-url URL ...] --fixture PATH [--format text|json]`
+
+The command must only include fixture sources whose `source_url` exactly matches one of the provided `--source-url` values. Fixture sources outside that allow-list are excluded and reported as warnings. Requested URLs missing from the fixture are also reported as warnings.
+
+The Telegram draft is preview text only. It must include the source URL basis and say that it summarizes article flow without trading judgment. It must not send Telegram messages.
+
 ## Output Contract
 
 The JSON report must include:

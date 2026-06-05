@@ -198,6 +198,7 @@ READ_ONLY_SCHEMA_CURRENT_COMMANDS = {
     "market-briefing-readiness",
     "market-day-observation",
     "mini-pc-preflight",
+    "news-flow-preview",
     "news-intelligence-daily-brief",
     "news-intelligence-observations",
     "next-phase-readiness",
@@ -462,6 +463,13 @@ def build_parser() -> argparse.ArgumentParser:
     news_preview_parser.add_argument("--scrapling-exe", type=Path)
     news_preview_parser.add_argument("--db-path", type=Path)
     news_preview_parser.add_argument("--save-observation", action="store_true")
+    news_flow_parser = subparsers.add_parser(
+        "news-flow-preview",
+        help="Preview the article flow from operator-provided news source URLs using a fixture.",
+    )
+    news_flow_parser.add_argument("--source-url", action="append", required=True)
+    news_flow_parser.add_argument("--fixture", type=Path, required=True)
+    news_flow_parser.add_argument("--format", choices=("text", "json"), default="text")
     news_observations_parser = subparsers.add_parser(
         "news-intelligence-observations",
         help="Read saved operator-only news intelligence observations as JSON.",
@@ -1844,6 +1852,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "news-intelligence-preview":
         return _run_news_intelligence_preview(args)
+    if args.command == "news-flow-preview":
+        return _run_news_flow_preview(args)
     if args.command == "news-intelligence-observations":
         return _run_news_intelligence_observations(args)
     if args.command == "news-intelligence-daily-brief":
@@ -2775,6 +2785,72 @@ def _run_read_only_schema_not_current_report(
     for item in payload["requires_separate_approval"]:
         print(f"  - {item}")
     return 1
+
+
+def _run_news_flow_preview(args: argparse.Namespace) -> int:
+    from stock_monitor.news.flow import (
+        build_news_flow_preview,
+        format_news_flow_preview_text,
+        parse_news_flow_json,
+    )
+
+    source_urls = tuple(args.source_url or ())
+    try:
+        fixture_text = args.fixture.read_text(encoding="utf-8")
+        collection = parse_news_flow_json(fixture_text, source_urls=source_urls)
+        preview = build_news_flow_preview(collection)
+    except Exception as exc:
+        payload = _news_flow_preview_error_payload(
+            source_urls=source_urls,
+            fixture=args.fixture,
+            error=str(exc) or exc.__class__.__name__,
+        )
+        if args.format == "json":
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(_format_news_flow_preview_error_text(payload), end="")
+        return 1
+
+    if args.format == "json":
+        print(json.dumps(preview.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        print(format_news_flow_preview_text(preview), end="")
+    return 0
+
+
+def _news_flow_preview_error_payload(
+    *,
+    source_urls: tuple[str, ...],
+    fixture: Path,
+    error: str,
+) -> dict[str, object]:
+    return {
+        "surface": "news-flow-preview",
+        "operator_only": True,
+        "public_safe": False,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "connects_web_view": False,
+        "source_urls": list(source_urls),
+        "fixture": str(fixture),
+        "error": error,
+    }
+
+
+def _format_news_flow_preview_error_text(payload: dict[str, object]) -> str:
+    return "\n".join(
+        [
+            "News flow preview",
+            f"error: {payload.get('error')}",
+            "live_fetch: False",
+            "writes_db: False",
+            "sends_telegram: False",
+            "registers_scheduler: False",
+            "connects_web_view: False",
+        ]
+    ) + "\n"
 
 
 def _run_news_intelligence_preview(args: argparse.Namespace) -> int:

@@ -2677,6 +2677,118 @@ def test_news_intelligence_preview_parser_accepts_operator_inputs() -> None:
     assert args.save_observation is True
 
 
+def test_news_flow_preview_parser_accepts_source_urls_and_fixture() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "news-flow-preview",
+            "--source-url",
+            "https://example.test/market-flow",
+            "--source-url",
+            "https://example.test/sector-flow",
+            "--fixture",
+            "C:/tmp/news-flow.json",
+            "--format",
+            "json",
+        ]
+    )
+
+    assert args.command == "news-flow-preview"
+    assert args.source_url == [
+        "https://example.test/market-flow",
+        "https://example.test/sector-flow",
+    ]
+    assert str(args.fixture).endswith("news-flow.json")
+    assert args.format == "json"
+
+
+def test_news_flow_preview_cli_outputs_json_without_runtime_side_effects(tmp_path, capsys) -> None:
+    fixture = tmp_path / "news-flow.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "sources": [
+                    {
+                        "source_url": "https://example.test/market-flow",
+                        "source": "Market Desk",
+                        "articles": [
+                            {
+                                "title": "Samsung Electronics and SK Hynix rise on AI chip supply news",
+                                "date": "2026-06-01T09:10:00+09:00",
+                                "url": "https://news.example/a",
+                                "source": "Market Desk",
+                                "summary": "Semiconductor demand and HBM supply contracts kept AI chip names in focus.",
+                            },
+                            {
+                                "title": "Samsung Electronics volatility caution after sharp move",
+                                "date": "2026-06-01T10:20:00+09:00",
+                                "url": "https://news.example/b",
+                                "source": "Market Desk",
+                                "summary": "Overheating and volatility risk were noted after the rally.",
+                            },
+                        ],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = cli_module.main(
+        [
+            "news-flow-preview",
+            "--source-url",
+            "https://example.test/market-flow",
+            "--fixture",
+            str(fixture),
+            "--format",
+            "json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["surface"] == "news-flow-preview"
+    assert payload["source_urls"] == ["https://example.test/market-flow"]
+    assert payload["article_count"] == 2
+    assert payload["live_fetch"] is False
+    assert payload["writes_db"] is False
+    assert payload["sends_telegram"] is False
+    assert payload["registers_scheduler"] is False
+    assert payload["connects_web_view"] is False
+    assert "source URL" in payload["telegram_draft"]
+
+
+def test_news_flow_preview_cli_uses_repository_fixture(capsys) -> None:
+    fixture = Path("tests/fixtures/news_flow_preview/market_flow_2026_06_01.json")
+
+    exit_code = cli_module.main(
+        [
+            "news-flow-preview",
+            "--source-url",
+            "https://example.test/market-flow",
+            "--source-url",
+            "https://example.test/sector-flow",
+            "--fixture",
+            str(fixture),
+            "--format",
+            "text",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "News flow preview" in output
+    assert "source URLs: 2" in output
+    assert "telegram draft:" in output
+    assert "writes_db: False" in output
+    assert "sends_telegram: False" in output
+    assert "registers_scheduler: False" in output
+    assert "connects_web_view: False" in output
+
+
 def test_news_intelligence_preview_cli_outputs_operator_only_json(tmp_path, monkeypatch, capsys) -> None:
     scrapling_exe = tmp_path / "scrapling.exe"
     scrapling_exe.write_text("fake", encoding="utf-8")
