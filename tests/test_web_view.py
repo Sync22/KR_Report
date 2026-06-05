@@ -198,6 +198,10 @@ def test_web_view_main_layout_first_pass_static_markup() -> None:
     assert "sector-breadth-bar" in html
     assert "renderTopTwoReviewCandidates" in html
     assert 'id="news-observation-summary"' in html
+    assert 'id="source-freshness-summary"' in html
+    assert "renderSourceFreshnessSummary" in html
+    assert "source_freshness_summary" in html
+    assert "source-freshness-item" in html
     assert "renderNewsObservationSummary" in html
     assert "renderNewsObservationSummaryItem" in html
     assert "function newsObservationMetaChips" in html
@@ -1596,6 +1600,25 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
     assert snapshot["krx_context"]["snapshot_date"] == "2026-05-08"
     assert snapshot["krx_context"]["top_kospi_by_turnover"][0]["stock_code"] == "000660"
     assert snapshot["krx_context"]["top_kospi_by_turnover"][0]["volume"] == 50_000
+    source_freshness_items = {
+        item["key"]: item for item in snapshot["source_freshness_summary"]["items"]
+    }
+    assert snapshot["source_freshness_summary"]["source"] == "stored_source_freshness"
+    assert snapshot["source_freshness_summary"]["read_only"] is True
+    assert snapshot["source_freshness_summary"]["live_fetch"] is False
+    assert snapshot["source_freshness_summary"]["scoring"] is False
+    assert source_freshness_items["reports"]["status"] == "exact"
+    assert source_freshness_items["reports"]["reference_date"] == "2026-05-08"
+    assert source_freshness_items["krx_market"]["status"] == "exact"
+    assert source_freshness_items["krx_market"]["source"] == "krx_open_api"
+    assert source_freshness_items["krx_market"]["reference_date"] == "2026-05-08"
+    assert source_freshness_items["krx_market"]["exact_date_available"] is True
+    assert source_freshness_items["etf_daily"]["status"] == "exact"
+    assert source_freshness_items["investor_flow"]["status"] == "exact"
+    assert source_freshness_items["investor_flow"]["source"] == "krx_data_market"
+    assert source_freshness_items["toss_openapi"]["status"] == "lab_hold"
+    assert source_freshness_items["toss_openapi"]["live_fetch"] is False
+    assert source_freshness_items["toss_openapi"]["affects_ordering"] is False
     assert snapshot["krx_recent_flow"] == {
         "available": True,
         "source": "krx",
@@ -3270,6 +3293,16 @@ def test_web_view_daily_krx_context_is_exact_date_and_does_not_fallback_to_lates
     assert missing_context_snapshot["krx_context"]["snapshot_date"] is None
     assert missing_context_snapshot["krx_context"]["top_kospi_by_turnover"] == []
     assert missing_context_snapshot["stocks"][0]["market_reference"] is None
+    missing_freshness = {
+        item["key"]: item for item in missing_context_snapshot["source_freshness_summary"]["items"]
+    }
+    assert missing_freshness["reports"]["status"] == "exact"
+    assert missing_freshness["reports"]["reference_date"] == "2026-05-07"
+    assert missing_freshness["krx_market"]["status"] == "missing"
+    assert missing_freshness["krx_market"]["reference_date"] is None
+    assert missing_freshness["etf_daily"]["status"] == "missing"
+    assert missing_freshness["investor_flow"]["status"] == "missing"
+    assert missing_freshness["toss_openapi"]["status"] == "lab_hold"
     assert "최신 날짜 값으로 대체하지 않습니다" in missing_context_snapshot["krx_context"]["notice"]
 
     context = exact_context_snapshot["krx_context"]
@@ -3291,6 +3324,14 @@ def test_web_view_daily_krx_context_is_exact_date_and_does_not_fallback_to_lates
         "rotation_reference": "저장 ETF 거래대금/NAV/기초지수 기준",
     }
     assert context["indices"][0]["index_name"] == "코스피"
+    exact_freshness = {
+        item["key"]: item for item in exact_context_snapshot["source_freshness_summary"]["items"]
+    }
+    assert exact_freshness["krx_market"]["status"] == "exact"
+    assert exact_freshness["krx_market"]["reference_date"] == "2026-05-08"
+    assert exact_freshness["etf_daily"]["status"] == "exact"
+    assert exact_freshness["investor_flow"]["status"] == "missing"
+    assert exact_freshness["toss_openapi"]["live_fetch"] is False
     assert "scheduler_tasks" not in context
     assert "worker_states" not in context
     assert "db_path" not in context
