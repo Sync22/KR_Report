@@ -781,6 +781,15 @@ def test_admin_boundary_audit_parser_accepts_limit_and_json() -> None:
     assert args.json is True
 
 
+def test_data_source_lane_audit_parser_accepts_json() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(["data-source-lane-audit", "--json"])
+
+    assert args.command == "data-source-lane-audit"
+    assert args.json is True
+
+
 def test_docs_hygiene_audit_parser_accepts_path_and_json() -> None:
     parser = cli_module.build_parser()
 
@@ -9250,6 +9259,68 @@ def test_run_ops_readiness_aggregates_operational_checks(tmp_path, monkeypatch, 
     assert payload["web_view_value_qa"]["issue_count"] == 0
     assert payload["api_perf"]["record_count"] == 2
     assert payload["recommended_actions"]
+
+
+def test_data_source_lane_audit_json_classifies_production_lab_and_hold(capsys) -> None:
+    exit_code = cli_module.main(["data-source-lane-audit", "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    lanes = {lane["key"]: lane for lane in payload["lanes"]}
+
+    assert exit_code == 0
+    assert payload["surface"] == "data-source-lane-audit"
+    assert payload["read_only"] is True
+    assert payload["live_fetch"] is False
+    assert payload["writes_db"] is False
+    assert payload["sends_telegram"] is False
+    assert payload["registers_scheduler"] is False
+    assert payload["connects_admin_gui"] is False
+    assert payload["connects_web_view"] is False
+    assert payload["ready"] is True
+    assert payload["classification_counts"] == {
+        "hold": 1,
+        "lab": 1,
+        "production": 4,
+        "production_limited": 1,
+    }
+    assert lanes["naver_reports"]["classification"] == "production"
+    assert lanes["krx_market_daily"]["classification"] == "production"
+    assert lanes["krx_investor_flow"]["classification"] == "production_limited"
+    assert lanes["etf_daily"]["classification"] == "production"
+    assert lanes["etf_daily"]["constituents_available"] is False
+    assert lanes["etf_daily"]["constituent_source_status"] == "not_loaded"
+    assert lanes["toss_openapi"]["classification"] == "hold"
+    assert lanes["toss_openapi"]["live_fetch"] is False
+    assert lanes["toss_openapi"]["affects_ordering"] is False
+    assert lanes["toss_openapi"]["forbidden_runtime_groups"] == [
+        "oauth_token_call",
+        "account_or_asset_read",
+        "order_create_modify_cancel",
+        "production_db_write",
+        "telegram_scheduler_or_public_surface",
+    ]
+    assert lanes["x_public_recap"]["classification"] == "lab"
+    assert lanes["x_public_recap"]["requires_separate_lab_branch"] is True
+    assert lanes["x_public_recap"]["login_dependency_allowed"] is False
+    assert payload["done_when_coverage"] == {
+        "source_lanes_classified": True,
+        "web_view_freshness_connected": True,
+        "telegram_freshness_connected": True,
+        "toss_x_not_exaggerated": True,
+        "etf_constituents_status_explicit": True,
+    }
+
+
+def test_data_source_lane_audit_text_prints_etf_toss_and_x_boundaries(capsys) -> None:
+    exit_code = cli_module.main(["data-source-lane-audit"])
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Data source lane audit" in output
+    assert "etf_daily | production | constituents=not_loaded" in output
+    assert "toss_openapi | hold | live_fetch=false | affects_ordering=false" in output
+    assert "x_public_recap | lab | separate_lab_branch=true | login_dependency_allowed=false" in output
 
 
 def test_ops_sync_preview_json_reports_git_batch_schema_and_safe_commands(
