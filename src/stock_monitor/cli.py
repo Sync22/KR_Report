@@ -21783,6 +21783,17 @@ def _render_web_view_html() -> str:
     .news-observation-summary-link:hover b { text-decoration: underline; }
     .news-observation-summary-item b { color: var(--ink); font-size: 12px; }
     .news-observation-summary-item span { color: var(--muted); line-height: 1.4; overflow-wrap: anywhere; }
+    .source-freshness-summary { display: grid; gap: 8px; border: 1px solid #d6dfd8; border-radius: 8px; padding: 10px 12px; background: #f6faf5; }
+    .source-freshness-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+    .source-freshness-head b { color: var(--ink); font-size: 13px; }
+    .source-freshness-items { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 8px; }
+    .source-freshness-item { min-width: 0; display: grid; gap: 3px; border-top: 1px solid rgba(199,190,176,.7); padding-top: 7px; font-size: 12px; }
+    .source-freshness-item:first-child { border-top: 0; }
+    .source-freshness-item b { overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
+    .source-freshness-item span { color: var(--muted); line-height: 1.35; overflow-wrap: anywhere; }
+    .source-freshness-status { display: inline-flex; width: fit-content; border-radius: 999px; padding: 2px 7px; background: #e2eee1; color: #245746; font-size: 11px; font-weight: 900; }
+    .source-freshness-status.stale { background: #fff0cf; color: #7a5400; }
+    .source-freshness-status.missing, .source-freshness-status.lab-hold { background: #eef1f2; color: #5d676d; }
     .intraday-overlap-panel { display: grid; gap: 8px; margin: 10px 0 12px; border: 1px solid #d8e8f5; border-radius: 8px; padding: 10px 12px; background: #f6fbff; }
     .intraday-overlap-panel[hidden] { display: none; }
     .intraday-overlap-meta { color: #1769aa; font-size: 11px; font-weight: 900; }
@@ -22077,6 +22088,12 @@ def _render_web_view_html() -> str:
               <strong id="briefing-investor-flow">-</strong>
               <span id="briefing-investor-flow-sub"></span>
             </div>
+          </div>
+        </div>
+        <div id="source-freshness-summary" class="source-freshness-summary" aria-live="polite">
+          <div class="source-freshness-head"><b>데이터 기준</b><span class="status-pill">저장 상태</span></div>
+          <div class="source-freshness-items">
+            <div class="source-freshness-item"><span>날짜를 선택하면 source별 저장 상태를 확인합니다.</span></div>
           </div>
         </div>
       </div>
@@ -22790,6 +22807,7 @@ def _render_web_view_html() -> str:
       syncStockSearchInput();
       renderDailyStocks(data);
       renderDailyBriefing(data);
+      renderSourceFreshnessSummary(data.source_freshness_summary);
       renderObservationSummary(data.observation_summary);
       renderNewsObservationSummary(data.news_observation_summary);
       document.getElementById("main-priority-date").textContent = `(${date})`;
@@ -22884,6 +22902,57 @@ def _render_web_view_html() -> str:
       const multiPoint = multiCount > 0 ? `반복 언급 ${number(multiCount)}종목` : "";
       renderBriefingCheckPoints([reportFlowPoint, multiPoint, ...(briefing.check_points || [])]);
       renderTimeSlotMoodCard(briefing.time_slot_mood_card);
+    }
+
+    function renderSourceFreshnessSummary(summary) {
+      const node = document.getElementById("source-freshness-summary");
+      if (!node) return;
+      const items = Array.isArray(summary?.items) ? summary.items.filter(Boolean) : [];
+      if (!items.length) {
+        node.innerHTML = `
+          <div class="source-freshness-head"><b>데이터 기준</b><span class="status-pill">저장 상태</span></div>
+          <div class="source-freshness-items">
+            <div class="source-freshness-item"><span>저장 source 상태가 없습니다.</span></div>
+          </div>
+        `;
+        return;
+      }
+      node.innerHTML = `
+        <div class="source-freshness-head">
+          <b>데이터 기준</b>
+          <span class="status-pill">${summary?.live_fetch ? "실시간 포함" : "저장 상태"}</span>
+        </div>
+        <div class="source-freshness-items">
+          ${items.map(renderSourceFreshnessItem).join("")}
+        </div>
+      `;
+    }
+
+    function renderSourceFreshnessItem(item) {
+      const status = String(item?.status || "missing");
+      const reference = item?.reference_date ? `기준 ${item.reference_date}` : "기준일 없음";
+      const count = item?.count !== undefined && item?.count !== null ? ` · ${number(item.count)}건` : "";
+      const scope = item?.data_scope ? ` · ${item.data_scope}` : "";
+      return `<div class="source-freshness-item">
+        <b>${esc(item?.label || item?.key || "-")}</b>
+        <span class="source-freshness-status ${esc(sourceFreshnessStatusClass(status))}">${esc(sourceFreshnessStatusLabel(status))}</span>
+        <span>${esc(reference)}${esc(count)}</span>
+        <span>${esc(item?.source || "-")}${esc(scope)}</span>
+      </div>`;
+    }
+
+    function sourceFreshnessStatusLabel(status) {
+      if (status === "exact") return "선택일";
+      if (status === "stale") return "최근 저장";
+      if (status === "lab_hold") return "lab 보류";
+      return "없음";
+    }
+
+    function sourceFreshnessStatusClass(status) {
+      if (status === "stale") return "stale";
+      if (status === "lab_hold") return "lab-hold";
+      if (status === "missing") return "missing";
+      return "";
     }
 
     function setBriefingPairValue(elementId, pair) {
@@ -25372,6 +25441,20 @@ def build_web_view_daily_snapshot(
         checked_at=current,
     )
     news_observation_summary = _build_web_view_news_observation_summary(repository, business_date)
+    report_count = sum(summary.mention_count for summary in summaries)
+    krx_context = _build_web_view_krx_context(repository, business_date)
+    krx_recent_flow = _build_web_view_krx_recent_flow(
+        repository,
+        business_date,
+        recent_snapshot_dates=recent_krx_snapshot_dates,
+    )
+    krx_investor_flow = _build_web_view_krx_investor_flow_context(repository, business_date)
+    source_freshness_summary = _build_web_view_source_freshness_summary(
+        business_date=business_date,
+        report_count=report_count,
+        recent_krx_snapshot_dates=recent_krx_snapshot_dates,
+        recent_flow_dates=recent_flow_dates,
+    )
     return {
         "now": current.isoformat(),
         "timezone": config.timezone,
@@ -25379,7 +25462,7 @@ def build_web_view_daily_snapshot(
         "read_only": True,
         "business_date": business_date.isoformat(),
         "public_contract": _web_view_public_contract(),
-        "report_count": sum(summary.mention_count for summary in summaries),
+        "report_count": report_count,
         "summary_stock_count": len(summaries),
         "mapping_notice": category_contract["notice"],
         "category_contract": category_contract,
@@ -25388,13 +25471,10 @@ def build_web_view_daily_snapshot(
         "market_commentary": market_commentary,
         "observation_summary": observation_summary,
         "news_observation_summary": news_observation_summary,
-        "krx_context": _build_web_view_krx_context(repository, business_date),
-        "krx_recent_flow": _build_web_view_krx_recent_flow(
-            repository,
-            business_date,
-            recent_snapshot_dates=recent_krx_snapshot_dates,
-        ),
-        "krx_investor_flow": _build_web_view_krx_investor_flow_context(repository, business_date),
+        "source_freshness_summary": source_freshness_summary,
+        "krx_context": krx_context,
+        "krx_recent_flow": krx_recent_flow,
+        "krx_investor_flow": krx_investor_flow,
         "stocks": [
             {
                 "business_date": summary.business_date.isoformat(),
@@ -25445,6 +25525,120 @@ def build_web_view_daily_snapshot(
         "market_mood": mood,
         "watch_candidates": watch_candidates,
     }
+
+
+def _build_web_view_source_freshness_summary(
+    *,
+    business_date: date,
+    report_count: int,
+    recent_krx_snapshot_dates: list[date],
+    recent_flow_dates: list[date],
+) -> dict:
+    krx_reference_date = recent_krx_snapshot_dates[0] if recent_krx_snapshot_dates else None
+    flow_reference_date = recent_flow_dates[0] if recent_flow_dates else None
+    report_reference_date = business_date if report_count > 0 else None
+    return {
+        "source": "stored_source_freshness",
+        "read_only": True,
+        "business_date": business_date.isoformat(),
+        "live_fetch": False,
+        "scoring": False,
+        "recommendation": False,
+        "items": [
+            _web_view_source_freshness_item(
+                key="reports",
+                label="Naver reports",
+                source="naver_research",
+                reference_date=report_reference_date,
+                business_date=business_date,
+                available=report_count > 0,
+                data_scope="stored_daily_summaries",
+                count=report_count,
+                notice="Stored Naver research reports for the selected date.",
+            ),
+            _web_view_source_freshness_item(
+                key="krx_market",
+                label="KRX market",
+                source="krx_open_api",
+                reference_date=krx_reference_date,
+                business_date=business_date,
+                available=krx_reference_date is not None,
+                data_scope="stored_stock_etf_index_daily",
+                notice="Stored KRX stock, ETF, and index daily snapshots.",
+            ),
+            _web_view_source_freshness_item(
+                key="etf_daily",
+                label="ETF daily",
+                source="krx_open_api",
+                reference_date=krx_reference_date,
+                business_date=business_date,
+                available=krx_reference_date is not None,
+                data_scope="stored_krx_etf_daily_snapshot",
+                notice="Stored ETF daily turnover/NAV reference only; constituents are not loaded.",
+            ),
+            _web_view_source_freshness_item(
+                key="investor_flow",
+                label="Investor flow",
+                source="krx_data_market",
+                reference_date=flow_reference_date,
+                business_date=business_date,
+                available=flow_reference_date is not None,
+                data_scope="stored_krx_data_market_sample",
+                notice="Stored KRX Data Marketplace investor flow sample.",
+            ),
+            {
+                "key": "toss_openapi",
+                "label": "Toss OpenAPI",
+                "source": "toss_openapi",
+                "status": "lab_hold",
+                "reference_date": None,
+                "exact_date_available": False,
+                "available": False,
+                "data_scope": "read_only_lab_contract",
+                "live_fetch": False,
+                "affects_ordering": False,
+                "notice": "Read-only lab/hold contract only; web-view does not call Toss OpenAPI.",
+            },
+        ],
+    }
+
+
+def _web_view_source_freshness_item(
+    *,
+    key: str,
+    label: str,
+    source: str,
+    reference_date: date | None,
+    business_date: date,
+    available: bool,
+    data_scope: str,
+    notice: str,
+    count: int | None = None,
+) -> dict:
+    status = _web_view_source_freshness_status(reference_date, business_date)
+    item = {
+        "key": key,
+        "label": label,
+        "source": source,
+        "status": status,
+        "reference_date": reference_date.isoformat() if reference_date else None,
+        "exact_date_available": status == "exact",
+        "available": available,
+        "data_scope": data_scope,
+        "live_fetch": False,
+        "notice": notice,
+    }
+    if count is not None:
+        item["count"] = count
+    return item
+
+
+def _web_view_source_freshness_status(reference_date: date | None, business_date: date) -> str:
+    if reference_date == business_date:
+        return "exact"
+    if reference_date is not None:
+        return "stale"
+    return "missing"
 
 
 def _build_web_view_market_briefing_context(
