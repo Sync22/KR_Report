@@ -205,6 +205,9 @@ KRX/ETF/flow/Toss/X 같은 외부 데이터 축을 실제 동작 가능한 sourc
 **Progress Note:**
 2026-06-05 dev commits `4b4f2e2`/`6cc9973`에서 `ops-sync-preview --json`에 `operating_pc_handoff`를 추가했다. handoff prompt의 첫 줄은 운영/개발 경계 규칙에 맞춰 `운영 PC용`이며, 비교 범위, source sync readiness, `data/` untracked 제외 안내, 커밋 요약, 변경 파일 그룹, 충돌 주의 경로, 검증 명령, 현재 blocker, 별도 승인 전 금지 작업, 적용 batch 제외 항목을 한 번에 출력한다. 이 기능은 read-only이며 DB write, scheduler 변경, Telegram 실발송, admin-gui 프로세스 조작을 하지 않는다. `python -m pytest tests\test_cli_commands.py -q -k ops_sync_preview` (`3 passed`)와 실제 `ops-sync-preview --base origin/main --head dev --json` handoff prompt 생성을 확인했다. 기본 DB schema blocker와 실제 운영 PC batch 검증은 여전히 별도 승인/운영 세션 범위다.
 
+**Progress Note:**
+2026-06-05 dev commits `9524f56`/`1b1c0dc` improved default-DB stale-schema handling for OPS verification commands. When the default DB is still schema `5/7`, `db-verify --json` and `ops-readiness --json` now return structured JSON with `surface`, `ready=false`, `schema_status.status=migration_required`, `pending_versions=[6,7]`, `default_db_schema_not_current`, review commands, and separate-approval requirements instead of a stack trace. `api-perf-summary --json` now runs without requiring DB schema current because it only reads API performance logs; the current dev-PC log smoke returned `record_count=1980` and `endpoint_count=62`. Verified focused stale-schema tests (`2 passed`), actual default-DB CLI smoke for `db-verify --json`, `ops-readiness --json`, `api-perf-summary --json`, `ops-sync-preview --json`, full CLI tests (`328 passed`), and full `python -m pytest -q` (`734 passed`). Remaining scope is still explicit migration approval/handling for the default or operating PC DB and final operating-PC batch verification.
+
 ### [x] TODO-ADMIN: Admin / Web-View / Operator-Review Boundary
 
 **Goal:**
