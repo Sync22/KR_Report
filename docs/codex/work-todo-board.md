@@ -19,15 +19,15 @@
 
 | Order | Todo ID | Why Now |
 | --- | --- | --- |
-| 1 | `TODO-WV` | 눈에 보이는 결과물이 부족하면 기능 성숙도를 판단하기 어렵다. |
-| 2 | `TODO-TG` | 웹뷰와 같은 근거를 Telegram briefing 문구로 재사용하면 실사용 가치가 바로 보인다. |
-| 3 | `TODO-NI` | news observation은 이미 저장/요약/웹뷰 노출 축이 있으므로 candidate evidence와의 연결 완성도가 중요하다. |
-| 4 | `TODO-DATA` | KRX/ETF/Toss/X 같은 외부 데이터 축은 실제 동작 가능성과 source freshness 기준을 먼저 잡아야 한다. |
-| 5 | `TODO-OPS` | 운영 싱크와 성능 관측은 기능 개발 후 묶어서 처리해야 충돌과 재작업이 줄어든다. |
+| 1 | `TODO-NI` | web-view/Telegram에 news observation 근거가 보이기 시작했으므로 candidate evidence와의 연결 완성도가 다음 병목이다. |
+| 2 | `TODO-DATA` | KRX/ETF/Toss/X 같은 외부 데이터 축은 실제 동작 가능성과 source freshness 기준을 더 명확히 잡아야 한다. |
+| 3 | `TODO-OPS` | 개발 산출물이 dev에 쌓였으므로 운영 싱크, 성능, GET-only/read-only 재관측을 묶어서 준비해야 한다. |
+| 4 | `TODO-ADMIN` | admin-gui와 shared web-view/operator-review 경계가 유지되는지 다음 기능 축 전에 재확인할 필요가 있다. |
+| 5 | `TODO-DOC` | README/canonical docs가 dev 현실과 다시 어긋나지 않도록 다음 구현 묶음 뒤에 정리한다. |
 
 ## Todo Board
 
-### [ ] TODO-WV: Web-View Visible Product Flow
+### [x] TODO-WV: Web-View Visible Product Flow
 
 **Goal:**
 `web-view`를 검증용 화면이 아니라 날짜별 브리핑, 후보 근거, 종목 상세, 시장/순환매 참고가 한 흐름으로 읽히는 화면으로 만든다.
@@ -59,7 +59,10 @@
 - `docs/codex/contracts/candidate-evidence-contract.md`
 - `docs/codex/contracts/news-intelligence-contract.md`
 
-### [ ] TODO-TG: Telegram Market Briefing Output
+**Completion Note:**
+2026-06-05 dev commit `e48eeab`에서 개발 검증 기준으로 완료 처리했다. `dev-fixture-db --scenario visible-product-flow` fixture DB를 만들고, `web-view-value-qa`, `web-view-browser-smoke`, `tests/test_web_view.py`, 전체 pytest를 통과했다. 실제 브라우저 smoke에서 메인/관찰/종목/시장/순환매 탭, 종목 검색, 리포트 없는 종목 `Beta Memory / 000660`의 stock-detail empty state, GET-only/POST-block 경계를 확인했다. 운영 적용, 외부 provider smoke, Startup fallback 운영 관측은 `TODO-OPS` 범위로 남긴다.
+
+### [x] TODO-TG: Telegram Market Briefing Output
 
 **Goal:**
 웹뷰의 stored evidence와 news observation을 활용해 장초/장중/장마감 복기용 Telegram briefing 문구를 실제 발송 가능한 형태로 만든다.
@@ -89,6 +92,9 @@
 - `docs/codex/execution-roadmap.md`
 - `docs/codex/data-quality-checklist.md`
 - `docs/codex/surface-contract.md`
+
+**Completion Note:**
+2026-06-05 dev commit `e48eeab`에서 개발 검증 기준으로 완료 처리했다. fixture DB 기준 `market-briefing --slot mood|lunch|preclose`, `--json` read-only preview, public-safe issue count `0`, stored news evidence 포함, `market-briefing-readiness` preview 경로를 확인했다. Telegram 실발송, 수동 review send 카운트 적립, phone review acceptance, scheduler 자동 등록은 별도 승인 전까지 운영 범위로 남긴다.
 
 ### [ ] TODO-NI: News Intelligence Evidence Layer
 
