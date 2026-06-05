@@ -19,7 +19,9 @@
 
 | Order | Todo ID | Why Now |
 | --- | --- | --- |
-| - | none | All board TODOs are development-verified. Real DB migration, scheduler changes, Telegram sends, admin-gui process operations, and operating-PC application remain separate approval work. |
+| 1 | TODO2-OPS-REAL | Dev-side TODOs are complete, but operating-PC sync, real DB migration approval, and scheduler/Telegram/admin boundaries still need an explicit operating handoff. |
+| 2 | TODO2-TG-LIVE-DRYRUN | Telegram output is preview-verified; the next risk is real operating data, paging/retry/outbox behavior, and final no-send dry-run evidence before any live send. |
+| 3 | TODO2-WV-CONTENT-QA | Web-view flow is fixture/browser-smoke verified; the next product risk is recent-date content quality, public-safe wording, and mobile/tablet scan quality on operating-like data. |
 
 ## Todo Board
 
@@ -282,6 +284,176 @@ README, roadmap, contracts, changelog가 현재 main/dev 현실과 맞고, 공�
 
 **Completion Note:**
 2026-06-05 dev commits `3d549b3`/`d066886` added a read-only `docs-hygiene-audit` CLI and refreshed public/canonical docs. The audit scans README, the core canonical status/roadmap docs, `surface-contract.md`, `data-source-policy.md`, `data-quality-checklist.md`, and `contracts/news-intelligence-contract.md` for local absolute user paths, real external provider URLs, secret-like assignments, and raw access-code examples while returning only redacted file/line/count metadata. `documentation-index.md`, roadmap, and core contract links were converted from local absolute workspace paths to relative links, historical external web-view provider URL mentions were replaced with placeholders, and README now lists `admin-boundary-audit --json` and `docs-hygiene-audit --json`. Verified `docs-hygiene-audit --json` returned `ready=true`, `scanned_file_count=9`, and `issue_count=0`; `tests/test_cli_commands.py -q -k docs_hygiene_audit` returned `4 passed`; `tests/test_cli_commands.py -q` returned `321 passed`.
+
+## Second Todo Board
+
+### [ ] TODO2-OPS-REAL: Operating-PC Sync And Real Migration Handoff
+
+**Goal:**
+Turn the dev-verified closeout into a controlled operating-PC handoff without silently performing production DB writes, scheduler changes, Telegram real sends, or admin-gui process operations.
+
+**Scope:**
+
+- Generate and review the operating-PC prompt from `ops-sync-preview --json`.
+- Confirm `dev` is pushed and identify the exact commit range to sync.
+- Run pre-approval checks only: `ops-sync-preview`, `db-migrate --dry-run`, `db-migration-rehearsal --json`, and `db-verify --json`.
+- Prepare the post-approval command sequence for DB backup, real migration, verification, and readiness.
+- Keep `data/` and any local fixtures out of commits and sync batches unless explicitly approved.
+
+**Done When:**
+
+- The operating-PC handoff starts with `운영 PC용`.
+- The handoff lists exact pre-approval and post-approval commands.
+- The default/operating DB schema state is known before any real migration.
+- Real DB write, scheduler registration/change, Telegram real send, and admin-gui process operation are still blocked unless separately approved.
+- A post-sync verification checklist exists for the operating PC.
+
+**Start By Reading:**
+
+- `docs/codex/weekly-sync/WEEKLY_SYNC_GUIDE.md`
+- `docs/codex/surface-contract.md`
+- `docs/codex/architecture-risk-review.md`
+- `docs/codex/work-todo-board.md`
+
+### [ ] TODO2-TG-LIVE-DRYRUN: Telegram Real-Data No-Send Dry Run
+
+**Goal:**
+Use operating-like stored data to prove Telegram briefing payload quality, paging, retry, and outbox/readiness behavior before any real Telegram send is approved.
+
+**Scope:**
+
+- Run market briefing preview for the key slots against recent stored data.
+- Compare text and JSON payloads for public-safe wording and evidence coverage.
+- Check paging, retry, and outbox/readiness behavior through read-only or no-send paths.
+- Confirm freshness lines for Naver/KRX/ETF/flow/Toss/X remain accurate and not overstated.
+- Keep Telegram real send disabled until a separate explicit approval.
+
+**Done When:**
+
+- Mood/lunch/preclose previews render with recent data and no public trading call, numeric score, buy/sell signal, broker, or order-routing wording.
+- Outbox/readiness state can be reviewed without sending.
+- Retry/paging behavior has focused test or CLI evidence.
+- Missing/stale source states are visible in the message instead of hidden.
+- The final report says exactly what remains before live send approval.
+
+**Start By Reading:**
+
+- `docs/codex/execution-roadmap.md`
+- `docs/codex/data-quality-checklist.md`
+- `docs/codex/surface-contract.md`
+- `docs/codex/contracts/news-intelligence-contract.md`
+
+### [ ] TODO2-WV-CONTENT-QA: Web-View Recent-Date Content QA
+
+**Goal:**
+Move beyond fixture smoke and verify that recent-date web-view content is usable, scan-friendly, and public-safe across desktop, tablet, and mobile.
+
+**Scope:**
+
+- Select several recent business dates from stored data.
+- Run value QA and browser smoke for daily, watchlist/candidate, stock detail, market, and ETF rotation surfaces.
+- Review empty states, stale source indicators, search behavior, and candidate/news evidence labels.
+- Confirm public DTOs do not expose raw sentiment, internal recommendation payloads, numeric scores, buy/sell calls, broker execution, or order-routing language.
+- Capture any content-quality defects as concrete follow-up items instead of broad redesign work.
+
+**Done When:**
+
+- Multiple recent dates have CLI/browser evidence.
+- Desktop/tablet/mobile smoke finds no blocking overlap or broken navigation.
+- Public-safe wording scan passes.
+- Empty/low-evidence states are understandable without operator context.
+- Remaining defects are listed with date, surface, symptom, and suggested fix.
+
+**Start By Reading:**
+
+- `docs/codex/surface-contract.md`
+- `docs/codex/next-phase.md`
+- `docs/codex/contracts/candidate-evidence-contract.md`
+- `docs/codex/contracts/news-intelligence-contract.md`
+
+### [ ] TODO2-DATA-FRESHNESS-LIVE: Live Source Freshness Verification
+
+**Goal:**
+Validate source freshness behavior on recent operating-like dates so KRX, ETF, investor-flow, Toss, and X states are displayed honestly.
+
+**Scope:**
+
+- Re-run `data-source-lane-audit --json` and compare with web-view/Telegram freshness output.
+- Check KRX latest-date logic and next-business-day publication assumptions.
+- Verify ETF/index data presence and keep ETF constituents marked clearly when not loaded.
+- Keep Toss as hold and X as lab unless separate source decisions are made.
+- Document source-specific stale/missing cases with commands and observed dates.
+
+**Done When:**
+
+- Source lanes remain classified as production, production_limited, lab, or hold.
+- Freshness output is consistent across CLI, web-view, and Telegram preview.
+- ETF constituent absence is explicit and not presented as loaded coverage.
+- Toss/X are not connected to production DB writes, Telegram, scheduler, admin-gui, or public web-view runtime paths.
+- Any source gap has a dated evidence note and next action.
+
+**Start By Reading:**
+
+- `docs/codex/data-source-policy.md`
+- `docs/codex/krx-market-data-runbook.md`
+- `docs/codex/contracts/toss-openapi-readonly-lab-contract.md`
+- `docs/codex/contracts/toss-openapi-official-api-inventory.md`
+
+### [ ] TODO2-NI-EVAL: News Evidence Quality Evaluation
+
+**Goal:**
+Evaluate whether the news-intelligence evidence layer is useful on real samples, not only structurally present.
+
+**Scope:**
+
+- Sample recent dates and mentioned stocks with stored observations.
+- Review candidate linkage labels, source modes, direct/caution/market-context separation, and stale KRX cues.
+- Identify duplicate, stale, weak, or misleading evidence cases.
+- Confirm raw sentiment/impact/internal recommendation details remain out of public surfaces.
+- Turn quality issues into focused tests or CLI/report improvements.
+
+**Done When:**
+
+- Sample cases have a reviewed evidence table or CLI output.
+- False-positive, duplicate, stale, and weak-evidence cases are classified.
+- At least one quality improvement is implemented if a repeated defect appears.
+- Public projection remains recommendation-safe.
+- Remaining evaluation gaps are tied to specific sample dates or source lanes.
+
+**Start By Reading:**
+
+- `docs/codex/contracts/news-intelligence-contract.md`
+- `docs/codex/contracts/candidate-evidence-contract.md`
+- `docs/codex/surface-contract.md`
+- `docs/codex/data-source-policy.md`
+
+### [ ] TODO2-ADMIN-ACCESS: Admin/Web-View Access Boundary Verification
+
+**Goal:**
+Verify the admin-gui, web-view, and future operator-review boundary in an operating-like environment without manipulating production admin processes unless explicitly approved.
+
+**Scope:**
+
+- Run `admin-boundary-audit --json` against the available approved DB/environment.
+- Confirm web-view remains GET-only and does not expose operator/admin payloads.
+- Confirm admin-gui remains operator-only and does not become a public evidence review surface.
+- Keep future operator-review reserved unless separately scoped.
+- Prepare operating-PC access checks that do not include process control by default.
+
+**Done When:**
+
+- Boundary audit is clean or lists concrete blockers.
+- Public web-view rejects unsafe methods and lacks admin/status/operator endpoints.
+- Admin-gui surfaces do not expose public-facing recommendation/evidence review content incorrectly.
+- Operator-review remains explicitly reserved/unimplemented.
+- Any operating-PC process action is separated behind an explicit approval step.
+
+**Start By Reading:**
+
+- `docs/codex/surface-contract.md`
+- `docs/codex/admin-gui-plan.md`
+- `tests/test_admin_gui.py`
+- `tests/test_operator_status.py`
 
 ## Lab Branches To Keep Separate
 
