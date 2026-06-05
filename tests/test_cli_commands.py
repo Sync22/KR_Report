@@ -9315,6 +9315,17 @@ def test_ops_sync_preview_json_reports_git_batch_schema_and_safe_commands(
     }
     assert payload["default_db_schema"]["current"] is True
     assert any("web-view-browser-smoke" in command for command in payload["verification_commands"])
+    handoff = payload["operating_pc_handoff"]
+    assert handoff["read_only"] is True
+    assert handoff["first_line"] == "운영 PC용"
+    assert handoff["prompt"].startswith("운영 PC용\n")
+    assert "origin/main..dev" in handoff["prompt"]
+    assert "abc1234 Add source freshness" in handoff["prompt"]
+    assert "fed9876 Update todo board" in handoff["prompt"]
+    assert "src: 1" in handoff["prompt"]
+    assert "python -m pytest -q" in handoff["prompt"]
+    assert "production DB write" in handoff["prompt"]
+    assert "data/ untracked" in handoff["prompt"]
     assert "db_path" not in json.dumps(payload)
 
 
@@ -9375,6 +9386,11 @@ def test_ops_sync_preview_reports_schema_blocker_without_failing_json(
     }
     assert payload["source_sync_ready"] is False
     assert payload["blockers"][0]["code"] == "default_db_schema_not_current"
+    handoff = payload["operating_pc_handoff"]
+    assert handoff["prompt"].startswith("운영 PC용\n")
+    assert "현재 blocker" in handoff["prompt"]
+    assert "default_db_schema_not_current" in handoff["prompt"]
+    assert "운영 DB write 금지" in handoff["prompt"]
 
 
 def test_admin_boundary_audit_json_reports_surface_split_without_leaking_status(
