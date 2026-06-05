@@ -213,6 +213,22 @@ SCHEMA_PRESERVING_EXISTING_DB_COMMANDS = {
     "db-restore-smoke",
     "dev-fixture-db",
 }
+DOCS_HYGIENE_DEFAULT_PATHS = (
+    Path("README.md"),
+    Path("docs/codex/documentation-index.md"),
+    Path("docs/codex/current-work.md"),
+    Path("docs/codex/next-phase.md"),
+    Path("docs/codex/execution-roadmap.md"),
+)
+DOCS_HYGIENE_LOCAL_ABSOLUTE_PATH_PATTERN = re.compile(
+    r"(?:/[A-Za-z]:/Users/[^)\s`]+|[A-Za-z]:[\\/](?:Users|Documents and Settings)[\\/][^)\s`]+)"
+)
+DOCS_HYGIENE_EXTERNAL_PROVIDER_URL_PATTERN = re.compile(r"https://[A-Za-z0-9.-]*kr-stock[.]site\b")
+DOCS_HYGIENE_SECRET_ASSIGNMENT_PATTERN = re.compile(
+    r"\b(?:STOCK_MONITOR_)?[A-Z0-9_]*(?:TOKEN|PASSWORD|SECRET|AUTH_KEY|CHAT_ID)[A-Z0-9_]*\s*=\s*[^\s`]+",
+    re.IGNORECASE,
+)
+DOCS_HYGIENE_RAW_ACCESS_CODE_PATTERN = re.compile(r"\baccess[_ -]?code\s*[:=]\s*[A-Za-z0-9]{4,}\b", re.IGNORECASE)
 ADMIN_BOUNDARY_JUDGMENT_REVIEW_FORBIDDEN_TOKENS = (
     "news-intelligence",
     "news_observation",
@@ -1448,6 +1464,19 @@ def build_parser() -> argparse.ArgumentParser:
     admin_boundary_audit_parser.add_argument("--limit", type=int, default=5)
     admin_boundary_audit_parser.add_argument("--json", action="store_true")
 
+    docs_hygiene_audit_parser = subparsers.add_parser(
+        "docs-hygiene-audit",
+        help="Read-only public/canonical documentation hygiene scan with redacted issue reporting.",
+    )
+    docs_hygiene_audit_parser.add_argument(
+        "--path",
+        dest="paths",
+        type=Path,
+        action="append",
+        help="Override the default public/canonical document set. Can be repeated.",
+    )
+    docs_hygiene_audit_parser.add_argument("--json", action="store_true")
+
     web_view_parser = subparsers.add_parser(
         "web-view",
         help="Run the read-only user web view for StockMonitor archive and market summaries.",
@@ -1792,6 +1821,12 @@ def main(argv: list[str] | None = None) -> int:
             scenario=args.scenario,
             output_path=args.output,
             overwrite=args.overwrite,
+            as_json=args.json,
+        )
+    if args.command == "docs-hygiene-audit":
+        return _run_docs_hygiene_audit(
+            Path.cwd(),
+            paths=tuple(args.paths or ()),
             as_json=args.json,
         )
 
@@ -4643,6 +4678,116 @@ def _run_api_perf_summary(config: RuntimeConfig, *, log_path: Path | None, as_js
             f"family={item['path_family']}"
         )
     return 0
+
+
+def _build_docs_hygiene_audit_payload(root_dir: Path, *, paths: Sequence[Path] = ()) -> dict[str, object]:
+    target_paths = tuple(paths) if paths else DOCS_HYGIENE_DEFAULT_PATHS
+    issue_map: dict[tuple[str, str], dict[str, object]] = {}
+    scanned_files: list[str] = []
+    for input_path in target_paths:
+        absolute_path = input_path if input_path.is_absolute() else root_dir / input_path
+        display_path = _docs_hygiene_display_path(root_dir, absolute_path)
+        if not absolute_path.exists():
+            issue_map[(display_path, "missing_public_doc")] = {
+                "code": "missing_public_doc",
+                "path": display_path,
+                "count": 1,
+                "lines": [],
+                "redacted": True,
+                "message": "Configured public/canonical document is missing.",
+            }
+            continue
+        scanned_files.append(display_path)
+        text = absolute_path.read_text(encoding="utf-8")
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            for code, pattern in _docs_hygiene_patterns():
+                match_count = len(pattern.findall(line))
+                if match_count == 0:
+                    continue
+                key = (display_path, code)
+                issue = issue_map.setdefault(
+                    key,
+                    {
+                        "code": code,
+                        "path": display_path,
+                        "count": 0,
+                        "lines": [],
+                        "redacted": True,
+                        "message": _docs_hygiene_issue_message(code),
+                    },
+                )
+                issue["count"] = int(issue["count"]) + match_count
+                issue["lines"].append(line_number)
+    issues = sorted(issue_map.values(), key=lambda item: (str(item["path"]), str(item["code"])))
+    issue_count = sum(int(item["count"]) for item in issues)
+    return {
+        "surface": "docs-hygiene-audit",
+        "read_only": True,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "ready": issue_count == 0,
+        "scanned_file_count": len(scanned_files),
+        "scanned_files": scanned_files,
+        "checked_patterns": [
+            "local_absolute_path",
+            "external_provider_url",
+            "secret_like_assignment",
+            "raw_access_code",
+        ],
+        "issue_count": issue_count,
+        "issues": issues,
+        "verification_commands": [
+            "python -m stock_monitor docs-hygiene-audit --json",
+            "python -m pytest tests/test_cli_commands.py -q -k docs_hygiene_audit",
+            "python -m pytest -q",
+        ],
+    }
+
+
+def _run_docs_hygiene_audit(root_dir: Path, *, paths: Sequence[Path], as_json: bool) -> int:
+    payload = _build_docs_hygiene_audit_payload(root_dir, paths=paths)
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload["ready"] else 1
+    print("Docs hygiene audit")
+    print(f"- ready: {'Y' if payload['ready'] else 'N'}")
+    print(f"- scanned files: {payload['scanned_file_count']}")
+    print(f"- issues: {payload['issue_count']}")
+    for item in payload["issues"]:
+        lines = ", ".join(str(line) for line in item["lines"]) or "-"
+        print(f"  - {item['path']}:{lines} {item['code']} count={item['count']} redacted=Y")
+    print("- verification commands:")
+    for command in payload["verification_commands"]:
+        print(f"  - {command}")
+    return 0 if payload["ready"] else 1
+
+
+def _docs_hygiene_patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
+    return (
+        ("local_absolute_path", DOCS_HYGIENE_LOCAL_ABSOLUTE_PATH_PATTERN),
+        ("external_provider_url", DOCS_HYGIENE_EXTERNAL_PROVIDER_URL_PATTERN),
+        ("secret_like_assignment", DOCS_HYGIENE_SECRET_ASSIGNMENT_PATTERN),
+        ("raw_access_code", DOCS_HYGIENE_RAW_ACCESS_CODE_PATTERN),
+    )
+
+
+def _docs_hygiene_issue_message(code: str) -> str:
+    messages = {
+        "local_absolute_path": "Public/canonical docs should use relative links instead of local absolute user paths.",
+        "external_provider_url": "Public/canonical docs should use a placeholder instead of a real external provider URL.",
+        "secret_like_assignment": "Public/canonical docs should not include secret-like assignments or example values.",
+        "raw_access_code": "Public/canonical docs should not include raw access-code examples or values.",
+    }
+    return messages.get(code, "Documentation hygiene issue.")
+
+
+def _docs_hygiene_display_path(root_dir: Path, absolute_path: Path) -> str:
+    try:
+        return absolute_path.resolve().relative_to(root_dir.resolve()).as_posix()
+    except ValueError:
+        return absolute_path.name
 
 
 def _build_admin_boundary_audit_payload(
