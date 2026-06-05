@@ -4704,6 +4704,12 @@ def test_market_briefing_preview_includes_turnover_reference(tmp_path, capsys) -
     assert "오늘의 시장 분위기 · 26.05.14" in output
     assert "거래대금 참고 · 26.05.14 KRX 저장값" in output
     assert "KOSPI: 삼성전자 2.3조" in output
+    assert "데이터 기준" in output
+    assert "Naver reports: exact 26.05.14 (3건)" in output
+    assert "KRX market: exact 26.05.14" in output
+    assert "ETF daily: exact 26.05.14" in output
+    assert "Investor flow: missing" in output
+    assert "Toss OpenAPI: lab-hold (호출 없음)" in output
     assert "추천" not in output
     assert "점수" not in output
 
@@ -4787,6 +4793,21 @@ def test_market_briefing_json_preview_includes_slot_and_public_news_observation(
     assert payload["sends_telegram"] is False
     assert payload["public_safe_issue_count"] == 0
     assert payload["news_observation_summary"]["available"] is True
+    source_freshness_items = {
+        item["key"]: item for item in payload["source_freshness_summary"]["items"]
+    }
+    assert payload["source_freshness_summary"]["read_only"] is True
+    assert payload["source_freshness_summary"]["live_fetch"] is False
+    assert source_freshness_items["reports"]["status"] == "exact"
+    assert source_freshness_items["reports"]["count"] == 1
+    assert source_freshness_items["krx_market"]["status"] == "exact"
+    assert source_freshness_items["etf_daily"]["status"] == "exact"
+    assert source_freshness_items["investor_flow"]["status"] == "missing"
+    assert source_freshness_items["toss_openapi"]["status"] == "lab_hold"
+    assert source_freshness_items["toss_openapi"]["live_fetch"] is False
+    assert source_freshness_items["toss_openapi"]["affects_ordering"] is False
+    assert "데이터 기준" in payload["message"]
+    assert "Toss OpenAPI: lab-hold (호출 없음)" in payload["message"]
     assert "뉴스 근거" in payload["message"]
     assert "삼성전자, AI 반도체 공급 계약 체결" in payload["message"]
     assert "sentiment_score" not in json.dumps(payload, ensure_ascii=False)
