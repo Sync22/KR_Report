@@ -165,6 +165,7 @@ READ_ONLY_SCHEMA_CURRENT_COMMANDS = {
     "access-code",
     "api-perf-summary",
     "ops-readiness",
+    "ops-sync-preview",
     "candidate-evidence-readiness",
     "category-catalog",
     "category-snapshot-plan",
@@ -1609,6 +1610,15 @@ def build_parser() -> argparse.ArgumentParser:
     ops_readiness_parser.add_argument("--api-perf-log", type=Path, help="Override logs/api_perf.log path.")
     ops_readiness_parser.add_argument("--json", action="store_true")
 
+    ops_sync_preview_parser = subparsers.add_parser(
+        "ops-sync-preview",
+        help="Preview dev/main sync scope, worktree state, schema blocker, and read-only verification commands.",
+    )
+    ops_sync_preview_parser.add_argument("--base", default="origin/main")
+    ops_sync_preview_parser.add_argument("--head", default="HEAD")
+    ops_sync_preview_parser.add_argument("--max-commits", type=int, default=30)
+    ops_sync_preview_parser.add_argument("--json", action="store_true")
+
     db_backup_parser = subparsers.add_parser(
         "db-backup",
         help="Create a consistent SQLite backup under data/backups.",
@@ -1755,6 +1765,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "db-migrate":
         return _run_db_migrate(repository, dry_run=args.dry_run)
+    if args.command == "ops-sync-preview":
+        return _run_ops_sync_preview(
+            config,
+            repository,
+            base_ref=args.base,
+            head_ref=args.head,
+            max_commits=args.max_commits,
+            as_json=args.json,
+        )
 
     _prepare_repository_for_command(repository, args)
 
@@ -4581,6 +4600,301 @@ def _run_api_perf_summary(config: RuntimeConfig, *, log_path: Path | None, as_js
             f"family={item['path_family']}"
         )
     return 0
+
+
+def _run_git_for_ops_sync_preview(root_dir: Path, args: tuple[str, ...]) -> dict[str, object]:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=root_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except Exception as exc:
+        return {"ok": False, "returncode": None, "stdout": "", "stderr": str(exc)}
+    return {
+        "ok": result.returncode == 0,
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
+
+
+def _build_ops_sync_preview_payload(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    base_ref: str,
+    head_ref: str,
+    max_commits: int,
+) -> dict[str, object]:
+    max_commit_count = max(1, min(max_commits, 200))
+    status_result = _run_git_for_ops_sync_preview(config.root_dir, ("status", "--short", "--branch"))
+    log_range = f"{base_ref}..{head_ref}"
+    log_result = _run_git_for_ops_sync_preview(
+        config.root_dir,
+        ("log", "--reverse", "--pretty=format:%h\t%s", f"--max-count={max_commit_count}", log_range),
+    )
+    diff_result = _run_git_for_ops_sync_preview(config.root_dir, ("diff", "--name-only", log_range))
+    worktree = _parse_ops_sync_git_status(str(status_result.get("stdout") or ""))
+    commits = _parse_ops_sync_commits(str(log_result.get("stdout") or ""))
+    changed_files = _parse_ops_sync_changed_files(str(diff_result.get("stdout") or ""))
+    schema_status = _ops_sync_db_schema_status(repository)
+    blockers: list[dict[str, object]] = []
+    if not status_result.get("ok"):
+        blockers.append(
+            {
+                "code": "git_status_unavailable",
+                "message": "git status could not be read.",
+            }
+        )
+    if not log_result.get("ok") or not diff_result.get("ok"):
+        blockers.append(
+            {
+                "code": "git_comparison_unavailable",
+                "message": f"git comparison failed for {log_range}.",
+            }
+        )
+    if int(worktree["tracked_dirty_count"]) > 0:
+        blockers.append(
+            {
+                "code": "tracked_worktree_dirty",
+                "message": "tracked worktree changes exist; commit or review them before preparing an ops batch.",
+                "count": worktree["tracked_dirty_count"],
+            }
+        )
+    if int(worktree["other_untracked_count"]) > 0:
+        blockers.append(
+            {
+                "code": "unexpected_untracked_files",
+                "message": "untracked files outside data/ exist; review before source sync.",
+                "count": worktree["other_untracked_count"],
+            }
+        )
+    if not bool(schema_status.get("current")):
+        blockers.append(
+            {
+                "code": "default_db_schema_not_current",
+                "message": "default DB cannot run normal read-only smoke until schema is current; use fixture DB or run an approved migration.",
+            }
+        )
+    return {
+        "surface": "ops-sync-preview",
+        "read_only": True,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "base_ref": base_ref,
+        "head_ref": head_ref,
+        "source_sync_ready": len(blockers) == 0,
+        "worktree": worktree,
+        "default_db_schema": schema_status,
+        "git_comparison": {
+            "range": log_range,
+            "commit_count": len(commits),
+            "commits": commits,
+            "changed_file_count": len(changed_files),
+            "changed_files": changed_files,
+            "changed_file_groups": _ops_sync_changed_file_groups(changed_files),
+            "conflict_watch_paths": _ops_sync_conflict_watch_paths(changed_files),
+        },
+        "batch_policy": {
+            "apply_as_reviewed_batch": True,
+            "do_not_include": [
+                ".env",
+                "data/",
+                "data/access_code.json",
+                "data/backups/",
+                "*.log",
+                ".venv/",
+            ],
+            "requires_separate_approval": [
+                "production DB write",
+                "scheduler registration/change",
+                "Telegram real send",
+                "admin-gui process control",
+                "broker/order routing",
+            ],
+        },
+        "verification_commands": [
+            "python -m stock_monitor ops-sync-preview --base origin/main --head dev --json",
+            "python -m stock_monitor db-verify --json",
+            "python -m stock_monitor web-view-value-qa --recent-business-days 4 --stock-limit 20 --json",
+            "python -m stock_monitor web-view-browser-smoke --date latest --stock-limit 20 --json",
+            "python -m stock_monitor api-perf-summary --json",
+            "python -m pytest -q",
+        ],
+        "blockers": blockers,
+    }
+
+
+def _run_ops_sync_preview(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    base_ref: str,
+    head_ref: str,
+    max_commits: int,
+    as_json: bool,
+) -> int:
+    if not base_ref.strip():
+        raise ValueError("--base must not be empty.")
+    if not head_ref.strip():
+        raise ValueError("--head must not be empty.")
+    payload = _build_ops_sync_preview_payload(
+        config,
+        repository,
+        base_ref=base_ref.strip(),
+        head_ref=head_ref.strip(),
+        max_commits=max_commits,
+    )
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload["source_sync_ready"] else 1
+    print("Operations sync preview")
+    print(f"- range: {payload['base_ref']}..{payload['head_ref']}")
+    print(f"- source sync ready: {'Y' if payload['source_sync_ready'] else 'N'}")
+    worktree = payload["worktree"]
+    print(
+        f"- worktree: tracked_dirty={worktree['tracked_dirty_count']} "
+        f"data_untracked={worktree['local_data_untracked_count']} "
+        f"other_untracked={worktree['other_untracked_count']}"
+    )
+    schema = payload["default_db_schema"]
+    print(
+        f"- default DB schema: {schema['status']} "
+        f"current={schema['current_version']} target={schema['target_version']}"
+    )
+    comparison = payload["git_comparison"]
+    print(f"- commits to review: {comparison['commit_count']}")
+    for item in comparison["commits"]:
+        print(f"  - {item['short_hash']} {item['subject']}")
+    print("- changed file groups:")
+    for group, count in comparison["changed_file_groups"].items():
+        print(f"  - {group}: {count}")
+    if payload["blockers"]:
+        print("- blockers:")
+        for item in payload["blockers"]:
+            print(f"  - {item['code']}: {item['message']}")
+    print("- verification commands:")
+    for command in payload["verification_commands"]:
+        print(f"  - {command}")
+    return 0 if payload["source_sync_ready"] else 1
+
+
+def _parse_ops_sync_git_status(output: str) -> dict[str, object]:
+    branch = None
+    tracked: list[str] = []
+    untracked: list[str] = []
+    local_data_untracked: list[str] = []
+    other_untracked: list[str] = []
+    for raw_line in output.splitlines():
+        line = raw_line.rstrip()
+        if not line:
+            continue
+        if line.startswith("## "):
+            branch = line[3:].strip()
+            continue
+        status = line[:2]
+        path = line[3:].strip() if len(line) > 3 else ""
+        if status == "??":
+            untracked.append(path)
+            if path == "data" or path == "data/" or path.startswith("data/"):
+                local_data_untracked.append(path)
+            else:
+                other_untracked.append(path)
+        else:
+            tracked.append(path)
+    return {
+        "branch": branch,
+        "tracked_dirty_count": len(tracked),
+        "tracked_dirty_paths": tracked,
+        "untracked_count": len(untracked),
+        "local_data_untracked_count": len(local_data_untracked),
+        "local_data_untracked_paths": local_data_untracked[:20],
+        "other_untracked_count": len(other_untracked),
+        "other_untracked_paths": other_untracked[:20],
+    }
+
+
+def _parse_ops_sync_commits(output: str) -> list[dict[str, str]]:
+    commits: list[dict[str, str]] = []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        short_hash, _, subject = line.partition("\t")
+        commits.append({"short_hash": short_hash.strip(), "subject": subject.strip()})
+    return commits
+
+
+def _parse_ops_sync_changed_files(output: str) -> list[str]:
+    return [line.strip() for line in output.splitlines() if line.strip()]
+
+
+def _ops_sync_changed_file_groups(changed_files: list[str]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for path in changed_files:
+        first = path.split("/", 1)[0]
+        if first in {"src", "tests", "scripts", "docs"}:
+            counts[first] += 1
+        elif first in {"AGENTS.md", "README.md", "CHANGELOG.md", "pyproject.toml"}:
+            counts["project_root"] += 1
+        else:
+            counts["other"] += 1
+    return dict(sorted(counts.items()))
+
+
+def _ops_sync_conflict_watch_paths(changed_files: list[str]) -> list[str]:
+    watch_prefixes = (
+        "src/stock_monitor/cli.py",
+        "src/stock_monitor/db/",
+        "tests/test_cli_commands.py",
+        "tests/test_web_view.py",
+        "scripts/",
+        "docs/codex/work-todo-board.md",
+        "docs/codex/surface-contract.md",
+        "docs/codex/weekly-sync/",
+        "AGENTS.md",
+        "README.md",
+        "CHANGELOG.md",
+    )
+    return [path for path in changed_files if path.startswith(watch_prefixes)]
+
+
+def _ops_sync_db_schema_status(repository: StockMonitorRepository) -> dict[str, object]:
+    if not repository.db_path.exists():
+        return {
+            "exists": False,
+            "current": False,
+            "current_version": None,
+            "target_version": None,
+            "pending_versions": [],
+            "status": "missing",
+        }
+    try:
+        status = repository.get_schema_migration_status()
+    except Exception as exc:
+        return {
+            "exists": True,
+            "current": False,
+            "current_version": None,
+            "target_version": None,
+            "pending_versions": [],
+            "status": "error",
+            "message": str(exc),
+        }
+    current = status.current_version == status.target_version and not status.pending_versions
+    return {
+        "exists": True,
+        "current": current,
+        "current_version": status.current_version,
+        "target_version": status.target_version,
+        "pending_versions": list(status.pending_versions),
+        "status": "current" if current else "migration_required",
+    }
 
 
 def _build_ops_readiness_payload(
