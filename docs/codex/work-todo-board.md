@@ -29,10 +29,10 @@
 
 ### [ ] TODO-WV: Web-View Visible Product Flow
 
-**Goal:**  
+**Goal:**
 `web-view`를 검증용 화면이 아니라 날짜별 브리핑, 후보 근거, 종목 상세, 시장/순환매 참고가 한 흐름으로 읽히는 화면으로 만든다.
 
-**User Command Examples:**  
+**User Command Examples:**
 `TODO-WV 진행`, `웹뷰 보이는 결과물 이어서`, `후보 근거 화면 정리`
 
 **Scope:**
@@ -61,10 +61,10 @@
 
 ### [ ] TODO-TG: Telegram Market Briefing Output
 
-**Goal:**  
+**Goal:**
 웹뷰의 stored evidence와 news observation을 활용해 장초/장중/장마감 복기용 Telegram briefing 문구를 실제 발송 가능한 형태로 만든다.
 
-**User Command Examples:**  
+**User Command Examples:**
 `TODO-TG 진행`, `시황 봇 문구 만들자`, `텔레그램 브리핑 이어서`
 
 **Scope:**
@@ -92,10 +92,10 @@
 
 ### [ ] TODO-NI: News Intelligence Evidence Layer
 
-**Goal:**  
+**Goal:**
 news intelligence를 독립 뉴스 수집기가 아니라 report/KRX/candidate evidence를 보강하는 판단 근거 레이어로 완성한다.
 
-**User Command Examples:**  
+**User Command Examples:**
 `TODO-NI 진행`, `뉴스 관찰 근거 이어서`, `candidate news 연결 더 해줘`
 
 **Scope:**
@@ -122,13 +122,13 @@ news intelligence를 독립 뉴스 수집기가 아니라 report/KRX/candidate e
 
 ### [ ] TODO-DATA: Market Data, ETF, And Source Freshness
 
-**Goal:**  
+**Goal:**
 KRX/ETF/flow/Toss/X 같은 외부 데이터 축을 실제 동작 가능한 source lane으로 분리하고, freshness와 한계를 화면/문구에 드러낸다.
 
-**User Command Examples:**  
+**User Command Examples:**
 `TODO-DATA 진행`, `TODO-DATA Toss 먼저`, `ETF 쪽 실제 기능 확인`, `데이터 소스 정리`
 
-**Aliases:**  
+**Aliases:**
 `TODO-TOSS`, `TODO-ETF`, `TODO-X`는 모두 `TODO-DATA`의 하위 범위로 해석한다.
 
 **Scope:**
@@ -155,10 +155,10 @@ KRX/ETF/flow/Toss/X 같은 외부 데이터 축을 실제 동작 가능한 sourc
 
 ### [ ] TODO-OPS: Operations, Sync, And Performance Closeout
 
-**Goal:**  
+**Goal:**
 개발 결과를 dev에 모으고, 운영 적용은 묶음 단위로 싱크하면서 성능/버튼/GET-only/read-only 계약을 재관측한다.
 
-**User Command Examples:**  
+**User Command Examples:**
 `TODO-OPS 진행`, `운영 싱크 준비`, `N100 관측 결과 반영`
 
 **Scope:**
@@ -184,10 +184,10 @@ KRX/ETF/flow/Toss/X 같은 외부 데이터 축을 실제 동작 가능한 sourc
 
 ### [ ] TODO-ADMIN: Admin / Web-View / Operator-Review Boundary
 
-**Goal:**  
+**Goal:**
 admin-gui는 운영 상태/제어/복구/설정/audit만 담당하고, 판단 화면은 web-view projection 또는 future operator-review로 분리한다.
 
-**User Command Examples:**  
+**User Command Examples:**
 `TODO-ADMIN 진행`, `관리자 화면 정리`, `operator-review 경계 잡자`
 
 **Scope:**
@@ -210,10 +210,10 @@ admin-gui는 운영 상태/제어/복구/설정/audit만 담당하고, 판단 �
 
 ### [ ] TODO-DOC: Public Documentation And Information Hygiene
 
-**Goal:**  
+**Goal:**
 README, roadmap, contracts, changelog가 현재 main/dev 현실과 맞고, 공개 문서에 개인 경로, secret, 실행 가능한 민감 URL, 과한 운영 세부가 남지 않게 유지한다.
 
-**User Command Examples:**  
+**User Command Examples:**
 `TODO-DOC 진행`, `문서 현행화`, `README 다시 훑어봐`
 
 **Scope:**
