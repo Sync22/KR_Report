@@ -5440,6 +5440,7 @@ def _build_ops_sync_preview_payload(
     commits = _parse_ops_sync_commits(str(log_result.get("stdout") or ""))
     changed_files = _parse_ops_sync_changed_files(str(diff_result.get("stdout") or ""))
     schema_status = _ops_sync_db_schema_status(repository)
+    schema_action_plan = _ops_sync_schema_action_plan(schema_status)
     blockers: list[dict[str, object]] = []
     if not status_result.get("ok"):
         blockers.append(
@@ -5490,6 +5491,7 @@ def _build_ops_sync_preview_payload(
         "source_sync_ready": len(blockers) == 0,
         "worktree": worktree,
         "default_db_schema": schema_status,
+        "schema_action_plan": schema_action_plan,
         "git_comparison": {
             "range": log_range,
             "commit_count": len(commits),
@@ -5531,6 +5533,41 @@ def _build_ops_sync_preview_payload(
     return payload
 
 
+def _ops_sync_schema_action_plan(schema_status: dict[str, object]) -> dict[str, object]:
+    schema_current = bool(schema_status.get("current"))
+    requires_migration = not schema_current
+    return {
+        "status": schema_status.get("status", "unknown"),
+        "current_version": schema_status.get("current_version"),
+        "target_version": schema_status.get("target_version"),
+        "pending_versions": list(schema_status.get("pending_versions") or []),
+        "requires_migration_approval": requires_migration,
+        "approval_required": requires_migration,
+        "read_only_until_approval": requires_migration,
+        "pre_approval_commands": [
+            "python -m stock_monitor ops-sync-preview --base origin/main --head dev --json",
+            "python -m stock_monitor db-migrate --dry-run",
+            "python -m stock_monitor db-verify --json",
+        ],
+        "post_approval_commands": [
+            "python -m stock_monitor db-backup --tag pre-schema-migration",
+            "python -m stock_monitor db-migrate",
+            "python -m stock_monitor db-verify --json",
+            "python -m stock_monitor ops-readiness --json",
+        ]
+        if requires_migration
+        else [],
+        "forbidden_without_approval": [
+            "production DB write",
+            "schema migration on operating PC",
+            "scheduler registration/change",
+            "Telegram real send",
+            "admin-gui process control",
+            "broker/order routing",
+        ],
+    }
+
+
 def _ops_sync_operating_pc_handoff(payload: dict[str, object]) -> dict[str, object]:
     comparison = payload.get("git_comparison")
     if not isinstance(comparison, dict):
@@ -5555,6 +5592,14 @@ def _ops_sync_operating_pc_handoff(payload: dict[str, object]) -> dict[str, obje
     approval_rows = approval_items if isinstance(approval_items, list) else []
     excluded_items = policy.get("do_not_include")
     excluded_rows = excluded_items if isinstance(excluded_items, list) else []
+    schema_action_plan = payload.get("schema_action_plan")
+    schema_plan = schema_action_plan if isinstance(schema_action_plan, dict) else {}
+    pre_approval_commands = schema_plan.get("pre_approval_commands")
+    pre_approval_rows = pre_approval_commands if isinstance(pre_approval_commands, list) else []
+    post_approval_commands = schema_plan.get("post_approval_commands")
+    post_approval_rows = post_approval_commands if isinstance(post_approval_commands, list) else []
+    schema_forbidden_items = schema_plan.get("forbidden_without_approval")
+    schema_forbidden_rows = schema_forbidden_items if isinstance(schema_forbidden_items, list) else []
 
     lines = [
         "운영 PC용",
@@ -5601,6 +5646,22 @@ def _ops_sync_operating_pc_handoff(payload: dict[str, object]) -> dict[str, obje
     lines.extend(["", "검증 명령:"])
     for command in verification_rows:
         lines.append(f"- {command}")
+
+    lines.extend(["", "Schema action plan:"])
+    lines.append(f"- status: {schema_plan.get('status', '-')}")
+    lines.append(f"- approval_required: {'Y' if schema_plan.get('approval_required') else 'N'}")
+    lines.append("- pre-approval:")
+    for command in pre_approval_rows:
+        lines.append(f"- {command}")
+    lines.append("- post-approval:")
+    if post_approval_rows:
+        for command in post_approval_rows:
+            lines.append(f"- {command}")
+    else:
+        lines.append("- none")
+    lines.append("- forbidden without approval:")
+    for item in schema_forbidden_rows:
+        lines.append(f"- {item}")
 
     if blocker_rows:
         lines.extend(["", "현재 blocker:"])
