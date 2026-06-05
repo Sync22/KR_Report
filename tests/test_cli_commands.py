@@ -55,6 +55,7 @@ from stock_monitor.db.schema import (
     KRX_MARKET_SNAPSHOT_MIGRATION,
     SCHEMA_MIGRATIONS_TABLE_STATEMENT,
     SCHEMA_STATEMENTS,
+    SchemaMigrationStatus,
     SCHEMA_VERSION,
 )
 from stock_monitor.fetch.naver_stock_quote import StockQuoteSnapshot
@@ -737,6 +738,29 @@ def test_ops_readiness_parser_accepts_recent_days_stock_limit_and_json() -> None
     assert args.command == "ops-readiness"
     assert args.recent_business_days == 3
     assert args.stock_limit == 10
+    assert args.json is True
+
+
+def test_ops_sync_preview_parser_accepts_base_head_max_commits_and_json() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "ops-sync-preview",
+            "--base",
+            "origin/main",
+            "--head",
+            "dev",
+            "--max-commits",
+            "12",
+            "--json",
+        ]
+    )
+
+    assert args.command == "ops-sync-preview"
+    assert args.base == "origin/main"
+    assert args.head == "dev"
+    assert args.max_commits == 12
     assert args.json is True
 
 
@@ -8987,6 +9011,131 @@ def test_run_ops_readiness_aggregates_operational_checks(tmp_path, monkeypatch, 
     assert payload["web_view_value_qa"]["issue_count"] == 0
     assert payload["api_perf"]["record_count"] == 2
     assert payload["recommended_actions"]
+
+
+def test_ops_sync_preview_json_reports_git_batch_schema_and_safe_commands(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path)
+    repository.initialize()
+
+    def fake_git(_root_dir, args):
+        if args == ("status", "--short", "--branch"):
+            return {
+                "ok": True,
+                "returncode": 0,
+                "stdout": "## dev...origin/dev\n?? data/\n",
+                "stderr": "",
+            }
+        if args == ("log", "--reverse", "--pretty=format:%h\t%s", "--max-count=12", "origin/main..dev"):
+            return {
+                "ok": True,
+                "returncode": 0,
+                "stdout": "abc1234\tAdd source freshness\nfed9876\tUpdate todo board",
+                "stderr": "",
+            }
+        if args == ("diff", "--name-only", "origin/main..dev"):
+            return {
+                "ok": True,
+                "returncode": 0,
+                "stdout": "src/stock_monitor/cli.py\ntests/test_cli_commands.py\ndocs/codex/work-todo-board.md\n",
+                "stderr": "",
+            }
+        raise AssertionError(args)
+
+    monkeypatch.setattr(cli_module, "_run_git_for_ops_sync_preview", fake_git)
+
+    assert (
+        cli_module._run_ops_sync_preview(
+            config,
+            repository,
+            base_ref="origin/main",
+            head_ref="dev",
+            max_commits=12,
+            as_json=True,
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["surface"] == "ops-sync-preview"
+    assert payload["read_only"] is True
+    assert payload["writes_db"] is False
+    assert payload["sends_telegram"] is False
+    assert payload["registers_scheduler"] is False
+    assert payload["source_sync_ready"] is True
+    assert payload["worktree"]["local_data_untracked_count"] == 1
+    assert payload["worktree"]["tracked_dirty_count"] == 0
+    assert payload["git_comparison"]["commit_count"] == 2
+    assert payload["git_comparison"]["commits"][0]["subject"] == "Add source freshness"
+    assert payload["git_comparison"]["changed_file_groups"] == {
+        "docs": 1,
+        "src": 1,
+        "tests": 1,
+    }
+    assert payload["default_db_schema"]["current"] is True
+    assert any("web-view-browser-smoke" in command for command in payload["verification_commands"])
+    assert "db_path" not in json.dumps(payload)
+
+
+def test_ops_sync_preview_reports_schema_blocker_without_failing_json(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path)
+    repository.initialize()
+
+    monkeypatch.setattr(
+        repository,
+        "get_schema_migration_status",
+        lambda: SchemaMigrationStatus(
+            current_version=5,
+            target_version=7,
+            applied_versions=(1, 2, 3, 4, 5),
+            pending_versions=(6, 7),
+        ),
+    )
+
+    def fake_git(_root_dir, args):
+        if args == ("status", "--short", "--branch"):
+            return {
+                "ok": True,
+                "returncode": 0,
+                "stdout": "## dev...origin/dev\n",
+                "stderr": "",
+            }
+        if args == ("log", "--reverse", "--pretty=format:%h\t%s", "--max-count=30", "origin/main..HEAD"):
+            return {"ok": True, "returncode": 0, "stdout": "", "stderr": ""}
+        if args == ("diff", "--name-only", "origin/main..HEAD"):
+            return {"ok": True, "returncode": 0, "stdout": "", "stderr": ""}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(cli_module, "_run_git_for_ops_sync_preview", fake_git)
+
+    assert (
+        cli_module._run_ops_sync_preview(
+            config,
+            repository,
+            base_ref="origin/main",
+            head_ref="HEAD",
+            max_commits=30,
+            as_json=True,
+        )
+        == 1
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["default_db_schema"] == {
+        "exists": True,
+        "current": False,
+        "current_version": 5,
+        "target_version": 7,
+        "pending_versions": [6, 7],
+        "status": "migration_required",
+    }
+    assert payload["source_sync_ready"] is False
+    assert payload["blockers"][0]["code"] == "default_db_schema_not_current"
 
 
 def test_next_phase_readiness_groups_latest_krx_openapi_probe_batch(tmp_path) -> None:
