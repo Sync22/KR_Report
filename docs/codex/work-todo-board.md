@@ -19,8 +19,8 @@
 
 | Order | Todo ID | Why Now |
 | --- | --- | --- |
-| 1 | `TODO-DATA` | web-view source freshness exists, but Toss/X lab feasibility, ETF source checks, and Telegram freshness wording remain. |
-| 2 | `TODO-OPS` | `ops-sync-preview` exists, but default DB schema approval/handling and final operating-PC batch verification remain separate. |
+| 1 | `TODO-OPS` | `ops-sync-preview` exists, but default DB schema approval/handling and final operating-PC batch verification remain separate. |
+| 2 | `TODO-DATA` | web-view and Telegram source freshness exist, but Toss/X lab feasibility and ETF constituent/source checks remain. |
 
 ## Todo Board
 
@@ -164,6 +164,9 @@ KRX/ETF/flow/Toss/X 같은 외부 데이터 축을 실제 동작 가능한 sourc
 
 **Progress Note:**
 2026-06-05 dev commits `80c9b98`/`f420bdc`에서 daily web-view API와 화면에 `source_freshness_summary`를 추가했다. 선택 날짜별 Naver reports, KRX Open API market/ETF, KRX Data Marketplace investor flow, Toss OpenAPI lab-hold 상태가 `exact`/`stale`/`missing`/`lab_hold`로 표시된다. 기본 DB는 schema가 오래되어 read-only QA가 migration 안내로 중단됐으므로, production/default DB를 쓰지 않고 temp fixture DB로 `web-view-value-qa`, `web-view-browser-smoke`, `tests/test_web_view.py`, `tests/test_cli_commands.py`, 전체 pytest를 통과시켰다. 남은 범위는 Toss/X lab feasibility, ETF 구성종목/source 검토, Telegram freshness 문구 연결이다.
+
+**Progress Note:**
+2026-06-05 dev commits `247a420`/`4838b22`에서 `market-briefing` Telegram preview에도 source freshness를 연결했다. text preview는 `데이터 기준` 섹션으로 Naver reports, KRX market, ETF daily, Investor flow, Toss OpenAPI 상태를 `exact`/`missing`/`lab-hold`와 기준일로 표시한다. JSON preview는 web-view와 같은 `source_freshness_summary`를 포함하고, Toss OpenAPI는 `lab_hold`, `live_fetch=false`, `affects_ordering=false`로 남긴다. RED/GREEN 테스트와 `python -m pytest tests\test_cli_commands.py -q -k market_briefing` (`16 passed`)를 확인했고, temp fixture DB smoke에서 message의 source freshness 줄과 JSON summary를 확인했다. 남은 범위는 Toss/X lab feasibility와 ETF 구성종목/source 검토다.
 
 ### [ ] TODO-OPS: Operations, Sync, And Performance Closeout
 
