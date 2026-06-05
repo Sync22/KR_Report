@@ -19,8 +19,7 @@
 
 | Order | Todo ID | Why Now |
 | --- | --- | --- |
-| 1 | `TODO-DATA` | web-view and Telegram source freshness exist, but Toss/X lab feasibility and ETF constituent/source checks remain. |
-| 2 | `TODO-OPS` | `ops-sync-preview` now emits an operating-PC handoff prompt, but default DB schema approval/handling and final operating-PC batch verification remain separate. |
+| 1 | `TODO-OPS` | `ops-sync-preview` now emits an operating-PC handoff prompt, but default DB schema approval/handling and final operating-PC batch verification remain separate. |
 
 ## Todo Board
 
@@ -129,7 +128,7 @@ news intelligence를 독립 뉴스 수집기가 아니라 report/KRX/candidate e
 **Completion Note:**
 2026-06-05 dev commits `c8a4a67`/`2fe1d80`에서 저장 observation readback과 CLI 비교 출력을 완료했다. `news-intelligence-observations`는 저장 run 전체의 `source_mode_coverage`를 JSON으로 내보내며 source mode, source lane, direct/indirect/market-context 합계, match scope, KRX exact/stale/missing/none 상태, candidate-linkage label, operator recommendation-support label, read-only/operator-only 경계 플래그를 한 번에 비교할 수 있다. text 출력도 per-run evidence 앞에 같은 coverage 요약을 표시한다. `news-intelligence-daily-brief` JSON/text에도 표시 대상 saved-run 그룹 기준 coverage가 추가됐다. RED/GREEN 테스트, `python -m pytest tests\test_cli_commands.py tests\test_news_intelligence.py -q -k news_intelligence` (`29 passed`), 전체 CLI 테스트 (`323 passed`), temp DB CLI smoke에서 `source-mode coverage`, `source_modes: naver_5_lane_preview=2`, `labels: stale_krx_check_first=1, strengthen_existing_candidate=1`, KRX exact/stale 집계를 확인했다. public web-view raw sentiment/impact/internal recommendation 노출 금지는 기존 public projection 테스트로 유지했고 public route는 변경하지 않았다.
 
-### [ ] TODO-DATA: Market Data, ETF, And Source Freshness
+### [x] TODO-DATA: Market Data, ETF, And Source Freshness
 
 **Goal:**
 KRX/ETF/flow/Toss/X 같은 외부 데이터 축을 실제 동작 가능한 source lane으로 분리하고, freshness와 한계를 화면/문구에 드러낸다.
@@ -167,6 +166,9 @@ KRX/ETF/flow/Toss/X 같은 외부 데이터 축을 실제 동작 가능한 sourc
 
 **Progress Note:**
 2026-06-05 dev commits `247a420`/`4838b22`에서 `market-briefing` Telegram preview에도 source freshness를 연결했다. text preview는 `데이터 기준` 섹션으로 Naver reports, KRX market, ETF daily, Investor flow, Toss OpenAPI 상태를 `exact`/`missing`/`lab-hold`와 기준일로 표시한다. JSON preview는 web-view와 같은 `source_freshness_summary`를 포함하고, Toss OpenAPI는 `lab_hold`, `live_fetch=false`, `affects_ordering=false`로 남긴다. RED/GREEN 테스트와 `python -m pytest tests\test_cli_commands.py -q -k market_briefing` (`16 passed`)를 확인했고, temp fixture DB smoke에서 message의 source freshness 줄과 JSON summary를 확인했다. 남은 범위는 Toss/X lab feasibility와 ETF 구성종목/source 검토다.
+
+**Completion Note:**
+2026-06-05 dev commits `65d41f4`/`d2c641e` completed the remaining source-lane boundary slice with the read-only `data-source-lane-audit` CLI. The command emits a concrete JSON/text audit with Naver reports, KRX stock/index/ETF daily, KRX investor flow, Toss OpenAPI, and X public recap classified as `production`, `production_limited`, `hold`, or `lab`. The output explicitly states `etf_daily | production | constituents=not_loaded`, `toss_openapi | hold | live_fetch=false | affects_ordering=false`, and `x_public_recap | lab | separate_lab_branch=true | login_dependency_allowed=false`; the JSON `done_when_coverage` confirms source lanes are classified, web-view freshness is connected, Telegram freshness is connected, Toss/X are not exaggerated, and ETF constituent status is explicit. Verified `python -m stock_monitor data-source-lane-audit`, `python -m stock_monitor data-source-lane-audit --json`, `python -m pytest tests\test_cli_commands.py -q -k data_source_lane_audit` (`3 passed`), `python -m pytest tests\test_cli_commands.py -q` (`326 passed`), and full `python -m pytest -q` (`732 passed`). No live fetch, DB write, Telegram send, scheduler registration, admin-gui connection, or web-view connection was added.
 
 ### [ ] TODO-OPS: Operations, Sync, And Performance Closeout
 
