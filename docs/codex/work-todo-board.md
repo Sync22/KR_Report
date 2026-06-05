@@ -19,11 +19,11 @@
 
 | Order | Todo ID | Why Now |
 | --- | --- | --- |
-| 1 | `TODO-OPS` | web-view, Telegram, news connection, source freshness의 dev 산출물이 쌓였으므로 운영 싱크 전 read-only/GET-only/성능 재관측을 묶어야 한다. |
-| 2 | `TODO-ADMIN` | admin-gui와 shared web-view/operator-review 경계가 유지되는지 운영 준비 전에 재확인할 필요가 있다. |
-| 3 | `TODO-DOC` | dev에서 바뀐 public surface와 source freshness 표현을 README/canonical docs에 반영해야 한다. |
-| 4 | `TODO-NI` | public news connection label은 들어갔지만 save-observation readback/CLI 비교와 source-mode coverage 잔여가 있다. |
-| 5 | `TODO-DATA` | web-view source freshness는 들어갔지만 Toss/X lab feasibility와 Telegram freshness 연결은 잔여다. |
+| 1 | `TODO-ADMIN` | 운영 싱크 전 admin-gui와 shared web-view/operator-review 경계가 유지되는지 재확인할 필요가 있다. |
+| 2 | `TODO-DOC` | dev에서 바뀐 public surface, source freshness, ops sync preview를 README/canonical docs에 반영해야 한다. |
+| 3 | `TODO-NI` | public news connection label은 들어갔지만 save-observation readback/CLI 비교와 source-mode coverage 잔여가 있다. |
+| 4 | `TODO-DATA` | web-view source freshness는 들어갔지만 Toss/X lab feasibility와 Telegram freshness 연결은 잔여다. |
+| 5 | `TODO-OPS` | `ops-sync-preview`가 생겼지만 기본 DB schema blocker와 최종 운영 적용 batch 검증은 아직 남아 있다. |
 
 ## Todo Board
 
@@ -193,6 +193,9 @@ KRX/ETF/flow/Toss/X 같은 외부 데이터 축을 실제 동작 가능한 sourc
 - `docs/codex/weekly-sync/WEEKLY_SYNC_GUIDE.md`
 - `docs/codex/surface-contract.md`
 - `docs/codex/architecture-risk-review.md`
+
+**Progress Note:**
+2026-06-05 dev commits `77a2321`/`02f13f7`에서 read-only `ops-sync-preview` CLI를 추가했다. 이 출력은 `origin/main..dev` commit subjects, changed file groups, conflict watch paths, `data/` untracked 분리, batch 제외 경로, 별도 승인 필요 작업, 검증 명령을 JSON/text로 보여준다. 기본 DB schema가 target보다 오래된 경우 stack trace 대신 `default_db_schema_not_current` blocker로 표시한다. fixture DB 기준 `web-view-value-qa` issue/warning `0`, `web-view-browser-smoke` issue `0`, `api-perf-summary` 읽기 성공, 전체 pytest `720 passed`를 확인했다. 남은 범위는 기본 DB migration 승인/처리 여부 결정, 실제 운영 적용 batch 검증, 운영 관측에서 나온 perf/UI 항목 환류다.
 
 ### [ ] TODO-ADMIN: Admin / Web-View / Operator-Review Boundary
 
