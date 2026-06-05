@@ -3795,6 +3795,8 @@ def test_news_intelligence_observations_text_includes_source_mode_coverage(
                 relevance="direct",
                 match_scope="both",
                 source_lane="mainnews",
+                candidate_priority_presence=True,
+                candidate_observation_priority="top_2",
             )
         ],
     )
@@ -4071,6 +4073,8 @@ def test_news_intelligence_daily_brief_outputs_grouped_text(
     assert "direct 1 / caution 0 / market_context 0" in output
     assert "KRX: exact" in output
     assert "[mainnews] 삼성전자, AI 반도체 공급 계약 체결" in output
+    assert "source-mode coverage:" in output
+    assert "source_modes: naver_5_lane_preview=6" in output
 
 
 def test_news_intelligence_daily_brief_outputs_grouped_json(
@@ -4112,9 +4116,10 @@ def test_news_intelligence_daily_brief_outputs_grouped_json(
     assert payload["source_mode_coverage"]["candidate_linkage_labels"] == {
         "insufficient_evidence": 1,
         "promote_news_only_candidate": 1,
+        "review_existing_candidate_with_caution": 1,
         "stale_krx_check_first": 1,
         "strengthen_existing_candidate": 1,
-        "support_only_context": 2,
+        "support_only_context": 1,
     }
 
 

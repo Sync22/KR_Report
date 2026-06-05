@@ -2877,9 +2877,11 @@ def _run_news_intelligence_observations(args: argparse.Namespace) -> int:
     if args.run_id:
         runs = [run for run in runs if run.run_id == args.run_id]
     run_payloads: list[dict[str, object]] = []
+    coverage_evidence_rows: list[ReportLinkedNewsEvidenceRecord] = []
     total_evidence_count = 0
     for run in runs:
         all_evidence = repository.list_report_linked_news_evidence(run_id=run.run_id, limit=1000)
+        coverage_evidence_rows.extend(all_evidence)
         total_evidence_count += len(all_evidence)
         run_payloads.append(
             _news_intelligence_observation_run_payload(
@@ -2892,6 +2894,11 @@ def _run_news_intelligence_observations(args: argparse.Namespace) -> int:
         {
             "run_count": len(run_payloads),
             "evidence_count": total_evidence_count,
+            "source_mode_coverage": _news_intelligence_source_mode_coverage(
+                run_payloads,
+                coverage_evidence_rows,
+                boundary_payload=payload,
+            ),
             "runs": run_payloads,
         }
     )
@@ -2919,6 +2926,7 @@ def _format_news_intelligence_observations_text(payload: dict[str, object]) -> s
     if not isinstance(runs, list) or not runs:
         lines.append("no saved observations")
         return "\n".join(lines) + "\n"
+    _append_news_intelligence_source_mode_coverage_text(lines, payload)
     for run in runs:
         if not isinstance(run, dict):
             continue
@@ -2991,13 +2999,17 @@ def _run_news_intelligence_daily_brief(args: argparse.Namespace) -> int:
         label: []
         for label in _NEWS_INTELLIGENCE_DAILY_BRIEF_LABELS
     }
+    coverage_run_payloads: list[dict[str, object]] = []
+    coverage_evidence_rows: list[ReportLinkedNewsEvidenceRecord] = []
     for run in representative_runs:
         evidence_rows = repository.list_report_linked_news_evidence(run_id=run.run_id, limit=1000)
+        coverage_evidence_rows.extend(evidence_rows)
         run_payload = _news_intelligence_observation_run_payload(
             run,
             all_evidence=evidence_rows,
             evidence_per_run=3,
         )
+        coverage_run_payloads.append(run_payload)
         item = _news_intelligence_daily_brief_item(run_payload)
         label = str(item["label"])
         sections.setdefault(label, []).append(item)
@@ -3005,6 +3017,11 @@ def _run_news_intelligence_daily_brief(args: argparse.Namespace) -> int:
     payload.update(
         {
             "item_count": sum(len(items) for items in sections.values()),
+            "source_mode_coverage": _news_intelligence_source_mode_coverage(
+                coverage_run_payloads,
+                coverage_evidence_rows,
+                boundary_payload=payload,
+            ),
             "sections": sections,
         }
     )
@@ -3116,6 +3133,7 @@ def _format_news_intelligence_daily_brief_text(payload: dict[str, object]) -> st
     if not isinstance(sections, dict) or int(payload.get("item_count") or 0) <= 0:
         lines.append("no saved observations")
         return "\n".join(lines) + "\n"
+    _append_news_intelligence_source_mode_coverage_text(lines, payload)
     for label in _NEWS_INTELLIGENCE_DAILY_BRIEF_LABELS:
         items = sections.get(label)
         if not isinstance(items, list) or not items:
@@ -3223,6 +3241,96 @@ def _news_intelligence_observation_run_payload(
             for row in all_evidence[: max(0, evidence_per_run)]
         ],
     }
+
+
+def _news_intelligence_source_mode_coverage(
+    run_payloads: list[dict[str, object]],
+    evidence_rows: list[ReportLinkedNewsEvidenceRecord],
+    *,
+    boundary_payload: dict[str, object],
+) -> dict[str, object]:
+    source_modes = Counter(
+        str(run.get("source_mode") or "unknown")
+        for run in run_payloads
+    )
+    source_lanes = Counter(row.source_lane for row in evidence_rows)
+    relevance = Counter(row.relevance for row in evidence_rows)
+    for key in ("direct", "indirect", "market_context"):
+        relevance.setdefault(key, 0)
+    match_scope = Counter(row.match_scope for row in evidence_rows)
+    krx_reference_status: Counter[str] = Counter()
+    candidate_linkage_labels: Counter[str] = Counter()
+    operator_recommendation_support: Counter[str] = Counter()
+    for run in run_payloads:
+        freshness = run.get("krx_reference_freshness")
+        status = "none"
+        if isinstance(freshness, dict):
+            status = str(freshness.get("status") or "none")
+        krx_reference_status[status] += 1
+        evaluation = run.get("candidate_linkage_evaluation")
+        if isinstance(evaluation, dict):
+            label = str(evaluation.get("label") or "")
+            recommendation_support = str(evaluation.get("recommendation_support") or "")
+            if label:
+                candidate_linkage_labels[label] += 1
+            if recommendation_support:
+                operator_recommendation_support[recommendation_support] += 1
+    for key in ("exact", "stale_reference", "missing", "none"):
+        krx_reference_status.setdefault(key, 0)
+    return {
+        "run_count": len(run_payloads),
+        "evidence_count": len(evidence_rows),
+        "source_modes": dict(sorted(source_modes.items())),
+        "source_lanes": dict(sorted(source_lanes.items())),
+        "relevance": {
+            "direct": relevance["direct"],
+            "indirect": relevance["indirect"],
+            "market_context": relevance["market_context"],
+        },
+        "match_scope": dict(sorted(match_scope.items())),
+        "krx_reference_status": {
+            "exact": krx_reference_status["exact"],
+            "stale_reference": krx_reference_status["stale_reference"],
+            "missing": krx_reference_status["missing"],
+            "none": krx_reference_status["none"],
+        },
+        "candidate_linkage_labels": dict(sorted(candidate_linkage_labels.items())),
+        "operator_recommendation_support": dict(sorted(operator_recommendation_support.items())),
+        "boundary": {
+            "read_only": bool(boundary_payload.get("read_only")),
+            "operator_only": bool(boundary_payload.get("operator_only")),
+            "public_safe": bool(boundary_payload.get("public_safe")),
+            "live_fetch": bool(boundary_payload.get("live_fetch")),
+            "writes_db": bool(boundary_payload.get("writes_db")),
+            "sends_telegram": bool(boundary_payload.get("sends_telegram")),
+            "registers_scheduler": bool(boundary_payload.get("registers_scheduler")),
+            "connects_web_view": bool(boundary_payload.get("connects_web_view")),
+        },
+    }
+
+
+def _append_news_intelligence_source_mode_coverage_text(
+    lines: list[str],
+    payload: dict[str, object],
+) -> None:
+    coverage = payload.get("source_mode_coverage")
+    if not isinstance(coverage, dict):
+        return
+    lines.append("")
+    lines.append("source-mode coverage:")
+    lines.append(
+        f"runs {coverage.get('run_count', 0)} / evidence {coverage.get('evidence_count', 0)}"
+    )
+    lines.append(f"source_modes: {_news_intelligence_counter_text(coverage.get('source_modes'))}")
+    lines.append(f"source_lanes: {_news_intelligence_counter_text(coverage.get('source_lanes'))}")
+    lines.append(f"labels: {_news_intelligence_counter_text(coverage.get('candidate_linkage_labels'))}")
+    lines.append(f"KRX: {_news_intelligence_counter_text(coverage.get('krx_reference_status'))}")
+
+
+def _news_intelligence_counter_text(value: object) -> str:
+    if not isinstance(value, dict) or not value:
+        return "-"
+    return ", ".join(f"{key}={value[key]}" for key in sorted(value))
 
 
 def _news_intelligence_observation_derived_counts(
