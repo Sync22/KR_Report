@@ -5183,7 +5183,7 @@ def _build_ops_sync_preview_payload(
                 "message": "default DB cannot run normal read-only smoke until schema is current; use fixture DB or run an approved migration.",
             }
         )
-    return {
+    payload = {
         "surface": "ops-sync-preview",
         "read_only": True,
         "live_fetch": False,
@@ -5231,6 +5231,106 @@ def _build_ops_sync_preview_payload(
             "python -m pytest -q",
         ],
         "blockers": blockers,
+    }
+    payload["operating_pc_handoff"] = _ops_sync_operating_pc_handoff(payload)
+    return payload
+
+
+def _ops_sync_operating_pc_handoff(payload: dict[str, object]) -> dict[str, object]:
+    comparison = payload.get("git_comparison")
+    if not isinstance(comparison, dict):
+        comparison = {}
+    worktree = payload.get("worktree")
+    if not isinstance(worktree, dict):
+        worktree = {}
+    policy = payload.get("batch_policy")
+    if not isinstance(policy, dict):
+        policy = {}
+    blockers = payload.get("blockers")
+    blocker_rows = blockers if isinstance(blockers, list) else []
+    commits = comparison.get("commits")
+    commit_rows = commits if isinstance(commits, list) else []
+    changed_groups = comparison.get("changed_file_groups")
+    changed_group_rows = changed_groups if isinstance(changed_groups, dict) else {}
+    conflict_paths = comparison.get("conflict_watch_paths")
+    conflict_path_rows = conflict_paths if isinstance(conflict_paths, list) else []
+    verification_commands = payload.get("verification_commands")
+    verification_rows = verification_commands if isinstance(verification_commands, list) else []
+    approval_items = policy.get("requires_separate_approval")
+    approval_rows = approval_items if isinstance(approval_items, list) else []
+    excluded_items = policy.get("do_not_include")
+    excluded_rows = excluded_items if isinstance(excluded_items, list) else []
+
+    lines = [
+        "운영 PC용",
+        "",
+        "목표: dev에서 검증된 변경을 운영 PC 적용 후보 batch로 리뷰한다.",
+        f"비교 범위: {comparison.get('range', '-')}",
+        f"source_sync_ready: {'Y' if payload.get('source_sync_ready') else 'N'}",
+        "",
+        "먼저 확인:",
+        "- pwd",
+        "- git status --short --branch",
+        "- git worktree list",
+        "- python -m stock_monitor ops-sync-preview --base origin/main --head dev --json",
+    ]
+    local_data_count = int(worktree.get("local_data_untracked_count") or 0)
+    if local_data_count:
+        lines.append(f"- data/ untracked: {local_data_count}개 - stage/commit/delete 금지")
+
+    lines.extend(["", "커밋 요약:"])
+    if commit_rows:
+        for item in commit_rows[:30]:
+            if not isinstance(item, dict):
+                continue
+            lines.append(f"- {item.get('short_hash', '-')} {item.get('subject', '-')}")
+        if len(commit_rows) > 30:
+            lines.append(f"- ... {len(commit_rows) - 30} more commits omitted from prompt")
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "변경 파일 그룹:"])
+    if changed_group_rows:
+        for group in sorted(changed_group_rows):
+            lines.append(f"- {group}: {changed_group_rows[group]}")
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "충돌 주의 경로:"])
+    if conflict_path_rows:
+        for path in conflict_path_rows[:20]:
+            lines.append(f"- {path}")
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "검증 명령:"])
+    for command in verification_rows:
+        lines.append(f"- {command}")
+
+    if blocker_rows:
+        lines.extend(["", "현재 blocker:"])
+        for item in blocker_rows:
+            if not isinstance(item, dict):
+                continue
+            lines.append(f"- {item.get('code', '-')}: {item.get('message', '-')}")
+
+    lines.extend(["", "별도 명시 승인 전 금지:"])
+    lines.append("- 운영 DB write 금지")
+    for item in approval_rows:
+        lines.append(f"- {item}")
+
+    lines.extend(["", "적용 batch 제외:"])
+    for item in excluded_rows:
+        lines.append(f"- {item}")
+
+    return {
+        "first_line": "운영 PC용",
+        "read_only": True,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "prompt": "\n".join(lines),
     }
 
 
