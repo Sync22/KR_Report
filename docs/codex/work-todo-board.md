@@ -214,6 +214,9 @@ KRX/ETF/flow/Toss/X 같은 외부 데이터 축을 실제 동작 가능한 sourc
 **Progress Note:**
 2026-06-05 dev commits `087cfcd`/`413ce3f` added `db-migration-rehearsal`, which uses a temporary SQLite backup copy to apply migrations and run verification without writing the source DB. Actual default-DB smoke with a `%TEMP%` work dir returned `ready=true`, `read_only_source=true`, `writes_source_db=false`, `copy_retained=false`, source schema `5/7` before and after, copy schema `5/7 -> 7/7`, `copy_verify_ready=true`, and `blocker_count=0`. Verified focused rehearsal tests (`2 passed`), full CLI tests (`330 passed`), and full `python -m pytest -q` (`736 passed`). Remaining scope is not technical rehearsal anymore; it is explicit approval for the real default/operating-PC DB migration and the actual operating-PC batch verification.
 
+**Progress Note:**
+2026-06-05 dev commits `345c4fb`/`5ba0a6c` connected `db-migration-rehearsal --json` back into `ops-sync-preview` as a pre-approval schema action. Actual `ops-sync-preview --json` smoke still exits `1` because the default DB schema is stale, but its `schema_action_plan.pre_approval_commands` now includes `ops-sync-preview`, `db-migrate --dry-run`, `db-migration-rehearsal --json`, and `db-verify --json`, and the operating-PC handoff prompt includes the rehearsal command. Verified focused ops-sync test (`1 passed`), full CLI tests (`330 passed`), and full `python -m pytest -q` (`736 passed`).
+
 ### [x] TODO-ADMIN: Admin / Web-View / Operator-Review Boundary
 
 **Goal:**
