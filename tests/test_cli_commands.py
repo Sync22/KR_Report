@@ -279,6 +279,50 @@ def test_prepare_repository_for_read_only_command_rejects_stale_schema(tmp_path)
         raise AssertionError("stale schema should be rejected before read-only command")
 
 
+def test_main_db_verify_json_reports_stale_schema_without_traceback(tmp_path, monkeypatch, capsys) -> None:
+    db_path = tmp_path / "stock_monitor.db"
+    _create_schema_v5_database(db_path)
+    monkeypatch.setenv("STOCK_MONITOR_DB_PATH", str(db_path))
+
+    exit_code = cli_module.main(["db-verify", "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert payload["surface"] == "db-verify"
+    assert payload["read_only"] is True
+    assert payload["writes_db"] is False
+    assert payload["ready"] is False
+    assert payload["schema_status"]["exists"] is True
+    assert payload["schema_status"]["current"] is False
+    assert payload["schema_status"]["current_version"] == 5
+    assert payload["schema_status"]["target_version"] == SCHEMA_VERSION
+    assert payload["schema_status"]["pending_versions"] == [6, 7]
+    assert payload["blockers"][0]["code"] == "default_db_schema_not_current"
+    assert "python -m stock_monitor db-migrate --dry-run" in payload["recommended_commands"]
+    assert "schema migration on operating PC" in payload["requires_separate_approval"]
+
+
+def test_main_api_perf_summary_json_runs_when_default_schema_is_stale(tmp_path, monkeypatch, capsys) -> None:
+    db_path = tmp_path / "stock_monitor.db"
+    _create_schema_v5_database(db_path)
+    monkeypatch.setenv("STOCK_MONITOR_DB_PATH", str(db_path))
+    log_path = tmp_path / "api_perf.log"
+    log_path.write_text(
+        '{"ts":"2026-06-05T10:00:00+09:00","method":"GET","path":"/api/archive",'
+        '"status":200,"total_ms":15,"db_ms":3,"build_ms":7,"json_ms":2,'
+        '"bytes":512,"cache":"miss","gzip":false}',
+        encoding="utf-8",
+    )
+
+    exit_code = cli_module.main(["api-perf-summary", "--log-path", str(log_path), "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["surface"] == "api-perf-summary"
+    assert payload["record_count"] == 1
+    assert payload["endpoints"][0]["path"] == "/api/archive"
+
+
 def test_schema_current_check_only_applies_to_read_only_variants() -> None:
     assert _uses_read_only_schema_current_check(Namespace(command="operator-status"))
     assert _uses_read_only_schema_current_check(Namespace(command="news-intelligence-observations"))
