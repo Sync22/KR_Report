@@ -1865,8 +1865,19 @@ def main(argv: list[str] | None = None) -> int:
             limit=args.limit,
             as_json=args.json,
         )
+    if args.command == "api-perf-summary":
+        return _run_api_perf_summary(config, log_path=args.log_path, as_json=args.json)
 
-    _prepare_repository_for_command(repository, args)
+    try:
+        _prepare_repository_for_command(repository, args)
+    except RuntimeError as exc:
+        if _is_database_schema_not_current_error(exc):
+            return _run_read_only_schema_not_current_report(
+                str(args.command),
+                repository,
+                as_json=bool(getattr(args, "json", False)),
+            )
+        raise
 
     try:
         if args.command == "inspect-page":
@@ -2563,8 +2574,6 @@ def main(argv: list[str] | None = None) -> int:
             )
         if args.command == "db-verify":
             return _run_db_verify(repository, as_json=args.json)
-        if args.command == "api-perf-summary":
-            return _run_api_perf_summary(config, log_path=args.log_path, as_json=args.json)
         if args.command == "ops-readiness":
             return _run_ops_readiness(
                 config,
@@ -2668,6 +2677,75 @@ def _prepare_repository_for_command(repository: StockMonitorRepository, args: ar
             )
         return
     repository.initialize()
+
+
+def _is_database_schema_not_current_error(exc: RuntimeError) -> bool:
+    return "Database schema is not current" in str(exc)
+
+
+def _build_read_only_schema_not_current_payload(
+    command: str,
+    repository: StockMonitorRepository,
+) -> dict[str, object]:
+    schema_status = _ops_sync_db_schema_status(repository)
+    return {
+        "surface": command,
+        "read_only": True,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "ready": False,
+        "schema_status": schema_status,
+        "blockers": [
+            {
+                "code": "default_db_schema_not_current",
+                "message": (
+                    "Default DB schema is not current; normal read-only verification is blocked "
+                    "until a schema migration is reviewed and approved."
+                ),
+            }
+        ],
+        "recommended_commands": [
+            "python -m stock_monitor ops-sync-preview --base origin/main --head dev --json",
+            "python -m stock_monitor db-migrate --dry-run",
+            "python -m stock_monitor db-backup --tag pre-schema-migration",
+            "python -m stock_monitor db-migrate",
+            "python -m stock_monitor db-verify --json",
+        ],
+        "requires_separate_approval": [
+            "production DB write",
+            "schema migration on operating PC",
+        ],
+    }
+
+
+def _run_read_only_schema_not_current_report(
+    command: str,
+    repository: StockMonitorRepository,
+    *,
+    as_json: bool,
+) -> int:
+    payload = _build_read_only_schema_not_current_payload(command, repository)
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 1
+    schema_status = payload["schema_status"]
+    print(f"{command} blocked by default DB schema")
+    print("- ready: N")
+    print(
+        f"- schema: {schema_status['status']} "
+        f"current={schema_status['current_version']} target={schema_status['target_version']}"
+    )
+    for blocker in payload["blockers"]:
+        print(f"- blocker: {blocker['code']} | {blocker['message']}")
+    print("- recommended commands:")
+    for item in payload["recommended_commands"]:
+        print(f"  - {item}")
+    print("- requires separate approval:")
+    for item in payload["requires_separate_approval"]:
+        print(f"  - {item}")
+    return 1
 
 
 def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
