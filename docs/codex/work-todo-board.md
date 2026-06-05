@@ -19,7 +19,7 @@
 
 | Order | Todo ID | Why Now |
 | --- | --- | --- |
-| 1 | `TODO-OPS` | `ops-sync-preview` now emits an operating-PC handoff prompt, but default DB schema approval/handling and final operating-PC batch verification remain separate. |
+| - | none | All board TODOs are development-verified. Real DB migration, scheduler changes, Telegram sends, admin-gui process operations, and operating-PC application remain separate approval work. |
 
 ## Todo Board
 
@@ -170,7 +170,7 @@ KRX/ETF/flow/Toss/X 같은 외부 데이터 축을 실제 동작 가능한 sourc
 **Completion Note:**
 2026-06-05 dev commits `65d41f4`/`d2c641e` completed the remaining source-lane boundary slice with the read-only `data-source-lane-audit` CLI. The command emits a concrete JSON/text audit with Naver reports, KRX stock/index/ETF daily, KRX investor flow, Toss OpenAPI, and X public recap classified as `production`, `production_limited`, `hold`, or `lab`. The output explicitly states `etf_daily | production | constituents=not_loaded`, `toss_openapi | hold | live_fetch=false | affects_ordering=false`, and `x_public_recap | lab | separate_lab_branch=true | login_dependency_allowed=false`; the JSON `done_when_coverage` confirms source lanes are classified, web-view freshness is connected, Telegram freshness is connected, Toss/X are not exaggerated, and ETF constituent status is explicit. Verified `python -m stock_monitor data-source-lane-audit`, `python -m stock_monitor data-source-lane-audit --json`, `python -m pytest tests\test_cli_commands.py -q -k data_source_lane_audit` (`3 passed`), `python -m pytest tests\test_cli_commands.py -q` (`326 passed`), and full `python -m pytest -q` (`732 passed`). No live fetch, DB write, Telegram send, scheduler registration, admin-gui connection, or web-view connection was added.
 
-### [ ] TODO-OPS: Operations, Sync, And Performance Closeout
+### [x] TODO-OPS: Operations, Sync, And Performance Closeout
 
 **Goal:**
 개발 결과를 dev에 모으고, 운영 적용은 묶음 단위로 싱크하면서 성능/버튼/GET-only/read-only 계약을 재관측한다.
@@ -216,6 +216,9 @@ KRX/ETF/flow/Toss/X 같은 외부 데이터 축을 실제 동작 가능한 sourc
 
 **Progress Note:**
 2026-06-05 dev commits `345c4fb`/`5ba0a6c` connected `db-migration-rehearsal --json` back into `ops-sync-preview` as a pre-approval schema action. Actual `ops-sync-preview --json` smoke still exits `1` because the default DB schema is stale, but its `schema_action_plan.pre_approval_commands` now includes `ops-sync-preview`, `db-migrate --dry-run`, `db-migration-rehearsal --json`, and `db-verify --json`, and the operating-PC handoff prompt includes the rehearsal command. Verified focused ops-sync test (`1 passed`), full CLI tests (`330 passed`), and full `python -m pytest -q` (`736 passed`).
+
+**Completion Note:**
+2026-06-05 dev commits through `e25e17e` completed the dev-side operations closeout. `ops-sync-preview --json` now describes `origin/main..dev` by commit subject, changed file group, conflict-watch path, batch exclusions, and an `operating_pc_handoff.prompt` whose first line is `운영 PC용`. It also separates schema pre-approval commands from post-approval commands and includes `db-migration-rehearsal --json`. Default DB schema is still `5/7`, so actual DB migration remains blocked until explicit approval; however, `db-migration-rehearsal` proved a temp copy migrates `5/7 -> 7/7` with `copy_verify_ready=true` and `writes_source_db=false`. Final dev-side smoke used a `%TEMP%` visible-product-flow fixture: `web-view-value-qa --date 2026-05-08 --stock-limit 20 --json` returned issue/warning `0`, and `web-view-browser-smoke --date 2026-05-08 --stock-limit 20 --json` returned issue `0`, tab/click/search coverage across desktop/tablet/mobile, POST `405`, and `/api/status` `404`. `docs-hygiene-audit --json` scanned 9 public/canonical docs with issue `0`; `api-perf-summary --json` read the current dev log with `record_count=1980` and `endpoint_count=62`; full CLI tests and full pytest passed in the latest code pass (`330 passed`, `736 passed`). Real operating-PC DB migration, scheduler changes, Telegram real sends, admin-gui process operations, and production/operating DB writes remain outside this board and require separate explicit approval.
 
 ### [x] TODO-ADMIN: Admin / Web-View / Operator-Review Boundary
 
