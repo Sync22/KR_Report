@@ -19,11 +19,11 @@
 
 | Order | Todo ID | Why Now |
 | --- | --- | --- |
-| 1 | `TODO-NI` | web-view/Telegram에 news observation 근거가 보이기 시작했으므로 candidate evidence와의 연결 완성도가 다음 병목이다. |
-| 2 | `TODO-DATA` | KRX/ETF/Toss/X 같은 외부 데이터 축은 실제 동작 가능성과 source freshness 기준을 더 명확히 잡아야 한다. |
-| 3 | `TODO-OPS` | 개발 산출물이 dev에 쌓였으므로 운영 싱크, 성능, GET-only/read-only 재관측을 묶어서 준비해야 한다. |
-| 4 | `TODO-ADMIN` | admin-gui와 shared web-view/operator-review 경계가 유지되는지 다음 기능 축 전에 재확인할 필요가 있다. |
-| 5 | `TODO-DOC` | README/canonical docs가 dev 현실과 다시 어긋나지 않도록 다음 구현 묶음 뒤에 정리한다. |
+| 1 | `TODO-OPS` | web-view, Telegram, news connection, source freshness의 dev 산출물이 쌓였으므로 운영 싱크 전 read-only/GET-only/성능 재관측을 묶어야 한다. |
+| 2 | `TODO-ADMIN` | admin-gui와 shared web-view/operator-review 경계가 유지되는지 운영 준비 전에 재확인할 필요가 있다. |
+| 3 | `TODO-DOC` | dev에서 바뀐 public surface와 source freshness 표현을 README/canonical docs에 반영해야 한다. |
+| 4 | `TODO-NI` | public news connection label은 들어갔지만 save-observation readback/CLI 비교와 source-mode coverage 잔여가 있다. |
+| 5 | `TODO-DATA` | web-view source freshness는 들어갔지만 Toss/X lab feasibility와 Telegram freshness 연결은 잔여다. |
 
 ## Todo Board
 
@@ -126,6 +126,9 @@ news intelligence를 독립 뉴스 수집기가 아니라 report/KRX/candidate e
 - `docs/codex/surface-contract.md`
 - `docs/codex/data-source-policy.md`
 
+**Progress Note:**
+2026-06-05 dev commit `24cff27`에서 daily web-view의 news observation summary, candidate badge, stock detail, `/v2` rendering에 public-safe connection label/reason을 추가했다. `tests/test_web_view.py`, `tests/test_cli_commands.py`, fixture `web-view-value-qa`, `web-view-browser-smoke`, 전체 pytest가 통과했다. raw sentiment/impact/internal recommendation은 public payload에 노출하지 않았다. 남은 범위는 저장 observation readback, CLI 비교 출력, source-mode coverage 정리다.
+
 ### [ ] TODO-DATA: Market Data, ETF, And Source Freshness
 
 **Goal:**
@@ -158,6 +161,9 @@ KRX/ETF/flow/Toss/X 같은 외부 데이터 축을 실제 동작 가능한 sourc
 - `docs/codex/krx-market-data-runbook.md`
 - `docs/codex/contracts/toss-openapi-readonly-lab-contract.md`
 - `docs/codex/contracts/toss-openapi-official-api-inventory.md`
+
+**Progress Note:**
+2026-06-05 dev commits `80c9b98`/`f420bdc`에서 daily web-view API와 화면에 `source_freshness_summary`를 추가했다. 선택 날짜별 Naver reports, KRX Open API market/ETF, KRX Data Marketplace investor flow, Toss OpenAPI lab-hold 상태가 `exact`/`stale`/`missing`/`lab_hold`로 표시된다. 기본 DB는 schema가 오래되어 read-only QA가 migration 안내로 중단됐으므로, production/default DB를 쓰지 않고 temp fixture DB로 `web-view-value-qa`, `web-view-browser-smoke`, `tests/test_web_view.py`, `tests/test_cli_commands.py`, 전체 pytest를 통과시켰다. 남은 범위는 Toss/X lab feasibility, ETF 구성종목/source 검토, Telegram freshness 문구 연결이다.
 
 ### [ ] TODO-OPS: Operations, Sync, And Performance Closeout
 
