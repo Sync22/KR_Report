@@ -3656,6 +3656,175 @@ def test_news_intelligence_observations_outputs_read_only_run_comparison(
     assert payload["runs"][0]["evidence"][0]["evidence_key"] == "ev-context"
 
 
+def test_news_intelligence_observations_summarizes_source_mode_coverage(
+    tmp_path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "news-intelligence.db"
+    repository = StockMonitorRepository(db_path)
+    repository.initialize()
+    run_exact = _news_intelligence_cli_run(
+        run_id="run-exact",
+        matched_count=2,
+        created_at=datetime(2026, 6, 1, 10, 0, 0),
+    )
+    run_stale = _news_intelligence_cli_run(
+        run_id="run-stale",
+        matched_count=1,
+        created_at=datetime(2026, 6, 1, 10, 5, 0),
+    )
+    repository.save_news_intelligence_observation(
+        run_exact,
+        [
+            _news_intelligence_cli_evidence(
+                run_id=run_exact.run_id,
+                evidence_key="ev-exact-direct",
+                relevance="direct",
+                match_scope="both",
+                source_lane="mainnews",
+                candidate_priority_presence=True,
+                candidate_observation_priority="top_2",
+            ),
+            _news_intelligence_cli_evidence(
+                run_id=run_exact.run_id,
+                evidence_key="ev-exact-context",
+                relevance="market_context",
+                match_scope="summary",
+                source_lane="section_market_outlook",
+                evidence_case="report_heavy_market_context_only",
+                operator_recommendation="separate_market_context",
+            ),
+        ],
+    )
+    repository.save_news_intelligence_observation(
+        run_stale,
+        [
+            _news_intelligence_cli_evidence(
+                run_id=run_stale.run_id,
+                evidence_key="ev-stale-caution",
+                relevance="direct",
+                match_scope="title",
+                source_lane="ranknews",
+                sentiment="Caution",
+                stock_impact="Caution",
+                event_types=("Risk/Caution",),
+                evidence_case="report_with_caution_news",
+                operator_recommendation="review_with_caution",
+                krx_reference_date=date(2026, 5, 29),
+            )
+        ],
+    )
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-observations",
+            "--date",
+            "2026-06-01",
+            "--stock-code",
+            "005930",
+            "--db-path",
+            str(db_path),
+            "--evidence-per-run",
+            "0",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["source_mode_coverage"] == {
+        "run_count": 2,
+        "evidence_count": 3,
+        "source_modes": {"naver_5_lane_preview": 2},
+        "source_lanes": {
+            "mainnews": 1,
+            "ranknews": 1,
+            "section_market_outlook": 1,
+        },
+        "relevance": {
+            "direct": 2,
+            "indirect": 0,
+            "market_context": 1,
+        },
+        "match_scope": {
+            "both": 1,
+            "summary": 1,
+            "title": 1,
+        },
+        "krx_reference_status": {
+            "exact": 1,
+            "stale_reference": 1,
+            "missing": 0,
+            "none": 0,
+        },
+        "candidate_linkage_labels": {
+            "stale_krx_check_first": 1,
+            "strengthen_existing_candidate": 1,
+        },
+        "operator_recommendation_support": {
+            "check_krx_before_linking": 1,
+            "strengthen_existing_candidate": 1,
+        },
+        "boundary": {
+            "read_only": True,
+            "operator_only": True,
+            "public_safe": False,
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_web_view": False,
+        },
+    }
+
+
+def test_news_intelligence_observations_text_includes_source_mode_coverage(
+    tmp_path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "news-intelligence.db"
+    repository = StockMonitorRepository(db_path)
+    repository.initialize()
+    run = _news_intelligence_cli_run(run_id="run-text-coverage")
+    repository.save_news_intelligence_observation(
+        run,
+        [
+            _news_intelligence_cli_evidence(
+                run_id=run.run_id,
+                evidence_key="ev-text-coverage",
+                relevance="direct",
+                match_scope="both",
+                source_lane="mainnews",
+            )
+        ],
+    )
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-observations",
+            "--date",
+            "2026-06-01",
+            "--stock-code",
+            "005930",
+            "--db-path",
+            str(db_path),
+            "--format",
+            "text",
+            "--evidence-per-run",
+            "0",
+        ]
+    )
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "source-mode coverage:" in output
+    assert "runs 1 / evidence 1" in output
+    assert "source_modes: naver_5_lane_preview=1" in output
+    assert "source_lanes: mainnews=1" in output
+    assert "labels: strengthen_existing_candidate=1" in output
+
+
 def test_news_intelligence_observations_classifies_candidate_linkage_preview_labels(
     tmp_path,
     capsys,
@@ -3937,6 +4106,16 @@ def test_news_intelligence_daily_brief_outputs_grouped_json(
     assert payload["sections"]["stale_krx_check_first"][0]["stock_code"] == "066570"
     assert payload["sections"]["insufficient_evidence"][0]["stock_code"] == "005490"
     assert payload["item_count"] == 6
+    assert payload["source_mode_coverage"]["run_count"] == 6
+    assert payload["source_mode_coverage"]["evidence_count"] == 5
+    assert payload["source_mode_coverage"]["source_modes"] == {"naver_5_lane_preview": 6}
+    assert payload["source_mode_coverage"]["candidate_linkage_labels"] == {
+        "insufficient_evidence": 1,
+        "promote_news_only_candidate": 1,
+        "stale_krx_check_first": 1,
+        "strengthen_existing_candidate": 1,
+        "support_only_context": 2,
+    }
 
 
 def _news_intelligence_cli_run(
