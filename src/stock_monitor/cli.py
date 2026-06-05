@@ -21487,16 +21487,18 @@ def _render_web_view_v2_html() -> str:
     }
 
     function renderCandidateNewsLine(badge) {
-      const label = newsKindLabel(badge);
+      const label = badge?.connection_label || newsKindLabel(badge);
       if (!badge || badge.available !== true) {
         return `<span class="v2-chip warn">${esc(label)}</span><span class="v2-news-line">${esc(badge?.reason || "같은 종목의 저장 뉴스 관찰이 없습니다.")}</span>`;
       }
       const krx = badge.krx_reference_status || "missing";
       const title = badge.top_title || badge.reason || "";
+      const connection = badge.connection_reason || "";
       return [
         `<span class="v2-chip strong">${esc(label)}</span>`,
         `<span class="v2-chip">직접 ${number(badge.direct_count)} · 주의 ${number(badge.caution_count)} · 시장맥락 ${number(badge.market_context_count)}</span>`,
         `<span class="v2-chip ${krx === "stale" ? "warn" : ""}">KRX ${esc(krx)}</span>`,
+        connection ? `<span class="v2-news-line">${esc(connection)}</span>` : "",
         title ? `<span class="v2-news-line">${esc(title)}</span>` : "",
       ].filter(Boolean).join("");
     }
@@ -23676,8 +23678,8 @@ def _render_web_view_html() -> str:
           : "KRX 없음";
       if (!detail.available) {
         return `<div class="detail-item stock-news-observation-detail muted">
-          <b>${esc(detail.display_label || "저장 뉴스 근거 없음")}</b>
-          <span class="detail-meta">${esc(detail.empty_state || detail.reason || "같은 종목의 저장 뉴스 observation이 없습니다.")}</span>
+          <b>${esc(detail.connection_label || detail.display_label || "저장 뉴스 근거 없음")}</b>
+          <span class="detail-meta">${esc(detail.connection_reason || detail.empty_state || detail.reason || "같은 종목의 저장 뉴스 observation이 없습니다.")}</span>
         </div>`;
       }
       const direct = Number(detail.direct_count || 0);
@@ -23689,8 +23691,8 @@ def _render_web_view_html() -> str:
         ? `<ul class="stock-news-title-list">${titles.map((title) => `<li>${esc(title)}</li>`).join("")}</ul>`
         : "";
       return `<div class="detail-item stock-news-observation-detail">
-        <b>저장 뉴스 근거 · ${esc(detail.display_label || "뉴스 근거 있음")}</b>
-        <span class="detail-meta">${esc(detail.reason || countLine)}</span>
+        <b>저장 뉴스 근거 · ${esc(detail.connection_label || detail.display_label || "뉴스 근거 있음")}</b>
+        <span class="detail-meta">${esc(detail.connection_reason || detail.reason || countLine)}</span>
         <span class="detail-meta">${esc(countLine)}</span>
         ${titleList}
       </div>`;
@@ -23914,26 +23916,28 @@ def _render_web_view_html() -> str:
 
     function candidateNewsCompactLine(badge) {
       if (!badge || badge.available !== true) return "뉴스 근거: 저장 뉴스 근거 없음";
-      const label = badge.display_label || "뉴스 근거 있음";
+      const label = badge.connection_label || badge.display_label || "뉴스 근거 있음";
       const krx = badge.krx_reference_status || "missing";
       return `뉴스 근거: ${label} · KRX ${krx}`;
     }
 
     function renderCandidateNewsBadge(badge) {
       if (!badge || badge.available !== true) {
-        const label = badge?.display_label || "저장 뉴스 근거 없음";
-        const reason = badge?.reason || "같은 종목의 저장 뉴스 observation이 없습니다.";
+        const label = badge?.connection_label || badge?.display_label || "저장 뉴스 근거 없음";
+        const reason = badge?.connection_reason || badge?.reason || "같은 종목의 저장 뉴스 observation이 없습니다.";
         return `<div class="candidate-news-badge"><span class="quality-chip quality-chip--missing">${esc(label)}</span><span>${esc(reason)}</span></div>`;
       }
+      const connectionLabel = badge.connection_label || badge.display_label || "뉴스 근거 있음";
+      const connectionReason = badge.connection_reason || "";
       const chips = [
-        badge.display_label || "뉴스 근거 있음",
+        connectionLabel,
         `직접 ${number(badge.direct_count || 0)}`,
         `주의 ${number(badge.caution_count || 0)}`,
         `시장맥락 ${number(badge.market_context_count || 0)}`,
         `KRX ${badge.krx_reference_status || "missing"}`
       ];
       const title = badge.top_title || badge.reason || "";
-      return `<div class="candidate-news-badge">${chips.map((item) => `<span class="quality-chip">${esc(item)}</span>`).join("")}${title ? `<span><b>근거</b> ${esc(title)}</span>` : ""}</div>`;
+      return `<div class="candidate-news-badge">${chips.map((item) => `<span class="quality-chip">${esc(item)}</span>`).join("")}${connectionReason ? `<span><b>연결</b> ${esc(connectionReason)}</span>` : ""}${title ? `<span><b>근거</b> ${esc(title)}</span>` : ""}</div>`;
     }
 
     function candidateIntradayReferenceLabel(reference) {
@@ -26077,6 +26081,8 @@ def _build_web_view_news_observation_summary(
             "items": [],
             "empty_state": "저장된 뉴스 관찰 없음",
             "missing_context": ["stored_news_observation"],
+            "connection_label": "뉴스 근거 부족",
+            "connection_reason": "우선 확인 후보와 연결할 저장 뉴스 관찰이 없습니다.",
         }
 
     direct_count = sum(1 for row in evidence_rows if row.relevance == "direct")
@@ -26094,6 +26100,12 @@ def _build_web_view_news_observation_summary(
         for run in representative_runs
     ]
     display_label, reason = _web_view_news_observation_label(
+        direct_count=direct_count,
+        caution_count=caution_count,
+        market_context_count=market_context_count,
+        krx_reference_status=krx_reference_status,
+    )
+    connection_label, connection_reason = _web_view_news_observation_connection(
         direct_count=direct_count,
         caution_count=caution_count,
         market_context_count=market_context_count,
@@ -26122,6 +26134,8 @@ def _build_web_view_news_observation_summary(
         "top_titles": top_titles,
         "items": [item for item in items if item["available"]],
         "missing_context": [],
+        "connection_label": connection_label,
+        "connection_reason": connection_reason,
     }
 
 
@@ -26143,6 +26157,8 @@ def _web_view_news_observation_summary_item(
         "market_context_count": badge["market_context_count"],
         "krx_reference_status": badge["krx_reference_status"],
         "top_title": badge["top_title"],
+        "connection_label": badge["connection_label"],
+        "connection_reason": badge["connection_reason"],
     }
 
 
@@ -26204,6 +26220,24 @@ def _web_view_news_observation_label(
     if market_context_count > 0:
         return "시장 맥락 참고", "시장/업종 맥락 중심이라 종목 직접 근거로 과신하지 않습니다."
     return "뉴스 근거 부족", "저장된 뉴스가 있지만 직접 판단 근거는 부족합니다."
+
+
+def _web_view_news_observation_connection(
+    *,
+    direct_count: int,
+    caution_count: int,
+    market_context_count: int,
+    krx_reference_status: str,
+) -> tuple[str, str]:
+    if krx_reference_status == "stale":
+        return "KRX 기준일 확인 필요", "KRX 기준일이 선택 날짜와 달라 뉴스 연결 전 시장 반응 기준일을 먼저 확인해야 합니다."
+    if caution_count > 0:
+        return "주의 뉴스 확인", "주의/혼합 성격의 뉴스가 있어 리포트 근거와 함께 확인합니다."
+    if direct_count > 0:
+        return "뉴스로 후보 강화", "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다."
+    if market_context_count > 0:
+        return "시장 맥락 참고", "업종/시장 맥락 뉴스라 종목 직접 근거로 과신하지 않습니다."
+    return "뉴스 근거 부족", "저장 뉴스가 있지만 후보와 직접 연결할 근거는 부족합니다."
 
 
 def _web_view_unique_texts(values: list[str], *, limit: int) -> list[str]:
@@ -27318,6 +27352,8 @@ def _web_view_empty_candidate_news_badge() -> dict[str, object]:
         "available": False,
         "display_label": "저장 뉴스 근거 없음",
         "reason": "같은 종목의 저장 뉴스 observation이 없습니다.",
+        "connection_label": "뉴스 근거 부족",
+        "connection_reason": "같은 종목의 저장 뉴스 관찰이 없습니다.",
         "direct_count": 0,
         "caution_count": 0,
         "market_context_count": 0,
@@ -27336,6 +27372,13 @@ def _web_view_candidate_news_badge(
     direct_count = sum(1 for row in rows if row.relevance == "direct")
     caution_count = sum(1 for row in rows if _web_view_news_observation_is_caution(row))
     market_context_count = sum(1 for row in rows if row.relevance == "market_context")
+    krx_reference_status = _web_view_news_observation_krx_status(rows, business_date)
+    connection_label, connection_reason = _web_view_news_observation_connection(
+        direct_count=direct_count,
+        caution_count=caution_count,
+        market_context_count=market_context_count,
+        krx_reference_status=krx_reference_status,
+    )
     ordered_rows = sorted(
         rows,
         key=lambda row: (
@@ -27360,8 +27403,10 @@ def _web_view_candidate_news_badge(
         "direct_count": direct_count,
         "caution_count": caution_count,
         "market_context_count": market_context_count,
-        "krx_reference_status": _web_view_news_observation_krx_status(rows, business_date),
+        "krx_reference_status": krx_reference_status,
         "top_title": top_title,
+        "connection_label": connection_label,
+        "connection_reason": connection_reason,
     }
 
 

@@ -308,6 +308,8 @@ def test_web_view_daily_snapshot_exposes_news_observation_empty_state(tmp_path, 
         "items": [],
         "empty_state": "저장된 뉴스 관찰 없음",
         "missing_context": ["stored_news_observation"],
+        "connection_label": "뉴스 근거 부족",
+        "connection_reason": "우선 확인 후보와 연결할 저장 뉴스 관찰이 없습니다.",
     }
     _assert_public_safe_payload(snapshot)
 
@@ -345,6 +347,8 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
     assert summary["available"] is True
     assert summary["display_label"] == "주의 뉴스 확인"
     assert summary["reason"] == "주의 문구가 있어 리포트 근거와 함께 확인합니다."
+    assert summary["connection_label"] == "주의 뉴스 확인"
+    assert summary["connection_reason"] == "주의/혼합 성격의 뉴스가 있어 리포트 근거와 함께 확인합니다."
     assert summary["connection_note"] == "우선 확인 후보와 겹친 뉴스 근거: 삼성전자"
     assert summary["candidate_overlap_count"] == 1
     assert summary["candidate_overlap_names"] == ["삼성전자"]
@@ -368,6 +372,8 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
             "market_context_count": 1,
             "krx_reference_status": "exact",
             "top_title": "삼성전자, AI 반도체 공급 계약 체결",
+            "connection_label": "주의 뉴스 확인",
+            "connection_reason": "주의/혼합 성격의 뉴스가 있어 리포트 근거와 함께 확인합니다.",
         }
     ]
     assert "overall_sentiment" not in summary
@@ -594,6 +600,8 @@ def test_web_view_candidate_evidence_projects_public_safe_news_badge(tmp_path, m
     assert badge["caution_count"] == 1
     assert badge["market_context_count"] == 1
     assert badge["krx_reference_status"] == "stale"
+    assert badge["connection_label"] == "KRX 기준일 확인 필요"
+    assert badge["connection_reason"] == "KRX 기준일이 선택 날짜와 달라 뉴스 연결 전 시장 반응 기준일을 먼저 확인해야 합니다."
     assert badge["top_title"] == direct_evidence.title
     payload = json.dumps(snapshot, ensure_ascii=False)
     assert "sentiment_score" not in payload
@@ -730,6 +738,8 @@ def test_web_view_candidate_evidence_projects_empty_news_badge(tmp_path, monkeyp
         "available": False,
         "display_label": "저장 뉴스 근거 없음",
         "reason": "같은 종목의 저장 뉴스 observation이 없습니다.",
+        "connection_label": "뉴스 근거 부족",
+        "connection_reason": "같은 종목의 저장 뉴스 관찰이 없습니다.",
         "direct_count": 0,
         "caution_count": 0,
         "market_context_count": 0,
@@ -802,6 +812,8 @@ def test_web_view_stock_detail_projects_public_safe_news_observation_detail(tmp_
     assert detail["caution_count"] == 1
     assert detail["market_context_count"] == 1
     assert detail["krx_reference_status"] == "exact"
+    assert detail["connection_label"] == "주의 뉴스 확인"
+    assert detail["connection_reason"] == "주의/혼합 성격의 뉴스가 있어 리포트 근거와 함께 확인합니다."
     assert detail["top_titles"] == [
         "Samsung expands AI semiconductor supply",
         "Semiconductor volatility caution",
@@ -867,6 +879,8 @@ def test_web_view_static_html_renders_stock_news_observation_detail() -> None:
     assert "renderStockNewsObservationDetail" in html
     assert "stock-news-observation-detail" in html
     assert "stock-news-title-list" in html
+    assert "connection_label" in html
+    assert "connection_reason" in html
     assert ".stock-news-observation-detail { display: grid; gap: 6px; border-color: #e7d8bf; background: #fff; }" in html
     assert 'const validStockCode = (value) => /^\\d{6}$/.test(value || "");' in html
     assert "const requestedStockCode = () => new URLSearchParams(window.location.search).get(\"stock\");" in html
