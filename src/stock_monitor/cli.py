@@ -219,6 +219,10 @@ DOCS_HYGIENE_DEFAULT_PATHS = (
     Path("docs/codex/current-work.md"),
     Path("docs/codex/next-phase.md"),
     Path("docs/codex/execution-roadmap.md"),
+    Path("docs/codex/surface-contract.md"),
+    Path("docs/codex/data-source-policy.md"),
+    Path("docs/codex/data-quality-checklist.md"),
+    Path("docs/codex/contracts/news-intelligence-contract.md"),
 )
 DOCS_HYGIENE_LOCAL_ABSOLUTE_PATH_PATTERN = re.compile(
     r"(?:/[A-Za-z]:/Users/[^)\s`]+|[A-Za-z]:[\\/](?:Users|Documents and Settings)[\\/][^)\s`]+)"

@@ -126,8 +126,8 @@ Disallowed examples:
 
 The user page is an archive/review surface, not a delivery mirror.
 
-Detailed data-quality rules are maintained in [data-quality-checklist.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/data-quality-checklist.md).
-Source ownership and Korean display naming are fixed in [data-source-policy.md](/c:/Users/MING/Codex/02.Stock_Moniter/docs/codex/data-source-policy.md).
+Detailed data-quality rules are maintained in [data-quality-checklist.md](data-quality-checklist.md).
+Source ownership and Korean display naming are fixed in [data-source-policy.md](data-source-policy.md).
 
 | Item | Contract |
 | --- | --- |
@@ -155,7 +155,7 @@ When that future lane is approved, `read-only` still means no DB write, no Teleg
 
 If a later phase evaluates trading decisions, keep it out of the public `web-view` contract. It should be an operator-only decision-support or execution-lab surface with its own permission, audit, source freshness, failure, and order-safety contract.
 
-Operator-only news intelligence may produce sentiment scores, event impact labels, and recommendation-draft summaries for the operator lane. The v1 contract is [news-intelligence-contract.md](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/contracts/news-intelligence-contract.md): the default preview writes no DB rows, and only the explicit `--save-observation` operator path may write to operator-only observation tables. It still connects to no scheduler, Telegram, broker, or public route by default.
+Operator-only news intelligence may produce sentiment scores, event impact labels, and recommendation-draft summaries for the operator lane. The v1 contract is [news-intelligence-contract.md](contracts/news-intelligence-contract.md): the default preview writes no DB rows, and only the explicit `--save-observation` operator path may write to operator-only observation tables. It still connects to no scheduler, Telegram, broker, or public route by default.
 
 Once observations are saved, `web-view` should be allowed to show a thin public-safe projection instead of keeping the work invisible. That projection must be stored-data-only and may show labels such as `뉴스로 후보 강화`, `주의 뉴스 확인`, `시장 맥락 참고`, `KRX 기준일 확인 필요`, direct/caution/market-context counts, KRX reference status, and one to three article titles. It must not expose internal sentiment scores, numeric impact, operator recommendation-support labels, trading calls, broker/execution language, or any live fetch/write action.
 
