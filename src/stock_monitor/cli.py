@@ -1664,6 +1664,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     db_migrate_parser.add_argument("--dry-run", action="store_true")
 
+    db_migration_rehearsal_parser = subparsers.add_parser(
+        "db-migration-rehearsal",
+        help="Migrate and verify a temporary copy of the local DB without writing the source DB.",
+    )
+    db_migration_rehearsal_parser.add_argument("--work-dir", type=Path)
+    db_migration_rehearsal_parser.add_argument("--keep-copy", action="store_true")
+    db_migration_rehearsal_parser.add_argument("--json", action="store_true")
+
     db_verify_parser = subparsers.add_parser(
         "db-verify",
         help="Run SQLite integrity and schema checks for the local database.",
@@ -1867,6 +1875,14 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "api-perf-summary":
         return _run_api_perf_summary(config, log_path=args.log_path, as_json=args.json)
+    if args.command == "db-migration-rehearsal":
+        return _run_db_migration_rehearsal(
+            config,
+            repository,
+            work_dir=args.work_dir,
+            keep_copy=args.keep_copy,
+            as_json=args.json,
+        )
 
     try:
         _prepare_repository_for_command(repository, args)
@@ -5994,6 +6010,157 @@ def _run_ops_readiness(
     for item in payload["recommended_actions"]:
         print(f"  - {item}")
     return 0 if payload["ready"] else 1
+
+
+def _run_db_migration_rehearsal(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    work_dir: Path | None,
+    keep_copy: bool,
+    as_json: bool,
+) -> int:
+    payload = _build_db_migration_rehearsal_payload(
+        config,
+        repository,
+        work_dir=work_dir,
+        keep_copy=keep_copy,
+    )
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload["ready"] else 1
+    print("Database migration rehearsal")
+    print(f"- ready: {'Y' if payload['ready'] else 'N'}")
+    print(f"- read_only_source: {'Y' if payload['read_only_source'] else 'N'}")
+    print(f"- writes_source_db: {'Y' if payload['writes_source_db'] else 'N'}")
+    before = payload["source_schema_before"]
+    after = payload["copy_schema_after"]
+    print(
+        f"- source schema before: {before['current_version']}/{before['target_version']} "
+        f"status={before['status']}"
+    )
+    print(
+        f"- copy schema after: {after['current_version']}/{after['target_version']} "
+        f"status={after['status']}"
+    )
+    verification = payload["copy_verification"]
+    print(
+        f"- copy verification: ready={'Y' if verification['ready'] else 'N'} "
+        f"integrity={verification['integrity_check']}"
+    )
+    print(f"- copy_retained: {'Y' if payload['copy_retained'] else 'N'}")
+    if payload["copy_path"]:
+        print(f"- copy_path: {payload['copy_path']}")
+    for blocker in payload["blockers"]:
+        print(f"- blocker: {blocker['code']} | {blocker['message']}")
+    return 0 if payload["ready"] else 1
+
+
+def _build_db_migration_rehearsal_payload(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    work_dir: Path | None,
+    keep_copy: bool,
+) -> dict[str, object]:
+    source_schema_before = _ops_sync_db_schema_status(repository)
+    if not bool(source_schema_before.get("exists")):
+        return {
+            "surface": "db-migration-rehearsal",
+            "read_only_source": True,
+            "writes_source_db": False,
+            "writes_temp_copy": False,
+            "ready": False,
+            "copy_retained": False,
+            "copy_path": None,
+            "source_schema_before": source_schema_before,
+            "source_schema_after": source_schema_before,
+            "copy_schema_before": None,
+            "copy_schema_after": None,
+            "copy_verification": None,
+            "blockers": [
+                {
+                    "code": "source_db_missing",
+                    "message": "Source DB does not exist; migration rehearsal cannot create a source snapshot.",
+                }
+            ],
+        }
+
+    target_dir = work_dir or config.data_dir / "migration-rehearsal"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    copied_path = target_dir / f"migration_rehearsal_{datetime.now(ZoneInfo(config.timezone)).strftime('%Y%m%d_%H%M%S_%f')}.db"
+    source_connection = sqlite3.connect(repository.db_path)
+    target_connection = sqlite3.connect(copied_path)
+    try:
+        source_connection.backup(target_connection)
+    finally:
+        target_connection.close()
+        source_connection.close()
+
+    copy_repository = StockMonitorRepository(copied_path, timezone=config.timezone)
+    copy_schema_before = _ops_sync_db_schema_status(copy_repository)
+    migration_status = copy_repository.migrate_schema(dry_run=False)
+    copy_schema_after = _ops_sync_db_schema_status(copy_repository)
+    verify_payload = _build_db_verify_payload(copy_repository)
+    copy_ready = _db_verify_payload_ready(verify_payload)
+    source_schema_after = _ops_sync_db_schema_status(repository)
+    source_unchanged = source_schema_before == source_schema_after
+    blockers: list[dict[str, object]] = []
+    if not source_unchanged:
+        blockers.append(
+            {
+                "code": "source_schema_changed",
+                "message": "Source DB schema changed during migration rehearsal.",
+            }
+        )
+    if not bool(copy_schema_after.get("current")):
+        blockers.append(
+            {
+                "code": "copy_schema_not_current",
+                "message": "Temporary copy did not migrate to the target schema.",
+            }
+        )
+    if not copy_ready:
+        blockers.append(
+            {
+                "code": "copy_verify_failed",
+                "message": "db-verify checks did not pass on the migrated temporary copy.",
+            }
+        )
+
+    retained_path = str(copied_path) if keep_copy else None
+    if not keep_copy:
+        copied_path.unlink(missing_ok=True)
+
+    return {
+        "surface": "db-migration-rehearsal",
+        "read_only_source": True,
+        "writes_source_db": False,
+        "writes_temp_copy": True,
+        "ready": len(blockers) == 0,
+        "copy_retained": keep_copy,
+        "copy_path": retained_path,
+        "source_schema_before": source_schema_before,
+        "source_schema_after": source_schema_after,
+        "copy_schema_before": copy_schema_before,
+        "migration_status": {
+            "current_version": migration_status.current_version,
+            "target_version": migration_status.target_version,
+            "applied_versions": list(migration_status.applied_versions),
+            "pending_versions": list(migration_status.pending_versions),
+        },
+        "copy_schema_after": copy_schema_after,
+        "copy_verification": {
+            "ready": copy_ready,
+            "integrity_check": verify_payload["integrity_check"],
+            "pending_migrations": list(verify_payload["pending_migrations"]),
+            "foreign_key_violations": verify_payload["foreign_key_violations"],
+            "partial_krx_daily_snapshot_date_count": len(verify_payload["partial_krx_daily_snapshot_dates"]),
+            "investor_flow_quality_issue_total": verify_payload["investor_flow_quality_issue_total"],
+            "category_quality_issue_total": verify_payload["category_quality_issue_total"],
+        },
+        "blockers": blockers,
+    }
 
 
 def _run_db_backup(
