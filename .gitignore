@@ -1,6 +1,8 @@
 # Local editor / Codex state
 .codex/
+.codex-remote-attachments/
 .codegraph/
+.playwright-mcp/
 .vscode/
 .idea/
 *.code-workspace
@@ -59,6 +61,7 @@ Stock_Moniter_migration_*.zip
 Stock_Moniter_migration_*.zip.sha256
 
 # Browser/test reports
+.tmp_admin_gui.*
 error_logs/
 output/
 playwright-report/
@@ -88,8 +91,14 @@ docs/codex/scoring-draft-plan.md
 docs/codex/target-price-progress-plan.md
 docs/codex/telegram-briefing-plan.md
 
+# Local operation notes and screenshots
+docs/codex/operations/
+etf-rotation-evidence-web-view.png
+web-view-stock-universe-search.png
+
 # Experimental local environments
 scripts/experimental/.venv-botasaurus/
+scripts/experimental/.venv-scrapling/
 scripts/experimental/.venv-kronos/
 scripts/experimental/.hf-kronos/
 scripts/experimental/.codegraph/
