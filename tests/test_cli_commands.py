@@ -9271,6 +9271,15 @@ def test_docs_hygiene_audit_current_public_docs_are_clean() -> None:
     assert payload["ready"] is True
 
 
+def test_docs_hygiene_audit_default_paths_include_core_contracts() -> None:
+    payload = cli_module._build_docs_hygiene_audit_payload(Path.cwd())
+
+    assert "docs/codex/surface-contract.md" in payload["scanned_files"]
+    assert "docs/codex/data-source-policy.md" in payload["scanned_files"]
+    assert "docs/codex/data-quality-checklist.md" in payload["scanned_files"]
+    assert "docs/codex/contracts/news-intelligence-contract.md" in payload["scanned_files"]
+
+
 def test_next_phase_readiness_groups_latest_krx_openapi_probe_batch(tmp_path) -> None:
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     repository = StockMonitorRepository(config.db_path)
