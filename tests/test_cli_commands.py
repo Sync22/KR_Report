@@ -323,6 +323,35 @@ def test_main_api_perf_summary_json_runs_when_default_schema_is_stale(tmp_path, 
     assert payload["endpoints"][0]["path"] == "/api/archive"
 
 
+def test_main_db_migration_rehearsal_migrates_temp_copy_without_source_write(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    db_path = tmp_path / "stock_monitor.db"
+    _create_schema_v5_database(db_path)
+    monkeypatch.setenv("STOCK_MONITOR_DB_PATH", str(db_path))
+    work_dir = tmp_path / "migration-rehearsal"
+
+    exit_code = cli_module.main(["db-migration-rehearsal", "--work-dir", str(work_dir), "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["surface"] == "db-migration-rehearsal"
+    assert payload["read_only_source"] is True
+    assert payload["writes_source_db"] is False
+    assert payload["writes_temp_copy"] is True
+    assert payload["copy_retained"] is False
+    assert payload["source_schema_before"]["current_version"] == 5
+    assert payload["source_schema_after"]["current_version"] == 5
+    assert payload["copy_schema_before"]["current_version"] == 5
+    assert payload["copy_schema_after"]["current_version"] == SCHEMA_VERSION
+    assert payload["copy_schema_after"]["current"] is True
+    assert payload["copy_verification"]["ready"] is True
+    assert payload["copy_path"] is None
+    assert list(work_dir.glob("*.db")) == []
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+
+
 def test_schema_current_check_only_applies_to_read_only_variants() -> None:
     assert _uses_read_only_schema_current_check(Namespace(command="operator-status"))
     assert _uses_read_only_schema_current_check(Namespace(command="news-intelligence-observations"))
@@ -831,6 +860,25 @@ def test_data_source_lane_audit_parser_accepts_json() -> None:
     args = parser.parse_args(["data-source-lane-audit", "--json"])
 
     assert args.command == "data-source-lane-audit"
+    assert args.json is True
+
+
+def test_db_migration_rehearsal_parser_accepts_work_dir_keep_copy_and_json(tmp_path) -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "db-migration-rehearsal",
+            "--work-dir",
+            str(tmp_path / "rehearsal"),
+            "--keep-copy",
+            "--json",
+        ]
+    )
+
+    assert args.command == "db-migration-rehearsal"
+    assert args.work_dir == tmp_path / "rehearsal"
+    assert args.keep_copy is True
     assert args.json is True
 
 
