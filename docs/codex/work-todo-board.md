@@ -19,10 +19,9 @@
 
 | Order | Todo ID | Why Now |
 | --- | --- | --- |
-| 1 | `TODO-DOC` | public docs now need to reflect completed web-view, source freshness, ops sync preview, and admin boundary audit outputs without leaking local/private details. |
-| 2 | `TODO-NI` | public news connection labels exist, but saved-observation readback, CLI compare output, and source-mode coverage still need a real evidence-layer pass. |
-| 3 | `TODO-DATA` | web-view source freshness exists, but Toss/X lab feasibility, ETF source checks, and Telegram freshness wording remain. |
-| 4 | `TODO-OPS` | `ops-sync-preview` exists, but default DB schema approval/handling and final operating-PC batch verification remain separate. |
+| 1 | `TODO-NI` | public news connection labels exist, but saved-observation readback, CLI compare output, and source-mode coverage still need a real evidence-layer pass. |
+| 2 | `TODO-DATA` | web-view source freshness exists, but Toss/X lab feasibility, ETF source checks, and Telegram freshness wording remain. |
+| 3 | `TODO-OPS` | `ops-sync-preview` exists, but default DB schema approval/handling and final operating-PC batch verification remain separate. |
 
 ## Todo Board
 
@@ -225,7 +224,7 @@ admin-gui는 운영 상태/제어/복구/설정/audit만 담당하고, 판단 �
 **Completion Note:**
 2026-06-05 dev commits `72312a3`/`3de33c4` added a read-only `admin-boundary-audit` CLI and tests. The audit emits a concrete JSON/text boundary report for `admin-gui`, `web-view`, and future `operator-review`: no live fetch, no DB write, no Telegram send, no scheduler registration, admin HTML judgment-review token count, public-content token count, operator status payload availability, web-view `/api/status` expected 404, and operator-review reserved/unimplemented state. Default DB remains untouched; when its schema is stale the command returns `default_db_schema_not_current` as a blocker instead of a stack trace. Fixture DB verification returned `ready=true`, `html_forbidden_token_count=0`, `html_public_content_token_count=0`, `status_payload.forbidden_token_count=0`, and `operator_review.route_present_in_admin_html=false`. Verified with `python -m stock_monitor admin-boundary-audit --json`, fixture `admin-boundary-audit --json`, `python -m pytest tests\test_admin_gui.py tests\test_operator_status.py tests\test_cli_commands.py -q -k "admin_boundary_audit or admin_gui or operator_status"` (`65 passed`), and full `python -m pytest -q` (`723 passed`).
 
-### [ ] TODO-DOC: Public Documentation And Information Hygiene
+### [x] TODO-DOC: Public Documentation And Information Hygiene
 
 **Goal:**
 README, roadmap, contracts, changelog가 현재 main/dev 현실과 맞고, 공개 문서에 개인 경로, secret, 실행 가능한 민감 URL, 과한 운영 세부가 남지 않게 유지한다.
@@ -255,6 +254,9 @@ README, roadmap, contracts, changelog가 현재 main/dev 현실과 맞고, 공�
 - `docs/codex/current-work.md`
 - `docs/codex/next-phase.md`
 - `docs/codex/execution-roadmap.md`
+
+**Completion Note:**
+2026-06-05 dev commits `3d549b3`/`d066886` added a read-only `docs-hygiene-audit` CLI and refreshed public/canonical docs. The audit scans `README.md`, `documentation-index.md`, `current-work.md`, `next-phase.md`, and `execution-roadmap.md` for local absolute user paths, real external provider URLs, secret-like assignments, and raw access-code examples while returning only redacted file/line/count metadata. `documentation-index.md` and roadmap links were converted from local absolute workspace paths to relative links, historical external web-view provider URL mentions were replaced with placeholders, and README now lists `admin-boundary-audit --json` and `docs-hygiene-audit --json`. Verified `docs-hygiene-audit --json` returned `ready=true` and `issue_count=0`; `tests/test_cli_commands.py -q -k docs_hygiene_audit` returned `3 passed`; `tests/test_cli_commands.py -q` returned `320 passed`.
 
 ## Lab Branches To Keep Separate
 

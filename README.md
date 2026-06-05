@@ -45,6 +45,8 @@ python -m stock_monitor krx-openapi-availability-probe --date latest --endpoint 
 python -m stock_monitor scheduled-krx-mentioned-flow-backfill --dry-run
 python -m stock_monitor admin-gui
 python -m stock_monitor admin-gui --no-open
+python -m stock_monitor admin-boundary-audit --json
+python -m stock_monitor docs-hygiene-audit --json
 python -m stock_monitor refresh-theme 505
 python -m stock_monitor scheduler-control run-now --task poll --dry-run
 python -m stock_monitor scheduler-control run-now --task poll --confirm
