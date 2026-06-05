@@ -9429,6 +9429,8 @@ def test_ops_sync_preview_json_reports_git_batch_schema_and_safe_commands(
         "tests": 1,
     }
     assert payload["default_db_schema"]["current"] is True
+    assert payload["schema_action_plan"]["requires_migration_approval"] is False
+    assert payload["schema_action_plan"]["approval_required"] is False
     assert any("web-view-browser-smoke" in command for command in payload["verification_commands"])
     handoff = payload["operating_pc_handoff"]
     assert handoff["read_only"] is True
@@ -9438,6 +9440,7 @@ def test_ops_sync_preview_json_reports_git_batch_schema_and_safe_commands(
     assert "abc1234 Add source freshness" in handoff["prompt"]
     assert "fed9876 Update todo board" in handoff["prompt"]
     assert "src: 1" in handoff["prompt"]
+    assert "Schema action plan" in handoff["prompt"]
     assert "python -m pytest -q" in handoff["prompt"]
     assert "production DB write" in handoff["prompt"]
     assert "data/ untracked" in handoff["prompt"]
@@ -9501,8 +9504,22 @@ def test_ops_sync_preview_reports_schema_blocker_without_failing_json(
     }
     assert payload["source_sync_ready"] is False
     assert payload["blockers"][0]["code"] == "default_db_schema_not_current"
+    schema_action_plan = payload["schema_action_plan"]
+    assert schema_action_plan["requires_migration_approval"] is True
+    assert schema_action_plan["approval_required"] is True
+    assert schema_action_plan["read_only_until_approval"] is True
+    assert "python -m stock_monitor db-migrate --dry-run" in schema_action_plan["pre_approval_commands"]
+    assert "python -m stock_monitor db-backup --tag pre-schema-migration" in schema_action_plan[
+        "post_approval_commands"
+    ]
+    assert "python -m stock_monitor db-migrate" in schema_action_plan["post_approval_commands"]
+    assert "schema migration on operating PC" in schema_action_plan["forbidden_without_approval"]
     handoff = payload["operating_pc_handoff"]
     assert handoff["prompt"].startswith("운영 PC용\n")
+    assert "Schema action plan" in handoff["prompt"]
+    assert "pre-approval" in handoff["prompt"]
+    assert "post-approval" in handoff["prompt"]
+    assert "schema migration on operating PC" in handoff["prompt"]
     assert "현재 blocker" in handoff["prompt"]
     assert "default_db_schema_not_current" in handoff["prompt"]
     assert "운영 DB write 금지" in handoff["prompt"]
