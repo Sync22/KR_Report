@@ -5563,6 +5563,7 @@ def _ops_sync_schema_action_plan(schema_status: dict[str, object]) -> dict[str, 
         "pre_approval_commands": [
             "python -m stock_monitor ops-sync-preview --base origin/main --head dev --json",
             "python -m stock_monitor db-migrate --dry-run",
+            "python -m stock_monitor db-migration-rehearsal --json",
             "python -m stock_monitor db-verify --json",
         ],
         "post_approval_commands": [
