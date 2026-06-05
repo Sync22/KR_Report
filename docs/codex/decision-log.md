@@ -1,4 +1,4 @@
-# Decision Log
+﻿# Decision Log
 
 ## Scope Constraint
 

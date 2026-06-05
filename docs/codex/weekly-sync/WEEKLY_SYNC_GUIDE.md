@@ -1,4 +1,4 @@
-# Weekly Mini PC Sync Guide
+﻿# Weekly Mini PC Sync Guide
 
 미니PC에서 생긴 코드/문서/테스트 변경을 본컴 소스 기준으로 주간 동기화하기 위한 행동지침입니다.
 

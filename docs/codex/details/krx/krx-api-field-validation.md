@@ -1,4 +1,4 @@
-# KRX API Field Validation
+﻿# KRX API Field Validation
 
 ## Purpose
 

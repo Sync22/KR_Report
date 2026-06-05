@@ -1,4 +1,4 @@
-# Docs Role Reorganization Review Prompt
+﻿# Docs Role Reorganization Review Prompt
 
 Use this prompt before moving or splitting files under `{PROJECT_ROOT}\docs`.
 

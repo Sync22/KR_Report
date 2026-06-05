@@ -1,4 +1,4 @@
-# Agent Guide
+﻿# Agent Guide
 
 ## Purpose
 
@@ -53,9 +53,9 @@ If the global skill `$scrapling-official` is installed, use it as an active sour
 - browser-gated or anti-bot-sensitive source checks
 - bounded source comparison before deciding whether a source should remain probe-only, become fallback, or be proposed for later integration
 
-For Scrapling CLI extraction commands, include `--ai-targeted`. Use the configured shared Scrapling runtime path, represented in public docs as `{SCRAPLING_EXE}`. Do not wire Scrapling into production DB writes, Telegram automation, scheduler tasks, `admin-gui`, or public `web-view`. KRX/Data Marketplace should still prefer existing request/login/sample validation paths first; use Scrapling only for bounded source probing when those paths are insufficient or the source is new/unstable.
+For Scrapling CLI extraction commands, include `--ai-targeted`. The installed shared runtime is `{USER_HOME}\Codex\_tools\scrapling\.venv\Scripts\scrapling.exe`. Do not wire Scrapling into production DB writes, Telegram automation, scheduler tasks, `admin-gui`, or public `web-view`. KRX/Data Marketplace should still prefer existing request/login/sample validation paths first; use Scrapling only for bounded source probing when those paths are insufficient or the source is new/unstable.
 
-If the global skill `$kronos-market-forecast` is installed, use it only for:
+`$kronos-market-forecast` is not part of the current active global baseline. Treat old Kronos outputs as historical research-only references unless the user explicitly re-enables that lane. If it is re-enabled later, use it only for:
 
 - offline OHLCV forecast experiments on stored KRX data
 - comparison against backtest-observation or candidate-evidence views
@@ -109,10 +109,12 @@ Use a skill when the task needs a specialized workflow or tool lane. Use an agen
 | Future operator decision/execution lane | source/broker skills only after explicit approval | `market-data-engineer`, `security-hardening`, `reviewer`, `sql-pro`, `test-engineer`, `cli-developer` | Do not treat current public wording limits as a permanent goal. Trading-decision support is possible only as a separate operator-only/execution-lab path after real-time source, audit, permission, and order-safety gates. |
 | Naver report collection/parser | none by default; `scrapling-official` only for bounded source discovery | `backend-developer`, `python-pro`, `test-engineer` | Main Naver pipeline is production code; Scrapling probes must not replace stable request/API paths without documented evidence. |
 | Telegram/scheduler/SQLite operation | none | `cli-developer`, `debugger`, `test-engineer`, `reviewer` | Operational behavior needs CLI/DB/replay safety, not a browser skill. |
-| User `web-view` / admin UI | `browser-use:browser` only for local visual verification | `web-ui-engineer`, `admin-ui-engineer`, `security-hardening` | Browser skill can verify UI, but implementation/review should stay with UI/security agents. |
-| OHLCV forecast experiment | `kronos-market-forecast` | `market-data-engineer`, `reviewer` | Kronos is research-only and may compare against stored KRX data; it must not feed public scoring directly. |
+| User `web-view` / admin UI | Browser/Chrome plugin for ordinary local inspection; Playwright MCP only for repeatable lab/E2E-style checks | `web-ui-engineer`, `admin-ui-engineer`, `security-hardening` | Browser tools verify UI, but implementation/review should stay with UI/security agents. |
+| OHLCV forecast experiment | none by default; historical Kronos lane only if explicitly re-enabled | `market-data-engineer`, `reviewer` | Keep forecast comparisons research-only; they must not feed public scoring directly. |
 | Public numeric scoring / trading recommendation | none for production | `reviewer`, `market-data-engineer`, `sql-pro`, `test-engineer` | Still blocked. Skills can support experiments only; public score requires data/holdout policy first. Observation-candidate recommendation remains a product/UI task, not a trading recommendation. |
 | Documentation/roadmap/handoff | `superpowers:writing-plans` for large implementation plans | `documentation-engineer` | The skill structures plans; the agent keeps local docs consistent. |
+
+Context7 is the preferred docs lookup for current library/framework/API documentation. HeroUI guidance is relevant only for a future React/Next rewrite, not for the current Python `admin-gui` or `web-view`.
 
 Practical rule:
 
@@ -126,8 +128,8 @@ Always include:
 
 - Scope is only `{PROJECT_ROOT}`.
 - Read `AGENTS.md`.
-- Check [data-quality-checklist.md](/docs/codex/data-quality-checklist.md) before data-display or parsing work.
-- Preserve `admin-gui` vs `web-view` boundary from [surface-contract.md](/docs/codex/surface-contract.md).
+- Check [data-quality-checklist.md]({PROJECT_ROOT}/docs/codex/data-quality-checklist.md) before data-display or parsing work.
+- Preserve `admin-gui` vs `web-view` boundary from [surface-contract.md]({PROJECT_ROOT}/docs/codex/surface-contract.md).
 - Do not enable KRX Data Marketplace scheduled ingest without explicit approval.
 
 ## Closure Rule

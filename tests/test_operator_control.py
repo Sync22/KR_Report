@@ -134,7 +134,7 @@ def test_operator_control_explain_date_json_uses_priority_and_db_reason(tmp_path
     assert payload["is_db_run_suppressed"] is True
     assert payload["db_reason"] == "personal off"
     assert payload["previous_business_day"] == "2026-06-01"
-    assert payload["next_business_day"] == "2026-06-03"
+    assert payload["next_business_day"] == "2026-06-04"
 
 
 def test_operator_control_explain_date_text_shows_holiday_reason(tmp_path, monkeypatch, capsys) -> None:

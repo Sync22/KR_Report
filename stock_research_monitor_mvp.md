@@ -1,4 +1,4 @@
-# Stock Research Monitor Requirements
+﻿# Stock Research Monitor Requirements
 
 ## 목적
 

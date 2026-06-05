@@ -1,4 +1,4 @@
-# Agent Reassessment
+﻿# Agent Reassessment
 
 2026-05-29 decision: keep project-local `.codex/agents/` absent. The role names below remain useful ownership vocabulary, but the default execution layer is now global agents/skills plus CodeGraph. Do not recreate or bulk-restore the old local TOML agent set unless repeated Stock Monitor work proves one exact missing role.
 
@@ -97,13 +97,13 @@ When work is multi-step, cross-module, high-risk, or needs separate review, use 
 
 ## Skills versus agents
 
-This project now has three installed project-specific global skills:
+The current active global skill inventory exposes `scrapling-official` for this project. Older project-specific lanes remain as historical or optional references:
 
-- `botasaurus-stock-monitor`
-- `kronos-market-forecast`
-- `scrapling-official`
+- `scrapling-official` is active for bounded browser/source probes.
+- `botasaurus-stock-monitor` is archived legacy reference only unless explicitly restored.
+- `kronos-market-forecast` is historical research-only/hold unless explicitly re-enabled.
 
-They are useful, but they are not replacements for repository ownership review.
+These lanes are not replacements for repository ownership review.
 
 | Capability | Skill fit | Agent fit | Decision |
 | --- | --- | --- | --- |
@@ -111,8 +111,8 @@ They are useful, but they are not replacements for repository ownership review.
 | KRX Data Marketplace browser/session probing | Existing request/login/sample validation first; `scrapling-official` only when a bounded browser/source probe is needed. | `market-data-engineer`, `debugger` define what success means and whether it should influence the product. | Scrapling is active tooling; Botasaurus is legacy reference only. |
 | Browser-gated rendered-page/source probing | `scrapling-official` is appropriate for bounded rendered extraction and anti-bot-sensitive source comparison. | `market-data-engineer`, `debugger`, `reviewer` decide whether the result stays probe-only, becomes fallback, or needs later integration design. | Use Scrapling as the preferred active probe tool; do not wire it into production ingest or public surfaces. |
 | KRX investor-flow import/display | No skill by default. | `market-data-engineer`, `sql-pro`, `web-ui-engineer`, `reviewer` | Use the normal DB/DTO/UI path. |
-| Stored OHLCV forecasting experiment | `kronos-market-forecast` is appropriate for research-only stored KRX OHLCV experiments. | `market-data-engineer`, `reviewer`, `test-engineer` judge whether results are meaningful. | Keep Kronos output offline and hidden. |
-| Web-view visual verification | `browser-use:browser` is appropriate for local UI inspection when it can access the page. | `web-ui-engineer`, `security-hardening` implement and review public-safe UI behavior. | Browser verifies; agents own changes. |
+| Stored OHLCV forecasting experiment | No active skill by default; historical Kronos results are reference-only unless explicitly re-enabled. | `market-data-engineer`, `reviewer`, `test-engineer` judge whether results are meaningful. | Keep forecast output offline and hidden. |
+| Web-view visual verification | Browser/Chrome plugin is appropriate for ordinary local UI inspection; Playwright MCP is optional for repeatable lab/E2E-style checks. | `web-ui-engineer`, `security-hardening` implement and review public-safe UI behavior. | Browser tools verify; agents own changes. |
 | Telegram/scheduler/SQLite safety | No project skill should handle this. | `cli-developer`, `debugger`, `sql-pro`, `test-engineer`, `reviewer` | Keep in local code/review workflow. |
 | Public numeric score / trading recommendation | No skill should directly produce product behavior. | `reviewer`, `market-data-engineer`, `sql-pro` must approve data/holdout policy first. | Still blocked from public surfaces; observation-candidate recommendation is allowed separately. Future operator-only decision support is a separate lane, not a skill shortcut. |
 
@@ -120,7 +120,7 @@ The reason this comparison was not previously prominent is that the data targets
 
 - Scrapling answers browser/source-access, rendered-page extraction, anti-bot-sensitive source reachability, and source comparison questions.
 - Botasaurus remains historical reference only unless explicitly restored.
-- Kronos answers offline forecast-experiment questions.
+- Kronos is not active in the current baseline; keep old offline forecast-experiment output as historical reference unless explicitly re-enabled.
 - Local agents answer product correctness, DB safety, UI boundaries, Telegram operations, and documentation consistency.
 
 ## Suggested prompt examples

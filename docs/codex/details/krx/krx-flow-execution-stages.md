@@ -1,4 +1,4 @@
-# KRX Flow Execution Stages
+﻿# KRX Flow Execution Stages
 
 This document fixes the execution stages for KRX Data Marketplace investor-flow expansion.
 Use these stage numbers when requesting work, for example: `Stage 2까지 진행` or `Stage 4까지 밀어`.

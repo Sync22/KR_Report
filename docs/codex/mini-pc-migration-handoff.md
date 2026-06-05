@@ -1,4 +1,4 @@
-# Mini PC Migration Handoff
+﻿# Mini PC Migration Handoff
 
 ## Purpose
 

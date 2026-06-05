@@ -198,6 +198,10 @@ def test_web_view_main_layout_first_pass_static_markup() -> None:
     assert "sector-breadth-bar" in html
     assert "renderTopTwoReviewCandidates" in html
     assert 'id="news-observation-summary"' in html
+    assert 'id="source-freshness-summary"' in html
+    assert "renderSourceFreshnessSummary" in html
+    assert "source_freshness_summary" in html
+    assert "source-freshness-item" in html
     assert "renderNewsObservationSummary" in html
     assert "renderNewsObservationSummaryItem" in html
     assert "function newsObservationMetaChips" in html
@@ -308,6 +312,8 @@ def test_web_view_daily_snapshot_exposes_news_observation_empty_state(tmp_path, 
         "items": [],
         "empty_state": "저장된 뉴스 관찰 없음",
         "missing_context": ["stored_news_observation"],
+        "connection_label": "뉴스 근거 부족",
+        "connection_reason": "우선 확인 후보와 연결할 저장 뉴스 관찰이 없습니다.",
     }
     _assert_public_safe_payload(snapshot)
 
@@ -345,6 +351,8 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
     assert summary["available"] is True
     assert summary["display_label"] == "주의 뉴스 확인"
     assert summary["reason"] == "주의 문구가 있어 리포트 근거와 함께 확인합니다."
+    assert summary["connection_label"] == "주의 뉴스 확인"
+    assert summary["connection_reason"] == "주의/혼합 성격의 뉴스가 있어 리포트 근거와 함께 확인합니다."
     assert summary["connection_note"] == "우선 확인 후보와 겹친 뉴스 근거: 삼성전자"
     assert summary["candidate_overlap_count"] == 1
     assert summary["candidate_overlap_names"] == ["삼성전자"]
@@ -368,6 +376,8 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
             "market_context_count": 1,
             "krx_reference_status": "exact",
             "top_title": "삼성전자, AI 반도체 공급 계약 체결",
+            "connection_label": "주의 뉴스 확인",
+            "connection_reason": "주의/혼합 성격의 뉴스가 있어 리포트 근거와 함께 확인합니다.",
         }
     ]
     assert "overall_sentiment" not in summary
@@ -533,10 +543,10 @@ def test_web_view_candidate_evidence_projects_public_safe_news_badge(tmp_path, m
     repository.insert_reports(
         [
             Report(
-                stock_name="Samsung Electronics",
+                stock_name="?쇱꽦?꾩옄",
                 stock_code="005930",
-                title="Samsung Electronics report A",
-                broker_name="NH",
+                title="?쇱꽦?꾩옄 ?먭? A",
+                broker_name="NH?ъ옄利앷텒",
                 published_at=datetime(2026, 6, 2, 9, 0, 0),
                 business_date=business_date,
                 collected_at=datetime(2026, 6, 2, 9, 0, 30),
@@ -546,10 +556,10 @@ def test_web_view_candidate_evidence_projects_public_safe_news_badge(tmp_path, m
                 identity_key="news-badge-report-a",
             ),
             Report(
-                stock_name="Samsung Electronics",
+                stock_name="?쇱꽦?꾩옄",
                 stock_code="005930",
-                title="Samsung Electronics report B",
-                broker_name="KB",
+                title="?쇱꽦?꾩옄 ?먭? B",
+                broker_name="KB利앷텒",
                 published_at=datetime(2026, 6, 2, 10, 0, 0),
                 business_date=business_date,
                 collected_at=datetime(2026, 6, 2, 10, 0, 30),
@@ -561,20 +571,14 @@ def test_web_view_candidate_evidence_projects_public_safe_news_badge(tmp_path, m
         ]
     )
     repository.rebuild_daily_summaries(business_date)
-    direct_evidence = _web_view_news_evidence(
-        title="Samsung Electronics AI supply deal",
-        stock_name="Samsung Electronics",
-        target_date=business_date,
-        krx_reference_date=date(2026, 6, 1),
-    )
+    direct_evidence = _web_view_news_evidence(target_date=business_date, krx_reference_date=date(2026, 6, 1))
     repository.save_news_intelligence_observation(
-        _web_view_news_run(stock_name="Samsung Electronics", target_date=business_date),
+        _web_view_news_run(target_date=business_date),
         [
             direct_evidence,
             _web_view_news_evidence(
                 evidence_key="news-badge-caution",
-                title="Samsung Electronics volatility caution",
-                stock_name="Samsung Electronics",
+                title="?쇱꽦?꾩옄, 蹂?숈꽦 ?뺣? 二쇱쓽",
                 relevance="market_context",
                 sentiment="Caution",
                 stock_impact="Negative",
@@ -600,14 +604,13 @@ def test_web_view_candidate_evidence_projects_public_safe_news_badge(tmp_path, m
     assert badge["caution_count"] == 1
     assert badge["market_context_count"] == 1
     assert badge["krx_reference_status"] == "stale"
+    assert badge["connection_label"] == "KRX 기준일 확인 필요"
+    assert badge["connection_reason"] == "KRX 기준일이 선택 날짜와 달라 뉴스 연결 전 시장 반응 기준일을 먼저 확인해야 합니다."
     assert badge["top_title"] == direct_evidence.title
     payload = json.dumps(snapshot, ensure_ascii=False)
     assert "sentiment_score" not in payload
     assert "stock_impact" not in payload
     assert "operator_recommendation" not in payload
-    assert "recommendation_support" not in payload
-    assert "trading call" not in payload
-    assert "order-routing" not in payload
     _assert_public_safe_payload(snapshot)
 
 
@@ -701,8 +704,8 @@ def test_web_view_candidate_evidence_projects_empty_news_badge(tmp_path, monkeyp
             Report(
                 stock_name="NAVER",
                 stock_code="035420",
-                title="NAVER report A",
-                broker_name="NH",
+                title="NAVER ?먭?",
+                broker_name="NH?ъ옄利앷텒",
                 published_at=datetime(2026, 6, 2, 9, 0, 0),
                 business_date=business_date,
                 collected_at=datetime(2026, 6, 2, 9, 0, 30),
@@ -714,8 +717,8 @@ def test_web_view_candidate_evidence_projects_empty_news_badge(tmp_path, monkeyp
             Report(
                 stock_name="NAVER",
                 stock_code="035420",
-                title="NAVER report B",
-                broker_name="KB",
+                title="NAVER ?먭? B",
+                broker_name="KB利앷텒",
                 published_at=datetime(2026, 6, 2, 10, 0, 0),
                 business_date=business_date,
                 collected_at=datetime(2026, 6, 2, 10, 0, 30),
@@ -739,6 +742,8 @@ def test_web_view_candidate_evidence_projects_empty_news_badge(tmp_path, monkeyp
         "available": False,
         "display_label": "저장 뉴스 근거 없음",
         "reason": "같은 종목의 저장 뉴스 observation이 없습니다.",
+        "connection_label": "뉴스 근거 부족",
+        "connection_reason": "같은 종목의 저장 뉴스 관찰이 없습니다.",
         "direct_count": 0,
         "caution_count": 0,
         "market_context_count": 0,
@@ -811,6 +816,8 @@ def test_web_view_stock_detail_projects_public_safe_news_observation_detail(tmp_
     assert detail["caution_count"] == 1
     assert detail["market_context_count"] == 1
     assert detail["krx_reference_status"] == "exact"
+    assert detail["connection_label"] == "주의 뉴스 확인"
+    assert detail["connection_reason"] == "주의/혼합 성격의 뉴스가 있어 리포트 근거와 함께 확인합니다."
     assert detail["top_titles"] == [
         "Samsung expands AI semiconductor supply",
         "Semiconductor volatility caution",
@@ -876,6 +883,8 @@ def test_web_view_static_html_renders_stock_news_observation_detail() -> None:
     assert "renderStockNewsObservationDetail" in html
     assert "stock-news-observation-detail" in html
     assert "stock-news-title-list" in html
+    assert "connection_label" in html
+    assert "connection_reason" in html
     assert ".stock-news-observation-detail { display: grid; gap: 6px; border-color: #e7d8bf; background: #fff; }" in html
     assert 'const validStockCode = (value) => /^\\d{6}$/.test(value || "");' in html
     assert "const requestedStockCode = () => new URLSearchParams(window.location.search).get(\"stock\");" in html
@@ -1591,6 +1600,25 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
     assert snapshot["krx_context"]["snapshot_date"] == "2026-05-08"
     assert snapshot["krx_context"]["top_kospi_by_turnover"][0]["stock_code"] == "000660"
     assert snapshot["krx_context"]["top_kospi_by_turnover"][0]["volume"] == 50_000
+    source_freshness_items = {
+        item["key"]: item for item in snapshot["source_freshness_summary"]["items"]
+    }
+    assert snapshot["source_freshness_summary"]["source"] == "stored_source_freshness"
+    assert snapshot["source_freshness_summary"]["read_only"] is True
+    assert snapshot["source_freshness_summary"]["live_fetch"] is False
+    assert snapshot["source_freshness_summary"]["scoring"] is False
+    assert source_freshness_items["reports"]["status"] == "exact"
+    assert source_freshness_items["reports"]["reference_date"] == "2026-05-08"
+    assert source_freshness_items["krx_market"]["status"] == "exact"
+    assert source_freshness_items["krx_market"]["source"] == "krx_open_api"
+    assert source_freshness_items["krx_market"]["reference_date"] == "2026-05-08"
+    assert source_freshness_items["krx_market"]["exact_date_available"] is True
+    assert source_freshness_items["etf_daily"]["status"] == "exact"
+    assert source_freshness_items["investor_flow"]["status"] == "exact"
+    assert source_freshness_items["investor_flow"]["source"] == "krx_data_market"
+    assert source_freshness_items["toss_openapi"]["status"] == "lab_hold"
+    assert source_freshness_items["toss_openapi"]["live_fetch"] is False
+    assert source_freshness_items["toss_openapi"]["affects_ordering"] is False
     assert snapshot["krx_recent_flow"] == {
         "available": True,
         "source": "krx",
@@ -3265,6 +3293,16 @@ def test_web_view_daily_krx_context_is_exact_date_and_does_not_fallback_to_lates
     assert missing_context_snapshot["krx_context"]["snapshot_date"] is None
     assert missing_context_snapshot["krx_context"]["top_kospi_by_turnover"] == []
     assert missing_context_snapshot["stocks"][0]["market_reference"] is None
+    missing_freshness = {
+        item["key"]: item for item in missing_context_snapshot["source_freshness_summary"]["items"]
+    }
+    assert missing_freshness["reports"]["status"] == "exact"
+    assert missing_freshness["reports"]["reference_date"] == "2026-05-07"
+    assert missing_freshness["krx_market"]["status"] == "missing"
+    assert missing_freshness["krx_market"]["reference_date"] is None
+    assert missing_freshness["etf_daily"]["status"] == "missing"
+    assert missing_freshness["investor_flow"]["status"] == "missing"
+    assert missing_freshness["toss_openapi"]["status"] == "lab_hold"
     assert "최신 날짜 값으로 대체하지 않습니다" in missing_context_snapshot["krx_context"]["notice"]
 
     context = exact_context_snapshot["krx_context"]
@@ -3286,6 +3324,14 @@ def test_web_view_daily_krx_context_is_exact_date_and_does_not_fallback_to_lates
         "rotation_reference": "저장 ETF 거래대금/NAV/기초지수 기준",
     }
     assert context["indices"][0]["index_name"] == "코스피"
+    exact_freshness = {
+        item["key"]: item for item in exact_context_snapshot["source_freshness_summary"]["items"]
+    }
+    assert exact_freshness["krx_market"]["status"] == "exact"
+    assert exact_freshness["krx_market"]["reference_date"] == "2026-05-08"
+    assert exact_freshness["etf_daily"]["status"] == "exact"
+    assert exact_freshness["investor_flow"]["status"] == "missing"
+    assert exact_freshness["toss_openapi"]["live_fetch"] is False
     assert "scheduler_tasks" not in context
     assert "worker_states" not in context
     assert "db_path" not in context
@@ -4458,7 +4504,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "loadCandidateEvidence(date)" in html
     assert 'document.getElementById("main-priority-rows").innerHTML = message;' in html
     assert 'if (activeViewTab === "main") {\n        await loadCandidateEvidence(date);' in html
-    load_daily_body = html.split("async function loadDaily(date)", 1)[1].split(
+    load_daily_body = html.split("async function loadDaily(date, options = {})", 1)[1].split(
         "function renderDailyBriefing", 1
     )[0]
     assert "loadBacktestObservation(date)" not in load_daily_body
@@ -4581,6 +4627,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "stockSearchDefaultStatus" in html
     assert "syncStockSearchInput" in html
     assert "renderStockSearchResults" in html
+    assert "loadStockSearchResults" in html
+    assert "/api/stocks/search?" in html
     assert "selectStockFromSearch" in html
     assert "오늘 읽을 요약" in html
     assert "daily-briefing-headline" in html
@@ -5164,6 +5212,10 @@ def test_web_view_browser_smoke_checks_tablet_and_large_mobile_viewports() -> No
     assert "watch_observation_summary_visible" in source
     assert "observation_summary_visible_on_main" in source
     assert "watch_observation_summary_missing" in source
+    assert "stock_search_flow" in source
+    assert "q=Beta" in source
+    assert "has_selected_date_report" in source
+    assert "report_empty_state" in source
     assert 'for text in ("오늘 읽을 요약", "오늘의 우선순위")' in source
     assert '"국장 관찰 요약")' not in source
     assert ".is_visible()" in source

@@ -1,4 +1,4 @@
-# KRX Detail Documents
+﻿# KRX Detail Documents
 
 This folder contains detailed KRX/Data Marketplace source studies, field notes, sample capture runbooks, and schema-stage documents.
 

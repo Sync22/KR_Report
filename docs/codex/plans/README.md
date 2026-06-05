@@ -1,4 +1,4 @@
-# Plan Documents
+﻿# Plan Documents
 
 This folder contains detailed feature and analysis plans that are still useful, but are not the first source for current status.
 

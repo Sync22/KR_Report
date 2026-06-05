@@ -1,4 +1,4 @@
-# Surface Contract
+﻿# Surface Contract
 
 ## Purpose
 
@@ -126,8 +126,8 @@ Disallowed examples:
 
 The user page is an archive/review surface, not a delivery mirror.
 
-Detailed data-quality rules are maintained in [data-quality-checklist.md](/docs/codex/data-quality-checklist.md).
-Source ownership and Korean display naming are fixed in [data-source-policy.md](/docs/codex/data-source-policy.md).
+Detailed data-quality rules are maintained in [data-quality-checklist.md](data-quality-checklist.md).
+Source ownership and Korean display naming are fixed in [data-source-policy.md](data-source-policy.md).
 
 | Item | Contract |
 | --- | --- |
@@ -155,7 +155,7 @@ When that future lane is approved, `read-only` still means no DB write, no Teleg
 
 If a later phase evaluates trading decisions, keep it out of the public `web-view` contract. It should be an operator-only decision-support or execution-lab surface with its own permission, audit, source freshness, failure, and order-safety contract.
 
-Operator-only news intelligence may produce sentiment scores, event impact labels, and recommendation-draft summaries for the operator lane. The v1 contract is [news-intelligence-contract.md](/docs/codex/contracts/news-intelligence-contract.md): the default preview writes no DB rows, and only the explicit `--save-observation` operator path may write to operator-only observation tables. It still connects to no scheduler, Telegram, broker, or public route by default.
+Operator-only news intelligence may produce sentiment scores, event impact labels, and recommendation-draft summaries for the operator lane. The v1 contract is [news-intelligence-contract.md](contracts/news-intelligence-contract.md): the default preview writes no DB rows, and only the explicit `--save-observation` operator path may write to operator-only observation tables. It still connects to no scheduler, Telegram, broker, or public route by default.
 
 Once observations are saved, `web-view` should be allowed to show a thin public-safe projection instead of keeping the work invisible. That projection must be stored-data-only and may show labels such as `뉴스로 후보 강화`, `주의 뉴스 확인`, `시장 맥락 참고`, `KRX 기준일 확인 필요`, direct/caution/market-context counts, KRX reference status, and one to three article titles. It must not expose internal sentiment scores, numeric impact, operator recommendation-support labels, trading calls, broker/execution language, or any live fetch/write action.
 
@@ -192,7 +192,7 @@ Before any Cloudflare Tunnel URL is shared, confirm this checklist:
 
 | Check | Required State |
 | --- | --- |
-| Target port | Only the `web-view` port, for example `{LOCAL_WEB_VIEW_TARGET}`. |
+| Target port | Only the `web-view` port, for example `127.0.0.1:8780`. |
 | Local bind | Keep `web-view` bound to `127.0.0.1` unless a deliberate private-network exception uses `--allow-non-loopback`. |
 | HTTP methods | `GET` only for user data routes; write methods return `405`. `/auth/login` is the only allowed POST exception. |
 | Admin separation | `admin-gui`, `/api/status`, scheduler/operator/settings POST routes, shutdown controls, `.env`, DB files, and Telegram secrets are not exposed. |
@@ -257,7 +257,7 @@ These candidates must not start servers, expose `admin-gui`, or perform write/co
 | Candidate | Allowed target | Intended audience | Notes |
 | --- | --- | --- | --- |
 | Tailscale | Local services on the mini PC, primarily owner access | Owner devices first | Good for private remote operation. Friend sharing is possible but creates onboarding overhead. |
-| Cloudflare Tunnel | `web-view` only, for example `{LOCAL_WEB_VIEW_TARGET}` | Small trusted friend group | Best fit for a convenient friend-facing HTTPS URL after local validation and the local entry-code gate is enabled. |
+| Cloudflare Tunnel | `web-view` only, for example `<loopback web-view URL>` | Small trusted friend group | Best fit for a convenient friend-facing HTTPS URL after local validation and the local entry-code gate is enabled. |
 | Docker | None for the current Windows N100 path | Not a sharing mechanism | Deferred. Direct Python + Windows Task Scheduler is the operating target unless the host moves to Linux/VPS or multi-service deployment. |
 
 `admin-gui` must not be exposed through either candidate as a public/friend-facing surface.

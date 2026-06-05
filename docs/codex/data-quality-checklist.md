@@ -1,4 +1,4 @@
-# Data Quality Checklist
+﻿# Data Quality Checklist
 
 ## Purpose
 

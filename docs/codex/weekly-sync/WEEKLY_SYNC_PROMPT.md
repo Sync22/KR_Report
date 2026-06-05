@@ -1,4 +1,4 @@
-# Weekly Mini PC Sync Prompt
+﻿# Weekly Mini PC Sync Prompt
 
 아래 프롬프트를 미니PC 쪽 Codex 세션에 붙여 넣어 주간 변경 묶음을 만들 때 사용한다.
 

@@ -1,4 +1,4 @@
-# News Intelligence Contract
+﻿# News Intelligence Contract
 
 ## Purpose
 
@@ -37,8 +37,8 @@ Supported source lanes:
 - `https://stock.naver.com/news/flashnews`
 - `https://stock.naver.com/news/mainnews`
 - `https://stock.naver.com/news/ranknews`
-- `{NAVER_STOCK_NEWS_FOCUS_API}` with section `401` for `시황·전망`
-- `{NAVER_STOCK_NEWS_FOCUS_API}` with section `402` for `기업·종목분석`
+- `https://stock.naver.com/api/<domestic-news-path>/news/focus?sid=401&page=1&pageSize=20&date=YYYYMMDD` for `시황·전망`
+- `https://stock.naver.com/api/<domestic-news-path>/news/focus?sid=402&page=1&pageSize=20&date=YYYYMMDD` for `기업·종목분석`
 
 The default collection mode is date mode, not latest mode. The default target date is Asia/Seoul today. Latest-mode views may hide older same-day items, so v1 request specs should represent a full target-date collection intent per source lane.
 
@@ -181,6 +181,8 @@ Allowed storage tables:
 
 - `news_intelligence_runs`: one operator preview/evaluation run.
 - `report_linked_news_evidence`: article-level report-linked evidence rows for that run.
+
+The readback command may derive review-only summaries from these rows, including direct/indirect/market-context counts, evidence-case counts, operator recommendation-support counts, and KRX exact/stale/missing reference status. These summaries are operator comparison aids for deciding whether candidate-evidence integration is ready; they are not public DTOs.
 
 The stored lane may include:
 

@@ -1,4 +1,4 @@
-# Admin GUI Plan
+﻿# Admin GUI Plan
 
 ## Purpose
 

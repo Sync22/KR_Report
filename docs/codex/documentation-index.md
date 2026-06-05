@@ -1,4 +1,4 @@
-# Documentation Index
+﻿# Documentation Index
 
 ## Purpose
 
@@ -16,25 +16,26 @@ Implementation-heavy follow-up work should use this map to avoid adding duplicat
 
 | Area | Canonical document | Role |
 | --- | --- | --- |
-| Product requirements | [stock_research_monitor_mvp.md](/stock_research_monitor_mvp.md) | Current product requirements and explicit non-goals. This is no longer only the initial MVP memo. |
-| Current status | [current-work.md](/docs/codex/current-work.md) | Current state, active assumptions, immediate next work. |
-| Next phase | [next-phase.md](/docs/codex/next-phase.md) | Next execution axes and non-goals from the current state. |
-| Progress and roadmap | [execution-roadmap.md](/docs/codex/execution-roadmap.md) | Progress percentages, P0/P1/P2, 100% definition. |
-| Project file map | [project-map.md](/docs/codex/project-map.md) | Where important code/data/docs live. |
-| Surface boundary | [surface-contract.md](/docs/codex/surface-contract.md) | `admin-gui`, read-only `web-view`, and future `operator-review` contract. |
-| Data quality | [data-quality-checklist.md](/docs/codex/data-quality-checklist.md) | Raw, parsed, aggregate, and display value rules. |
-| Source ownership | [data-source-policy.md](/docs/codex/data-source-policy.md) | Naver/KRX/taxonomy ownership and naming. |
-| KRX and flow | [krx-market-data-runbook.md](/docs/codex/krx-market-data-runbook.md) | KRX Open API, Data Marketplace, ETF, flow, stages, and guards in one place. |
-| KRX 18-month baseline | [krx-18m-backfill-analysis.md](/docs/codex/krx-18m-backfill-analysis.md) | 18-month OpenAPI backfill progress, source-lane comparison, skill/agent comparison, and repeatable baseline analysis commands. |
-| Data rebaseline | [data-rebaseline-plan.md](/docs/codex/data-rebaseline-plan.md) | How to extend market-reference data before migration. |
-| Architecture risk review | [architecture-risk-review.md](/docs/codex/architecture-risk-review.md) | Current architecture snapshot, risk candidates, source/surface boundaries, performance candidates, and agent ownership for broad reviews. |
-| Admin GUI | [admin-gui-plan.md](/docs/codex/admin-gui-plan.md) | Local operator GUI status and next safe controls. |
-| Agents | [agent-guide.md](/docs/codex/agent-guide.md) | When and how to use project subagents. |
-| Module ownership | [module-ownership.md](/docs/codex/module-ownership.md) | Proposed role boundaries by module and next work axis. |
-| Agent reassessment | [agent-reassessment.md](/docs/codex/agent-reassessment.md) | Current local `.codex/agents` keep/add/merge evaluation. |
-| Rotation overlay | [rotation-overlay-plan.md](/docs/codex/rotation-overlay-plan.md) | SVG overlay plan for the cycle image. |
-| Mini PC handoff | [mini-pc-migration-handoff.md](/docs/codex/mini-pc-migration-handoff.md) | Current Windows N100 migration, archive, restore, scheduler registration, source-desktop cutover, and external web-view readiness notes. |
-| Weekly PC sync | [weekly-sync/WEEKLY_SYNC_GUIDE.md](/docs/codex/weekly-sync/WEEKLY_SYNC_GUIDE.md) | Weekly main-PC and mini-PC sync guide/prompt docs. Generated weekly handoff notes and sync archives live under `handoff/mini_pc_changes/`. |
+| Product requirements | [stock_research_monitor_mvp.md](../../stock_research_monitor_mvp.md) | Current product requirements and explicit non-goals. This is no longer only the initial MVP memo. |
+| Current status | [current-work.md](current-work.md) | Current state, active assumptions, immediate next work. |
+| Next phase | [next-phase.md](next-phase.md) | Next execution axes and non-goals from the current state. |
+| Progress and roadmap | [execution-roadmap.md](execution-roadmap.md) | Progress percentages, P0/P1/P2, 100% definition. |
+| Work todo board | [work-todo-board.md](work-todo-board.md) | Stable large-axis TODO IDs that the operator can reference directly in future prompts. |
+| Project file map | [project-map.md](project-map.md) | Where important code/data/docs live. |
+| Surface boundary | [surface-contract.md](surface-contract.md) | `admin-gui`, read-only `web-view`, and future `operator-review` contract. |
+| Data quality | [data-quality-checklist.md](data-quality-checklist.md) | Raw, parsed, aggregate, and display value rules. |
+| Source ownership | [data-source-policy.md](data-source-policy.md) | Naver/KRX/taxonomy ownership and naming. |
+| KRX and flow | [krx-market-data-runbook.md](krx-market-data-runbook.md) | KRX Open API, Data Marketplace, ETF, flow, stages, and guards in one place. |
+| KRX 18-month baseline | [krx-18m-backfill-analysis.md](krx-18m-backfill-analysis.md) | 18-month OpenAPI backfill progress, source-lane comparison, skill/agent comparison, and repeatable baseline analysis commands. |
+| Data rebaseline | [data-rebaseline-plan.md](data-rebaseline-plan.md) | How to extend market-reference data before migration. |
+| Architecture risk review | [architecture-risk-review.md](architecture-risk-review.md) | Current architecture snapshot, risk candidates, source/surface boundaries, performance candidates, and agent ownership for broad reviews. |
+| Admin GUI | [admin-gui-plan.md](admin-gui-plan.md) | Local operator GUI status and next safe controls. |
+| Agents | [agent-guide.md](agent-guide.md) | When and how to use project subagents. |
+| Module ownership | [module-ownership.md](module-ownership.md) | Proposed role boundaries by module and next work axis. |
+| Agent reassessment | [agent-reassessment.md](agent-reassessment.md) | Current local `.codex/agents` keep/add/merge evaluation. |
+| Rotation overlay | [rotation-overlay-plan.md](rotation-overlay-plan.md) | SVG overlay plan for the cycle image. |
+| Mini PC handoff | [mini-pc-migration-handoff.md](mini-pc-migration-handoff.md) | Current Windows N100 migration, archive, restore, scheduler registration, source-desktop cutover, and external web-view readiness notes. |
+| Weekly PC sync | [weekly-sync/WEEKLY_SYNC_GUIDE.md](weekly-sync/WEEKLY_SYNC_GUIDE.md) | Weekly main-PC and mini-PC sync guide/prompt docs. Generated weekly handoff notes and sync archives live under `handoff/mini_pc_changes/`. |
 
 ## Detailed Reference Documents
 
@@ -45,6 +46,8 @@ These files remain useful as detailed history or implementation notes, but they 
 | `details/krx/*` | `krx-market-data-runbook.md` |
 | `contracts/*` | `surface-contract.md`, `data-quality-checklist.md`, `data-source-policy.md`, and the relevant canonical runbook |
 | `contracts/news-intelligence-contract.md` | `stock_research_monitor_mvp.md`, `surface-contract.md`, and `next-phase.md` for the operator-only news intelligence, explicit observation save/readback boundary, and future public-safe stored `web-view` projection. |
+| `contracts/toss-openapi-official-api-inventory.md` | `contracts/toss-openapi-readonly-lab-contract.md` for local memory of the official Toss endpoint/schema/auth/rate-limit/model surface before runtime use. |
+| `contracts/toss-openapi-readonly-lab-contract.md` | `surface-contract.md`, `data-source-policy.md`, `current-work.md`, and `next-phase.md` for future Toss Securities OpenAPI read-only lab work, pre-key restrictions, secret/account/order boundaries, and public-surface exclusions. |
 | `plans/*` | `current-work.md`, `next-phase.md`, and `execution-roadmap.md` |
 | `plans/observation-candidate-recommendation-goal-prompt.md` | Goal prompt for the next `오늘의 관찰 후보` implementation pass; keep the product boundary in `current-work.md`, `next-phase.md`, and `surface-contract.md`. |
 | `history/mini-pc-restore-change-log-2026-05-16.md` | `mini-pc-migration-handoff.md`, `current-work.md`, and `krx-market-data-runbook.md` for ongoing policy; keep this file as the source-sync record for the mini PC restore session. |

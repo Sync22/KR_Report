@@ -1,4 +1,4 @@
-# Telegram Briefing Plan
+﻿# Telegram Briefing Plan
 
 ## Purpose
 

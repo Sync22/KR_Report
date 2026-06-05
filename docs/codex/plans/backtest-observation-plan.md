@@ -1,4 +1,4 @@
-# Backtest Observation Plan
+﻿# Backtest Observation Plan
 
 ## Purpose
 

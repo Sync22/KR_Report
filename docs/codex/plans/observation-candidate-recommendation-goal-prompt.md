@@ -1,4 +1,4 @@
-# Observation Candidate Recommendation Goal Prompt
+﻿# Observation Candidate Recommendation Goal Prompt
 
 Use this prompt when starting the next implementation pass for stored-data based observation-candidate recommendation.
 

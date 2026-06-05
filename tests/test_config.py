@@ -83,6 +83,8 @@ def test_runtime_config_defaults_include_market_window_and_2024_to_2026_holidays
     assert date(2024, 5, 15) in config.holiday_overrides
     assert date(2025, 1, 27) in config.holiday_overrides
     assert date(2025, 6, 3) in config.holiday_overrides
+    assert date(2026, 6, 3) in config.holiday_overrides
+    assert date(2026, 7, 17) in config.holiday_overrides
     assert date(2026, 12, 31) in config.holiday_overrides
 
 

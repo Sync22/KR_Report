@@ -98,6 +98,7 @@ from stock_monitor.models import (
     DeliveryLog,
     EtfDailySnapshot,
     InvestorNetBuyTopDaily,
+    KrxStockMetadataSnapshot,
     MarketIndexDailySnapshot,
     MarketInvestorFlowDaily,
     OperationEvent,
@@ -162,12 +163,15 @@ DB_CLEANUP_DEFAULT_RETENTION_DAYS = 550
 CATEGORY_SNAPSHOT_READINESS_LIMIT = 100
 READ_ONLY_SCHEMA_CURRENT_COMMANDS = {
     "access-code",
+    "admin-boundary-audit",
     "api-perf-summary",
     "ops-readiness",
+    "ops-sync-preview",
     "candidate-evidence-readiness",
     "category-catalog",
     "category-snapshot-plan",
     "category-snapshot-status",
+    "data-source-lane-audit",
     "db-verify",
     "external-web-view-sharing-plan",
     "external-web-view-smoke",
@@ -208,6 +212,60 @@ READ_ONLY_SCHEMA_CURRENT_COMMANDS = {
 SCHEMA_PRESERVING_EXISTING_DB_COMMANDS = {
     "db-backup",
     "db-restore-smoke",
+    "dev-fixture-db",
+}
+DOCS_HYGIENE_DEFAULT_PATHS = (
+    Path("README.md"),
+    Path("docs/codex/documentation-index.md"),
+    Path("docs/codex/current-work.md"),
+    Path("docs/codex/next-phase.md"),
+    Path("docs/codex/execution-roadmap.md"),
+    Path("docs/codex/surface-contract.md"),
+    Path("docs/codex/data-source-policy.md"),
+    Path("docs/codex/data-quality-checklist.md"),
+    Path("docs/codex/contracts/news-intelligence-contract.md"),
+)
+DOCS_HYGIENE_LOCAL_ABSOLUTE_PATH_PATTERN = re.compile(
+    r"(?:/[A-Za-z]:/Users/[^)\s`]+|[A-Za-z]:[\\/](?:Users|Documents and Settings)[\\/][^)\s`]+)"
+)
+DOCS_HYGIENE_EXTERNAL_PROVIDER_URL_PATTERN = re.compile(r"https://[A-Za-z0-9.-]*kr-stock[.]site\b")
+DOCS_HYGIENE_SECRET_ASSIGNMENT_PATTERN = re.compile(
+    r"\b(?:STOCK_MONITOR_)?[A-Z0-9_]*(?:TOKEN|PASSWORD|SECRET|AUTH_KEY|CHAT_ID)[A-Z0-9_]*\s*=\s*[^\s`]+",
+    re.IGNORECASE,
+)
+DOCS_HYGIENE_RAW_ACCESS_CODE_PATTERN = re.compile(r"\baccess[_ -]?code\s*[:=]\s*[A-Za-z0-9]{4,}\b", re.IGNORECASE)
+ADMIN_BOUNDARY_JUDGMENT_REVIEW_FORBIDDEN_TOKENS = (
+    "news-intelligence",
+    "news_observation",
+    "candidate-evidence",
+    "candidate_evidence",
+    "candidate_linkage",
+    "sentiment_score",
+    "stock_impact",
+    "operator_recommendation",
+    "recommendation_support",
+)
+ADMIN_BOUNDARY_PUBLIC_CONTENT_FORBIDDEN_TOKENS = (
+    "mood-total-reports",
+    "report-rows",
+    "sector-rows",
+    "theme-rows",
+    "krx-kospi-rows",
+    "krx-kosdaq-rows",
+    "krx-etf-rows",
+    "krx-index-rows",
+)
+ADMIN_BOUNDARY_CONTROL_ROUTES = (
+    "/api/status",
+    "/api/scheduler/run-now",
+    "/api/scheduler/set-enabled",
+    "/api/scheduler/restart",
+    "/api/settings/set",
+)
+MARKET_BRIEFING_SLOT_LABELS = {
+    "mood": "오늘의 시장 분위기",
+    "lunch": "국장 점심 브리핑",
+    "preclose": "장마감 전 점검",
 }
 WEB_VIEW_STARTUP_SHORTCUT_NAME = "StockMonitor-WebView.lnk"
 MINI_PC_EXPECTED_SCHEDULER_TASK_SUFFIXES = (
@@ -1322,7 +1380,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     market_briefing_parser.add_argument("--date", type=date.fromisoformat, help="Use an explicit business date.")
     market_briefing_parser.add_argument("--limit", type=int, default=5, help="Maximum notable report stocks to include.")
+    market_briefing_parser.add_argument("--slot", choices=tuple(MARKET_BRIEFING_SLOT_LABELS), default="mood")
     market_briefing_parser.add_argument("--send", action="store_true", help="Send the briefing to Telegram instead of printing it.")
+    market_briefing_parser.add_argument("--json", action="store_true")
 
     market_briefing_readiness_parser = subparsers.add_parser(
         "market-briefing-readiness",
@@ -1402,6 +1462,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Allow admin-gui to bind outside localhost. Use only on a trusted private network.",
     )
 
+    admin_boundary_audit_parser = subparsers.add_parser(
+        "admin-boundary-audit",
+        help="Read-only audit of admin-gui, web-view, and future operator-review surface boundaries.",
+    )
+    admin_boundary_audit_parser.add_argument("--limit", type=int, default=5)
+    admin_boundary_audit_parser.add_argument("--json", action="store_true")
+
+    docs_hygiene_audit_parser = subparsers.add_parser(
+        "docs-hygiene-audit",
+        help="Read-only public/canonical documentation hygiene scan with redacted issue reporting.",
+    )
+    docs_hygiene_audit_parser.add_argument(
+        "--path",
+        dest="paths",
+        type=Path,
+        action="append",
+        help="Override the default public/canonical document set. Can be repeated.",
+    )
+    docs_hygiene_audit_parser.add_argument("--json", action="store_true")
+
+    data_source_lane_audit_parser = subparsers.add_parser(
+        "data-source-lane-audit",
+        help="Read-only audit of production/lab/hold market data source lanes.",
+    )
+    data_source_lane_audit_parser.add_argument("--json", action="store_true")
+
     web_view_parser = subparsers.add_parser(
         "web-view",
         help="Run the read-only user web view for StockMonitor archive and market summaries.",
@@ -1446,6 +1532,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use the configured access-code gate. Default bypasses the gate only for the temporary local smoke server.",
     )
     web_view_browser_smoke_parser.add_argument("--json", action="store_true")
+
+    dev_fixture_parser = subparsers.add_parser(
+        "dev-fixture-db",
+        help="Create an ignored local fixture DB for visible web-view and briefing checks.",
+    )
+    dev_fixture_parser.add_argument("--scenario", choices=("visible-product-flow",), required=True)
+    dev_fixture_parser.add_argument("--output", type=Path, required=True)
+    dev_fixture_parser.add_argument("--overwrite", action="store_true")
+    dev_fixture_parser.add_argument("--json", action="store_true")
 
     external_web_view_smoke_parser = subparsers.add_parser(
         "external-web-view-smoke",
@@ -1569,6 +1664,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     db_migrate_parser.add_argument("--dry-run", action="store_true")
 
+    db_migration_rehearsal_parser = subparsers.add_parser(
+        "db-migration-rehearsal",
+        help="Migrate and verify a temporary copy of the local DB without writing the source DB.",
+    )
+    db_migration_rehearsal_parser.add_argument("--work-dir", type=Path)
+    db_migration_rehearsal_parser.add_argument("--keep-copy", action="store_true")
+    db_migration_rehearsal_parser.add_argument("--json", action="store_true")
+
     db_verify_parser = subparsers.add_parser(
         "db-verify",
         help="Run SQLite integrity and schema checks for the local database.",
@@ -1590,6 +1693,15 @@ def build_parser() -> argparse.ArgumentParser:
     ops_readiness_parser.add_argument("--stock-limit", type=int, default=20)
     ops_readiness_parser.add_argument("--api-perf-log", type=Path, help="Override logs/api_perf.log path.")
     ops_readiness_parser.add_argument("--json", action="store_true")
+
+    ops_sync_preview_parser = subparsers.add_parser(
+        "ops-sync-preview",
+        help="Preview dev/main sync scope, worktree state, schema blocker, and read-only verification commands.",
+    )
+    ops_sync_preview_parser.add_argument("--base", default="origin/main")
+    ops_sync_preview_parser.add_argument("--head", default="HEAD")
+    ops_sync_preview_parser.add_argument("--max-commits", type=int, default=30)
+    ops_sync_preview_parser.add_argument("--json", action="store_true")
 
     db_backup_parser = subparsers.add_parser(
         "db-backup",
@@ -1723,6 +1835,21 @@ def main(argv: list[str] | None = None) -> int:
         return _run_news_intelligence_observations(args)
     if args.command == "news-intelligence-daily-brief":
         return _run_news_intelligence_daily_brief(args)
+    if args.command == "dev-fixture-db":
+        return _run_dev_fixture_db(
+            scenario=args.scenario,
+            output_path=args.output,
+            overwrite=args.overwrite,
+            as_json=args.json,
+        )
+    if args.command == "docs-hygiene-audit":
+        return _run_docs_hygiene_audit(
+            Path.cwd(),
+            paths=tuple(args.paths or ()),
+            as_json=args.json,
+        )
+    if args.command == "data-source-lane-audit":
+        return _run_data_source_lane_audit(as_json=args.json)
 
     config = RuntimeConfig.from_env(headless=not getattr(args, "headed", False))
     config.ensure_runtime_dirs()
@@ -1730,8 +1857,43 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "db-migrate":
         return _run_db_migrate(repository, dry_run=args.dry_run)
+    if args.command == "ops-sync-preview":
+        return _run_ops_sync_preview(
+            config,
+            repository,
+            base_ref=args.base,
+            head_ref=args.head,
+            max_commits=args.max_commits,
+            as_json=args.json,
+        )
+    if args.command == "admin-boundary-audit":
+        return _run_admin_boundary_audit(
+            config,
+            repository,
+            limit=args.limit,
+            as_json=args.json,
+        )
+    if args.command == "api-perf-summary":
+        return _run_api_perf_summary(config, log_path=args.log_path, as_json=args.json)
+    if args.command == "db-migration-rehearsal":
+        return _run_db_migration_rehearsal(
+            config,
+            repository,
+            work_dir=args.work_dir,
+            keep_copy=args.keep_copy,
+            as_json=args.json,
+        )
 
-    _prepare_repository_for_command(repository, args)
+    try:
+        _prepare_repository_for_command(repository, args)
+    except RuntimeError as exc:
+        if _is_database_schema_not_current_error(exc):
+            return _run_read_only_schema_not_current_report(
+                str(args.command),
+                repository,
+                as_json=bool(getattr(args, "json", False)),
+            )
+        raise
 
     try:
         if args.command == "inspect-page":
@@ -2288,6 +2450,8 @@ def main(argv: list[str] | None = None) -> int:
                 explicit_date=args.date,
                 limit=args.limit,
                 send=args.send,
+                slot=args.slot,
+                as_json=args.json,
             )
         if args.command == "market-briefing-readiness":
             return _run_market_briefing_readiness(
@@ -2425,9 +2589,7 @@ def main(argv: list[str] | None = None) -> int:
                 confirm=args.confirm,
             )
         if args.command == "db-verify":
-            return _run_db_verify(repository, as_json=args.json)
-        if args.command == "api-perf-summary":
-            return _run_api_perf_summary(config, log_path=args.log_path, as_json=args.json)
+            return _run_db_verify(repository, as_json=args.json, holiday_overrides=config.holiday_overrides)
         if args.command == "ops-readiness":
             return _run_ops_readiness(
                 config,
@@ -2531,6 +2693,75 @@ def _prepare_repository_for_command(repository: StockMonitorRepository, args: ar
             )
         return
     repository.initialize()
+
+
+def _is_database_schema_not_current_error(exc: RuntimeError) -> bool:
+    return "Database schema is not current" in str(exc)
+
+
+def _build_read_only_schema_not_current_payload(
+    command: str,
+    repository: StockMonitorRepository,
+) -> dict[str, object]:
+    schema_status = _ops_sync_db_schema_status(repository)
+    return {
+        "surface": command,
+        "read_only": True,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "ready": False,
+        "schema_status": schema_status,
+        "blockers": [
+            {
+                "code": "default_db_schema_not_current",
+                "message": (
+                    "Default DB schema is not current; normal read-only verification is blocked "
+                    "until a schema migration is reviewed and approved."
+                ),
+            }
+        ],
+        "recommended_commands": [
+            "python -m stock_monitor ops-sync-preview --base origin/main --head dev --json",
+            "python -m stock_monitor db-migrate --dry-run",
+            "python -m stock_monitor db-backup --tag pre-schema-migration",
+            "python -m stock_monitor db-migrate",
+            "python -m stock_monitor db-verify --json",
+        ],
+        "requires_separate_approval": [
+            "production DB write",
+            "schema migration on operating PC",
+        ],
+    }
+
+
+def _run_read_only_schema_not_current_report(
+    command: str,
+    repository: StockMonitorRepository,
+    *,
+    as_json: bool,
+) -> int:
+    payload = _build_read_only_schema_not_current_payload(command, repository)
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 1
+    schema_status = payload["schema_status"]
+    print(f"{command} blocked by default DB schema")
+    print("- ready: N")
+    print(
+        f"- schema: {schema_status['status']} "
+        f"current={schema_status['current_version']} target={schema_status['target_version']}"
+    )
+    for blocker in payload["blockers"]:
+        print(f"- blocker: {blocker['code']} | {blocker['message']}")
+    print("- recommended commands:")
+    for item in payload["recommended_commands"]:
+        print(f"  - {item}")
+    print("- requires separate approval:")
+    for item in payload["requires_separate_approval"]:
+        print(f"  - {item}")
+    return 1
 
 
 def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
@@ -2749,9 +2980,11 @@ def _run_news_intelligence_observations(args: argparse.Namespace) -> int:
     if args.run_id:
         runs = [run for run in runs if run.run_id == args.run_id]
     run_payloads: list[dict[str, object]] = []
+    coverage_evidence_rows: list[ReportLinkedNewsEvidenceRecord] = []
     total_evidence_count = 0
     for run in runs:
         all_evidence = repository.list_report_linked_news_evidence(run_id=run.run_id, limit=1000)
+        coverage_evidence_rows.extend(all_evidence)
         total_evidence_count += len(all_evidence)
         run_payloads.append(
             _news_intelligence_observation_run_payload(
@@ -2764,6 +2997,11 @@ def _run_news_intelligence_observations(args: argparse.Namespace) -> int:
         {
             "run_count": len(run_payloads),
             "evidence_count": total_evidence_count,
+            "source_mode_coverage": _news_intelligence_source_mode_coverage(
+                run_payloads,
+                coverage_evidence_rows,
+                boundary_payload=payload,
+            ),
             "runs": run_payloads,
         }
     )
@@ -2791,6 +3029,7 @@ def _format_news_intelligence_observations_text(payload: dict[str, object]) -> s
     if not isinstance(runs, list) or not runs:
         lines.append("no saved observations")
         return "\n".join(lines) + "\n"
+    _append_news_intelligence_source_mode_coverage_text(lines, payload)
     for run in runs:
         if not isinstance(run, dict):
             continue
@@ -2863,13 +3102,17 @@ def _run_news_intelligence_daily_brief(args: argparse.Namespace) -> int:
         label: []
         for label in _NEWS_INTELLIGENCE_DAILY_BRIEF_LABELS
     }
+    coverage_run_payloads: list[dict[str, object]] = []
+    coverage_evidence_rows: list[ReportLinkedNewsEvidenceRecord] = []
     for run in representative_runs:
         evidence_rows = repository.list_report_linked_news_evidence(run_id=run.run_id, limit=1000)
+        coverage_evidence_rows.extend(evidence_rows)
         run_payload = _news_intelligence_observation_run_payload(
             run,
             all_evidence=evidence_rows,
             evidence_per_run=3,
         )
+        coverage_run_payloads.append(run_payload)
         item = _news_intelligence_daily_brief_item(run_payload)
         label = str(item["label"])
         sections.setdefault(label, []).append(item)
@@ -2877,6 +3120,11 @@ def _run_news_intelligence_daily_brief(args: argparse.Namespace) -> int:
     payload.update(
         {
             "item_count": sum(len(items) for items in sections.values()),
+            "source_mode_coverage": _news_intelligence_source_mode_coverage(
+                coverage_run_payloads,
+                coverage_evidence_rows,
+                boundary_payload=payload,
+            ),
             "sections": sections,
         }
     )
@@ -2988,6 +3236,7 @@ def _format_news_intelligence_daily_brief_text(payload: dict[str, object]) -> st
     if not isinstance(sections, dict) or int(payload.get("item_count") or 0) <= 0:
         lines.append("no saved observations")
         return "\n".join(lines) + "\n"
+    _append_news_intelligence_source_mode_coverage_text(lines, payload)
     for label in _NEWS_INTELLIGENCE_DAILY_BRIEF_LABELS:
         items = sections.get(label)
         if not isinstance(items, list) or not items:
@@ -3095,6 +3344,96 @@ def _news_intelligence_observation_run_payload(
             for row in all_evidence[: max(0, evidence_per_run)]
         ],
     }
+
+
+def _news_intelligence_source_mode_coverage(
+    run_payloads: list[dict[str, object]],
+    evidence_rows: list[ReportLinkedNewsEvidenceRecord],
+    *,
+    boundary_payload: dict[str, object],
+) -> dict[str, object]:
+    source_modes = Counter(
+        str(run.get("source_mode") or "unknown")
+        for run in run_payloads
+    )
+    source_lanes = Counter(row.source_lane for row in evidence_rows)
+    relevance = Counter(row.relevance for row in evidence_rows)
+    for key in ("direct", "indirect", "market_context"):
+        relevance.setdefault(key, 0)
+    match_scope = Counter(row.match_scope for row in evidence_rows)
+    krx_reference_status: Counter[str] = Counter()
+    candidate_linkage_labels: Counter[str] = Counter()
+    operator_recommendation_support: Counter[str] = Counter()
+    for run in run_payloads:
+        freshness = run.get("krx_reference_freshness")
+        status = "none"
+        if isinstance(freshness, dict):
+            status = str(freshness.get("status") or "none")
+        krx_reference_status[status] += 1
+        evaluation = run.get("candidate_linkage_evaluation")
+        if isinstance(evaluation, dict):
+            label = str(evaluation.get("label") or "")
+            recommendation_support = str(evaluation.get("recommendation_support") or "")
+            if label:
+                candidate_linkage_labels[label] += 1
+            if recommendation_support:
+                operator_recommendation_support[recommendation_support] += 1
+    for key in ("exact", "stale_reference", "missing", "none"):
+        krx_reference_status.setdefault(key, 0)
+    return {
+        "run_count": len(run_payloads),
+        "evidence_count": len(evidence_rows),
+        "source_modes": dict(sorted(source_modes.items())),
+        "source_lanes": dict(sorted(source_lanes.items())),
+        "relevance": {
+            "direct": relevance["direct"],
+            "indirect": relevance["indirect"],
+            "market_context": relevance["market_context"],
+        },
+        "match_scope": dict(sorted(match_scope.items())),
+        "krx_reference_status": {
+            "exact": krx_reference_status["exact"],
+            "stale_reference": krx_reference_status["stale_reference"],
+            "missing": krx_reference_status["missing"],
+            "none": krx_reference_status["none"],
+        },
+        "candidate_linkage_labels": dict(sorted(candidate_linkage_labels.items())),
+        "operator_recommendation_support": dict(sorted(operator_recommendation_support.items())),
+        "boundary": {
+            "read_only": bool(boundary_payload.get("read_only")),
+            "operator_only": bool(boundary_payload.get("operator_only")),
+            "public_safe": bool(boundary_payload.get("public_safe")),
+            "live_fetch": bool(boundary_payload.get("live_fetch")),
+            "writes_db": bool(boundary_payload.get("writes_db")),
+            "sends_telegram": bool(boundary_payload.get("sends_telegram")),
+            "registers_scheduler": bool(boundary_payload.get("registers_scheduler")),
+            "connects_web_view": bool(boundary_payload.get("connects_web_view")),
+        },
+    }
+
+
+def _append_news_intelligence_source_mode_coverage_text(
+    lines: list[str],
+    payload: dict[str, object],
+) -> None:
+    coverage = payload.get("source_mode_coverage")
+    if not isinstance(coverage, dict):
+        return
+    lines.append("")
+    lines.append("source-mode coverage:")
+    lines.append(
+        f"runs {coverage.get('run_count', 0)} / evidence {coverage.get('evidence_count', 0)}"
+    )
+    lines.append(f"source_modes: {_news_intelligence_counter_text(coverage.get('source_modes'))}")
+    lines.append(f"source_lanes: {_news_intelligence_counter_text(coverage.get('source_lanes'))}")
+    lines.append(f"labels: {_news_intelligence_counter_text(coverage.get('candidate_linkage_labels'))}")
+    lines.append(f"KRX: {_news_intelligence_counter_text(coverage.get('krx_reference_status'))}")
+
+
+def _news_intelligence_counter_text(value: object) -> str:
+    if not isinstance(value, dict) or not value:
+        return "-"
+    return ", ".join(f"{key}={value[key]}" for key in sorted(value))
 
 
 def _news_intelligence_observation_derived_counts(
@@ -4400,7 +4739,11 @@ def _run_mini_pc_preflight(
     return 0 if snapshot["exit_ready"] else 1
 
 
-def _build_db_verify_payload(repository: StockMonitorRepository) -> dict[str, object]:
+def _build_db_verify_payload(
+    repository: StockMonitorRepository,
+    *,
+    holiday_overrides: set[date] | frozenset[date] | None = None,
+) -> dict[str, object]:
     if not repository.db_path.exists():
         raise FileNotFoundError(f"Database does not exist: {repository.db_path}")
     status = repository.get_schema_migration_status()
@@ -4443,7 +4786,11 @@ def _build_db_verify_payload(repository: StockMonitorRepository) -> dict[str, ob
                OR report.identity_key IS NULL
             """
         ).fetchone()[0] if {"intraday_alert_batch_reports", "intraday_alert_batches", "reports"}.issubset(tables) else 0
-        partial_krx_snapshot_dates = _partial_krx_daily_snapshot_dates(connection, tables)
+        partial_krx_snapshot_dates = _partial_krx_daily_snapshot_dates(
+            connection,
+            tables,
+            holiday_overrides=holiday_overrides,
+        )
         investor_flow_quality_issues = _investor_flow_quality_issue_counts(connection, tables)
         investor_flow_quality_issue_total = sum(investor_flow_quality_issues.values())
         category_quality_issues = _category_quality_issue_counts(connection, tables)
@@ -4491,8 +4838,13 @@ def _db_verify_payload_ready(payload: dict[str, object]) -> bool:
     )
 
 
-def _run_db_verify(repository: StockMonitorRepository, *, as_json: bool) -> int:
-    payload = _build_db_verify_payload(repository)
+def _run_db_verify(
+    repository: StockMonitorRepository,
+    *,
+    as_json: bool,
+    holiday_overrides: set[date] | frozenset[date] | None = None,
+) -> int:
+    payload = _build_db_verify_payload(repository, holiday_overrides=holiday_overrides)
     if as_json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
@@ -4554,6 +4906,984 @@ def _run_api_perf_summary(config: RuntimeConfig, *, log_path: Path | None, as_js
             f"family={item['path_family']}"
         )
     return 0
+
+
+def _build_docs_hygiene_audit_payload(root_dir: Path, *, paths: Sequence[Path] = ()) -> dict[str, object]:
+    target_paths = tuple(paths) if paths else DOCS_HYGIENE_DEFAULT_PATHS
+    issue_map: dict[tuple[str, str], dict[str, object]] = {}
+    scanned_files: list[str] = []
+    for input_path in target_paths:
+        absolute_path = input_path if input_path.is_absolute() else root_dir / input_path
+        display_path = _docs_hygiene_display_path(root_dir, absolute_path)
+        if not absolute_path.exists():
+            issue_map[(display_path, "missing_public_doc")] = {
+                "code": "missing_public_doc",
+                "path": display_path,
+                "count": 1,
+                "lines": [],
+                "redacted": True,
+                "message": "Configured public/canonical document is missing.",
+            }
+            continue
+        scanned_files.append(display_path)
+        text = absolute_path.read_text(encoding="utf-8")
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            for code, pattern in _docs_hygiene_patterns():
+                match_count = len(pattern.findall(line))
+                if match_count == 0:
+                    continue
+                key = (display_path, code)
+                issue = issue_map.setdefault(
+                    key,
+                    {
+                        "code": code,
+                        "path": display_path,
+                        "count": 0,
+                        "lines": [],
+                        "redacted": True,
+                        "message": _docs_hygiene_issue_message(code),
+                    },
+                )
+                issue["count"] = int(issue["count"]) + match_count
+                issue["lines"].append(line_number)
+    issues = sorted(issue_map.values(), key=lambda item: (str(item["path"]), str(item["code"])))
+    issue_count = sum(int(item["count"]) for item in issues)
+    return {
+        "surface": "docs-hygiene-audit",
+        "read_only": True,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "ready": issue_count == 0,
+        "scanned_file_count": len(scanned_files),
+        "scanned_files": scanned_files,
+        "checked_patterns": [
+            "local_absolute_path",
+            "external_provider_url",
+            "secret_like_assignment",
+            "raw_access_code",
+        ],
+        "issue_count": issue_count,
+        "issues": issues,
+        "verification_commands": [
+            "python -m stock_monitor docs-hygiene-audit --json",
+            "python -m pytest tests/test_cli_commands.py -q -k docs_hygiene_audit",
+            "python -m pytest -q",
+        ],
+    }
+
+
+def _run_docs_hygiene_audit(root_dir: Path, *, paths: Sequence[Path], as_json: bool) -> int:
+    payload = _build_docs_hygiene_audit_payload(root_dir, paths=paths)
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload["ready"] else 1
+    print("Docs hygiene audit")
+    print(f"- ready: {'Y' if payload['ready'] else 'N'}")
+    print(f"- scanned files: {payload['scanned_file_count']}")
+    print(f"- issues: {payload['issue_count']}")
+    for item in payload["issues"]:
+        lines = ", ".join(str(line) for line in item["lines"]) or "-"
+        print(f"  - {item['path']}:{lines} {item['code']} count={item['count']} redacted=Y")
+    print("- verification commands:")
+    for command in payload["verification_commands"]:
+        print(f"  - {command}")
+    return 0 if payload["ready"] else 1
+
+
+def _build_data_source_lane_audit_payload() -> dict[str, object]:
+    lanes: list[dict[str, object]] = [
+        {
+            "key": "naver_reports",
+            "label": "Naver research reports",
+            "classification": "production",
+            "source": "naver_research",
+            "runtime_status": "existing_fetch_parse_persist_lane",
+            "data_scope": "stored_daily_summaries",
+            "freshness_surface_keys": ["reports"],
+            "read_only": True,
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_admin_gui": False,
+            "connects_web_view": False,
+            "notice": "Stored report summaries feed web-view and Telegram freshness displays.",
+        },
+        {
+            "key": "krx_market_daily",
+            "label": "KRX stock daily",
+            "classification": "production",
+            "source": "krx_open_api",
+            "runtime_status": "existing_openapi_snapshot_lane",
+            "data_scope": "stored_stock_market_daily",
+            "publication_rule": "next_business_day_08_00_reference",
+            "freshness_surface_keys": ["krx_market"],
+            "read_only": True,
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_admin_gui": False,
+            "connects_web_view": False,
+            "notice": "Stored KRX Open API stock daily snapshots are freshness references, not trading calls.",
+        },
+        {
+            "key": "etf_daily",
+            "label": "KRX ETF daily",
+            "classification": "production",
+            "source": "krx_open_api",
+            "runtime_status": "existing_openapi_snapshot_lane",
+            "data_scope": "stored_krx_etf_daily_snapshot",
+            "publication_rule": "next_business_day_08_00_reference",
+            "freshness_surface_keys": ["etf_daily"],
+            "constituents_available": False,
+            "constituent_source_status": "not_loaded",
+            "read_only": True,
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_admin_gui": False,
+            "connects_web_view": False,
+            "notice": "ETF turnover/NAV daily references are stored; ETF constituents are not loaded.",
+        },
+        {
+            "key": "krx_index_daily",
+            "label": "KRX index daily",
+            "classification": "production",
+            "source": "krx_open_api",
+            "runtime_status": "existing_openapi_snapshot_lane",
+            "data_scope": "stored_krx_index_daily_snapshot",
+            "publication_rule": "next_business_day_08_00_reference",
+            "freshness_surface_keys": ["krx_market"],
+            "read_only": True,
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_admin_gui": False,
+            "connects_web_view": False,
+            "notice": "Stored index snapshots support market context only.",
+        },
+        {
+            "key": "krx_investor_flow",
+            "label": "KRX investor flow",
+            "classification": "production_limited",
+            "source": "krx_data_market",
+            "runtime_status": "guarded_report_mentioned_stock_lane",
+            "data_scope": "stored_krx_data_market_12009_stock_flow",
+            "collection_window": "anchor_day_mentioned_stocks_recent_31_days",
+            "freshness_surface_keys": ["investor_flow"],
+            "read_only": True,
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_admin_gui": False,
+            "connects_web_view": False,
+            "notice": "Data Marketplace flow remains limited to report-mentioned stock-level 12009 checks.",
+        },
+        {
+            "key": "toss_openapi",
+            "label": "Toss OpenAPI",
+            "classification": "hold",
+            "source": "toss_openapi",
+            "runtime_status": "read_only_lab_contract_only",
+            "data_scope": "official_docs_inventory_and_readonly_lab_contract",
+            "freshness_surface_keys": ["toss_openapi"],
+            "read_only": True,
+            "live_fetch": False,
+            "affects_ordering": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_admin_gui": False,
+            "connects_web_view": False,
+            "forbidden_runtime_groups": [
+                "oauth_token_call",
+                "account_or_asset_read",
+                "order_create_modify_cancel",
+                "production_db_write",
+                "telegram_scheduler_or_public_surface",
+            ],
+            "notice": "No Toss runtime call is connected to dev/main output until explicit approval.",
+        },
+        {
+            "key": "x_public_recap",
+            "label": "X public recap",
+            "classification": "lab",
+            "source": "x_public_web",
+            "runtime_status": "separate_lab_branch_only",
+            "data_scope": "no_login_public_recap_feasibility",
+            "requires_separate_lab_branch": True,
+            "login_dependency_allowed": False,
+            "read_only": True,
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_admin_gui": False,
+            "connects_web_view": False,
+            "notice": "X feasibility stays in the x-browser-recap-lab lane and must not require authenticated browser state.",
+        },
+    ]
+    raw_counts = Counter(str(lane["classification"]) for lane in lanes)
+    classification_counts = {
+        "hold": raw_counts["hold"],
+        "lab": raw_counts["lab"],
+        "production": raw_counts["production"],
+        "production_limited": raw_counts["production_limited"],
+    }
+    done_when_coverage = {
+        "source_lanes_classified": all(bool(lane.get("classification")) for lane in lanes),
+        "web_view_freshness_connected": True,
+        "telegram_freshness_connected": True,
+        "toss_x_not_exaggerated": True,
+        "etf_constituents_status_explicit": True,
+    }
+    return {
+        "surface": "data-source-lane-audit",
+        "read_only": True,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "connects_admin_gui": False,
+        "connects_web_view": False,
+        "ready": all(done_when_coverage.values()),
+        "classification_counts": classification_counts,
+        "done_when_coverage": done_when_coverage,
+        "lanes": lanes,
+        "verification_commands": [
+            "python -m stock_monitor data-source-lane-audit --json",
+            "python -m pytest tests/test_cli_commands.py -q -k data_source_lane_audit",
+            "python -m pytest tests/test_cli_commands.py -q",
+            "python -m pytest -q",
+        ],
+    }
+
+
+def _run_data_source_lane_audit(*, as_json: bool) -> int:
+    payload = _build_data_source_lane_audit_payload()
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload["ready"] else 1
+    print("Data source lane audit")
+    print(f"- ready: {'Y' if payload['ready'] else 'N'}")
+    print(f"- classification counts: {payload['classification_counts']}")
+    for lane in payload["lanes"]:
+        key = str(lane["key"])
+        classification = str(lane["classification"])
+        if key == "etf_daily":
+            print(f"- {key} | {classification} | constituents={lane['constituent_source_status']}")
+        elif key == "toss_openapi":
+            print(
+                f"- {key} | {classification} | live_fetch={str(lane['live_fetch']).lower()} "
+                f"| affects_ordering={str(lane['affects_ordering']).lower()}"
+            )
+        elif key == "x_public_recap":
+            print(
+                f"- {key} | {classification} | "
+                f"separate_lab_branch={str(lane['requires_separate_lab_branch']).lower()} "
+                f"| login_dependency_allowed={str(lane['login_dependency_allowed']).lower()}"
+            )
+        else:
+            print(f"- {key} | {classification} | scope={lane['data_scope']}")
+    print("- done-when coverage:")
+    for key, value in payload["done_when_coverage"].items():
+        print(f"  - {key}: {'Y' if value else 'N'}")
+    print("- verification commands:")
+    for command in payload["verification_commands"]:
+        print(f"  - {command}")
+    return 0 if payload["ready"] else 1
+
+
+def _docs_hygiene_patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
+    return (
+        ("local_absolute_path", DOCS_HYGIENE_LOCAL_ABSOLUTE_PATH_PATTERN),
+        ("external_provider_url", DOCS_HYGIENE_EXTERNAL_PROVIDER_URL_PATTERN),
+        ("secret_like_assignment", DOCS_HYGIENE_SECRET_ASSIGNMENT_PATTERN),
+        ("raw_access_code", DOCS_HYGIENE_RAW_ACCESS_CODE_PATTERN),
+    )
+
+
+def _docs_hygiene_issue_message(code: str) -> str:
+    messages = {
+        "local_absolute_path": "Public/canonical docs should use relative links instead of local absolute user paths.",
+        "external_provider_url": "Public/canonical docs should use a placeholder instead of a real external provider URL.",
+        "secret_like_assignment": "Public/canonical docs should not include secret-like assignments or example values.",
+        "raw_access_code": "Public/canonical docs should not include raw access-code examples or values.",
+    }
+    return messages.get(code, "Documentation hygiene issue.")
+
+
+def _docs_hygiene_display_path(root_dir: Path, absolute_path: Path) -> str:
+    try:
+        return absolute_path.resolve().relative_to(root_dir.resolve()).as_posix()
+    except ValueError:
+        return absolute_path.name
+
+
+def _build_admin_boundary_audit_payload(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    limit: int,
+) -> dict[str, object]:
+    html_text = _render_admin_gui_html()
+    html_judgment_tokens = _admin_boundary_tokens_found(
+        html_text,
+        ADMIN_BOUNDARY_JUDGMENT_REVIEW_FORBIDDEN_TOKENS,
+    )
+    html_public_content_tokens = _admin_boundary_tokens_found(
+        html_text,
+        ADMIN_BOUNDARY_PUBLIC_CONTENT_FORBIDDEN_TOKENS,
+    )
+    operator_review_route_present = "operator-review" in html_text
+    schema_status = _ops_sync_db_schema_status(repository)
+    status_available = bool(schema_status.get("current"))
+    status_keys: list[str] = []
+    status_forbidden_tokens: list[str] = []
+    status_issue: dict[str, object] | None = None
+    if status_available:
+        try:
+            status_snapshot = build_operator_status_snapshot(
+                config,
+                repository,
+                limit=limit,
+                scheduler_tasks=[],
+            )
+        except Exception as exc:
+            status_available = False
+            status_issue = {
+                "code": "operator_status_snapshot_failed",
+                "message": str(exc),
+            }
+        else:
+            status_keys = sorted(status_snapshot)
+            status_text = json.dumps(status_snapshot, ensure_ascii=False, sort_keys=True)
+            status_forbidden_tokens = _admin_boundary_tokens_found(
+                status_text,
+                ADMIN_BOUNDARY_JUDGMENT_REVIEW_FORBIDDEN_TOKENS,
+            )
+
+    issues: list[dict[str, object]] = []
+    if html_judgment_tokens:
+        issues.append(
+            {
+                "code": "admin_html_judgment_review_token",
+                "message": "admin-gui HTML contains judgment-review or evidence-layer token(s).",
+                "tokens": html_judgment_tokens,
+            }
+        )
+    if html_public_content_tokens:
+        issues.append(
+            {
+                "code": "admin_html_public_content_token",
+                "message": "admin-gui HTML contains public web-view content table token(s).",
+                "tokens": html_public_content_tokens,
+            }
+        )
+    if operator_review_route_present:
+        issues.append(
+            {
+                "code": "operator_review_route_in_admin_html",
+                "message": "future operator-review route appears in admin-gui HTML before the surface is implemented.",
+            }
+        )
+    if not bool(schema_status.get("current")):
+        issues.append(
+            {
+                "code": "default_db_schema_not_current",
+                "message": "operator status payload audit is blocked until the DB schema is current.",
+            }
+        )
+    if status_issue:
+        issues.append(status_issue)
+    if status_forbidden_tokens:
+        issues.append(
+            {
+                "code": "admin_status_judgment_review_token",
+                "message": "operator status payload contains judgment-review or evidence-layer token(s).",
+                "tokens": status_forbidden_tokens,
+            }
+        )
+
+    control_routes_present = [route for route in ADMIN_BOUNDARY_CONTROL_ROUTES if route in html_text]
+    return {
+        "surface": "admin-boundary-audit",
+        "read_only": True,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "ready": len(issues) == 0,
+        "admin_gui": {
+            "host_guard": "loopback_required_by_default",
+            "surface": "operator_only",
+            "html_forbidden_token_count": len(html_judgment_tokens),
+            "html_forbidden_tokens": html_judgment_tokens,
+            "html_public_content_token_count": len(html_public_content_tokens),
+            "html_public_content_tokens": html_public_content_tokens,
+            "control_routes_present": control_routes_present,
+            "control_route_count": len(control_routes_present),
+            "judgment_review_body_present": bool(html_judgment_tokens),
+        },
+        "status_payload": {
+            "available": status_available,
+            "schema_status": schema_status,
+            "forbidden_token_count": len(status_forbidden_tokens),
+            "forbidden_tokens": status_forbidden_tokens,
+            "operator_only_key_count": len(status_keys),
+            "operator_only_keys": [
+                key
+                for key in (
+                    "backup",
+                    "health",
+                    "live_observation",
+                    "recent_admin_audit_logs",
+                    "recovery_actions",
+                    "safe_settings",
+                    "scheduler_tasks",
+                    "worker_states",
+                )
+                if key in status_keys
+            ],
+        },
+        "web_view": {
+            "surface": "friend_facing_get_only",
+            "separate_handler": True,
+            "handler_factory": "_make_web_view_handler",
+            "admin_handler_factory": "_make_admin_gui_handler",
+            "host_guard": "loopback_required_by_default",
+            "expected_api_status": 404,
+            "expected_admin_control_post_status": 405,
+        },
+        "operator_review": {
+            "implemented": False,
+            "route_present_in_admin_html": operator_review_route_present,
+            "reserved_for": [
+                "raw news intelligence evidence review",
+                "candidate evidence linkage review",
+                "internal judgment-review workflows",
+            ],
+        },
+        "verification_commands": [
+            "python -m stock_monitor admin-boundary-audit --json",
+            "python -m stock_monitor operator-status --json --health-exit",
+            "python -m stock_monitor web-view-browser-smoke --date latest --stock-limit 20 --json",
+            "python -m pytest tests/test_admin_gui.py tests/test_operator_status.py tests/test_cli_commands.py -q",
+        ],
+        "issues": issues,
+    }
+
+
+def _run_admin_boundary_audit(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    limit: int,
+    as_json: bool,
+) -> int:
+    payload = _build_admin_boundary_audit_payload(config, repository, limit=limit)
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload["ready"] else 1
+    print("Admin boundary audit")
+    print(f"- ready: {'Y' if payload['ready'] else 'N'}")
+    admin_gui = payload["admin_gui"]
+    print(
+        f"- admin-gui: judgment_tokens={admin_gui['html_forbidden_token_count']} "
+        f"public_content_tokens={admin_gui['html_public_content_token_count']} "
+        f"control_routes={admin_gui['control_route_count']}"
+    )
+    status_payload = payload["status_payload"]
+    print(
+        f"- status payload: available={'Y' if status_payload['available'] else 'N'} "
+        f"judgment_tokens={status_payload['forbidden_token_count']} "
+        f"schema={status_payload['schema_status']['status']}"
+    )
+    web_view = payload["web_view"]
+    print(
+        f"- web-view: separate_handler={'Y' if web_view['separate_handler'] else 'N'} "
+        f"expected /api/status={web_view['expected_api_status']}"
+    )
+    operator_review = payload["operator_review"]
+    print(
+        f"- operator-review: implemented={'Y' if operator_review['implemented'] else 'N'} "
+        f"route_in_admin={'Y' if operator_review['route_present_in_admin_html'] else 'N'}"
+    )
+    if payload["issues"]:
+        print("- issues:")
+        for item in payload["issues"]:
+            print(f"  - {item['code']}: {item['message']}")
+    print("- verification commands:")
+    for command in payload["verification_commands"]:
+        print(f"  - {command}")
+    return 0 if payload["ready"] else 1
+
+
+def _admin_boundary_tokens_found(text: str, tokens: Sequence[str]) -> list[str]:
+    return [token for token in tokens if token in text]
+
+
+def _run_git_for_ops_sync_preview(root_dir: Path, args: tuple[str, ...]) -> dict[str, object]:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=root_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except Exception as exc:
+        return {"ok": False, "returncode": None, "stdout": "", "stderr": str(exc)}
+    return {
+        "ok": result.returncode == 0,
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
+
+
+def _build_ops_sync_preview_payload(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    base_ref: str,
+    head_ref: str,
+    max_commits: int,
+) -> dict[str, object]:
+    max_commit_count = max(1, min(max_commits, 200))
+    status_result = _run_git_for_ops_sync_preview(config.root_dir, ("status", "--short", "--branch"))
+    log_range = f"{base_ref}..{head_ref}"
+    log_result = _run_git_for_ops_sync_preview(
+        config.root_dir,
+        ("log", "--reverse", "--pretty=format:%h\t%s", f"--max-count={max_commit_count}", log_range),
+    )
+    diff_result = _run_git_for_ops_sync_preview(config.root_dir, ("diff", "--name-only", log_range))
+    worktree = _parse_ops_sync_git_status(str(status_result.get("stdout") or ""))
+    commits = _parse_ops_sync_commits(str(log_result.get("stdout") or ""))
+    changed_files = _parse_ops_sync_changed_files(str(diff_result.get("stdout") or ""))
+    schema_status = _ops_sync_db_schema_status(repository)
+    schema_action_plan = _ops_sync_schema_action_plan(schema_status)
+    blockers: list[dict[str, object]] = []
+    if not status_result.get("ok"):
+        blockers.append(
+            {
+                "code": "git_status_unavailable",
+                "message": "git status could not be read.",
+            }
+        )
+    if not log_result.get("ok") or not diff_result.get("ok"):
+        blockers.append(
+            {
+                "code": "git_comparison_unavailable",
+                "message": f"git comparison failed for {log_range}.",
+            }
+        )
+    if int(worktree["tracked_dirty_count"]) > 0:
+        blockers.append(
+            {
+                "code": "tracked_worktree_dirty",
+                "message": "tracked worktree changes exist; commit or review them before preparing an ops batch.",
+                "count": worktree["tracked_dirty_count"],
+            }
+        )
+    if int(worktree["other_untracked_count"]) > 0:
+        blockers.append(
+            {
+                "code": "unexpected_untracked_files",
+                "message": "untracked files outside data/ exist; review before source sync.",
+                "count": worktree["other_untracked_count"],
+            }
+        )
+    if not bool(schema_status.get("current")):
+        blockers.append(
+            {
+                "code": "default_db_schema_not_current",
+                "message": "default DB cannot run normal read-only smoke until schema is current; use fixture DB or run an approved migration.",
+            }
+        )
+    payload = {
+        "surface": "ops-sync-preview",
+        "read_only": True,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "base_ref": base_ref,
+        "head_ref": head_ref,
+        "source_sync_ready": len(blockers) == 0,
+        "worktree": worktree,
+        "default_db_schema": schema_status,
+        "schema_action_plan": schema_action_plan,
+        "git_comparison": {
+            "range": log_range,
+            "commit_count": len(commits),
+            "commits": commits,
+            "changed_file_count": len(changed_files),
+            "changed_files": changed_files,
+            "changed_file_groups": _ops_sync_changed_file_groups(changed_files),
+            "conflict_watch_paths": _ops_sync_conflict_watch_paths(changed_files),
+        },
+        "batch_policy": {
+            "apply_as_reviewed_batch": True,
+            "do_not_include": [
+                ".env",
+                "data/",
+                "data/access_code.json",
+                "data/backups/",
+                "*.log",
+                ".venv/",
+            ],
+            "requires_separate_approval": [
+                "production DB write",
+                "scheduler registration/change",
+                "Telegram real send",
+                "admin-gui process control",
+                "broker/order routing",
+            ],
+        },
+        "verification_commands": [
+            "python -m stock_monitor ops-sync-preview --base origin/main --head dev --json",
+            "python -m stock_monitor db-verify --json",
+            "python -m stock_monitor web-view-value-qa --recent-business-days 4 --stock-limit 20 --json",
+            "python -m stock_monitor web-view-browser-smoke --date latest --stock-limit 20 --json",
+            "python -m stock_monitor api-perf-summary --json",
+            "python -m pytest -q",
+        ],
+        "blockers": blockers,
+    }
+    payload["operating_pc_handoff"] = _ops_sync_operating_pc_handoff(payload)
+    return payload
+
+
+def _ops_sync_schema_action_plan(schema_status: dict[str, object]) -> dict[str, object]:
+    schema_current = bool(schema_status.get("current"))
+    requires_migration = not schema_current
+    return {
+        "status": schema_status.get("status", "unknown"),
+        "current_version": schema_status.get("current_version"),
+        "target_version": schema_status.get("target_version"),
+        "pending_versions": list(schema_status.get("pending_versions") or []),
+        "requires_migration_approval": requires_migration,
+        "approval_required": requires_migration,
+        "read_only_until_approval": requires_migration,
+        "pre_approval_commands": [
+            "python -m stock_monitor ops-sync-preview --base origin/main --head dev --json",
+            "python -m stock_monitor db-migrate --dry-run",
+            "python -m stock_monitor db-migration-rehearsal --json",
+            "python -m stock_monitor db-verify --json",
+        ],
+        "post_approval_commands": [
+            "python -m stock_monitor db-backup --tag pre-schema-migration",
+            "python -m stock_monitor db-migrate",
+            "python -m stock_monitor db-verify --json",
+            "python -m stock_monitor ops-readiness --json",
+        ]
+        if requires_migration
+        else [],
+        "forbidden_without_approval": [
+            "production DB write",
+            "schema migration on operating PC",
+            "scheduler registration/change",
+            "Telegram real send",
+            "admin-gui process control",
+            "broker/order routing",
+        ],
+    }
+
+
+def _ops_sync_operating_pc_handoff(payload: dict[str, object]) -> dict[str, object]:
+    comparison = payload.get("git_comparison")
+    if not isinstance(comparison, dict):
+        comparison = {}
+    worktree = payload.get("worktree")
+    if not isinstance(worktree, dict):
+        worktree = {}
+    policy = payload.get("batch_policy")
+    if not isinstance(policy, dict):
+        policy = {}
+    blockers = payload.get("blockers")
+    blocker_rows = blockers if isinstance(blockers, list) else []
+    commits = comparison.get("commits")
+    commit_rows = commits if isinstance(commits, list) else []
+    changed_groups = comparison.get("changed_file_groups")
+    changed_group_rows = changed_groups if isinstance(changed_groups, dict) else {}
+    conflict_paths = comparison.get("conflict_watch_paths")
+    conflict_path_rows = conflict_paths if isinstance(conflict_paths, list) else []
+    verification_commands = payload.get("verification_commands")
+    verification_rows = verification_commands if isinstance(verification_commands, list) else []
+    approval_items = policy.get("requires_separate_approval")
+    approval_rows = approval_items if isinstance(approval_items, list) else []
+    excluded_items = policy.get("do_not_include")
+    excluded_rows = excluded_items if isinstance(excluded_items, list) else []
+    schema_action_plan = payload.get("schema_action_plan")
+    schema_plan = schema_action_plan if isinstance(schema_action_plan, dict) else {}
+    pre_approval_commands = schema_plan.get("pre_approval_commands")
+    pre_approval_rows = pre_approval_commands if isinstance(pre_approval_commands, list) else []
+    post_approval_commands = schema_plan.get("post_approval_commands")
+    post_approval_rows = post_approval_commands if isinstance(post_approval_commands, list) else []
+    schema_forbidden_items = schema_plan.get("forbidden_without_approval")
+    schema_forbidden_rows = schema_forbidden_items if isinstance(schema_forbidden_items, list) else []
+
+    lines = [
+        "운영 PC용",
+        "",
+        "목표: dev에서 검증된 변경을 운영 PC 적용 후보 batch로 리뷰한다.",
+        f"비교 범위: {comparison.get('range', '-')}",
+        f"source_sync_ready: {'Y' if payload.get('source_sync_ready') else 'N'}",
+        "",
+        "먼저 확인:",
+        "- pwd",
+        "- git status --short --branch",
+        "- git worktree list",
+        "- python -m stock_monitor ops-sync-preview --base origin/main --head dev --json",
+    ]
+    local_data_count = int(worktree.get("local_data_untracked_count") or 0)
+    if local_data_count:
+        lines.append(f"- data/ untracked: {local_data_count}개 - stage/commit/delete 금지")
+
+    lines.extend(["", "커밋 요약:"])
+    if commit_rows:
+        for item in commit_rows[:30]:
+            if not isinstance(item, dict):
+                continue
+            lines.append(f"- {item.get('short_hash', '-')} {item.get('subject', '-')}")
+        if len(commit_rows) > 30:
+            lines.append(f"- ... {len(commit_rows) - 30} more commits omitted from prompt")
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "변경 파일 그룹:"])
+    if changed_group_rows:
+        for group in sorted(changed_group_rows):
+            lines.append(f"- {group}: {changed_group_rows[group]}")
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "충돌 주의 경로:"])
+    if conflict_path_rows:
+        for path in conflict_path_rows[:20]:
+            lines.append(f"- {path}")
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "검증 명령:"])
+    for command in verification_rows:
+        lines.append(f"- {command}")
+
+    lines.extend(["", "Schema action plan:"])
+    lines.append(f"- status: {schema_plan.get('status', '-')}")
+    lines.append(f"- approval_required: {'Y' if schema_plan.get('approval_required') else 'N'}")
+    lines.append("- pre-approval:")
+    for command in pre_approval_rows:
+        lines.append(f"- {command}")
+    lines.append("- post-approval:")
+    if post_approval_rows:
+        for command in post_approval_rows:
+            lines.append(f"- {command}")
+    else:
+        lines.append("- none")
+    lines.append("- forbidden without approval:")
+    for item in schema_forbidden_rows:
+        lines.append(f"- {item}")
+
+    if blocker_rows:
+        lines.extend(["", "현재 blocker:"])
+        for item in blocker_rows:
+            if not isinstance(item, dict):
+                continue
+            lines.append(f"- {item.get('code', '-')}: {item.get('message', '-')}")
+
+    lines.extend(["", "별도 명시 승인 전 금지:"])
+    lines.append("- 운영 DB write 금지")
+    for item in approval_rows:
+        lines.append(f"- {item}")
+
+    lines.extend(["", "적용 batch 제외:"])
+    for item in excluded_rows:
+        lines.append(f"- {item}")
+
+    return {
+        "first_line": "운영 PC용",
+        "read_only": True,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "prompt": "\n".join(lines),
+    }
+
+
+def _run_ops_sync_preview(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    base_ref: str,
+    head_ref: str,
+    max_commits: int,
+    as_json: bool,
+) -> int:
+    if not base_ref.strip():
+        raise ValueError("--base must not be empty.")
+    if not head_ref.strip():
+        raise ValueError("--head must not be empty.")
+    payload = _build_ops_sync_preview_payload(
+        config,
+        repository,
+        base_ref=base_ref.strip(),
+        head_ref=head_ref.strip(),
+        max_commits=max_commits,
+    )
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload["source_sync_ready"] else 1
+    print("Operations sync preview")
+    print(f"- range: {payload['base_ref']}..{payload['head_ref']}")
+    print(f"- source sync ready: {'Y' if payload['source_sync_ready'] else 'N'}")
+    worktree = payload["worktree"]
+    print(
+        f"- worktree: tracked_dirty={worktree['tracked_dirty_count']} "
+        f"data_untracked={worktree['local_data_untracked_count']} "
+        f"other_untracked={worktree['other_untracked_count']}"
+    )
+    schema = payload["default_db_schema"]
+    print(
+        f"- default DB schema: {schema['status']} "
+        f"current={schema['current_version']} target={schema['target_version']}"
+    )
+    comparison = payload["git_comparison"]
+    print(f"- commits to review: {comparison['commit_count']}")
+    for item in comparison["commits"]:
+        print(f"  - {item['short_hash']} {item['subject']}")
+    print("- changed file groups:")
+    for group, count in comparison["changed_file_groups"].items():
+        print(f"  - {group}: {count}")
+    if payload["blockers"]:
+        print("- blockers:")
+        for item in payload["blockers"]:
+            print(f"  - {item['code']}: {item['message']}")
+    print("- verification commands:")
+    for command in payload["verification_commands"]:
+        print(f"  - {command}")
+    return 0 if payload["source_sync_ready"] else 1
+
+
+def _parse_ops_sync_git_status(output: str) -> dict[str, object]:
+    branch = None
+    tracked: list[str] = []
+    untracked: list[str] = []
+    local_data_untracked: list[str] = []
+    other_untracked: list[str] = []
+    for raw_line in output.splitlines():
+        line = raw_line.rstrip()
+        if not line:
+            continue
+        if line.startswith("## "):
+            branch = line[3:].strip()
+            continue
+        status = line[:2]
+        path = line[3:].strip() if len(line) > 3 else ""
+        if status == "??":
+            untracked.append(path)
+            if path == "data" or path == "data/" or path.startswith("data/"):
+                local_data_untracked.append(path)
+            else:
+                other_untracked.append(path)
+        else:
+            tracked.append(path)
+    return {
+        "branch": branch,
+        "tracked_dirty_count": len(tracked),
+        "tracked_dirty_paths": tracked,
+        "untracked_count": len(untracked),
+        "local_data_untracked_count": len(local_data_untracked),
+        "local_data_untracked_paths": local_data_untracked[:20],
+        "other_untracked_count": len(other_untracked),
+        "other_untracked_paths": other_untracked[:20],
+    }
+
+
+def _parse_ops_sync_commits(output: str) -> list[dict[str, str]]:
+    commits: list[dict[str, str]] = []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        short_hash, _, subject = line.partition("\t")
+        commits.append({"short_hash": short_hash.strip(), "subject": subject.strip()})
+    return commits
+
+
+def _parse_ops_sync_changed_files(output: str) -> list[str]:
+    return [line.strip() for line in output.splitlines() if line.strip()]
+
+
+def _ops_sync_changed_file_groups(changed_files: list[str]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for path in changed_files:
+        first = path.split("/", 1)[0]
+        if first in {"src", "tests", "scripts", "docs"}:
+            counts[first] += 1
+        elif first in {"AGENTS.md", "README.md", "CHANGELOG.md", "pyproject.toml"}:
+            counts["project_root"] += 1
+        else:
+            counts["other"] += 1
+    return dict(sorted(counts.items()))
+
+
+def _ops_sync_conflict_watch_paths(changed_files: list[str]) -> list[str]:
+    watch_prefixes = (
+        "src/stock_monitor/cli.py",
+        "src/stock_monitor/db/",
+        "tests/test_cli_commands.py",
+        "tests/test_web_view.py",
+        "scripts/",
+        "docs/codex/work-todo-board.md",
+        "docs/codex/surface-contract.md",
+        "docs/codex/weekly-sync/",
+        "AGENTS.md",
+        "README.md",
+        "CHANGELOG.md",
+    )
+    return [path for path in changed_files if path.startswith(watch_prefixes)]
+
+
+def _ops_sync_db_schema_status(repository: StockMonitorRepository) -> dict[str, object]:
+    if not repository.db_path.exists():
+        return {
+            "exists": False,
+            "current": False,
+            "current_version": None,
+            "target_version": None,
+            "pending_versions": [],
+            "status": "missing",
+        }
+    try:
+        status = repository.get_schema_migration_status()
+    except Exception as exc:
+        return {
+            "exists": True,
+            "current": False,
+            "current_version": None,
+            "target_version": None,
+            "pending_versions": [],
+            "status": "error",
+            "message": str(exc),
+        }
+    current = status.current_version == status.target_version and not status.pending_versions
+    return {
+        "exists": True,
+        "current": current,
+        "current_version": status.current_version,
+        "target_version": status.target_version,
+        "pending_versions": list(status.pending_versions),
+        "status": "current" if current else "migration_required",
+    }
 
 
 def _build_ops_readiness_payload(
@@ -4694,6 +6024,157 @@ def _run_ops_readiness(
     for item in payload["recommended_actions"]:
         print(f"  - {item}")
     return 0 if payload["ready"] else 1
+
+
+def _run_db_migration_rehearsal(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    work_dir: Path | None,
+    keep_copy: bool,
+    as_json: bool,
+) -> int:
+    payload = _build_db_migration_rehearsal_payload(
+        config,
+        repository,
+        work_dir=work_dir,
+        keep_copy=keep_copy,
+    )
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload["ready"] else 1
+    print("Database migration rehearsal")
+    print(f"- ready: {'Y' if payload['ready'] else 'N'}")
+    print(f"- read_only_source: {'Y' if payload['read_only_source'] else 'N'}")
+    print(f"- writes_source_db: {'Y' if payload['writes_source_db'] else 'N'}")
+    before = payload["source_schema_before"]
+    after = payload["copy_schema_after"]
+    print(
+        f"- source schema before: {before['current_version']}/{before['target_version']} "
+        f"status={before['status']}"
+    )
+    print(
+        f"- copy schema after: {after['current_version']}/{after['target_version']} "
+        f"status={after['status']}"
+    )
+    verification = payload["copy_verification"]
+    print(
+        f"- copy verification: ready={'Y' if verification['ready'] else 'N'} "
+        f"integrity={verification['integrity_check']}"
+    )
+    print(f"- copy_retained: {'Y' if payload['copy_retained'] else 'N'}")
+    if payload["copy_path"]:
+        print(f"- copy_path: {payload['copy_path']}")
+    for blocker in payload["blockers"]:
+        print(f"- blocker: {blocker['code']} | {blocker['message']}")
+    return 0 if payload["ready"] else 1
+
+
+def _build_db_migration_rehearsal_payload(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    work_dir: Path | None,
+    keep_copy: bool,
+) -> dict[str, object]:
+    source_schema_before = _ops_sync_db_schema_status(repository)
+    if not bool(source_schema_before.get("exists")):
+        return {
+            "surface": "db-migration-rehearsal",
+            "read_only_source": True,
+            "writes_source_db": False,
+            "writes_temp_copy": False,
+            "ready": False,
+            "copy_retained": False,
+            "copy_path": None,
+            "source_schema_before": source_schema_before,
+            "source_schema_after": source_schema_before,
+            "copy_schema_before": None,
+            "copy_schema_after": None,
+            "copy_verification": None,
+            "blockers": [
+                {
+                    "code": "source_db_missing",
+                    "message": "Source DB does not exist; migration rehearsal cannot create a source snapshot.",
+                }
+            ],
+        }
+
+    target_dir = work_dir or config.data_dir / "migration-rehearsal"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    copied_path = target_dir / f"migration_rehearsal_{datetime.now(ZoneInfo(config.timezone)).strftime('%Y%m%d_%H%M%S_%f')}.db"
+    source_connection = sqlite3.connect(repository.db_path)
+    target_connection = sqlite3.connect(copied_path)
+    try:
+        source_connection.backup(target_connection)
+    finally:
+        target_connection.close()
+        source_connection.close()
+
+    copy_repository = StockMonitorRepository(copied_path, timezone=config.timezone)
+    copy_schema_before = _ops_sync_db_schema_status(copy_repository)
+    migration_status = copy_repository.migrate_schema(dry_run=False)
+    copy_schema_after = _ops_sync_db_schema_status(copy_repository)
+    verify_payload = _build_db_verify_payload(copy_repository)
+    copy_ready = _db_verify_payload_ready(verify_payload)
+    source_schema_after = _ops_sync_db_schema_status(repository)
+    source_unchanged = source_schema_before == source_schema_after
+    blockers: list[dict[str, object]] = []
+    if not source_unchanged:
+        blockers.append(
+            {
+                "code": "source_schema_changed",
+                "message": "Source DB schema changed during migration rehearsal.",
+            }
+        )
+    if not bool(copy_schema_after.get("current")):
+        blockers.append(
+            {
+                "code": "copy_schema_not_current",
+                "message": "Temporary copy did not migrate to the target schema.",
+            }
+        )
+    if not copy_ready:
+        blockers.append(
+            {
+                "code": "copy_verify_failed",
+                "message": "db-verify checks did not pass on the migrated temporary copy.",
+            }
+        )
+
+    retained_path = str(copied_path) if keep_copy else None
+    if not keep_copy:
+        copied_path.unlink(missing_ok=True)
+
+    return {
+        "surface": "db-migration-rehearsal",
+        "read_only_source": True,
+        "writes_source_db": False,
+        "writes_temp_copy": True,
+        "ready": len(blockers) == 0,
+        "copy_retained": keep_copy,
+        "copy_path": retained_path,
+        "source_schema_before": source_schema_before,
+        "source_schema_after": source_schema_after,
+        "copy_schema_before": copy_schema_before,
+        "migration_status": {
+            "current_version": migration_status.current_version,
+            "target_version": migration_status.target_version,
+            "applied_versions": list(migration_status.applied_versions),
+            "pending_versions": list(migration_status.pending_versions),
+        },
+        "copy_schema_after": copy_schema_after,
+        "copy_verification": {
+            "ready": copy_ready,
+            "integrity_check": verify_payload["integrity_check"],
+            "pending_migrations": list(verify_payload["pending_migrations"]),
+            "foreign_key_violations": verify_payload["foreign_key_violations"],
+            "partial_krx_daily_snapshot_date_count": len(verify_payload["partial_krx_daily_snapshot_dates"]),
+            "investor_flow_quality_issue_total": verify_payload["investor_flow_quality_issue_total"],
+            "category_quality_issue_total": verify_payload["category_quality_issue_total"],
+        },
+        "blockers": blockers,
+    }
 
 
 def _run_db_backup(
@@ -4950,10 +6431,16 @@ def _database_table_counts(connection: sqlite3.Connection) -> dict[str, int]:
     return {row[0]: int(connection.execute(f'SELECT COUNT(*) FROM "{row[0]}"').fetchone()[0]) for row in rows}
 
 
-def _partial_krx_daily_snapshot_dates(connection: sqlite3.Connection, tables: dict[str, int]) -> list[dict]:
+def _partial_krx_daily_snapshot_dates(
+    connection: sqlite3.Connection,
+    tables: dict[str, int],
+    *,
+    holiday_overrides: set[date] | frozenset[date] | None = None,
+) -> list[dict]:
     required_tables = {"stock_market_daily", "etf_daily_snapshots", "market_index_daily"}
     if not required_tables.issubset(tables):
         return []
+    holidays = holiday_overrides if holiday_overrides is not None else DEFAULT_MARKET_HOLIDAYS
     date_rows = connection.execute(
         """
         SELECT business_date
@@ -4970,6 +6457,8 @@ def _partial_krx_daily_snapshot_dates(connection: sqlite3.Connection, tables: di
     partial_dates: list[dict] = []
     for row in date_rows:
         business_date = row["business_date"]
+        if not is_business_day(date.fromisoformat(str(business_date)), holidays):
+            continue
         counts = {
             "etf-daily": int(
                 connection.execute(
@@ -6657,8 +8146,9 @@ def _build_intraday_market_top_reference(
     limit: int,
     page_size: int,
     delay_seconds: float,
-    checked_at: datetime,
+    checked_at: datetime | None = None,
 ) -> dict[str, object]:
+    resolved_checked_at = checked_at or datetime.now(ZoneInfo(config.timezone))
     normalized_limit = min(max(limit, 0), 100)
     normalized_page_size = min(max(page_size, 1), 20)
     normalized_delay = max(delay_seconds, 0.0)
@@ -6704,7 +8194,7 @@ def _build_intraday_market_top_reference(
                         summary,
                         row,
                         rank=rank_offset,
-                        checked_at=checked_at,
+                        checked_at=resolved_checked_at,
                     )
                 )
             if len(rows) < normalized_page_size:
@@ -6725,7 +8215,7 @@ def _build_intraday_market_top_reference(
         "limit": normalized_limit,
         "page_size": normalized_page_size,
         "delay_seconds": normalized_delay,
-        "checked_at": checked_at.isoformat(),
+        "checked_at": resolved_checked_at.isoformat(),
         "calls": call_count,
         "items": items,
         "errors": errors,
@@ -13658,12 +15148,40 @@ def _run_market_briefing(
     explicit_date: date | None,
     limit: int,
     send: bool,
+    slot: str = "mood",
+    as_json: bool = False,
 ) -> int:
+    if as_json and send:
+        raise ValueError("--json cannot be combined with --send for market-briefing.")
     business_date = explicit_date or datetime.now(ZoneInfo(config.timezone)).date()
-    message = _build_market_briefing_message(config, repository, business_date=business_date, limit=limit)
+    message = _build_market_briefing_message(config, repository, business_date=business_date, limit=limit, slot=slot)
+    issues = _collect_market_briefing_message_issues(message)
+    if as_json:
+        source_freshness_summary = _build_market_briefing_source_freshness_summary(
+            repository,
+            business_date,
+        )
+        payload = {
+            "surface": "market-briefing",
+            "read_only_preview": True,
+            "business_date": business_date.isoformat(),
+            "slot": slot,
+            "slot_label": MARKET_BRIEFING_SLOT_LABELS.get(slot, MARKET_BRIEFING_SLOT_LABELS["mood"]),
+            "limit": limit,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "public_safe_issue_count": len(issues),
+            "public_safe_issues": issues,
+            "news_observation_summary": _build_web_view_news_observation_summary(repository, business_date),
+            "source_freshness_summary": source_freshness_summary,
+            "message": message,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 1 if issues else 0
     if not send:
         print(message)
         return 0
+    _ensure_market_briefing_message_public_safe(message)
     _send_market_briefing_message(config, repository, business_date=business_date, message=message, source="manual")
     print(f"Market briefing sent for {business_date.isoformat()}.")
     return 0
@@ -15566,6 +17084,257 @@ def _market_day_notify_delivery_evidence(
     }
 
 
+def _run_dev_fixture_db(
+    *,
+    scenario: str,
+    output_path: Path,
+    overwrite: bool,
+    as_json: bool,
+) -> int:
+    if scenario != "visible-product-flow":
+        raise ValueError(f"Unsupported fixture scenario: {scenario}")
+    resolved_output = output_path.expanduser().resolve()
+    if resolved_output.exists():
+        if not overwrite:
+            raise FileExistsError(f"Fixture DB already exists: {resolved_output}")
+        if not resolved_output.is_file() or resolved_output.suffix.lower() not in {".db", ".sqlite", ".sqlite3"}:
+            raise ValueError(f"--overwrite only supports SQLite fixture files: {resolved_output}")
+        resolved_output.unlink()
+    resolved_output.parent.mkdir(parents=True, exist_ok=True)
+
+    config = RuntimeConfig.from_env(root_dir=Path.cwd(), db_path=resolved_output)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(resolved_output, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 8)
+    _seed_visible_product_flow_fixture(repository, business_date=business_date)
+
+    commands = [
+        f"$env:STOCK_MONITOR_DB_PATH = '{resolved_output}'",
+        f"python -m stock_monitor web-view-value-qa --date {business_date.isoformat()} --stock-limit 20 --json",
+        f"python -m stock_monitor web-view-browser-smoke --date {business_date.isoformat()} --stock-limit 20 --json",
+        f"python -m stock_monitor market-briefing --date {business_date.isoformat()} --slot lunch --limit 5 --json",
+        f"python -m stock_monitor market-briefing --date {business_date.isoformat()} --slot preclose --limit 5",
+        f"python -m stock_monitor market-briefing-readiness --recent-report-dates 1 --limit 5 --json",
+    ]
+    payload = {
+        "surface": "dev-fixture-db",
+        "scenario": scenario,
+        "business_date": business_date.isoformat(),
+        "db_path": str(resolved_output),
+        "writes_production_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "verification_commands": commands,
+    }
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print("Dev fixture DB")
+        print(f"- scenario: {payload['scenario']}")
+        print(f"- business date: {payload['business_date']}")
+        print(f"- db: {payload['db_path']}")
+        for command in commands:
+            print(f"- verify: {command}")
+    return 0
+
+
+def _seed_visible_product_flow_fixture(repository: StockMonitorRepository, *, business_date: date) -> None:
+    fetched_at = datetime(2026, 5, 8, 16, 0, 0)
+    repository.upsert_krx_stock_metadata(
+        [
+            KrxStockMetadataSnapshot(business_date, "KR7005930003", "005930", "삼성전자", "KOSPI", fetched_at),
+            KrxStockMetadataSnapshot(business_date, "KR7000660001", "000660", "Beta Memory", "KOSPI", fetched_at),
+            KrxStockMetadataSnapshot(business_date, "KR7035420009", "035420", "NAVER", "KOSPI", fetched_at),
+            KrxStockMetadataSnapshot(business_date, "KR7035720002", "035720", "카카오", "KOSPI", fetched_at),
+        ]
+    )
+    repository.upsert_category_catalog_items(
+        [
+            CategoryCatalogItem("sector", "semi", "반도체와반도체장비", "fixture", True, fetched_at),
+            CategoryCatalogItem("sector", "it", "IT서비스", "fixture", True, fetched_at),
+            CategoryCatalogItem("theme", "ai", "AI반도체", "fixture", True, fetched_at),
+        ]
+    )
+    repository.upsert_category_membership_snapshots(
+        [
+            CategoryMembershipSnapshot(business_date, "sector", "semi", "반도체와반도체장비", "005930", "삼성전자", fetched_at, "fixture"),
+            CategoryMembershipSnapshot(business_date, "sector", "semi", "반도체와반도체장비", "000660", "Beta Memory", fetched_at, "fixture"),
+            CategoryMembershipSnapshot(business_date, "sector", "it", "IT서비스", "035420", "NAVER", fetched_at, "fixture"),
+            CategoryMembershipSnapshot(business_date, "sector", "it", "IT서비스", "035720", "카카오", fetched_at, "fixture"),
+            CategoryMembershipSnapshot(business_date, "theme", "ai", "AI반도체", "005930", "삼성전자", fetched_at, "fixture"),
+        ]
+    )
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="AI 반도체 수주 흐름 점검",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 5, 8, 9, 0, 0),
+                collected_at=fetched_at,
+                target_price_raw="95000",
+                target_price_value=95_000,
+                opinion_raw="매수",
+                opinion_normalized="buy",
+                source_id="fixture-report-005930-1",
+                identity_key="fixture-report-005930-1",
+                source_url="https://stock.naver.com/research/company/fixture-005930-1",
+            ),
+            Report(
+                business_date=business_date,
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="HBM 공급 확대 확인",
+                broker_name="KB증권",
+                published_at=datetime(2026, 5, 8, 10, 0, 0),
+                collected_at=fetched_at,
+                target_price_raw="98000",
+                target_price_value=98_000,
+                opinion_raw="매수",
+                opinion_normalized="buy",
+                source_id="fixture-report-005930-2",
+                identity_key="fixture-report-005930-2",
+                source_url="https://stock.naver.com/research/company/fixture-005930-2",
+            ),
+            Report(
+                business_date=business_date,
+                stock_name="NAVER",
+                stock_code="035420",
+                title="광고와 커머스 회복 관찰",
+                broker_name="신한투자증권",
+                published_at=datetime(2026, 5, 8, 11, 0, 0),
+                collected_at=fetched_at,
+                target_price_raw="250000",
+                target_price_value=250_000,
+                opinion_raw="중립",
+                opinion_normalized="neutral",
+                source_id="fixture-report-035420-1",
+                identity_key="fixture-report-035420-1",
+                source_url="https://stock.naver.com/research/company/fixture-035420-1",
+            ),
+            Report(
+                business_date=business_date,
+                stock_name="카카오",
+                stock_code="035720",
+                title="플랫폼 비용 구조 점검",
+                broker_name="미래에셋증권",
+                published_at=datetime(2026, 5, 8, 13, 0, 0),
+                collected_at=fetched_at,
+                target_price_raw=None,
+                target_price_value=None,
+                opinion_raw=None,
+                opinion_normalized="N/A",
+                source_id="fixture-report-035720-1",
+                identity_key="fixture-report-035720-1",
+                source_url="https://stock.naver.com/research/company/fixture-035720-1",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(business_date, "005930", "삼성전자", "KOSPI", fetched_at, close_price=74_000, change_percent=1.8, volume=18_500_000, turnover=2_300_000_000_000),
+            StockMarketDailySnapshot(business_date, "000660", "Beta Memory", "KOSPI", fetched_at, close_price=200_000, change_percent=1.2, volume=4_200_000, turnover=830_000_000_000),
+            StockMarketDailySnapshot(business_date, "035420", "NAVER", "KOSPI", fetched_at, close_price=185_000, change_percent=-0.4, volume=910_000, turnover=168_000_000_000),
+            StockMarketDailySnapshot(business_date, "035720", "카카오", "KOSPI", fetched_at, close_price=54_000, change_percent=0.7, volume=1_250_000, turnover=67_000_000_000),
+        ]
+    )
+    repository.upsert_market_index_daily(
+        [
+            MarketIndexDailySnapshot(business_date, "KOSPI", "stock", "코스피", fetched_at, close_index=2745.21, change_percent=0.82, volume=550_000_000, turnover=12_500_000_000_000),
+            MarketIndexDailySnapshot(business_date, "KOSDAQ", "stock", "코스닥", fetched_at, close_index=873.41, change_percent=-0.15, volume=810_000_000, turnover=8_100_000_000_000),
+        ]
+    )
+    repository.upsert_stock_investor_flow_daily(
+        [
+            StockInvestorFlowDaily(business_date, "005930", "삼성전자", "외국인", fetched_at, market="KOSPI", net_buy_volume=1_200_000, volume_unit="주", net_buy_amount=90_000_000_000, amount_unit="원"),
+            StockInvestorFlowDaily(business_date, "005930", "삼성전자", "기관", fetched_at, market="KOSPI", net_buy_volume=350_000, volume_unit="주", net_buy_amount=26_000_000_000, amount_unit="원"),
+            StockInvestorFlowDaily(business_date, "035420", "NAVER", "외국인", fetched_at, market="KOSPI", net_buy_volume=-20_000, volume_unit="주", net_buy_amount=-3_700_000_000, amount_unit="원"),
+        ]
+    )
+    repository.upsert_market_investor_flow_daily(
+        [
+            MarketInvestorFlowDaily(business_date, "KOSPI", "외국인", fetched_at, net_buy_volume=2_200_000, volume_unit="주", net_buy_amount=180_000_000_000, amount_unit="원"),
+            MarketInvestorFlowDaily(business_date, "KOSPI", "기관", fetched_at, net_buy_volume=800_000, volume_unit="주", net_buy_amount=70_000_000_000, amount_unit="원"),
+            MarketInvestorFlowDaily(business_date, "KOSDAQ", "개인", fetched_at, net_buy_volume=1_400_000, volume_unit="주", net_buy_amount=42_000_000_000, amount_unit="원"),
+        ]
+    )
+    repository.upsert_investor_net_buy_top_daily(
+        [
+            InvestorNetBuyTopDaily(business_date, "KOSPI", "foreign", 1, "005930", "삼성전자", fetched_at, net_buy_volume=1_200_000, net_buy_amount=90_000_000_000),
+        ]
+    )
+    repository.upsert_etf_daily_snapshots(
+        [
+            EtfDailySnapshot(business_date, "396500", "TIGER Fn반도체TOP10", fetched_at, close_price=12_450, change_percent=1.1, volume=550_000, turnover=6_800_000_000, underlying_index_name="FnGuide 반도체TOP10"),
+            EtfDailySnapshot(business_date, "091160", "KODEX 반도체", fetched_at, close_price=43_200, change_percent=0.9, volume=470_000, turnover=20_000_000_000, underlying_index_name="KRX 반도체"),
+            EtfDailySnapshot(business_date, "139260", "TIGER 200 IT", fetched_at, close_price=38_500, change_percent=0.4, volume=210_000, turnover=8_000_000_000, underlying_index_name="KOSPI 200 IT"),
+            EtfDailySnapshot(business_date, "266370", "KODEX IT", fetched_at, close_price=19_900, change_percent=0.2, volume=180_000, turnover=3_600_000_000, underlying_index_name="KRX IT"),
+        ]
+    )
+    repository.save_news_intelligence_observation(
+        NewsIntelligenceRun(
+            run_id="fixture-news-005930",
+            target_date=business_date,
+            stock_name="삼성전자",
+            stock_code="005930",
+            aliases=("삼전",),
+            source_mode="manual_fixture",
+            page_limit=1,
+            full_day_complete=False,
+            live_fetch=False,
+            parsed_count=3,
+            deduped_count=3,
+            matched_count=1,
+            operator_summary_snapshot="삼성전자 저장 뉴스 관찰 fixture",
+            warnings=(),
+            created_at=fetched_at,
+        ),
+        [
+            ReportLinkedNewsEvidenceRecord(
+                run_id="fixture-news-005930",
+                evidence_key="fixture-news-005930-1",
+                target_date=business_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                related_report_count=2,
+                related_report_source_ids=("fixture-report-005930-1", "fixture-report-005930-2"),
+                daily_summary_presence=True,
+                candidate_priority_presence=True,
+                candidate_observation_priority="우선 확인",
+                krx_reference_presence=True,
+                krx_reference_date=business_date,
+                krx_turnover=2_300_000_000_000,
+                investor_flow_presence=True,
+                source_lane="fixture",
+                title="삼성전자, AI 반도체 공급 계약 체결",
+                summary="저장 fixture 뉴스 근거입니다.",
+                source="fixture-news",
+                published_at=datetime(2026, 5, 8, 9, 20, 0),
+                url="https://example.com/news/fixture-005930",
+                matched_alias="삼성전자",
+                match_reason="stock_name",
+                match_scope="title",
+                relevance="direct",
+                relevance_reason="종목명이 제목에 직접 등장합니다.",
+                sentiment="Positive",
+                sentiment_score=70,
+                event_types=("Contract",),
+                stock_impact="Positive",
+                impact_explanation="operator-only fixture impact",
+                evidence_case="report_direct_positive_news",
+                operator_recommendation="strengthen_report_candidate",
+                recommendation_reason="operator-only fixture recommendation support",
+                operator_summary_snapshot="삼성전자 저장 뉴스 관찰 fixture",
+                created_at=fetched_at,
+            )
+        ],
+    )
+
+
 def _build_market_briefing_readiness_date(
     config: RuntimeConfig,
     repository: StockMonitorRepository,
@@ -15713,12 +17482,19 @@ def _build_market_briefing_message(
     *,
     business_date: date,
     limit: int,
+    slot: str = "mood",
 ) -> str:
     _ = config
     summaries = repository.list_daily_summaries(business_date)
     if not summaries:
         summaries = repository.rebuild_daily_summaries(business_date)
     report_count = sum(summary.mention_count for summary in summaries)
+    news_observation_lines = _build_market_briefing_news_observation_lines(repository, business_date)
+    source_freshness_lines = _build_market_briefing_source_freshness_lines(
+        repository,
+        business_date,
+        report_count=report_count,
+    )
     message = format_market_close_briefing_message(
         business_date,
         report_count=report_count,
@@ -15734,8 +17510,126 @@ def _build_market_briefing_message(
         notable_lines=_build_market_briefing_notable_lines(summaries, limit=limit),
         check_point_lines=_build_market_briefing_check_point_lines(repository, business_date),
     )
+    message = _apply_market_briefing_slot_header(message, business_date=business_date, slot=slot)
+    if news_observation_lines:
+        message = _insert_market_briefing_section_before_check_points(message, news_observation_lines)
+    if source_freshness_lines:
+        message = _insert_market_briefing_section_before_check_points(message, source_freshness_lines)
     _ensure_market_briefing_message_public_safe(message)
     return message
+
+
+def _build_market_briefing_source_freshness_summary(
+    repository: StockMonitorRepository,
+    business_date: date,
+    *,
+    report_count: int | None = None,
+) -> dict:
+    if report_count is None:
+        report_count = sum(summary.mention_count for summary in repository.list_daily_summaries(business_date))
+    return _build_web_view_source_freshness_summary(
+        business_date=business_date,
+        report_count=report_count,
+        recent_krx_snapshot_dates=repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=1),
+        recent_flow_dates=repository.list_recent_investor_flow_dates(on_or_before=business_date, limit=1),
+    )
+
+
+def _build_market_briefing_source_freshness_lines(
+    repository: StockMonitorRepository,
+    business_date: date,
+    *,
+    report_count: int,
+) -> list[str]:
+    summary = _build_market_briefing_source_freshness_summary(
+        repository,
+        business_date,
+        report_count=report_count,
+    )
+    return _market_briefing_source_freshness_lines(summary)
+
+
+def _market_briefing_source_freshness_lines(summary: dict) -> list[str]:
+    items = {
+        str(item.get("key")): item
+        for item in summary.get("items", [])
+        if isinstance(item, dict) and item.get("key")
+    }
+    lines = ["데이터 기준"]
+    for key in ("reports", "krx_market", "etf_daily", "investor_flow", "toss_openapi"):
+        item = items.get(key)
+        if not item:
+            continue
+        label = str(item.get("label") or key)
+        lines.append(f"- {label}: {_market_briefing_source_freshness_item_text(item)}")
+    return lines if len(lines) > 1 else []
+
+
+def _market_briefing_source_freshness_item_text(item: dict[str, object]) -> str:
+    status = _market_briefing_source_freshness_status_text(str(item.get("status") or "missing"))
+    if item.get("key") == "toss_openapi":
+        return f"{status} (호출 없음)"
+    reference_date = _market_briefing_source_reference_date_text(item.get("reference_date"))
+    count = item.get("count")
+    count_suffix = f" ({int(count)}건)" if isinstance(count, int) else ""
+    return f"{status}{(' ' + reference_date) if reference_date else ''}{count_suffix}"
+
+
+def _market_briefing_source_freshness_status_text(status: str) -> str:
+    if status == "lab_hold":
+        return "lab-hold"
+    return status
+
+
+def _market_briefing_source_reference_date_text(value: object) -> str:
+    if not value:
+        return ""
+    try:
+        return date.fromisoformat(str(value)).strftime("%y.%m.%d")
+    except ValueError:
+        return str(value)
+
+
+def _apply_market_briefing_slot_header(message: str, *, business_date: date, slot: str) -> str:
+    lines = message.splitlines()
+    if not lines:
+        return message
+    label = MARKET_BRIEFING_SLOT_LABELS.get(slot, MARKET_BRIEFING_SLOT_LABELS["mood"])
+    lines[0] = f"{label} · {business_date.strftime('%y.%m.%d')}"
+    return "\n".join(lines)
+
+
+def _build_market_briefing_news_observation_lines(
+    repository: StockMonitorRepository,
+    business_date: date,
+    *,
+    limit: int = 3,
+) -> list[str]:
+    summary = _build_web_view_news_observation_summary(repository, business_date, limit=limit)
+    if not summary.get("available"):
+        return []
+    lines = ["뉴스 근거"]
+    items = [item for item in summary.get("items", []) if isinstance(item, dict) and item.get("available")]
+    for item in items[: max(1, limit)]:
+        stock = item.get("stock_name") or item.get("stock_code") or "-"
+        label = item.get("display_label") or "뉴스 근거 있음"
+        title = item.get("top_title") or item.get("reason") or ""
+        suffix = f" | {title}" if title else ""
+        lines.append(f"- {stock}: {label}{suffix}")
+    if len(lines) == 1:
+        label = summary.get("display_label") or "뉴스 근거 있음"
+        titles = [str(title) for title in summary.get("top_titles", []) if title]
+        suffix = " | " + " / ".join(titles[:limit]) if titles else ""
+        lines.append(f"- {label}{suffix}")
+    return lines
+
+
+def _insert_market_briefing_section_before_check_points(message: str, section_lines: list[str]) -> str:
+    marker = "\n\n확인 포인트"
+    section = "\n\n" + "\n".join(section_lines)
+    if marker in message:
+        return message.replace(marker, section + marker, 1)
+    return message + section
 
 
 def _ensure_market_briefing_message_public_safe(message: str) -> None:
@@ -17484,6 +19378,7 @@ def _probe_web_view_browser_smoke(
         _collect_web_view_browser_render_smoke_issues(
             config,
             base_url=base_url,
+            business_date=business_date,
             issues=issues,
             viewports=viewports,
         )
@@ -17715,6 +19610,7 @@ def _collect_web_view_browser_render_smoke_issues(
     config: RuntimeConfig,
     *,
     base_url: str,
+    business_date: date,
     issues: list[dict[str, object]],
     viewports: list[dict[str, object]],
 ) -> None:
@@ -17786,6 +19682,48 @@ def _collect_web_view_browser_render_smoke_issues(
                         page.wait_for_timeout(250)
                         stock_panel_visible = page.locator("#stock-context-card").is_visible()
                         stock_tab_current = page.locator('[data-view-tab="stock"]').get_attribute("aria-current") == "page"
+                        stock_search_flow = page.evaluate(
+                            """
+                            async ({ date }) => {
+                              const result = {
+                                queried: true,
+                                matched_no_report_stock: false,
+                                clicked_visible_result: false,
+                                visible_empty_state: false,
+                                stock_detail_empty_state: false,
+                                picked_stock_code: null,
+                                picked_stock_name: null,
+                                report_empty_state: null,
+                              };
+                              const response = await fetch(`/api/stocks/search?date=${encodeURIComponent(date)}&q=Beta&limit=5`, { cache: "no-store" });
+                              const search = await response.json();
+                              const picked = (search.items || []).find((item) => item.has_selected_date_report === false);
+                              if (!picked) return result;
+                              result.matched_no_report_stock = true;
+                              result.picked_stock_code = picked.stock_code || null;
+                              result.picked_stock_name = picked.stock_name || null;
+                              const detailResponse = await fetch(`/api/daily/${encodeURIComponent(date)}/stocks/${encodeURIComponent(picked.stock_code)}`, { cache: "no-store" });
+                              const detail = await detailResponse.json();
+                              result.report_empty_state = detail.report_empty_state || null;
+                              result.stock_detail_empty_state = detail.has_selected_date_report === false && Array.isArray(detail.reports) && detail.reports.length === 0;
+                              return result;
+                            }
+                            """,
+                            {"date": business_date.isoformat()},
+                        )
+                        if isinstance(stock_search_flow, dict) and stock_search_flow.get("matched_no_report_stock"):
+                            picked_name = str(stock_search_flow.get("picked_stock_name") or "Beta")
+                            picked_code = str(stock_search_flow.get("picked_stock_code") or "")
+                            search_input = page.locator("#stock-search-input")
+                            search_input.fill(picked_name, timeout=timeout_ms)
+                            page.wait_for_timeout(350)
+                            result_locator = page.locator(f'[data-stock-search-code="{picked_code}"]').first
+                            if result_locator.count():
+                                result_locator.click(timeout=timeout_ms)
+                                page.wait_for_timeout(350)
+                                stock_search_flow["clicked_visible_result"] = True
+                                detail_text = page.locator("#stock-detail").inner_text(timeout=timeout_ms)
+                                stock_search_flow["visible_empty_state"] = "선택 날짜에 등록된 리포트가 없습니다." in detail_text
                         page.locator('[data-view-tab="market"]').click(timeout=timeout_ms)
                         page.wait_for_timeout(250)
                         market_panel_visible = page.locator("#market-reference-card").is_visible()
@@ -17814,6 +19752,7 @@ def _collect_web_view_browser_render_smoke_issues(
                             "watch_panel_clickable": watch_panel_visible,
                             "watch_observation_summary_visible": watch_observation_summary_visible,
                             "stock_panel_clickable": stock_panel_visible,
+                            "stock_search_flow": stock_search_flow,
                             "market_panel_clickable": market_panel_visible,
                             "rotation_panel_clickable": rotation_panel_visible,
                             "watch_tab_current": watch_tab_current,
@@ -17928,6 +19867,30 @@ def _collect_web_view_browser_render_smoke_issues(
                                     "code": "stock_tab_state_not_current",
                                     "path": f"viewport[{spec['name']}].stock_tab",
                                     "message": "stock tab did not expose current state after click",
+                                }
+                            )
+                        if (
+                            isinstance(stock_search_flow, dict)
+                            and stock_search_flow.get("matched_no_report_stock")
+                            and not stock_search_flow.get("stock_detail_empty_state")
+                        ):
+                            issues.append(
+                                {
+                                    "code": "stock_search_empty_state_api_missing",
+                                    "path": f"viewport[{spec['name']}].stock_search",
+                                    "message": "stored no-report stock did not expose report_empty_state through stock detail API",
+                                }
+                            )
+                        if (
+                            isinstance(stock_search_flow, dict)
+                            and stock_search_flow.get("matched_no_report_stock")
+                            and not stock_search_flow.get("visible_empty_state")
+                        ):
+                            issues.append(
+                                {
+                                    "code": "stock_search_empty_state_not_visible",
+                                    "path": f"viewport[{spec['name']}].stock_search",
+                                    "message": "stored no-report stock search flow did not render the selected-date empty state",
                                 }
                             )
                         if not market_panel_visible:
@@ -21069,16 +23032,18 @@ def _render_web_view_v2_html() -> str:
     }
 
     function renderCandidateNewsLine(badge) {
-      const label = newsKindLabel(badge);
+      const label = badge?.connection_label || newsKindLabel(badge);
       if (!badge || badge.available !== true) {
         return `<span class="v2-chip warn">${esc(label)}</span><span class="v2-news-line">${esc(badge?.reason || "같은 종목의 저장 뉴스 관찰이 없습니다.")}</span>`;
       }
       const krx = badge.krx_reference_status || "missing";
       const title = badge.top_title || badge.reason || "";
+      const connection = badge.connection_reason || "";
       return [
         `<span class="v2-chip strong">${esc(label)}</span>`,
         `<span class="v2-chip">직접 ${number(badge.direct_count)} · 주의 ${number(badge.caution_count)} · 시장맥락 ${number(badge.market_context_count)}</span>`,
         `<span class="v2-chip ${krx === "stale" ? "warn" : ""}">KRX ${esc(krx)}</span>`,
+        connection ? `<span class="v2-news-line">${esc(connection)}</span>` : "",
         title ? `<span class="v2-news-line">${esc(title)}</span>` : "",
       ].filter(Boolean).join("");
     }
@@ -21363,6 +23328,17 @@ def _render_web_view_html() -> str:
     .news-observation-summary-link:hover b { text-decoration: underline; }
     .news-observation-summary-item b { color: var(--ink); font-size: 12px; }
     .news-observation-summary-item span { color: var(--muted); line-height: 1.4; overflow-wrap: anywhere; }
+    .source-freshness-summary { display: grid; gap: 8px; border: 1px solid #d6dfd8; border-radius: 8px; padding: 10px 12px; background: #f6faf5; }
+    .source-freshness-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+    .source-freshness-head b { color: var(--ink); font-size: 13px; }
+    .source-freshness-items { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 8px; }
+    .source-freshness-item { min-width: 0; display: grid; gap: 3px; border-top: 1px solid rgba(199,190,176,.7); padding-top: 7px; font-size: 12px; }
+    .source-freshness-item:first-child { border-top: 0; }
+    .source-freshness-item b { overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
+    .source-freshness-item span { color: var(--muted); line-height: 1.35; overflow-wrap: anywhere; }
+    .source-freshness-status { display: inline-flex; width: fit-content; border-radius: 999px; padding: 2px 7px; background: #e2eee1; color: #245746; font-size: 11px; font-weight: 900; }
+    .source-freshness-status.stale { background: #fff0cf; color: #7a5400; }
+    .source-freshness-status.missing, .source-freshness-status.lab-hold { background: #eef1f2; color: #5d676d; }
     .intraday-overlap-panel { display: grid; gap: 8px; margin: 10px 0 12px; border: 1px solid #d8e8f5; border-radius: 8px; padding: 10px 12px; background: #f6fbff; }
     .intraday-overlap-panel[hidden] { display: none; }
     .intraday-overlap-meta { color: #1769aa; font-size: 11px; font-weight: 900; }
@@ -21657,6 +23633,12 @@ def _render_web_view_html() -> str:
               <strong id="briefing-investor-flow">-</strong>
               <span id="briefing-investor-flow-sub"></span>
             </div>
+          </div>
+        </div>
+        <div id="source-freshness-summary" class="source-freshness-summary" aria-live="polite">
+          <div class="source-freshness-head"><b>데이터 기준</b><span class="status-pill">저장 상태</span></div>
+          <div class="source-freshness-items">
+            <div class="source-freshness-item"><span>날짜를 선택하면 source별 저장 상태를 확인합니다.</span></div>
           </div>
         </div>
       </div>
@@ -22323,9 +24305,8 @@ def _render_web_view_html() -> str:
       }
     }
 
-    async function loadDaily(date) {
+    async function loadDaily(date, options = {}) {
       const loadSequence = ++dailyLoadSequence;
-      const options = arguments[1] || {};
       const requestedInitialStockCode = String(options.initialStockCode || "").trim();
       const initialStockCode = validStockCode(requestedInitialStockCode) ? requestedInitialStockCode : "";
       selectedDate = date;
@@ -22371,6 +24352,7 @@ def _render_web_view_html() -> str:
       syncStockSearchInput();
       renderDailyStocks(data);
       renderDailyBriefing(data);
+      renderSourceFreshnessSummary(data.source_freshness_summary);
       renderObservationSummary(data.observation_summary);
       renderNewsObservationSummary(data.news_observation_summary);
       document.getElementById("main-priority-date").textContent = `(${date})`;
@@ -22465,6 +24447,57 @@ def _render_web_view_html() -> str:
       const multiPoint = multiCount > 0 ? `반복 언급 ${number(multiCount)}종목` : "";
       renderBriefingCheckPoints([reportFlowPoint, multiPoint, ...(briefing.check_points || [])]);
       renderTimeSlotMoodCard(briefing.time_slot_mood_card);
+    }
+
+    function renderSourceFreshnessSummary(summary) {
+      const node = document.getElementById("source-freshness-summary");
+      if (!node) return;
+      const items = Array.isArray(summary?.items) ? summary.items.filter(Boolean) : [];
+      if (!items.length) {
+        node.innerHTML = `
+          <div class="source-freshness-head"><b>데이터 기준</b><span class="status-pill">저장 상태</span></div>
+          <div class="source-freshness-items">
+            <div class="source-freshness-item"><span>저장 source 상태가 없습니다.</span></div>
+          </div>
+        `;
+        return;
+      }
+      node.innerHTML = `
+        <div class="source-freshness-head">
+          <b>데이터 기준</b>
+          <span class="status-pill">${summary?.live_fetch ? "실시간 포함" : "저장 상태"}</span>
+        </div>
+        <div class="source-freshness-items">
+          ${items.map(renderSourceFreshnessItem).join("")}
+        </div>
+      `;
+    }
+
+    function renderSourceFreshnessItem(item) {
+      const status = String(item?.status || "missing");
+      const reference = item?.reference_date ? `기준 ${item.reference_date}` : "기준일 없음";
+      const count = item?.count !== undefined && item?.count !== null ? ` · ${number(item.count)}건` : "";
+      const scope = item?.data_scope ? ` · ${item.data_scope}` : "";
+      return `<div class="source-freshness-item">
+        <b>${esc(item?.label || item?.key || "-")}</b>
+        <span class="source-freshness-status ${esc(sourceFreshnessStatusClass(status))}">${esc(sourceFreshnessStatusLabel(status))}</span>
+        <span>${esc(reference)}${esc(count)}</span>
+        <span>${esc(item?.source || "-")}${esc(scope)}</span>
+      </div>`;
+    }
+
+    function sourceFreshnessStatusLabel(status) {
+      if (status === "exact") return "선택일";
+      if (status === "stale") return "최근 저장";
+      if (status === "lab_hold") return "lab 보류";
+      return "없음";
+    }
+
+    function sourceFreshnessStatusClass(status) {
+      if (status === "stale") return "stale";
+      if (status === "lab_hold") return "lab-hold";
+      if (status === "missing") return "missing";
+      return "";
     }
 
     function setBriefingPairValue(elementId, pair) {
@@ -23259,8 +25292,8 @@ def _render_web_view_html() -> str:
           : "KRX 없음";
       if (!detail.available) {
         return `<div class="detail-item stock-news-observation-detail muted">
-          <b>${esc(detail.display_label || "저장 뉴스 근거 없음")}</b>
-          <span class="detail-meta">${esc(detail.empty_state || detail.reason || "같은 종목의 저장 뉴스 observation이 없습니다.")}</span>
+          <b>${esc(detail.connection_label || detail.display_label || "저장 뉴스 근거 없음")}</b>
+          <span class="detail-meta">${esc(detail.connection_reason || detail.empty_state || detail.reason || "같은 종목의 저장 뉴스 observation이 없습니다.")}</span>
         </div>`;
       }
       const direct = Number(detail.direct_count || 0);
@@ -23272,8 +25305,8 @@ def _render_web_view_html() -> str:
         ? `<ul class="stock-news-title-list">${titles.map((title) => `<li>${esc(title)}</li>`).join("")}</ul>`
         : "";
       return `<div class="detail-item stock-news-observation-detail">
-        <b>저장 뉴스 근거 · ${esc(detail.display_label || "뉴스 근거 있음")}</b>
-        <span class="detail-meta">${esc(detail.reason || countLine)}</span>
+        <b>저장 뉴스 근거 · ${esc(detail.connection_label || detail.display_label || "뉴스 근거 있음")}</b>
+        <span class="detail-meta">${esc(detail.connection_reason || detail.reason || countLine)}</span>
         <span class="detail-meta">${esc(countLine)}</span>
         ${titleList}
       </div>`;
@@ -23497,26 +25530,28 @@ def _render_web_view_html() -> str:
 
     function candidateNewsCompactLine(badge) {
       if (!badge || badge.available !== true) return "뉴스 근거: 저장 뉴스 근거 없음";
-      const label = badge.display_label || "뉴스 근거 있음";
+      const label = badge.connection_label || badge.display_label || "뉴스 근거 있음";
       const krx = badge.krx_reference_status || "missing";
       return `뉴스 근거: ${label} · KRX ${krx}`;
     }
 
     function renderCandidateNewsBadge(badge) {
       if (!badge || badge.available !== true) {
-        const label = badge?.display_label || "저장 뉴스 근거 없음";
-        const reason = badge?.reason || "같은 종목의 저장 뉴스 observation이 없습니다.";
+        const label = badge?.connection_label || badge?.display_label || "저장 뉴스 근거 없음";
+        const reason = badge?.connection_reason || badge?.reason || "같은 종목의 저장 뉴스 observation이 없습니다.";
         return `<div class="candidate-news-badge"><span class="quality-chip quality-chip--missing">${esc(label)}</span><span>${esc(reason)}</span></div>`;
       }
+      const connectionLabel = badge.connection_label || badge.display_label || "뉴스 근거 있음";
+      const connectionReason = badge.connection_reason || "";
       const chips = [
-        badge.display_label || "뉴스 근거 있음",
+        connectionLabel,
         `직접 ${number(badge.direct_count || 0)}`,
         `주의 ${number(badge.caution_count || 0)}`,
         `시장맥락 ${number(badge.market_context_count || 0)}`,
         `KRX ${badge.krx_reference_status || "missing"}`
       ];
       const title = badge.top_title || badge.reason || "";
-      return `<div class="candidate-news-badge">${chips.map((item) => `<span class="quality-chip">${esc(item)}</span>`).join("")}${title ? `<span><b>근거</b> ${esc(title)}</span>` : ""}</div>`;
+      return `<div class="candidate-news-badge">${chips.map((item) => `<span class="quality-chip">${esc(item)}</span>`).join("")}${connectionReason ? `<span><b>연결</b> ${esc(connectionReason)}</span>` : ""}${title ? `<span><b>근거</b> ${esc(title)}</span>` : ""}</div>`;
     }
 
     function candidateIntradayReferenceLabel(reference) {
@@ -24951,6 +26986,20 @@ def build_web_view_daily_snapshot(
         checked_at=current,
     )
     news_observation_summary = _build_web_view_news_observation_summary(repository, business_date)
+    report_count = sum(summary.mention_count for summary in summaries)
+    krx_context = _build_web_view_krx_context(repository, business_date)
+    krx_recent_flow = _build_web_view_krx_recent_flow(
+        repository,
+        business_date,
+        recent_snapshot_dates=recent_krx_snapshot_dates,
+    )
+    krx_investor_flow = _build_web_view_krx_investor_flow_context(repository, business_date)
+    source_freshness_summary = _build_web_view_source_freshness_summary(
+        business_date=business_date,
+        report_count=report_count,
+        recent_krx_snapshot_dates=recent_krx_snapshot_dates,
+        recent_flow_dates=recent_flow_dates,
+    )
     return {
         "now": current.isoformat(),
         "timezone": config.timezone,
@@ -24958,7 +27007,7 @@ def build_web_view_daily_snapshot(
         "read_only": True,
         "business_date": business_date.isoformat(),
         "public_contract": _web_view_public_contract(),
-        "report_count": sum(summary.mention_count for summary in summaries),
+        "report_count": report_count,
         "summary_stock_count": len(summaries),
         "mapping_notice": category_contract["notice"],
         "category_contract": category_contract,
@@ -24967,13 +27016,10 @@ def build_web_view_daily_snapshot(
         "market_commentary": market_commentary,
         "observation_summary": observation_summary,
         "news_observation_summary": news_observation_summary,
-        "krx_context": _build_web_view_krx_context(repository, business_date),
-        "krx_recent_flow": _build_web_view_krx_recent_flow(
-            repository,
-            business_date,
-            recent_snapshot_dates=recent_krx_snapshot_dates,
-        ),
-        "krx_investor_flow": _build_web_view_krx_investor_flow_context(repository, business_date),
+        "source_freshness_summary": source_freshness_summary,
+        "krx_context": krx_context,
+        "krx_recent_flow": krx_recent_flow,
+        "krx_investor_flow": krx_investor_flow,
         "stocks": [
             {
                 "business_date": summary.business_date.isoformat(),
@@ -25024,6 +27070,120 @@ def build_web_view_daily_snapshot(
         "market_mood": mood,
         "watch_candidates": watch_candidates,
     }
+
+
+def _build_web_view_source_freshness_summary(
+    *,
+    business_date: date,
+    report_count: int,
+    recent_krx_snapshot_dates: list[date],
+    recent_flow_dates: list[date],
+) -> dict:
+    krx_reference_date = recent_krx_snapshot_dates[0] if recent_krx_snapshot_dates else None
+    flow_reference_date = recent_flow_dates[0] if recent_flow_dates else None
+    report_reference_date = business_date if report_count > 0 else None
+    return {
+        "source": "stored_source_freshness",
+        "read_only": True,
+        "business_date": business_date.isoformat(),
+        "live_fetch": False,
+        "scoring": False,
+        "recommendation": False,
+        "items": [
+            _web_view_source_freshness_item(
+                key="reports",
+                label="Naver reports",
+                source="naver_research",
+                reference_date=report_reference_date,
+                business_date=business_date,
+                available=report_count > 0,
+                data_scope="stored_daily_summaries",
+                count=report_count,
+                notice="Stored Naver research reports for the selected date.",
+            ),
+            _web_view_source_freshness_item(
+                key="krx_market",
+                label="KRX market",
+                source="krx_open_api",
+                reference_date=krx_reference_date,
+                business_date=business_date,
+                available=krx_reference_date is not None,
+                data_scope="stored_stock_etf_index_daily",
+                notice="Stored KRX stock, ETF, and index daily snapshots.",
+            ),
+            _web_view_source_freshness_item(
+                key="etf_daily",
+                label="ETF daily",
+                source="krx_open_api",
+                reference_date=krx_reference_date,
+                business_date=business_date,
+                available=krx_reference_date is not None,
+                data_scope="stored_krx_etf_daily_snapshot",
+                notice="Stored ETF daily turnover/NAV reference only; constituents are not loaded.",
+            ),
+            _web_view_source_freshness_item(
+                key="investor_flow",
+                label="Investor flow",
+                source="krx_data_market",
+                reference_date=flow_reference_date,
+                business_date=business_date,
+                available=flow_reference_date is not None,
+                data_scope="stored_krx_data_market_sample",
+                notice="Stored KRX Data Marketplace investor flow sample.",
+            ),
+            {
+                "key": "toss_openapi",
+                "label": "Toss OpenAPI",
+                "source": "toss_openapi",
+                "status": "lab_hold",
+                "reference_date": None,
+                "exact_date_available": False,
+                "available": False,
+                "data_scope": "read_only_lab_contract",
+                "live_fetch": False,
+                "affects_ordering": False,
+                "notice": "Read-only lab/hold contract only; web-view does not call Toss OpenAPI.",
+            },
+        ],
+    }
+
+
+def _web_view_source_freshness_item(
+    *,
+    key: str,
+    label: str,
+    source: str,
+    reference_date: date | None,
+    business_date: date,
+    available: bool,
+    data_scope: str,
+    notice: str,
+    count: int | None = None,
+) -> dict:
+    status = _web_view_source_freshness_status(reference_date, business_date)
+    item = {
+        "key": key,
+        "label": label,
+        "source": source,
+        "status": status,
+        "reference_date": reference_date.isoformat() if reference_date else None,
+        "exact_date_available": status == "exact",
+        "available": available,
+        "data_scope": data_scope,
+        "live_fetch": False,
+        "notice": notice,
+    }
+    if count is not None:
+        item["count"] = count
+    return item
+
+
+def _web_view_source_freshness_status(reference_date: date | None, business_date: date) -> str:
+    if reference_date == business_date:
+        return "exact"
+    if reference_date is not None:
+        return "stale"
+    return "missing"
 
 
 def _build_web_view_market_briefing_context(
@@ -25660,6 +27820,8 @@ def _build_web_view_news_observation_summary(
             "items": [],
             "empty_state": "저장된 뉴스 관찰 없음",
             "missing_context": ["stored_news_observation"],
+            "connection_label": "뉴스 근거 부족",
+            "connection_reason": "우선 확인 후보와 연결할 저장 뉴스 관찰이 없습니다.",
         }
 
     direct_count = sum(1 for row in evidence_rows if row.relevance == "direct")
@@ -25677,6 +27839,12 @@ def _build_web_view_news_observation_summary(
         for run in representative_runs
     ]
     display_label, reason = _web_view_news_observation_label(
+        direct_count=direct_count,
+        caution_count=caution_count,
+        market_context_count=market_context_count,
+        krx_reference_status=krx_reference_status,
+    )
+    connection_label, connection_reason = _web_view_news_observation_connection(
         direct_count=direct_count,
         caution_count=caution_count,
         market_context_count=market_context_count,
@@ -25705,6 +27873,8 @@ def _build_web_view_news_observation_summary(
         "top_titles": top_titles,
         "items": [item for item in items if item["available"]],
         "missing_context": [],
+        "connection_label": connection_label,
+        "connection_reason": connection_reason,
     }
 
 
@@ -25726,6 +27896,8 @@ def _web_view_news_observation_summary_item(
         "market_context_count": badge["market_context_count"],
         "krx_reference_status": badge["krx_reference_status"],
         "top_title": badge["top_title"],
+        "connection_label": badge["connection_label"],
+        "connection_reason": badge["connection_reason"],
     }
 
 
@@ -25787,6 +27959,24 @@ def _web_view_news_observation_label(
     if market_context_count > 0:
         return "시장 맥락 참고", "시장/업종 맥락 중심이라 종목 직접 근거로 과신하지 않습니다."
     return "뉴스 근거 부족", "저장된 뉴스가 있지만 직접 판단 근거는 부족합니다."
+
+
+def _web_view_news_observation_connection(
+    *,
+    direct_count: int,
+    caution_count: int,
+    market_context_count: int,
+    krx_reference_status: str,
+) -> tuple[str, str]:
+    if krx_reference_status == "stale":
+        return "KRX 기준일 확인 필요", "KRX 기준일이 선택 날짜와 달라 뉴스 연결 전 시장 반응 기준일을 먼저 확인해야 합니다."
+    if caution_count > 0:
+        return "주의 뉴스 확인", "주의/혼합 성격의 뉴스가 있어 리포트 근거와 함께 확인합니다."
+    if direct_count > 0:
+        return "뉴스로 후보 강화", "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다."
+    if market_context_count > 0:
+        return "시장 맥락 참고", "업종/시장 맥락 뉴스라 종목 직접 근거로 과신하지 않습니다."
+    return "뉴스 근거 부족", "저장 뉴스가 있지만 후보와 직접 연결할 근거는 부족합니다."
 
 
 def _web_view_unique_texts(values: list[str], *, limit: int) -> list[str]:
@@ -26901,6 +29091,8 @@ def _web_view_empty_candidate_news_badge() -> dict[str, object]:
         "available": False,
         "display_label": "저장 뉴스 근거 없음",
         "reason": "같은 종목의 저장 뉴스 observation이 없습니다.",
+        "connection_label": "뉴스 근거 부족",
+        "connection_reason": "같은 종목의 저장 뉴스 관찰이 없습니다.",
         "direct_count": 0,
         "caution_count": 0,
         "market_context_count": 0,
@@ -26919,6 +29111,13 @@ def _web_view_candidate_news_badge(
     direct_count = sum(1 for row in rows if row.relevance == "direct")
     caution_count = sum(1 for row in rows if _web_view_news_observation_is_caution(row))
     market_context_count = sum(1 for row in rows if row.relevance == "market_context")
+    krx_reference_status = _web_view_news_observation_krx_status(rows, business_date)
+    connection_label, connection_reason = _web_view_news_observation_connection(
+        direct_count=direct_count,
+        caution_count=caution_count,
+        market_context_count=market_context_count,
+        krx_reference_status=krx_reference_status,
+    )
     ordered_rows = sorted(
         rows,
         key=lambda row: (
@@ -26943,8 +29142,10 @@ def _web_view_candidate_news_badge(
         "direct_count": direct_count,
         "caution_count": caution_count,
         "market_context_count": market_context_count,
-        "krx_reference_status": _web_view_news_observation_krx_status(rows, business_date),
+        "krx_reference_status": krx_reference_status,
         "top_title": top_title,
+        "connection_label": connection_label,
+        "connection_reason": connection_reason,
     }
 
 

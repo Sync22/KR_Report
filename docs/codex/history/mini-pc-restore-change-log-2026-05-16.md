@@ -1,4 +1,4 @@
-# Mini PC Restore Change Log - 2026-05-16
+﻿# Mini PC Restore Change Log - 2026-05-16
 
 ## Purpose
 

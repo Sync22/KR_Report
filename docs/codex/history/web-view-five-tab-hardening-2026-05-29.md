@@ -1,4 +1,4 @@
-# Web-View Five-Tab Hardening (2026-05-29)
+﻿# Web-View Five-Tab Hardening (2026-05-29)
 
 ## Scope
 

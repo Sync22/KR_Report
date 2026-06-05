@@ -1,4 +1,4 @@
-# Candidate Evidence Contract
+﻿# Candidate Evidence Contract
 
 ## Purpose
 
@@ -217,8 +217,8 @@ The label belongs in `evidence_layers.support`, not `why_notable` or `evidence_l
 | --- | --- |
 | Missing stock code excludes the row. | A candidate-evidence row without stable KRX join keys is not safe. |
 | Missing target/opinion must not improve a row. | Preserve detail visibility, but do not add positive notes for missing values. |
-| Missing exact-date KRX stock row is a flag, not a latest-date fallback. | Keep `market_reference` nullable and add `missing_krx_stock_snapshot`. |
-| Missing `[12009]` flow is a flag, not neutral evidence. | Add `missing_stock_flow` or `partial_stock_flow`. |
+| Missing exact-date KRX stock row is a flag, not a latest-date fallback. | Keep `market_reference` nullable, add `missing_krx_stock_snapshot`, and use public wording such as `선택일 KRX 저장값 없음`. |
+| Missing `[12009]` flow is a flag, not neutral evidence. | Add `missing_stock_flow` or `partial_stock_flow`, and use public wording such as `종목 수급 저장값 없음`. |
 | Category fallback must stay outside stock evidence for CE-1. | Per-stock dated category lookup is not yet implemented; do not silently attach current sector names. |
 | `candidate_score` and `candidate_reasons` are ignored. | They are operator/source-validation fields, not public evidence. |
 

@@ -1,4 +1,4 @@
-# History Documents
+﻿# History Documents
 
 This folder contains historical change logs and restore/session records.
 

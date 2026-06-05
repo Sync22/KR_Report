@@ -1,4 +1,4 @@
-# KRX Flow Sample Capture Runbook
+﻿# KRX Flow Sample Capture Runbook
 
 This runbook fixes the manual capture process for KRX Data Marketplace investor-flow samples.
 It is for validation only. Do not store credentials, cookies, tokens, or personal login payloads.

@@ -1,4 +1,4 @@
-# Scoring Draft Plan
+﻿# Scoring Draft Plan
 
 ## Purpose
 

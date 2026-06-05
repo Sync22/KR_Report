@@ -55,6 +55,7 @@ from stock_monitor.db.schema import (
     KRX_MARKET_SNAPSHOT_MIGRATION,
     SCHEMA_MIGRATIONS_TABLE_STATEMENT,
     SCHEMA_STATEMENTS,
+    SchemaMigrationStatus,
     SCHEMA_VERSION,
 )
 from stock_monitor.fetch.naver_stock_quote import StockQuoteSnapshot
@@ -276,6 +277,79 @@ def test_prepare_repository_for_read_only_command_rejects_stale_schema(tmp_path)
         assert "db-migrate" in str(exc)
     else:
         raise AssertionError("stale schema should be rejected before read-only command")
+
+
+def test_main_db_verify_json_reports_stale_schema_without_traceback(tmp_path, monkeypatch, capsys) -> None:
+    db_path = tmp_path / "stock_monitor.db"
+    _create_schema_v5_database(db_path)
+    monkeypatch.setenv("STOCK_MONITOR_DB_PATH", str(db_path))
+
+    exit_code = cli_module.main(["db-verify", "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert payload["surface"] == "db-verify"
+    assert payload["read_only"] is True
+    assert payload["writes_db"] is False
+    assert payload["ready"] is False
+    assert payload["schema_status"]["exists"] is True
+    assert payload["schema_status"]["current"] is False
+    assert payload["schema_status"]["current_version"] == 5
+    assert payload["schema_status"]["target_version"] == SCHEMA_VERSION
+    assert payload["schema_status"]["pending_versions"] == [6, 7]
+    assert payload["blockers"][0]["code"] == "default_db_schema_not_current"
+    assert "python -m stock_monitor db-migrate --dry-run" in payload["recommended_commands"]
+    assert "schema migration on operating PC" in payload["requires_separate_approval"]
+
+
+def test_main_api_perf_summary_json_runs_when_default_schema_is_stale(tmp_path, monkeypatch, capsys) -> None:
+    db_path = tmp_path / "stock_monitor.db"
+    _create_schema_v5_database(db_path)
+    monkeypatch.setenv("STOCK_MONITOR_DB_PATH", str(db_path))
+    log_path = tmp_path / "api_perf.log"
+    log_path.write_text(
+        '{"ts":"2026-06-05T10:00:00+09:00","method":"GET","path":"/api/archive",'
+        '"status":200,"total_ms":15,"db_ms":3,"build_ms":7,"json_ms":2,'
+        '"bytes":512,"cache":"miss","gzip":false}',
+        encoding="utf-8",
+    )
+
+    exit_code = cli_module.main(["api-perf-summary", "--log-path", str(log_path), "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["surface"] == "api-perf-summary"
+    assert payload["record_count"] == 1
+    assert payload["endpoints"][0]["path"] == "/api/archive"
+
+
+def test_main_db_migration_rehearsal_migrates_temp_copy_without_source_write(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    db_path = tmp_path / "stock_monitor.db"
+    _create_schema_v5_database(db_path)
+    monkeypatch.setenv("STOCK_MONITOR_DB_PATH", str(db_path))
+    work_dir = tmp_path / "migration-rehearsal"
+
+    exit_code = cli_module.main(["db-migration-rehearsal", "--work-dir", str(work_dir), "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["surface"] == "db-migration-rehearsal"
+    assert payload["read_only_source"] is True
+    assert payload["writes_source_db"] is False
+    assert payload["writes_temp_copy"] is True
+    assert payload["copy_retained"] is False
+    assert payload["source_schema_before"]["current_version"] == 5
+    assert payload["source_schema_after"]["current_version"] == 5
+    assert payload["copy_schema_before"]["current_version"] == 5
+    assert payload["copy_schema_after"]["current_version"] == SCHEMA_VERSION
+    assert payload["copy_schema_after"]["current"] is True
+    assert payload["copy_verification"]["ready"] is True
+    assert payload["copy_path"] is None
+    assert list(work_dir.glob("*.db")) == []
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
 
 
 def test_schema_current_check_only_applies_to_read_only_variants() -> None:
@@ -740,6 +814,91 @@ def test_ops_readiness_parser_accepts_recent_days_stock_limit_and_json() -> None
     assert args.json is True
 
 
+def test_ops_sync_preview_parser_accepts_base_head_max_commits_and_json() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "ops-sync-preview",
+            "--base",
+            "origin/main",
+            "--head",
+            "dev",
+            "--max-commits",
+            "12",
+            "--json",
+        ]
+    )
+
+    assert args.command == "ops-sync-preview"
+    assert args.base == "origin/main"
+    assert args.head == "dev"
+    assert args.max_commits == 12
+    assert args.json is True
+
+
+def test_admin_boundary_audit_parser_accepts_limit_and_json() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "admin-boundary-audit",
+            "--limit",
+            "7",
+            "--json",
+        ]
+    )
+
+    assert args.command == "admin-boundary-audit"
+    assert args.limit == 7
+    assert args.json is True
+
+
+def test_data_source_lane_audit_parser_accepts_json() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(["data-source-lane-audit", "--json"])
+
+    assert args.command == "data-source-lane-audit"
+    assert args.json is True
+
+
+def test_db_migration_rehearsal_parser_accepts_work_dir_keep_copy_and_json(tmp_path) -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "db-migration-rehearsal",
+            "--work-dir",
+            str(tmp_path / "rehearsal"),
+            "--keep-copy",
+            "--json",
+        ]
+    )
+
+    assert args.command == "db-migration-rehearsal"
+    assert args.work_dir == tmp_path / "rehearsal"
+    assert args.keep_copy is True
+    assert args.json is True
+
+
+def test_docs_hygiene_audit_parser_accepts_path_and_json() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "docs-hygiene-audit",
+            "--path",
+            "README.md",
+            "--json",
+        ]
+    )
+
+    assert args.command == "docs-hygiene-audit"
+    assert args.paths == [Path("README.md")]
+    assert args.json is True
+
+
 def test_web_view_browser_smoke_parser_accepts_date_and_json() -> None:
     parser = cli_module.build_parser()
 
@@ -770,6 +929,73 @@ def test_web_view_browser_smoke_parser_accepts_latest_date_alias() -> None:
     assert args.command == "web-view-browser-smoke"
     assert args.date is None
     assert args.json is True
+
+
+def test_dev_fixture_db_parser_accepts_visible_product_flow_output_and_overwrite(tmp_path) -> None:
+    parser = cli_module.build_parser()
+    output_path = tmp_path / "visible-product-flow.db"
+
+    args = parser.parse_args(
+        [
+            "dev-fixture-db",
+            "--scenario",
+            "visible-product-flow",
+            "--output",
+            str(output_path),
+            "--overwrite",
+            "--json",
+        ]
+    )
+
+    assert args.command == "dev-fixture-db"
+    assert args.scenario == "visible-product-flow"
+    assert args.output == output_path
+    assert args.overwrite is True
+    assert args.json is True
+
+
+def test_dev_fixture_db_visible_product_flow_creates_browser_and_briefing_fixture(tmp_path, capsys) -> None:
+    output_path = tmp_path / "visible-product-flow.db"
+
+    exit_code = cli_module._run_dev_fixture_db(
+        scenario="visible-product-flow",
+        output_path=output_path,
+        overwrite=False,
+        as_json=True,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert output_path.exists()
+    assert payload["surface"] == "dev-fixture-db"
+    assert payload["scenario"] == "visible-product-flow"
+    assert payload["business_date"] == "2026-05-08"
+    assert payload["writes_production_db"] is False
+    assert payload["sends_telegram"] is False
+    assert payload["registers_scheduler"] is False
+    assert "web-view-browser-smoke --date 2026-05-08" in " ".join(payload["verification_commands"])
+
+    config = RuntimeConfig.from_env(root_dir=tmp_path, db_path=output_path)
+    repository = StockMonitorRepository(output_path, timezone=config.timezone)
+    daily = cli_module.build_web_view_daily_snapshot(config, repository, business_date=date(2026, 5, 8))
+    candidates = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=date(2026, 5, 8),
+        limit=20,
+    )
+    search = cli_module.build_web_view_stock_search_snapshot(
+        config,
+        repository,
+        business_date=date(2026, 5, 8),
+        query="Beta",
+    )
+
+    assert daily["report_count"] >= 4
+    assert daily["news_observation_summary"]["available"] is True
+    assert candidates["rows"]
+    assert any(row["news_observation_badge"]["available"] for row in candidates["rows"])
+    assert search["items"][0]["has_selected_date_report"] is False
 
 
 def test_web_view_browser_api_smoke_checks_intraday_market_top_route(monkeypatch) -> None:
@@ -2270,7 +2496,7 @@ def test_mini_pc_preflight_snapshot_reports_latest_backup(tmp_path) -> None:
     repository.initialize()
     backup_dir = config.data_dir / "backups"
     backup_dir.mkdir(parents=True)
-    backup_path = backup_dir / "stock_monitor_sample_before_mini_pc_migration.db"
+    backup_path = backup_dir / "stock_monitor_20260515_2100_before_mini_pc_migration.db"
     backup_path.write_bytes(b"backup")
 
     snapshot = _build_mini_pc_preflight_snapshot(
@@ -3531,6 +3757,177 @@ def test_news_intelligence_observations_outputs_read_only_run_comparison(
     assert payload["runs"][0]["evidence"][0]["evidence_key"] == "ev-context"
 
 
+def test_news_intelligence_observations_summarizes_source_mode_coverage(
+    tmp_path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "news-intelligence.db"
+    repository = StockMonitorRepository(db_path)
+    repository.initialize()
+    run_exact = _news_intelligence_cli_run(
+        run_id="run-exact",
+        matched_count=2,
+        created_at=datetime(2026, 6, 1, 10, 0, 0),
+    )
+    run_stale = _news_intelligence_cli_run(
+        run_id="run-stale",
+        matched_count=1,
+        created_at=datetime(2026, 6, 1, 10, 5, 0),
+    )
+    repository.save_news_intelligence_observation(
+        run_exact,
+        [
+            _news_intelligence_cli_evidence(
+                run_id=run_exact.run_id,
+                evidence_key="ev-exact-direct",
+                relevance="direct",
+                match_scope="both",
+                source_lane="mainnews",
+                candidate_priority_presence=True,
+                candidate_observation_priority="top_2",
+            ),
+            _news_intelligence_cli_evidence(
+                run_id=run_exact.run_id,
+                evidence_key="ev-exact-context",
+                relevance="market_context",
+                match_scope="summary",
+                source_lane="section_market_outlook",
+                evidence_case="report_heavy_market_context_only",
+                operator_recommendation="separate_market_context",
+            ),
+        ],
+    )
+    repository.save_news_intelligence_observation(
+        run_stale,
+        [
+            _news_intelligence_cli_evidence(
+                run_id=run_stale.run_id,
+                evidence_key="ev-stale-caution",
+                relevance="direct",
+                match_scope="title",
+                source_lane="ranknews",
+                sentiment="Caution",
+                stock_impact="Caution",
+                event_types=("Risk/Caution",),
+                evidence_case="report_with_caution_news",
+                operator_recommendation="review_with_caution",
+                krx_reference_date=date(2026, 5, 29),
+            )
+        ],
+    )
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-observations",
+            "--date",
+            "2026-06-01",
+            "--stock-code",
+            "005930",
+            "--db-path",
+            str(db_path),
+            "--evidence-per-run",
+            "0",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["source_mode_coverage"] == {
+        "run_count": 2,
+        "evidence_count": 3,
+        "source_modes": {"naver_5_lane_preview": 2},
+        "source_lanes": {
+            "mainnews": 1,
+            "ranknews": 1,
+            "section_market_outlook": 1,
+        },
+        "relevance": {
+            "direct": 2,
+            "indirect": 0,
+            "market_context": 1,
+        },
+        "match_scope": {
+            "both": 1,
+            "summary": 1,
+            "title": 1,
+        },
+        "krx_reference_status": {
+            "exact": 1,
+            "stale_reference": 1,
+            "missing": 0,
+            "none": 0,
+        },
+        "candidate_linkage_labels": {
+            "stale_krx_check_first": 1,
+            "strengthen_existing_candidate": 1,
+        },
+        "operator_recommendation_support": {
+            "check_krx_before_linking": 1,
+            "strengthen_existing_candidate": 1,
+        },
+        "boundary": {
+            "read_only": True,
+            "operator_only": True,
+            "public_safe": False,
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_web_view": False,
+        },
+    }
+
+
+def test_news_intelligence_observations_text_includes_source_mode_coverage(
+    tmp_path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "news-intelligence.db"
+    repository = StockMonitorRepository(db_path)
+    repository.initialize()
+    run = _news_intelligence_cli_run(run_id="run-text-coverage")
+    repository.save_news_intelligence_observation(
+        run,
+        [
+            _news_intelligence_cli_evidence(
+                run_id=run.run_id,
+                evidence_key="ev-text-coverage",
+                relevance="direct",
+                match_scope="both",
+                source_lane="mainnews",
+                candidate_priority_presence=True,
+                candidate_observation_priority="top_2",
+            )
+        ],
+    )
+
+    exit_code = cli_module.main(
+        [
+            "news-intelligence-observations",
+            "--date",
+            "2026-06-01",
+            "--stock-code",
+            "005930",
+            "--db-path",
+            str(db_path),
+            "--format",
+            "text",
+            "--evidence-per-run",
+            "0",
+        ]
+    )
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "source-mode coverage:" in output
+    assert "runs 1 / evidence 1" in output
+    assert "source_modes: naver_5_lane_preview=1" in output
+    assert "source_lanes: mainnews=1" in output
+    assert "labels: strengthen_existing_candidate=1" in output
+
+
 def test_news_intelligence_observations_classifies_candidate_linkage_preview_labels(
     tmp_path,
     capsys,
@@ -3777,6 +4174,8 @@ def test_news_intelligence_daily_brief_outputs_grouped_text(
     assert "direct 1 / caution 0 / market_context 0" in output
     assert "KRX: exact" in output
     assert "[mainnews] 삼성전자, AI 반도체 공급 계약 체결" in output
+    assert "source-mode coverage:" in output
+    assert "source_modes: naver_5_lane_preview=6" in output
 
 
 def test_news_intelligence_daily_brief_outputs_grouped_json(
@@ -3812,6 +4211,17 @@ def test_news_intelligence_daily_brief_outputs_grouped_json(
     assert payload["sections"]["stale_krx_check_first"][0]["stock_code"] == "066570"
     assert payload["sections"]["insufficient_evidence"][0]["stock_code"] == "005490"
     assert payload["item_count"] == 6
+    assert payload["source_mode_coverage"]["run_count"] == 6
+    assert payload["source_mode_coverage"]["evidence_count"] == 5
+    assert payload["source_mode_coverage"]["source_modes"] == {"naver_5_lane_preview": 6}
+    assert payload["source_mode_coverage"]["candidate_linkage_labels"] == {
+        "insufficient_evidence": 1,
+        "promote_news_only_candidate": 1,
+        "review_existing_candidate_with_caution": 1,
+        "stale_krx_check_first": 1,
+        "strengthen_existing_candidate": 1,
+        "support_only_context": 1,
+    }
 
 
 def _news_intelligence_cli_run(
@@ -4169,7 +4579,30 @@ def test_market_briefing_parser_defaults_to_preview_only() -> None:
     assert args.command == "market-briefing"
     assert args.date == date(2026, 5, 14)
     assert args.limit == 3
+    assert args.slot == "mood"
     assert args.send is False
+    assert args.json is False
+
+
+def test_market_briefing_parser_accepts_slot_and_json_preview() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "market-briefing",
+            "--date",
+            "2026-05-14",
+            "--slot",
+            "lunch",
+            "--limit",
+            "3",
+            "--json",
+        ]
+    )
+
+    assert args.command == "market-briefing"
+    assert args.slot == "lunch"
+    assert args.json is True
 
 
 def test_scheduled_market_briefing_parser_defaults_to_guarded_dry_run_off() -> None:
@@ -4372,8 +4805,114 @@ def test_market_briefing_preview_includes_turnover_reference(tmp_path, capsys) -
     assert "오늘의 시장 분위기 · 26.05.14" in output
     assert "거래대금 참고 · 26.05.14 KRX 저장값" in output
     assert "KOSPI: 삼성전자 2.3조" in output
+    assert "데이터 기준" in output
+    assert "Naver reports: exact 26.05.14 (3건)" in output
+    assert "KRX market: exact 26.05.14" in output
+    assert "ETF daily: exact 26.05.14" in output
+    assert "Investor flow: missing" in output
+    assert "Toss OpenAPI: lab-hold (호출 없음)" in output
     assert "추천" not in output
     assert "점수" not in output
+
+
+def test_market_briefing_json_preview_includes_slot_and_public_news_observation(tmp_path, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 14)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                close_price=100_000,
+                change_percent=1.2,
+                volume=1000,
+                turnover=2_300_000_000_000,
+                fetched_at=datetime(2026, 5, 14, 16, 0, 0),
+            )
+        ]
+    )
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name="삼성전자",
+                title="삼성전자 AI 반도체 점검",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 5, 14, 9, 0, 0),
+                collected_at=datetime(2026, 5, 14, 16, 0, 0),
+                stock_code="005930",
+                target_price_raw="320000",
+                target_price_value=320_000,
+                opinion_raw="매수",
+                opinion_normalized="buy",
+                source_id="market-briefing-json-1",
+                identity_key="market-briefing-json-1",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.save_news_intelligence_observation(
+        _news_intelligence_cli_run(
+            run_id="market-briefing-news-run",
+            target_date=business_date,
+            stock_name="삼성전자",
+            stock_code="005930",
+        ),
+        [
+            _news_intelligence_cli_evidence(
+                run_id="market-briefing-news-run",
+                evidence_key="market-briefing-news-evidence",
+                relevance="direct",
+                match_scope="title",
+                target_date=business_date,
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="삼성전자, AI 반도체 공급 계약 체결",
+            )
+        ],
+    )
+
+    exit_code = _run_market_briefing(
+        config,
+        repository,
+        explicit_date=business_date,
+        limit=5,
+        send=False,
+        slot="lunch",
+        as_json=True,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["surface"] == "market-briefing"
+    assert payload["read_only_preview"] is True
+    assert payload["slot"] == "lunch"
+    assert payload["sends_telegram"] is False
+    assert payload["public_safe_issue_count"] == 0
+    assert payload["news_observation_summary"]["available"] is True
+    source_freshness_items = {
+        item["key"]: item for item in payload["source_freshness_summary"]["items"]
+    }
+    assert payload["source_freshness_summary"]["read_only"] is True
+    assert payload["source_freshness_summary"]["live_fetch"] is False
+    assert source_freshness_items["reports"]["status"] == "exact"
+    assert source_freshness_items["reports"]["count"] == 1
+    assert source_freshness_items["krx_market"]["status"] == "exact"
+    assert source_freshness_items["etf_daily"]["status"] == "exact"
+    assert source_freshness_items["investor_flow"]["status"] == "missing"
+    assert source_freshness_items["toss_openapi"]["status"] == "lab_hold"
+    assert source_freshness_items["toss_openapi"]["live_fetch"] is False
+    assert source_freshness_items["toss_openapi"]["affects_ordering"] is False
+    assert "데이터 기준" in payload["message"]
+    assert "Toss OpenAPI: lab-hold (호출 없음)" in payload["message"]
+    assert "뉴스 근거" in payload["message"]
+    assert "삼성전자, AI 반도체 공급 계약 체결" in payload["message"]
+    assert "sentiment_score" not in json.dumps(payload, ensure_ascii=False)
+    assert "operator_recommendation" not in json.dumps(payload, ensure_ascii=False)
 
 
 def test_market_briefing_uses_stock_flow_reference_when_market_flow_missing(tmp_path, capsys) -> None:
@@ -7866,6 +8405,27 @@ def test_db_verify_fails_on_partial_krx_daily_snapshot(tmp_path, capsys) -> None
     assert "2026-05-08: missing etf-daily, stock-kospi-daily" in output
 
 
+def test_db_verify_allows_partial_krx_daily_snapshot_on_market_holiday(tmp_path, capsys) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+    repository.upsert_etf_daily_snapshots(
+        [
+            EtfDailySnapshot(
+                business_date=date(2026, 6, 3),
+                etf_code="069500",
+                etf_name="KODEX 200",
+                fetched_at=datetime(2026, 6, 5, 8, 10, 0),
+            )
+        ]
+    )
+
+    exit_code = _run_db_verify(repository, as_json=False, holiday_overrides={date(2026, 6, 3)})
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "- partial KRX daily snapshot dates: 0" in output
+
+
 def test_db_backup_creates_consistent_sqlite_copy(tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
@@ -8812,6 +9372,338 @@ def test_run_ops_readiness_aggregates_operational_checks(tmp_path, monkeypatch, 
     assert payload["web_view_value_qa"]["issue_count"] == 0
     assert payload["api_perf"]["record_count"] == 2
     assert payload["recommended_actions"]
+
+
+def test_data_source_lane_audit_json_classifies_production_lab_and_hold(capsys) -> None:
+    exit_code = cli_module.main(["data-source-lane-audit", "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    lanes = {lane["key"]: lane for lane in payload["lanes"]}
+
+    assert exit_code == 0
+    assert payload["surface"] == "data-source-lane-audit"
+    assert payload["read_only"] is True
+    assert payload["live_fetch"] is False
+    assert payload["writes_db"] is False
+    assert payload["sends_telegram"] is False
+    assert payload["registers_scheduler"] is False
+    assert payload["connects_admin_gui"] is False
+    assert payload["connects_web_view"] is False
+    assert payload["ready"] is True
+    assert payload["classification_counts"] == {
+        "hold": 1,
+        "lab": 1,
+        "production": 4,
+        "production_limited": 1,
+    }
+    assert lanes["naver_reports"]["classification"] == "production"
+    assert lanes["krx_market_daily"]["classification"] == "production"
+    assert lanes["krx_investor_flow"]["classification"] == "production_limited"
+    assert lanes["etf_daily"]["classification"] == "production"
+    assert lanes["etf_daily"]["constituents_available"] is False
+    assert lanes["etf_daily"]["constituent_source_status"] == "not_loaded"
+    assert lanes["toss_openapi"]["classification"] == "hold"
+    assert lanes["toss_openapi"]["live_fetch"] is False
+    assert lanes["toss_openapi"]["affects_ordering"] is False
+    assert lanes["toss_openapi"]["forbidden_runtime_groups"] == [
+        "oauth_token_call",
+        "account_or_asset_read",
+        "order_create_modify_cancel",
+        "production_db_write",
+        "telegram_scheduler_or_public_surface",
+    ]
+    assert lanes["x_public_recap"]["classification"] == "lab"
+    assert lanes["x_public_recap"]["requires_separate_lab_branch"] is True
+    assert lanes["x_public_recap"]["login_dependency_allowed"] is False
+    assert payload["done_when_coverage"] == {
+        "source_lanes_classified": True,
+        "web_view_freshness_connected": True,
+        "telegram_freshness_connected": True,
+        "toss_x_not_exaggerated": True,
+        "etf_constituents_status_explicit": True,
+    }
+
+
+def test_data_source_lane_audit_text_prints_etf_toss_and_x_boundaries(capsys) -> None:
+    exit_code = cli_module.main(["data-source-lane-audit"])
+
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Data source lane audit" in output
+    assert "etf_daily | production | constituents=not_loaded" in output
+    assert "toss_openapi | hold | live_fetch=false | affects_ordering=false" in output
+    assert "x_public_recap | lab | separate_lab_branch=true | login_dependency_allowed=false" in output
+
+
+def test_ops_sync_preview_json_reports_git_batch_schema_and_safe_commands(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path)
+    repository.initialize()
+
+    def fake_git(_root_dir, args):
+        if args == ("status", "--short", "--branch"):
+            return {
+                "ok": True,
+                "returncode": 0,
+                "stdout": "## dev...origin/dev\n?? data/\n",
+                "stderr": "",
+            }
+        if args == ("log", "--reverse", "--pretty=format:%h\t%s", "--max-count=12", "origin/main..dev"):
+            return {
+                "ok": True,
+                "returncode": 0,
+                "stdout": "abc1234\tAdd source freshness\nfed9876\tUpdate todo board",
+                "stderr": "",
+            }
+        if args == ("diff", "--name-only", "origin/main..dev"):
+            return {
+                "ok": True,
+                "returncode": 0,
+                "stdout": "src/stock_monitor/cli.py\ntests/test_cli_commands.py\ndocs/codex/work-todo-board.md\n",
+                "stderr": "",
+            }
+        raise AssertionError(args)
+
+    monkeypatch.setattr(cli_module, "_run_git_for_ops_sync_preview", fake_git)
+
+    assert (
+        cli_module._run_ops_sync_preview(
+            config,
+            repository,
+            base_ref="origin/main",
+            head_ref="dev",
+            max_commits=12,
+            as_json=True,
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["surface"] == "ops-sync-preview"
+    assert payload["read_only"] is True
+    assert payload["writes_db"] is False
+    assert payload["sends_telegram"] is False
+    assert payload["registers_scheduler"] is False
+    assert payload["source_sync_ready"] is True
+    assert payload["worktree"]["local_data_untracked_count"] == 1
+    assert payload["worktree"]["tracked_dirty_count"] == 0
+    assert payload["git_comparison"]["commit_count"] == 2
+    assert payload["git_comparison"]["commits"][0]["subject"] == "Add source freshness"
+    assert payload["git_comparison"]["changed_file_groups"] == {
+        "docs": 1,
+        "src": 1,
+        "tests": 1,
+    }
+    assert payload["default_db_schema"]["current"] is True
+    assert payload["schema_action_plan"]["requires_migration_approval"] is False
+    assert payload["schema_action_plan"]["approval_required"] is False
+    assert any("web-view-browser-smoke" in command for command in payload["verification_commands"])
+    handoff = payload["operating_pc_handoff"]
+    assert handoff["read_only"] is True
+    assert handoff["first_line"] == "운영 PC용"
+    assert handoff["prompt"].startswith("운영 PC용\n")
+    assert "origin/main..dev" in handoff["prompt"]
+    assert "abc1234 Add source freshness" in handoff["prompt"]
+    assert "fed9876 Update todo board" in handoff["prompt"]
+    assert "src: 1" in handoff["prompt"]
+    assert "Schema action plan" in handoff["prompt"]
+    assert "python -m pytest -q" in handoff["prompt"]
+    assert "production DB write" in handoff["prompt"]
+    assert "data/ untracked" in handoff["prompt"]
+    assert "db_path" not in json.dumps(payload)
+
+
+def test_ops_sync_preview_reports_schema_blocker_without_failing_json(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path)
+    repository.initialize()
+
+    monkeypatch.setattr(
+        repository,
+        "get_schema_migration_status",
+        lambda: SchemaMigrationStatus(
+            current_version=5,
+            target_version=7,
+            applied_versions=(1, 2, 3, 4, 5),
+            pending_versions=(6, 7),
+        ),
+    )
+
+    def fake_git(_root_dir, args):
+        if args == ("status", "--short", "--branch"):
+            return {
+                "ok": True,
+                "returncode": 0,
+                "stdout": "## dev...origin/dev\n",
+                "stderr": "",
+            }
+        if args == ("log", "--reverse", "--pretty=format:%h\t%s", "--max-count=30", "origin/main..HEAD"):
+            return {"ok": True, "returncode": 0, "stdout": "", "stderr": ""}
+        if args == ("diff", "--name-only", "origin/main..HEAD"):
+            return {"ok": True, "returncode": 0, "stdout": "", "stderr": ""}
+        raise AssertionError(args)
+
+    monkeypatch.setattr(cli_module, "_run_git_for_ops_sync_preview", fake_git)
+
+    assert (
+        cli_module._run_ops_sync_preview(
+            config,
+            repository,
+            base_ref="origin/main",
+            head_ref="HEAD",
+            max_commits=30,
+            as_json=True,
+        )
+        == 1
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["default_db_schema"] == {
+        "exists": True,
+        "current": False,
+        "current_version": 5,
+        "target_version": 7,
+        "pending_versions": [6, 7],
+        "status": "migration_required",
+    }
+    assert payload["source_sync_ready"] is False
+    assert payload["blockers"][0]["code"] == "default_db_schema_not_current"
+    schema_action_plan = payload["schema_action_plan"]
+    assert schema_action_plan["requires_migration_approval"] is True
+    assert schema_action_plan["approval_required"] is True
+    assert schema_action_plan["read_only_until_approval"] is True
+    assert "python -m stock_monitor db-migrate --dry-run" in schema_action_plan["pre_approval_commands"]
+    assert "python -m stock_monitor db-migration-rehearsal --json" in schema_action_plan[
+        "pre_approval_commands"
+    ]
+    assert "python -m stock_monitor db-backup --tag pre-schema-migration" in schema_action_plan[
+        "post_approval_commands"
+    ]
+    assert "python -m stock_monitor db-migrate" in schema_action_plan["post_approval_commands"]
+    assert "schema migration on operating PC" in schema_action_plan["forbidden_without_approval"]
+    handoff = payload["operating_pc_handoff"]
+    assert handoff["prompt"].startswith("운영 PC용\n")
+    assert "Schema action plan" in handoff["prompt"]
+    assert "pre-approval" in handoff["prompt"]
+    assert "db-migration-rehearsal --json" in handoff["prompt"]
+    assert "post-approval" in handoff["prompt"]
+    assert "schema migration on operating PC" in handoff["prompt"]
+    assert "현재 blocker" in handoff["prompt"]
+    assert "default_db_schema_not_current" in handoff["prompt"]
+    assert "운영 DB write 금지" in handoff["prompt"]
+
+
+def test_admin_boundary_audit_json_reports_surface_split_without_leaking_status(
+    tmp_path, capsys
+) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path)
+    repository.initialize()
+
+    assert cli_module._run_admin_boundary_audit(config, repository, limit=2, as_json=True) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    payload_text = json.dumps(payload, ensure_ascii=False)
+    assert payload["surface"] == "admin-boundary-audit"
+    assert payload["read_only"] is True
+    assert payload["live_fetch"] is False
+    assert payload["writes_db"] is False
+    assert payload["sends_telegram"] is False
+    assert payload["registers_scheduler"] is False
+    assert payload["ready"] is True
+    assert payload["admin_gui"]["html_forbidden_token_count"] == 0
+    assert payload["admin_gui"]["html_public_content_token_count"] == 0
+    assert payload["admin_gui"]["host_guard"] == "loopback_required_by_default"
+    assert payload["status_payload"]["available"] is True
+    assert payload["status_payload"]["forbidden_token_count"] == 0
+    assert payload["web_view"]["separate_handler"] is True
+    assert payload["web_view"]["expected_api_status"] == 404
+    assert payload["operator_review"]["implemented"] is False
+    assert payload["operator_review"]["route_present_in_admin_html"] is False
+    assert any("web-view-browser-smoke" in command for command in payload["verification_commands"])
+    assert "db_path" not in payload_text
+
+
+def test_admin_boundary_audit_reports_schema_blocker_without_status_stacktrace(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path)
+    repository.initialize()
+
+    monkeypatch.setattr(
+        repository,
+        "get_schema_migration_status",
+        lambda: SchemaMigrationStatus(
+            current_version=5,
+            target_version=7,
+            applied_versions=(1, 2, 3, 4, 5),
+            pending_versions=(6, 7),
+        ),
+    )
+
+    assert cli_module._run_admin_boundary_audit(config, repository, limit=2, as_json=True) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready"] is False
+    assert payload["status_payload"]["available"] is False
+    assert payload["status_payload"]["schema_status"]["status"] == "migration_required"
+    assert payload["issues"][0]["code"] == "default_db_schema_not_current"
+    assert payload["admin_gui"]["html_forbidden_token_count"] == 0
+
+
+def test_docs_hygiene_audit_redacts_sensitive_values(tmp_path) -> None:
+    public_doc = tmp_path / "public.md"
+    public_doc.write_text(
+        "\n".join(
+            [
+                "[doc](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/current-work.md)",
+                "shared origin https://demo.kr-stock.site",
+                "STOCK_MONITOR_TELEGRAM_BOT_TOKEN=abc123",
+                "access_code=2468",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    payload = cli_module._build_docs_hygiene_audit_payload(tmp_path, paths=(public_doc,))
+    payload_text = json.dumps(payload, ensure_ascii=False)
+
+    assert payload["surface"] == "docs-hygiene-audit"
+    assert payload["read_only"] is True
+    assert payload["issue_count"] == 4
+    assert {issue["code"] for issue in payload["issues"]} == {
+        "local_absolute_path",
+        "external_provider_url",
+        "secret_like_assignment",
+        "raw_access_code",
+    }
+    assert "demo.kr-stock.site" not in payload_text
+    assert "abc123" not in payload_text
+    assert "2468" not in payload_text
+    assert "C:/Users/MING" not in payload_text
+
+
+def test_docs_hygiene_audit_current_public_docs_are_clean() -> None:
+    payload = cli_module._build_docs_hygiene_audit_payload(Path.cwd())
+
+    assert payload["issue_count"] == 0
+    assert payload["ready"] is True
+
+
+def test_docs_hygiene_audit_default_paths_include_core_contracts() -> None:
+    payload = cli_module._build_docs_hygiene_audit_payload(Path.cwd())
+
+    assert "docs/codex/surface-contract.md" in payload["scanned_files"]
+    assert "docs/codex/data-source-policy.md" in payload["scanned_files"]
+    assert "docs/codex/data-quality-checklist.md" in payload["scanned_files"]
+    assert "docs/codex/contracts/news-intelligence-contract.md" in payload["scanned_files"]
 
 
 def test_next_phase_readiness_groups_latest_krx_openapi_probe_batch(tmp_path) -> None:
