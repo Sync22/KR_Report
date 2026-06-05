@@ -163,6 +163,7 @@ DB_CLEANUP_DEFAULT_RETENTION_DAYS = 550
 CATEGORY_SNAPSHOT_READINESS_LIMIT = 100
 READ_ONLY_SCHEMA_CURRENT_COMMANDS = {
     "access-code",
+    "admin-boundary-audit",
     "api-perf-summary",
     "ops-readiness",
     "ops-sync-preview",
@@ -212,6 +213,34 @@ SCHEMA_PRESERVING_EXISTING_DB_COMMANDS = {
     "db-restore-smoke",
     "dev-fixture-db",
 }
+ADMIN_BOUNDARY_JUDGMENT_REVIEW_FORBIDDEN_TOKENS = (
+    "news-intelligence",
+    "news_observation",
+    "candidate-evidence",
+    "candidate_evidence",
+    "candidate_linkage",
+    "sentiment_score",
+    "stock_impact",
+    "operator_recommendation",
+    "recommendation_support",
+)
+ADMIN_BOUNDARY_PUBLIC_CONTENT_FORBIDDEN_TOKENS = (
+    "mood-total-reports",
+    "report-rows",
+    "sector-rows",
+    "theme-rows",
+    "krx-kospi-rows",
+    "krx-kosdaq-rows",
+    "krx-etf-rows",
+    "krx-index-rows",
+)
+ADMIN_BOUNDARY_CONTROL_ROUTES = (
+    "/api/status",
+    "/api/scheduler/run-now",
+    "/api/scheduler/set-enabled",
+    "/api/scheduler/restart",
+    "/api/settings/set",
+)
 MARKET_BRIEFING_SLOT_LABELS = {
     "mood": "오늘의 시장 분위기",
     "lunch": "국장 점심 브리핑",
@@ -1412,6 +1441,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Allow admin-gui to bind outside localhost. Use only on a trusted private network.",
     )
 
+    admin_boundary_audit_parser = subparsers.add_parser(
+        "admin-boundary-audit",
+        help="Read-only audit of admin-gui, web-view, and future operator-review surface boundaries.",
+    )
+    admin_boundary_audit_parser.add_argument("--limit", type=int, default=5)
+    admin_boundary_audit_parser.add_argument("--json", action="store_true")
+
     web_view_parser = subparsers.add_parser(
         "web-view",
         help="Run the read-only user web view for StockMonitor archive and market summaries.",
@@ -1772,6 +1808,13 @@ def main(argv: list[str] | None = None) -> int:
             base_ref=args.base,
             head_ref=args.head,
             max_commits=args.max_commits,
+            as_json=args.json,
+        )
+    if args.command == "admin-boundary-audit":
+        return _run_admin_boundary_audit(
+            config,
+            repository,
+            limit=args.limit,
             as_json=args.json,
         )
 
@@ -4600,6 +4643,209 @@ def _run_api_perf_summary(config: RuntimeConfig, *, log_path: Path | None, as_js
             f"family={item['path_family']}"
         )
     return 0
+
+
+def _build_admin_boundary_audit_payload(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    limit: int,
+) -> dict[str, object]:
+    html_text = _render_admin_gui_html()
+    html_judgment_tokens = _admin_boundary_tokens_found(
+        html_text,
+        ADMIN_BOUNDARY_JUDGMENT_REVIEW_FORBIDDEN_TOKENS,
+    )
+    html_public_content_tokens = _admin_boundary_tokens_found(
+        html_text,
+        ADMIN_BOUNDARY_PUBLIC_CONTENT_FORBIDDEN_TOKENS,
+    )
+    operator_review_route_present = "operator-review" in html_text
+    schema_status = _ops_sync_db_schema_status(repository)
+    status_available = bool(schema_status.get("current"))
+    status_keys: list[str] = []
+    status_forbidden_tokens: list[str] = []
+    status_issue: dict[str, object] | None = None
+    if status_available:
+        try:
+            status_snapshot = build_operator_status_snapshot(
+                config,
+                repository,
+                limit=limit,
+                scheduler_tasks=[],
+            )
+        except Exception as exc:
+            status_available = False
+            status_issue = {
+                "code": "operator_status_snapshot_failed",
+                "message": str(exc),
+            }
+        else:
+            status_keys = sorted(status_snapshot)
+            status_text = json.dumps(status_snapshot, ensure_ascii=False, sort_keys=True)
+            status_forbidden_tokens = _admin_boundary_tokens_found(
+                status_text,
+                ADMIN_BOUNDARY_JUDGMENT_REVIEW_FORBIDDEN_TOKENS,
+            )
+
+    issues: list[dict[str, object]] = []
+    if html_judgment_tokens:
+        issues.append(
+            {
+                "code": "admin_html_judgment_review_token",
+                "message": "admin-gui HTML contains judgment-review or evidence-layer token(s).",
+                "tokens": html_judgment_tokens,
+            }
+        )
+    if html_public_content_tokens:
+        issues.append(
+            {
+                "code": "admin_html_public_content_token",
+                "message": "admin-gui HTML contains public web-view content table token(s).",
+                "tokens": html_public_content_tokens,
+            }
+        )
+    if operator_review_route_present:
+        issues.append(
+            {
+                "code": "operator_review_route_in_admin_html",
+                "message": "future operator-review route appears in admin-gui HTML before the surface is implemented.",
+            }
+        )
+    if not bool(schema_status.get("current")):
+        issues.append(
+            {
+                "code": "default_db_schema_not_current",
+                "message": "operator status payload audit is blocked until the DB schema is current.",
+            }
+        )
+    if status_issue:
+        issues.append(status_issue)
+    if status_forbidden_tokens:
+        issues.append(
+            {
+                "code": "admin_status_judgment_review_token",
+                "message": "operator status payload contains judgment-review or evidence-layer token(s).",
+                "tokens": status_forbidden_tokens,
+            }
+        )
+
+    control_routes_present = [route for route in ADMIN_BOUNDARY_CONTROL_ROUTES if route in html_text]
+    return {
+        "surface": "admin-boundary-audit",
+        "read_only": True,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "ready": len(issues) == 0,
+        "admin_gui": {
+            "host_guard": "loopback_required_by_default",
+            "surface": "operator_only",
+            "html_forbidden_token_count": len(html_judgment_tokens),
+            "html_forbidden_tokens": html_judgment_tokens,
+            "html_public_content_token_count": len(html_public_content_tokens),
+            "html_public_content_tokens": html_public_content_tokens,
+            "control_routes_present": control_routes_present,
+            "control_route_count": len(control_routes_present),
+            "judgment_review_body_present": bool(html_judgment_tokens),
+        },
+        "status_payload": {
+            "available": status_available,
+            "schema_status": schema_status,
+            "forbidden_token_count": len(status_forbidden_tokens),
+            "forbidden_tokens": status_forbidden_tokens,
+            "operator_only_key_count": len(status_keys),
+            "operator_only_keys": [
+                key
+                for key in (
+                    "backup",
+                    "health",
+                    "live_observation",
+                    "recent_admin_audit_logs",
+                    "recovery_actions",
+                    "safe_settings",
+                    "scheduler_tasks",
+                    "worker_states",
+                )
+                if key in status_keys
+            ],
+        },
+        "web_view": {
+            "surface": "friend_facing_get_only",
+            "separate_handler": True,
+            "handler_factory": "_make_web_view_handler",
+            "admin_handler_factory": "_make_admin_gui_handler",
+            "host_guard": "loopback_required_by_default",
+            "expected_api_status": 404,
+            "expected_admin_control_post_status": 405,
+        },
+        "operator_review": {
+            "implemented": False,
+            "route_present_in_admin_html": operator_review_route_present,
+            "reserved_for": [
+                "raw news intelligence evidence review",
+                "candidate evidence linkage review",
+                "internal judgment-review workflows",
+            ],
+        },
+        "verification_commands": [
+            "python -m stock_monitor admin-boundary-audit --json",
+            "python -m stock_monitor operator-status --json --health-exit",
+            "python -m stock_monitor web-view-browser-smoke --date latest --stock-limit 20 --json",
+            "python -m pytest tests/test_admin_gui.py tests/test_operator_status.py tests/test_cli_commands.py -q",
+        ],
+        "issues": issues,
+    }
+
+
+def _run_admin_boundary_audit(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    limit: int,
+    as_json: bool,
+) -> int:
+    payload = _build_admin_boundary_audit_payload(config, repository, limit=limit)
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload["ready"] else 1
+    print("Admin boundary audit")
+    print(f"- ready: {'Y' if payload['ready'] else 'N'}")
+    admin_gui = payload["admin_gui"]
+    print(
+        f"- admin-gui: judgment_tokens={admin_gui['html_forbidden_token_count']} "
+        f"public_content_tokens={admin_gui['html_public_content_token_count']} "
+        f"control_routes={admin_gui['control_route_count']}"
+    )
+    status_payload = payload["status_payload"]
+    print(
+        f"- status payload: available={'Y' if status_payload['available'] else 'N'} "
+        f"judgment_tokens={status_payload['forbidden_token_count']} "
+        f"schema={status_payload['schema_status']['status']}"
+    )
+    web_view = payload["web_view"]
+    print(
+        f"- web-view: separate_handler={'Y' if web_view['separate_handler'] else 'N'} "
+        f"expected /api/status={web_view['expected_api_status']}"
+    )
+    operator_review = payload["operator_review"]
+    print(
+        f"- operator-review: implemented={'Y' if operator_review['implemented'] else 'N'} "
+        f"route_in_admin={'Y' if operator_review['route_present_in_admin_html'] else 'N'}"
+    )
+    if payload["issues"]:
+        print("- issues:")
+        for item in payload["issues"]:
+            print(f"  - {item['code']}: {item['message']}")
+    print("- verification commands:")
+    for command in payload["verification_commands"]:
+        print(f"  - {command}")
+    return 0 if payload["ready"] else 1
+
+
+def _admin_boundary_tokens_found(text: str, tokens: Sequence[str]) -> list[str]:
+    return [token for token in tokens if token in text]
 
 
 def _run_git_for_ops_sync_preview(root_dir: Path, args: tuple[str, ...]) -> dict[str, object]:
