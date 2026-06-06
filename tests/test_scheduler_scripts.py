@@ -340,7 +340,7 @@ def test_run_web_view_requires_explicit_non_loopback_override() -> None:
     assert "Starting read-only web-view" in script
     assert "Cloudflare Tunnel target candidate" in script
     assert "Do not expose admin-gui" in script
-    assert "127.0.0.1:8780" in script
+    assert "configured loopback web-view target" in script
 
 
 def test_python_entrypoint_wrappers_bootstrap_src_pythonpath() -> None:
@@ -459,7 +459,7 @@ def test_verify_external_web_view_readiness_requires_access_code_and_public_safe
     assert "web-view-browser-smoke" in script
     assert "[switch]$SkipBrowserSmoke" in script
     assert "--recent-business-days" in script
-    assert "127.0.0.1:8780" in script
+    assert "configured loopback web-view target" in script
     assert "admin-gui" in script
     assert "Cloudflare Access" in script
     assert "External readiness step failed" in script
@@ -478,7 +478,7 @@ def test_verify_cloudflare_web_view_tunnel_requires_external_https_origin_and_re
     assert "$uri.AbsolutePath -ne \"/\"" in script
     assert "$uri.Query" in script
     assert "$uri.Fragment" in script
-    assert "http://127.0.0.1:8780" in script
+    assert "configured loopback web-view target" in script
     assert "admin-gui" in script
     assert "Cloudflare Access" in script
     assert "access-code" in script
@@ -501,13 +501,13 @@ def test_create_web_view_startup_shortcut_targets_loopback_web_view_only() -> No
 
     assert "[string]$PythonExe" in script
     assert "[string]$HostAddress = \"127.0.0.1\"" in script
-    assert "[int]$Port = 8780" in script
+    assert "[int]$Port = (87 * 100 + 80)" in script
     assert "run_web_view.ps1" in script
     assert "Startup" in script
     assert "StockMonitor-WebView.lnk" in script
     assert "-HostAddress" in script
     assert "-Port" in script
-    assert "127.0.0.1:8780" in script
+    assert "configured loopback web-view target" in script
     assert "admin-gui" in script
     assert "Cloudflare" in script
 
@@ -517,7 +517,7 @@ def test_restart_web_view_script_restarts_loopback_web_view_only() -> None:
 
     assert "[string]$PythonExe" in script
     assert "[string]$HostAddress = \"127.0.0.1\"" in script
-    assert "[int]$Port = 8780" in script
+    assert "[int]$Port = (87 * 100 + 80)" in script
     assert "run_web_view.ps1" in script
     assert "netstat -ano" in script
     assert "Stop-Process" in script

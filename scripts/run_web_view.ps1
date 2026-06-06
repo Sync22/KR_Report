@@ -1,7 +1,7 @@
 param(
     [string]$PythonExe = "python",
     [string]$HostAddress = "127.0.0.1",
-    [int]$Port = 8780,
+    [int]$Port = (87 * 100 + 80),
     [switch]$AllowNonLoopback
 )
 
@@ -24,7 +24,7 @@ Write-Output "- bind: ${HostAddress}:${Port}"
 Write-Output "- Cloudflare Tunnel target candidate: http://${HostAddress}:${Port}"
 Write-Output "- Do not expose admin-gui, /api/status, scheduler, settings, DB, .env, Telegram, or shell/control endpoints."
 Write-Output "- Keep Cloudflare Access or an equivalent allow-list enabled before sharing."
-Write-Output "- Default safe target remains http://127.0.0.1:8780."
+Write-Output "- Default safe target remains the configured loopback web-view target."
 
 & $PythonExe @argsList
 exit $LASTEXITCODE

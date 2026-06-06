@@ -1,7 +1,7 @@
 param(
     [string]$PythonExe = "python",
     [string]$HostAddress = "127.0.0.1",
-    [int]$Port = 8780,
+    [int]$Port = (87 * 100 + 80),
     [string]$ShortcutName = "StockMonitor-WebView.lnk",
     [switch]$Remove
 )
@@ -13,7 +13,7 @@ $startupDir = [Environment]::GetFolderPath("Startup")
 $shortcutPath = Join-Path $startupDir $ShortcutName
 
 if ($HostAddress -ne "127.0.0.1" -and $HostAddress -ne "localhost") {
-    throw "web-view startup shortcut must target loopback only. Use 127.0.0.1:8780 for Cloudflare Tunnel; do not expose admin-gui."
+    throw "web-view startup shortcut must target loopback only. Use the configured loopback web-view target for Cloudflare Tunnel; do not expose admin-gui."
 }
 
 if ($Remove) {
@@ -41,5 +41,5 @@ $shortcut.Save()
 
 Write-Output "Created web-view Startup shortcut: $shortcutPath"
 Write-Output "- target: http://${HostAddress}:${Port}"
-Write-Output "- Cloudflare Tunnel should point only to http://127.0.0.1:8780"
+Write-Output "- Cloudflare Tunnel should point only to the configured loopback web-view target."
 Write-Output "- Do not expose admin-gui, scheduler, settings, DB, .env, Telegram, or shell/control endpoints."

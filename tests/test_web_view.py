@@ -3669,7 +3669,7 @@ def test_web_view_stock_detail_snapshot_exposes_reports_without_admin_state(tmp_
             "target_price_value": 100_000,
             "target_price_display": "목표가 100,000원",
             "opinion_normalized": "buy",
-            "opinion_display": "매수",
+            "opinion_display": "증권사 의견: 매수",
             "source_url": "https://stock.naver.com/research/company/1",
         }
     ]
@@ -3693,9 +3693,9 @@ def test_web_view_report_display_values_are_user_facing() -> None:
     assert cli_module._web_view_target_price_display(100_000) == "목표가 100,000원"
     assert cli_module._web_view_opinion_display("N/A") == "의견 없음"
     assert cli_module._web_view_opinion_display(None) == "의견 없음"
-    assert cli_module._web_view_opinion_display("buy") == "매수"
-    assert cli_module._web_view_opinion_display("neutral") == "중립"
-    assert cli_module._web_view_opinion_display("sell") == "매도"
+    assert cli_module._web_view_opinion_display("buy") == "증권사 의견: 매수"
+    assert cli_module._web_view_opinion_display("neutral") == "증권사 의견: 중립"
+    assert cli_module._web_view_opinion_display("sell") == "증권사 의견: 매도"
 
 
 def test_web_view_category_detail_snapshot_exposes_sector_stocks_without_admin_state(tmp_path, monkeypatch) -> None:

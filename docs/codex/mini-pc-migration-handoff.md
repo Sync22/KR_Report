@@ -57,8 +57,8 @@ Current snapshot as of `2026-05-17 17:02 KST`:
 External `web-view` runtime note:
 
 - The Cloudflare target is the read-only `web-view` on `{LOCAL_WEB_VIEW_TARGET}`.
-- `scripts/run_web_view.ps1 -HostAddress 127.0.0.1 -Port 8780` is the canonical local runner.
-- `scripts/restart_web_view.ps1 -HostAddress 127.0.0.1 -Port 8780` is the canonical scheduler restart helper; it stops the current port listener and starts only the read-only `web-view`.
+- `scripts/run_web_view.ps1 -HostAddress <loopback-host> -Port <web-view-port>` is the canonical local runner.
+- `scripts/restart_web_view.ps1 -HostAddress <loopback-host> -Port <web-view-port>` is the canonical scheduler restart helper; it stops the current port listener and starts only the read-only `web-view`.
 - `StockMonitor-WebViewHourlyRestart` is registered by default by the mini-PC scheduler wrapper so Cloudflare keeps a fresh local target.
 - `scripts/create_web_view_startup_shortcut.ps1` remains a logon fallback. The Startup shortcut starts only the `web-view` runner at logon; it must not point to `admin-gui`.
 - On this mini PC, the Startup shortcut was created at `2026-05-17 18:00 KST`, and a follow-up external smoke for `https://web-view.example.invalid` returned issue count `0`.
@@ -397,13 +397,13 @@ Boundary:
 User web-view draft:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_web_view.ps1 -PythonExe .\.venv\Scripts\python.exe -HostAddress 127.0.0.1 -Port 8780
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_web_view.ps1 -PythonExe .\.venv\Scripts\python.exe -HostAddress <loopback-host> -Port <web-view-port>
 ```
 
 Hourly restart helper:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\restart_web_view.ps1 -PythonExe .\.venv\Scripts\python.exe -HostAddress 127.0.0.1 -Port 8780
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\restart_web_view.ps1 -PythonExe .\.venv\Scripts\python.exe -HostAddress <loopback-host> -Port <web-view-port>
 ```
 
 Cloudflare Tunnel target candidate:
@@ -419,7 +419,7 @@ python -m stock_monitor access-code status
 python -m stock_monitor external-web-view-sharing-plan --json
 python -m stock_monitor mini-pc-preflight --require-access-code --require-backup --require-env
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify_external_web_view_readiness.ps1 -PythonExe .\.venv\Scripts\python.exe
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_web_view.ps1 -PythonExe .\.venv\Scripts\python.exe -HostAddress 127.0.0.1 -Port 8780
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_web_view.ps1 -PythonExe .\.venv\Scripts\python.exe -HostAddress <loopback-host> -Port <web-view-port>
 python -m stock_monitor web-view-startup-fallback-check --json
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify_next_phase_closeout.ps1 -PythonExe .\.venv\Scripts\python.exe -Date YYYY-MM-DD
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify_cloudflare_web_view_tunnel.ps1 -Url https://YOUR-WEB-VIEW-URL -PythonExe .\.venv\Scripts\python.exe
@@ -431,7 +431,7 @@ Cloudflare Tunnel connection sequence:
 1. Confirm `python -m stock_monitor access-code status` reports enabled.
 2. Run `python -m stock_monitor external-web-view-sharing-plan --json` to print the read-only operator sequence without changing Cloudflare, scheduler state, DB state, or secrets.
 3. Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify_external_web_view_readiness.ps1 -PythonExe .\.venv\Scripts\python.exe` before touching the provider.
-4. Start only the user page locally through the safe wrapper: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_web_view.ps1 -PythonExe .\.venv\Scripts\python.exe -HostAddress 127.0.0.1 -Port 8780`.
+4. Start only the user page locally through the safe wrapper: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_web_view.ps1 -PythonExe .\.venv\Scripts\python.exe -HostAddress <loopback-host> -Port <web-view-port>`.
 5. In Cloudflare, point the public hostname only to `{LOCAL_WEB_VIEW_TARGET}`.
 6. Do not map the hostname, tunnel, or any fallback route to `admin-gui`, `/api/status`, scheduler, settings, DB, `.env`, Telegram, or shell/control endpoints.
 7. Keep Cloudflare Access or an equivalent allow-list enabled before sharing the URL.

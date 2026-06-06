@@ -33,7 +33,7 @@ function Invoke-CloseoutPythonStep {
 
 Write-Output "Next-phase closeout verification"
 Write-Output "- read-only by default; no Telegram send, scheduler registration, Cloudflare configuration, or live KRX fetch is requested."
-Write-Output "- do not expose admin-gui; the external candidate remains the read-only web-view on 127.0.0.1:8780."
+Write-Output "- do not expose admin-gui; the external candidate remains the read-only loopback web-view."
 Write-Output "- access-code values and other secrets must not be printed."
 Write-Output "- StockMonitor-Shutdown should remain unregistered for mini-PC always-on operation."
 Write-Output "- use -RecordStartupFallbackSuccess only after a real Windows logon/reboot started web-view through the Startup shortcut."

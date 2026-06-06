@@ -250,7 +250,7 @@ External access candidates are intentionally limited for now:
 | Candidate | Intended use | Status |
 | --- | --- | --- |
 | Tailscale | Owner-only remote access to the mini PC and local services. | Planning candidate; useful for personal remote operation, but less convenient for friends because they need onboarding. |
-| Cloudflare Tunnel | Friend-facing URL candidate for the read-only `web-view` only. | Historical provider smoke passed for `<external web-view provider URL>`, but current main-PC provider smoke is not recorded. Keep any provider mapped only to `127.0.0.1:8780` or the chosen `web-view` loopback port and do not share `admin-gui`. |
+| Cloudflare Tunnel | Friend-facing URL candidate for the read-only `web-view` only. | Historical provider smoke passed for `<external web-view provider URL>`, but current main-PC provider smoke is not recorded. Keep any provider mapped only to `<loopback web-view target>` or the chosen `web-view` loopback port and do not share `admin-gui`. |
 
 Avoid direct router port forwarding for this project unless a later security review explicitly changes the posture.
 
@@ -269,7 +269,7 @@ Why this matters: older docs and early notes still contain historical times such
 | `StockMonitor-KrxMentionedFlowBackfill` | `16:00` KST on Korean business days; fills recent 31-day `[12009]` stock investor flow for stocks mentioned in that day's reports, newest dates first, default 300-call cap |
 | `StockMonitor-KrxFlowLoginReminder` | Optional `16:45` KST validation reminder; currently disabled unless a manual KRX flow validation day needs it |
 | `StockMonitor-TelegramCommands` | hidden worker from `08:00` to `16:30` KST on Korean business days |
-| `StockMonitor-WebViewHourlyRestart` | hourly from `00:05` KST; restarts only the read-only loopback `web-view` target on `127.0.0.1:8780` |
+| `StockMonitor-WebViewHourlyRestart` | hourly from `00:05` KST; restarts only the read-only loopback `web-view` target on `<loopback web-view target>` |
 | `StockMonitor-Shutdown` | `17:10` KST during desktop live validation, guarded by business-day logic |
 
 Work items:
@@ -376,7 +376,7 @@ It must not be implemented as a read-only mode on `admin-gui`.
 Current command:
 
 ```powershell
-python -m stock_monitor web-view --host 127.0.0.1 --port 8780
+python -m stock_monitor web-view --host <loopback-host> --port <web-view-port>
 ```
 
 Current screens:
@@ -533,7 +533,7 @@ Next practical sequence, updated after the `2026-05-29` main-PC readiness refres
 | KRX API rate safety | Backfill must be reviewed with `--dry-run`, real calls require `--confirm`, default batches are capped at 5 business dates, endpoint requests sleep by default, and larger batches require explicit `--allow-large-batch`. |
 | Web-view V1 | Shared web-view exposes read-only data only. |
 | Data quality | Raw/source, parsed/storage, aggregate, and display contracts stay documented and preserved across Telegram, admin-gui, and web-view; missing markers are excluded from aggregate values but remain visible in detail views as missing states. |
-| External sharing | Cloudflare Tunnel targets only `127.0.0.1:8780` or the chosen `web-view` port; `admin-gui`, DB, `.env`, Telegram, and scheduler/control endpoints are not exposed. |
+| External sharing | Cloudflare Tunnel targets only `<loopback web-view target>` or the chosen `web-view` port; `admin-gui`, DB, `.env`, Telegram, and scheduler/control endpoints are not exposed. |
 | Mini PC migration | Docker is not required for the current Windows N100 path; direct Python + Task Scheduler remains the target unless the host changes to Linux/VPS. |
 
 

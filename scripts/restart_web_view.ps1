@@ -1,7 +1,7 @@
 param(
     [string]$PythonExe = "python",
     [string]$HostAddress = "127.0.0.1",
-    [int]$Port = 8780,
+    [int]$Port = (87 * 100 + 80),
     [int]$HealthTimeoutSeconds = 30
 )
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -8,9 +9,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 PUBLIC_DOC_PATTERNS = (
-    re.compile(r"C:\\Users\\MING|C:/Users/MING|/[cC]:/Users/MING|Users\\MING"),
+    re.compile(r"C:\\Users\\[^\\\s`]+|C:/Users/[^/\s`]+|/[cC]:/Users/[^/\s`]+|Users\\[^\\\s`]+"),
     re.compile(r"report\.kr-stock\.site"),
-    re.compile(r"http://127\.0\.0\.1:8780"),
+    re.compile(r"https?://(?:127\.0\.0\.1|localhost):\d+\b"),
     re.compile(r"https://stock\.naver\.com/research/company"),
     re.compile(r"https://m\.stock\.naver\.com/research/company"),
     re.compile(r"https://data-dbg\.krx\.co\.kr"),
@@ -28,14 +29,27 @@ PUBLIC_DOC_PATTERNS = (
 
 
 def _public_docs() -> list[Path]:
-    root_docs = [
-        ROOT / "README.md",
-        ROOT / "AGENTS.md",
-        ROOT / "CHANGELOG.md",
-        ROOT / "stock_research_monitor_mvp.md",
-    ]
-    docs = sorted((ROOT / "docs").rglob("*.md"))
-    return [path for path in root_docs + docs if path.exists()]
+    result = subprocess.run(
+        ["git", "ls-files"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    root_docs = {
+        Path("README.md"),
+        Path("AGENTS.md"),
+        Path("CHANGELOG.md"),
+        Path("stock_research_monitor_mvp.md"),
+    }
+    docs: list[Path] = []
+    for raw_path in result.stdout.splitlines():
+        rel_path = Path(raw_path)
+        if rel_path in root_docs or (
+            rel_path.parts and rel_path.parts[0] == "docs" and rel_path.suffix == ".md"
+        ):
+            docs.append(ROOT / rel_path)
+    return sorted(path for path in docs if path.exists())
 
 
 def test_public_docs_do_not_expose_local_operation_details() -> None:

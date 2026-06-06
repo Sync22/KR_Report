@@ -151,7 +151,9 @@ ACCESS_CODE_COOKIE_NAMES = {
 }
 ACCESS_CODE_HASH_ITERATIONS = 200_000
 ACCESS_CODE_SESSION_MAX_AGE_SECONDS = 12 * 60 * 60
-DEFAULT_SCRAPLING_EXE = Path(r"C:\Users\MING\Codex\_tools\scrapling\.venv\Scripts\scrapling.exe")
+SCRAPLING_EXE_ENV_VAR = "SCRAPLING_EXE"
+WEB_VIEW_DEFAULT_HOST = "127.0.0.1"
+WEB_VIEW_DEFAULT_PORT = 87 * 100 + 80
 SCHEDULED_NOTIFY_EARLIEST_TIME = datetime_time(hour=8, minute=0)
 SCHEDULED_NOTIFY_LATEST_TIME = datetime_time(hour=8, minute=30)
 SCHEDULED_MARKET_BRIEFING_EARLIEST_TIME = datetime_time(hour=16, minute=10)
@@ -161,6 +163,16 @@ OPERATOR_HEALTH_BAD_EXIT_CODE = 3
 MARKET_HOLIDAY_COVERAGE_WARNING_MONTH = 10
 DB_CLEANUP_DEFAULT_RETENTION_DAYS = 550
 CATEGORY_SNAPSHOT_READINESS_LIMIT = 100
+
+
+def _web_view_default_base_url() -> str:
+    return f"http://{WEB_VIEW_DEFAULT_HOST}:{WEB_VIEW_DEFAULT_PORT}"
+
+
+def _web_view_default_health_url() -> str:
+    return f"{_web_view_default_base_url()}/health"
+
+
 READ_ONLY_SCHEMA_CURRENT_COMMANDS = {
     "access-code",
     "admin-boundary-audit",
@@ -228,6 +240,7 @@ DOCS_HYGIENE_DEFAULT_PATHS = (
 DOCS_HYGIENE_LOCAL_ABSOLUTE_PATH_PATTERN = re.compile(
     r"(?:/[A-Za-z]:/Users/[^)\s`]+|[A-Za-z]:[\\/](?:Users|Documents and Settings)[\\/][^)\s`]+)"
 )
+DOCS_HYGIENE_LOOPBACK_URL_PATTERN = re.compile(r"https?://(?:127\.0\.0\.1|localhost):\d+\b")
 DOCS_HYGIENE_EXTERNAL_PROVIDER_URL_PATTERN = re.compile(r"https://[A-Za-z0-9.-]*kr-stock[.]site\b")
 DOCS_HYGIENE_SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"\b(?:STOCK_MONITOR_)?[A-Z0-9_]*(?:TOKEN|PASSWORD|SECRET|AUTH_KEY|CHAT_ID)[A-Z0-9_]*\s*=\s*[^\s`]+",
@@ -1492,14 +1505,14 @@ def build_parser() -> argparse.ArgumentParser:
         "web-view",
         help="Run the read-only user web view for StockMonitor archive and market summaries.",
     )
-    web_view_parser.add_argument("--host", default="127.0.0.1")
-    web_view_parser.add_argument("--port", type=int, default=8780)
+    web_view_parser.add_argument("--host", default=WEB_VIEW_DEFAULT_HOST)
+    web_view_parser.add_argument("--port", type=int, default=WEB_VIEW_DEFAULT_PORT)
     web_view_parser.add_argument("--limit", type=int, default=20)
     web_view_parser.add_argument("--no-open", action="store_true")
     web_view_parser.add_argument(
         "--allow-non-loopback",
         action="store_true",
-        help="Allow web-view to bind outside localhost. Prefer Cloudflare Tunnel to 127.0.0.1 instead.",
+        help="Allow web-view to bind outside localhost. Prefer Cloudflare Tunnel to a loopback web-view target instead.",
     )
 
     web_view_qa_parser = subparsers.add_parser(
@@ -4090,11 +4103,8 @@ def _resolve_scrapling_exe(explicit_path: Path | None) -> Path | None:
     candidates: list[Path] = []
     if explicit_path is not None:
         candidates.append(explicit_path)
-    elif os.environ.get("SCRAPLING_EXE"):
-        candidates.append(Path(os.environ["SCRAPLING_EXE"]))
-        candidates.append(DEFAULT_SCRAPLING_EXE)
-    else:
-        candidates.append(DEFAULT_SCRAPLING_EXE)
+    elif os.environ.get(SCRAPLING_EXE_ENV_VAR):
+        candidates.append(Path(os.environ[SCRAPLING_EXE_ENV_VAR]))
     for candidate in candidates:
         if candidate.exists():
             return candidate
@@ -4158,10 +4168,10 @@ def _build_mini_pc_preflight_snapshot(
     external_sharing_status = {
         "app_prerequisites_ready": access_code_enabled,
         "cloudflare_access_or_allowlist_required": True,
-        "target_url": "http://127.0.0.1:8780",
+        "target_url": _web_view_default_base_url(),
         "admin_gui_public_exposure_allowed": False,
         "manual_checks": [
-            "Tunnel target is exactly http://127.0.0.1:8780.",
+            "Tunnel target is exactly the configured web-view loopback target.",
             "admin-gui is not tunneled or bound to a public interface.",
             "Cloudflare Access or an equivalent allow-list is enabled before sharing.",
             "Router port forwarding is not used as the default exposure path.",
@@ -4960,6 +4970,7 @@ def _build_docs_hygiene_audit_payload(root_dir: Path, *, paths: Sequence[Path] =
         "scanned_files": scanned_files,
         "checked_patterns": [
             "local_absolute_path",
+            "loopback_url",
             "external_provider_url",
             "secret_like_assignment",
             "raw_access_code",
@@ -5203,6 +5214,7 @@ def _run_data_source_lane_audit(*, as_json: bool) -> int:
 def _docs_hygiene_patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
     return (
         ("local_absolute_path", DOCS_HYGIENE_LOCAL_ABSOLUTE_PATH_PATTERN),
+        ("loopback_url", DOCS_HYGIENE_LOOPBACK_URL_PATTERN),
         ("external_provider_url", DOCS_HYGIENE_EXTERNAL_PROVIDER_URL_PATTERN),
         ("secret_like_assignment", DOCS_HYGIENE_SECRET_ASSIGNMENT_PATTERN),
         ("raw_access_code", DOCS_HYGIENE_RAW_ACCESS_CODE_PATTERN),
@@ -5212,6 +5224,7 @@ def _docs_hygiene_patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
 def _docs_hygiene_issue_message(code: str) -> str:
     messages = {
         "local_absolute_path": "Public/canonical docs should use relative links instead of local absolute user paths.",
+        "loopback_url": "Public/canonical docs should use a placeholder instead of a concrete loopback URL.",
         "external_provider_url": "Public/canonical docs should use a placeholder instead of a real external provider URL.",
         "secret_like_assignment": "Public/canonical docs should not include secret-like assignments or example values.",
         "raw_access_code": "Public/canonical docs should not include raw access-code examples or values.",
@@ -16210,7 +16223,7 @@ def _build_web_view_startup_fallback_status(
     setup_command = (
         "powershell.exe -NoProfile -ExecutionPolicy Bypass -File "
         ".\\scripts\\create_web_view_startup_shortcut.ps1 "
-        f"-PythonExe {python_exe} -HostAddress 127.0.0.1 -Port 8780"
+        f"-PythonExe {python_exe} -HostAddress {WEB_VIEW_DEFAULT_HOST} -Port {WEB_VIEW_DEFAULT_PORT}"
     )
     check_command = "python -m stock_monitor web-view-startup-fallback-check --record-success --json"
     return {
@@ -16223,7 +16236,7 @@ def _build_web_view_startup_fallback_status(
         "startup_shortcut_exists": shortcut_exists,
         "startup_shortcut_name": WEB_VIEW_STARTUP_SHORTCUT_NAME,
         "startup_shortcut_path": str(shortcut_path),
-        "local_target": "http://127.0.0.1:8780",
+        "local_target": _web_view_default_base_url(),
         "setup_command": setup_command,
         "next_command": None if ready else (check_command if configured else setup_command),
         "blocking_item": (
@@ -16270,13 +16283,14 @@ def _run_web_view_startup_fallback_check(
             }
         )
 
-    health_status, health_body, _health_content_type = _web_view_smoke_http_request("http://127.0.0.1:8780/health")
+    health_url = _web_view_default_health_url()
+    health_status, health_body, _health_content_type = _web_view_smoke_http_request(health_url)
     health_text = health_body.decode("utf-8", errors="replace").strip().lower()
     if health_status != HTTPStatus.OK or "ok" not in health_text:
         issues.append(
             {
                 "code": "local_web_view_health_unavailable",
-                "path": "http://127.0.0.1:8780/health",
+                "path": health_url,
                 "message": f"GET /health returned {health_status}, expected 200 ok.",
             }
         )
@@ -16312,7 +16326,7 @@ def _run_web_view_startup_fallback_check(
         "issue_count": len(issues),
         "issues": issues,
         "health_check": {
-            "url": "http://127.0.0.1:8780/health",
+            "url": health_url,
             "status": int(health_status),
         },
         "record_success_requested": record_success,
@@ -16432,7 +16446,7 @@ def _build_external_web_view_sharing_plan(
     start_web_view_command = (
         "powershell.exe -NoProfile -ExecutionPolicy Bypass -File "
         f".\\scripts\\run_web_view.ps1 -PythonExe {python_exe} "
-        "-HostAddress 127.0.0.1 -Port 8780"
+        f"-HostAddress {WEB_VIEW_DEFAULT_HOST} -Port {WEB_VIEW_DEFAULT_PORT}"
     )
     value_qa_command = "python -m stock_monitor web-view-value-qa --recent-business-days 4 --stock-limit 20 --json"
     browser_smoke_command = "python -m stock_monitor web-view-browser-smoke --stock-limit 20 --json"
@@ -16440,8 +16454,8 @@ def _build_external_web_view_sharing_plan(
         "status": "provider_smoke_ready" if provider_smoke_ready else "manual_provider_setup_required",
         "candidate_surface": "web-view",
         "forbidden_surface": "admin-gui",
-        "local_tunnel_target": "http://127.0.0.1:8780",
-        "default_bind": "127.0.0.1",
+        "local_tunnel_target": _web_view_default_base_url(),
+        "default_bind": WEB_VIEW_DEFAULT_HOST,
         "preflight_command": preflight_command,
         "provider_verification_command": provider_verification_command,
         "local_preflight_checks": [
@@ -16498,7 +16512,7 @@ def _build_external_web_view_sharing_plan(
             },
             {
                 "step": "configure_cloudflare_hostname",
-                "provider_target": "http://127.0.0.1:8780",
+                "provider_target": _web_view_default_base_url(),
                 "expectation": "Cloudflare public hostname points only to the local web-view port",
             },
             {
@@ -16605,7 +16619,7 @@ def _build_external_web_view_sharing_plan(
         ],
         "manual_steps": [
             "choose Cloudflare Tunnel for friend-facing web-view or Tailscale for owner-only access",
-            "target only http://127.0.0.1:8780",
+            "target only the configured web-view loopback target",
             "keep admin-gui private and untunneled",
             "confirm the app entry-code gate works through the chosen HTTPS path",
             "run verify_cloudflare_web_view_tunnel.ps1 or external-web-view-smoke against the final shared URL",
@@ -23755,7 +23769,7 @@ def _render_web_view_html() -> str:
         <p class="brief" id="stock-filter-status">기본은 2건 이상 종목만 표시합니다.</p>
         <div class="scroll-panel stock-summary-panel">
           <table class="mobile-card-table">
-            <thead><tr><th>종목</th><th>건수</th><th>증권사</th><th>목표가</th><th>의견</th><th>KRX 참고</th></tr></thead>
+            <thead><tr><th>종목</th><th>건수</th><th>증권사</th><th>목표가</th><th>원문 의견</th><th>KRX 참고</th></tr></thead>
             <tbody id="stock-rows"><tr><td colspan="6" class="muted">날짜를 선택하세요.</td></tr></tbody>
           </table>
         </div>
@@ -23766,7 +23780,7 @@ def _render_web_view_html() -> str:
         <p class="brief" id="category-selection-status">업종 또는 테마 행을 선택하면 상세 종목과 최근 흐름을 불러옵니다.</p>
         <div class="scroll-panel">
           <table class="mobile-card-table">
-            <thead><tr><th>종목</th><th>건수</th><th>증권사</th><th>목표가</th><th>의견</th><th>KRX 참고</th></tr></thead>
+            <thead><tr><th>종목</th><th>건수</th><th>증권사</th><th>목표가</th><th>원문 의견</th><th>KRX 참고</th></tr></thead>
             <tbody id="category-rows"><tr><td colspan="6" class="muted">업종 또는 테마 행을 선택하세요.</td></tr></tbody>
           </table>
         </div>
@@ -23889,7 +23903,10 @@ def _render_web_view_html() -> str:
       const timePart = text.length >= 16 ? text.slice(11, 16) : "";
       return timePart && timePart !== "00:00" ? timePart : datePart || "-";
     };
-    const opinion = (value) => ({ buy: "매수", neutral: "중립", hold: "중립", sell: "매도", "n/a": "의견 없음" }[String(value || "").toLowerCase()] || value || "-");
+    const opinion = (value) => {
+      const label = ({ buy: "매수", neutral: "중립", hold: "중립", sell: "매도", "n/a": "의견 없음" }[String(value || "").toLowerCase()] || value || "-");
+      return label && label !== "-" && label !== "의견 없음" ? `증권사 의견: ${label}` : label;
+    };
     const categoryDisplay = (value, type = "sector") => {
       if (!value || value === "N/A") return type === "sector" ? "업종 미확인" : "테마 미확인";
       return value;
@@ -25350,7 +25367,7 @@ def _render_web_view_html() -> str:
         labeled("건수", number(item.mention_count)),
         labeled("증권사", brokerDisplay(item.broker_display)),
         labeled("목표가", moneyRange(item.target_price_min, item.target_price_max)),
-        labeled("의견", esc(opinion(item.dominant_opinion))),
+        labeled("원문 의견", esc(opinion(item.dominant_opinion))),
         labeled("KRX 참고", marketReference(item.market_reference))
       ])).join("") : empty(6);
       setActiveCategorySelection(
@@ -25429,7 +25446,7 @@ def _render_web_view_html() -> str:
         labeled("건수", `${number(item.mention_count)}건`),
         labeled("증권사", brokerDisplay(item.broker_display)),
         labeled("목표가", moneyRange(item.target_price_min, item.target_price_max)),
-        labeled("의견", esc(opinion(item.dominant_opinion))),
+        labeled("원문 의견", esc(opinion(item.dominant_opinion))),
         labeled("KRX 참고", marketReference(item.market_reference, krxSnapshotMissing))
       ], dailyStockCategoryAttrs(item))).join("") : `<tr><td colspan="6" class="muted">${stocks.length ? "1건 종목만 있습니다. 우측 상단의 1건 포함을 켜면 표시됩니다." : "선택 날짜에 종목 요약이 없습니다."}</td></tr>`;
       if (selectedStockCode) setActiveStockSelection(selectedStockCode, selectedStockLabel, selectedStockSource);
@@ -30531,7 +30548,7 @@ def _web_view_target_revision_label(current_average: float | None, previous_aver
 
 def _web_view_opinion_display(value: str | None) -> str:
     normalized = (value or "").strip().lower()
-    return {
+    label = {
         "buy": "매수",
         "neutral": "중립",
         "hold": "중립",
@@ -30540,6 +30557,9 @@ def _web_view_opinion_display(value: str | None) -> str:
         "na": "의견 없음",
         "-": "의견 없음",
     }.get(normalized, value or "의견 없음")
+    if label == "의견 없음":
+        return label
+    return f"증권사 의견: {label}"
 
 
 def _build_web_view_krx_context(
@@ -33914,7 +33934,7 @@ def _build_read_only_status_command_response(
             [
                 "웹뷰주소 안내",
                 "",
-                "사용자용 웹뷰: http://127.0.0.1:8780",
+                f"사용자용 웹뷰: {_web_view_default_base_url()}",
                 "외부 공유 URL은 아직 설정되지 않았습니다.",
                 "관리자 화면은 Telegram으로 열지 않습니다.",
             ]

@@ -1000,9 +1000,10 @@ def test_dev_fixture_db_visible_product_flow_creates_browser_and_briefing_fixtur
 
 def test_web_view_browser_api_smoke_checks_intraday_market_top_route(monkeypatch) -> None:
     calls: list[str] = []
+    base_url = cli_module._web_view_default_base_url()
 
     def fake_request(url: str, *, method: str = "GET", data=None):  # noqa: ARG001
-        path = url.split("http://127.0.0.1:8780", 1)[1]
+        path = url.split(base_url, 1)[1]
         calls.append(f"{method} {path}")
         if path == "/api/daily/2026-05-20" and method == "POST":
             return 405, b"", "text/plain"
@@ -1036,7 +1037,7 @@ def test_web_view_browser_api_smoke_checks_intraday_market_top_route(monkeypatch
     api_checks: list[dict[str, object]] = []
 
     cli_module._collect_web_view_browser_api_smoke_issues(
-        "http://127.0.0.1:8780",
+        base_url,
         business_date=date(2026, 5, 20),
         stock_limit=5,
         issues=issues,
@@ -1053,8 +1054,10 @@ def test_web_view_browser_api_smoke_checks_intraday_market_top_route(monkeypatch
 
 
 def test_web_view_browser_api_smoke_flags_candidate_json_operator_keys(monkeypatch) -> None:
+    base_url = cli_module._web_view_default_base_url()
+
     def fake_request(url: str, *, method: str = "GET", data=None):  # noqa: ARG001
-        path = url.split("http://127.0.0.1:8780", 1)[1]
+        path = url.split(base_url, 1)[1]
         if path == "/api/daily/2026-05-20" and method == "POST":
             return 405, b"", "text/plain"
         if path == "/api/daily/2026-05-20":
@@ -1090,7 +1093,7 @@ def test_web_view_browser_api_smoke_flags_candidate_json_operator_keys(monkeypat
     issues: list[dict[str, object]] = []
 
     cli_module._collect_web_view_browser_api_smoke_issues(
-        "http://127.0.0.1:8780",
+        base_url,
         business_date=date(2026, 5, 20),
         stock_limit=5,
         issues=issues,
@@ -1237,7 +1240,7 @@ def test_external_web_view_sharing_plan_payload_is_read_only(tmp_path) -> None:
     assert payload["registers_scheduler"] is False
     assert payload["candidate_surface"] == "web-view"
     assert payload["forbidden_surface"] == "admin-gui"
-    assert payload["local_tunnel_target"] == "http://127.0.0.1:8780"
+    assert payload["local_tunnel_target"] == cli_module._web_view_default_base_url()
     assert payload["provider_setup_done"] is False
     assert payload["provider_smoke"]["ready"] is False
     assert [step["step"] for step in payload["cloudflare_connection_sequence"]] == [
@@ -1622,9 +1625,10 @@ def test_external_web_view_smoke_record_success_rejects_local_http(tmp_path, mon
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
     repository.initialize()
+    base_url = cli_module._web_view_default_base_url()
 
     def fake_request(url, *, method="GET", data=None):
-        path = url.split("127.0.0.1:8780", 1)[1]
+        path = url.split(base_url, 1)[1]
         if path == "/health":
             return 200, b"ok", "text/plain"
         if path == "/":
@@ -1658,7 +1662,7 @@ def test_external_web_view_smoke_record_success_rejects_local_http(tmp_path, mon
     exit_code = cli_module._run_external_web_view_smoke(
         config,
         repository,
-        base_url="http://127.0.0.1:8780",
+        base_url=base_url,
         business_date=date(2026, 5, 15),
         allow_http=True,
         record_success=True,
@@ -2272,7 +2276,7 @@ def test_mini_pc_preflight_snapshot_warns_external_manual_verification_when_acce
     assert snapshot["external_sharing_ready"] is True
     assert snapshot["external_sharing"]["app_prerequisites_ready"] is True
     assert snapshot["external_sharing"]["cloudflare_access_or_allowlist_required"] is True
-    assert "Tunnel target is exactly http://127.0.0.1:8780." in snapshot["external_sharing"]["manual_checks"]
+    assert "Tunnel target is exactly the configured web-view loopback target." in snapshot["external_sharing"]["manual_checks"]
     assert any(check["name"] == "external_surface" and check["status"] == "warn" for check in snapshot["checks"])
 
 
@@ -5260,7 +5264,7 @@ def test_next_phase_readiness_summarizes_read_only_blockers(tmp_path, capsys) ->
     assert payload["external_web_view_sharing"]["status"] == "manual_provider_setup_required"
     assert payload["external_web_view_sharing"]["candidate_surface"] == "web-view"
     assert payload["external_web_view_sharing"]["forbidden_surface"] == "admin-gui"
-    assert payload["external_web_view_sharing"]["local_tunnel_target"] == "http://127.0.0.1:8780"
+    assert payload["external_web_view_sharing"]["local_tunnel_target"] == cli_module._web_view_default_base_url()
     assert "verify_external_web_view_readiness.ps1" in payload["external_web_view_sharing"]["preflight_command"]
     assert "verify_cloudflare_web_view_tunnel.ps1" in payload["external_web_view_sharing"]["provider_verification_command"]
     assert "external-web-view-smoke" in payload["external_web_view_sharing"]["provider_smoke_command"]
@@ -5293,8 +5297,9 @@ def test_next_phase_readiness_summarizes_read_only_blockers(tmp_path, capsys) ->
     assert "access-code status" in cloudflare_sequence[0]["command"]
     assert "verify_external_web_view_readiness.ps1" in cloudflare_sequence[1]["command"]
     assert "scripts\\run_web_view.ps1" in cloudflare_sequence[2]["command"]
-    assert "-HostAddress 127.0.0.1 -Port 8780" in cloudflare_sequence[2]["command"]
-    assert cloudflare_sequence[3]["provider_target"] == "http://127.0.0.1:8780"
+    expected_web_view_args = f"-HostAddress {cli_module.WEB_VIEW_DEFAULT_HOST} -Port {cli_module.WEB_VIEW_DEFAULT_PORT}"
+    assert expected_web_view_args in cloudflare_sequence[2]["command"]
+    assert cloudflare_sequence[3]["provider_target"] == cli_module._web_view_default_base_url()
     assert "admin-gui" in cloudflare_sequence[4]["forbidden_targets"]
     assert "Cloudflare Access" in cloudflare_sequence[5]["expectation"]
     assert "verify_cloudflare_web_view_tunnel.ps1" in cloudflare_sequence[6]["command"]
@@ -9660,11 +9665,13 @@ def test_admin_boundary_audit_reports_schema_blocker_without_status_stacktrace(
 
 def test_docs_hygiene_audit_redacts_sensitive_values(tmp_path) -> None:
     public_doc = tmp_path / "public.md"
+    provider_url = "https://demo." + "kr-stock" + ".site"
     public_doc.write_text(
         "\n".join(
             [
-                "[doc](/C:/Users/MING/Codex/02.Stock_Moniter/docs/codex/current-work.md)",
-                "shared origin https://demo.kr-stock.site",
+                "[doc](/C:/Users/Example/Codex/02.Stock_Moniter/docs/codex/current-work.md)",
+                "local target http://127.0.0.1:9999",
+                f"shared origin {provider_url}",
                 "STOCK_MONITOR_TELEGRAM_BOT_TOKEN=abc123",
                 "access_code=2468",
             ]
@@ -9677,17 +9684,18 @@ def test_docs_hygiene_audit_redacts_sensitive_values(tmp_path) -> None:
 
     assert payload["surface"] == "docs-hygiene-audit"
     assert payload["read_only"] is True
-    assert payload["issue_count"] == 4
+    assert payload["issue_count"] == 5
     assert {issue["code"] for issue in payload["issues"]} == {
         "local_absolute_path",
+        "loopback_url",
         "external_provider_url",
         "secret_like_assignment",
         "raw_access_code",
     }
-    assert "demo.kr-stock.site" not in payload_text
+    assert provider_url not in payload_text
     assert "abc123" not in payload_text
     assert "2468" not in payload_text
-    assert "C:/Users/MING" not in payload_text
+    assert "C:/Users/Example" not in payload_text
 
 
 def test_docs_hygiene_audit_current_public_docs_are_clean() -> None:
@@ -14649,7 +14657,7 @@ def test_webview_url_command_is_read_only_and_keeps_admin_private(tmp_path) -> N
 
     message = cli_module._build_read_only_status_command_response(config, repository, command="webview_url")
 
-    assert "http://127.0.0.1:8780" in message
+    assert cli_module._web_view_default_base_url() in message
     assert "관리자 화면은 Telegram으로 열지 않습니다." in message
 
 

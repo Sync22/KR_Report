@@ -36,10 +36,12 @@ Do not use Botasaurus for new source probes by default. Use Scrapling unless the
 
 ## Scrapling global source-probe runtime
 
-Scrapling is installed globally as the preferred active source-probe tool:
+Scrapling is the preferred active source-probe tool. Keep the executable path
+in a local environment variable instead of committing a user-specific absolute
+path:
 
 ```powershell
-C:\Users\MING\Codex\_tools\scrapling\.venv\Scripts\scrapling.exe
+$env:SCRAPLING_EXE = "C:\path\to\scrapling.exe"
 ```
 
 Start with Scrapling when a new or unstable source needs rendered-page extraction, browser-gated checks, or anti-bot-sensitive comparison. Keep probes bounded and record the target, command, observed result, and decision: `probe-only`, `fallback candidate`, or `later integration proposal`.
@@ -49,7 +51,7 @@ For CLI extraction commands, include `--ai-targeted`.
 Safe first probe proposal for Naver stock news source discovery:
 
 ```powershell
-C:\Users\MING\Codex\_tools\scrapling\.venv\Scripts\scrapling.exe extract fetch "https://stock.naver.com/news/mainnews" $env:TEMP\stock-monitor-naver-mainnews.md --ai-targeted --network-idle --wait 1500
+& $env:SCRAPLING_EXE extract fetch "https://stock.naver.com/news/mainnews" $env:TEMP\stock-monitor-naver-mainnews.md --ai-targeted --network-idle --wait 1500
 ```
 
 After reading the temp output, delete it. Do not save provider responses into project data, do not connect Scrapling to DB writes, Telegram, Task Scheduler, `admin-gui`, or public `web-view`, and do not replace stable request/API paths unless a documented probe shows they are insufficient.

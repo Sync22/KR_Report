@@ -55,7 +55,7 @@ function Invoke-CloudflareTunnelStep {
 
 Write-Output "Cloudflare web-view tunnel verification"
 Write-Output "- provider_origin: $providerOrigin"
-Write-Output "- local_tunnel_target_must_be: http://127.0.0.1:8780"
+Write-Output "- local_tunnel_target_must_be: configured loopback web-view target"
 Write-Output "- share only web-view; do not expose admin-gui."
 Write-Output "- keep Cloudflare Access or an equivalent allow-list enabled before sharing."
 

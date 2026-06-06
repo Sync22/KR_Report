@@ -73,7 +73,7 @@ if (-not $SkipBrowserSmoke) {
 
 Write-Output ""
 Write-Output "External web-view readiness checks completed."
-Write-Output "- tunnel_target: http://127.0.0.1:8780"
+Write-Output "- tunnel_target: configured loopback web-view target"
 Write-Output "- share only web-view; do not expose admin-gui."
 Write-Output "- enable Cloudflare Access or an equivalent allow-list before sharing."
 Write-Output "- after provider setup, run: python -m stock_monitor external-web-view-smoke --url https://YOUR-WEB-VIEW-URL --date YYYY-MM-DD --record-success --json"
