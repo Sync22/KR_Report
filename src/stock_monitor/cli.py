@@ -3115,7 +3115,12 @@ def _resolve_x_browser_recap_target(
     normalized_handle = path_parts[0].lstrip("@") if path_parts else None
     if not normalized_handle:
         raise ValueError("profile-url must include a profile handle")
-    return f"https://x.com/{url_parse.quote(normalized_handle)}", normalized_handle
+    normalized_url = f"https://x.com/{url_parse.quote(normalized_handle)}"
+    query_pairs = url_parse.parse_qsl(parsed.query, keep_blank_values=False)
+    lang_values = [value for key, value in query_pairs if key == "lang" and value]
+    if lang_values:
+        normalized_url = f"{normalized_url}?{url_parse.urlencode({'lang': lang_values[-1]})}"
+    return normalized_url, normalized_handle
 
 
 def _parse_x_post_datetime(value: object, timezone: str) -> datetime | None:
@@ -3148,6 +3153,7 @@ def _build_x_browser_recap_payload_from_html(
     parser.feed(rendered_html)
     posts: list[dict[str, object]] = []
     seen_keys: set[str] = set()
+    raw_post_count = len(parser.posts)
     for raw_post in parser.posts:
         published_at = _parse_x_post_datetime(raw_post.get("published_at"), timezone)
         if target_date is not None and (published_at is None or published_at.date() != target_date):
@@ -3170,7 +3176,11 @@ def _build_x_browser_recap_payload_from_html(
             break
     blocked_reason = None
     if not posts:
-        blocked_reason = _detect_x_recap_blocked_reason(rendered_html) or "no_public_posts_found"
+        blocked_reason = (
+            "no_public_posts_found"
+            if raw_post_count
+            else _detect_x_recap_blocked_reason(rendered_html) or "no_public_posts_found"
+        )
     payload: dict[str, object] = {
         "surface": "x-browser-recap-probe",
         "profile_url": profile_url,
@@ -3205,7 +3215,6 @@ def _detect_x_recap_blocked_reason(rendered_html: str) -> str | None:
     login_markers = (
         "sign in to x",
         "log in",
-        "login",
         "로그인",
         "가입하기",
         "sign up",

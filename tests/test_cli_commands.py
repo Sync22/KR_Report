@@ -3450,6 +3450,16 @@ def test_x_browser_recap_probe_parser_accepts_no_login_filters() -> None:
     assert args.format == "json"
 
 
+def test_x_browser_recap_profile_url_preserves_lang_query() -> None:
+    profile_url, handle = cli_module._resolve_x_browser_recap_target(
+        profile_url="https://x.com/admi_alts?lang=ko",
+        handle=None,
+    )
+
+    assert profile_url == "https://x.com/admi_alts?lang=ko"
+    assert handle == "admi_alts"
+
+
 def test_x_browser_recap_extracts_public_posts_from_rendered_html() -> None:
     rendered_html = """
     <main>
@@ -3499,6 +3509,33 @@ def test_x_browser_recap_reports_login_wall_without_writes() -> None:
 
     assert payload["post_count"] == 0
     assert payload["blocked_reason"] == "login_required"
+    assert payload["writes_db"] is False
+    assert payload["sends_telegram"] is False
+
+
+def test_x_browser_recap_reports_no_posts_for_date_without_generic_login_false_positive() -> None:
+    payload = cli_module._build_x_browser_recap_payload_from_html(
+        """
+        <html>
+            <body>
+                <script>window.__route = "login";</script>
+                <span>로그인</span>
+                <article>
+              <a href="/market_reader/status/1001">open</a>
+              <time datetime="2026-06-03T01:20:00.000Z"></time>
+              <div>최근 시장 복기.</div>
+            </article>
+          </body>
+        </html>
+        """,
+        profile_url="https://x.com/market_reader?lang=ko",
+        handle="market_reader",
+        target_date=date(2026, 6, 7),
+        limit=10,
+    )
+
+    assert payload["post_count"] == 0
+    assert payload["blocked_reason"] == "no_public_posts_found"
     assert payload["writes_db"] is False
     assert payload["sends_telegram"] is False
 

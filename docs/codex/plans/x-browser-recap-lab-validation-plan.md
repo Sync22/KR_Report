@@ -32,6 +32,7 @@ Current command properties:
 - no scheduler registration
 - no `admin-gui` or `web-view` connection
 - optional diagnostic screenshot directory only when explicitly passed
+- profile URLs may include a `lang` query such as `?lang=ko`; this is preserved because no-login X rendering can differ by language URL
 
 Workspace note:
 
@@ -101,9 +102,9 @@ Example manual commands:
 
 ```powershell
 $env:PYTHONPATH='C:\Users\MING\Codex\02.Stock_Moniter_x_recap\src'
-python -m stock_monitor x-browser-recap-probe --handle HANDLE --date 2026-06-07 --limit 20 --scrolls 3 --format json
-python -m stock_monitor x-browser-recap-probe --handle HANDLE --date 2026-06-07 --limit 20 --scrolls 3 --format text
-python -m stock_monitor x-browser-recap-probe --handle HANDLE --date 2026-06-07 --limit 20 --scrolls 3 --format json --screenshot-dir data/lab/x_recap/screenshots
+python -m stock_monitor x-browser-recap-probe --profile-url 'https://x.com/HANDLE?lang=ko' --date 2026-06-07 --limit 20 --scrolls 3 --format json
+python -m stock_monitor x-browser-recap-probe --profile-url 'https://x.com/HANDLE?lang=ko' --date 2026-06-07 --limit 20 --scrolls 3 --format text
+python -m stock_monitor x-browser-recap-probe --profile-url 'https://x.com/HANDLE?lang=ko' --date 2026-06-07 --limit 20 --scrolls 3 --format json --screenshot-dir data/lab/x_recap/screenshots
 ```
 
 Lab snapshots, if saved, should not be committed. They may contain third-party post text and should be treated as local review artifacts.
@@ -243,14 +244,14 @@ Run for manual lab evidence after the operator supplies handles:
 
 ```powershell
 $env:PYTHONPATH='C:\Users\MING\Codex\02.Stock_Moniter_x_recap\src'
-python -m stock_monitor x-browser-recap-probe --handle HANDLE --date YYYY-MM-DD --limit 20 --scrolls 3 --format json
+python -m stock_monitor x-browser-recap-probe --profile-url 'https://x.com/HANDLE?lang=ko' --date YYYY-MM-DD --limit 20 --scrolls 3 --format json
 ```
 
 Run with screenshots only when diagnosing source access:
 
 ```powershell
 $env:PYTHONPATH='C:\Users\MING\Codex\02.Stock_Moniter_x_recap\src'
-python -m stock_monitor x-browser-recap-probe --handle HANDLE --date YYYY-MM-DD --limit 20 --scrolls 3 --format json --screenshot-dir data/lab/x_recap/screenshots
+python -m stock_monitor x-browser-recap-probe --profile-url 'https://x.com/HANDLE?lang=ko' --date YYYY-MM-DD --limit 20 --scrolls 3 --format json --screenshot-dir data/lab/x_recap/screenshots
 ```
 
 ## Residual Risks
