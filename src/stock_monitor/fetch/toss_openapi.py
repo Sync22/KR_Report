@@ -13,7 +13,8 @@ from stock_monitor.config import _parse_bool, _read_dotenv
 
 
 TOSS_OPENAPI_BASE_URL = "https://openapi.tossinvest.com"
-_SYMBOL_PATTERN = re.compile(r"^[A-Za-z0-9.\-]+$")
+TOSS_OPENAPI_MAX_RESPONSE_BYTES = 1_048_576
+_SYMBOL_PATTERN = re.compile(r"^\d{6}$")
 _FORBIDDEN_GROUPS = ("account", "asset", "order-info", "order-history", "order")
 _PRICE_FIELDS = frozenset({"symbol", "timestamp", "lastPrice", "currency"})
 _STOCK_FIELDS = frozenset(
@@ -345,7 +346,7 @@ def _build_readonly_params(
     if len(normalized_symbols) > 2:
         raise TossOpenApiSafetyError("The Toss read-only lab probe accepts at most 2 symbols.")
     if any(not _SYMBOL_PATTERN.fullmatch(symbol) for symbol in normalized_symbols):
-        raise TossOpenApiSafetyError("Toss symbols may contain only letters, numbers, '.', or '-'.")
+        raise TossOpenApiSafetyError("The main Toss lab profile accepts only six-digit Korean stock codes.")
     if endpoint.requires_symbols and not normalized_symbols:
         raise TossOpenApiSafetyError(f"Toss endpoint '{endpoint.key}' requires at least one --symbol.")
     if not endpoint.requires_symbols and normalized_symbols:
@@ -499,7 +500,10 @@ def _open_json(
 
 def _decode_json_response(response: object, *, action: str) -> dict[str, object]:
     try:
-        payload = json.loads(response.read().decode("utf-8"))
+        body = response.read(TOSS_OPENAPI_MAX_RESPONSE_BYTES + 1)
+        if len(body) > TOSS_OPENAPI_MAX_RESPONSE_BYTES:
+            raise RuntimeError(f"Toss OpenAPI {action} response exceeded the lab size limit.")
+        payload = json.loads(body.decode("utf-8"))
     except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
         raise RuntimeError(f"Toss OpenAPI {action} returned invalid JSON.") from None
     if not isinstance(payload, dict):

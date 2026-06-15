@@ -74,6 +74,62 @@ def test_format_news_flow_preview_text_includes_draft_and_source_boundaries() ->
     assert "sends_telegram: False" in output
 
 
+def test_news_flow_preview_does_not_match_short_terms_inside_unrelated_words() -> None:
+    content = json.dumps(
+        {
+            "sources": [
+                {
+                    "source_url": "https://example.test/unrelated",
+                    "articles": [
+                        {
+                            "title": "Company said revenue was flat",
+                            "date": "2026-06-01T09:30:00+09:00",
+                            "url": "https://news.example/unrelated-1",
+                            "summary": "The chairman explained a routine quarterly update.",
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    preview = build_news_flow_preview(
+        parse_news_flow_json(content, source_urls=("https://example.test/unrelated",))
+    )
+
+    assert preview.sector_themes == []
+    assert preview.key_issues == []
+    assert preview.caution_signals == []
+
+
+def test_news_flow_preview_ignores_low_signal_notice_articles_for_topics() -> None:
+    content = json.dumps(
+        {
+            "sources": [
+                {
+                    "source_url": "https://example.test/notices",
+                    "articles": [
+                        {
+                            "title": "Correction: rate chart source",
+                            "date": "2026-06-01T09:30:00+09:00",
+                            "url": "https://news.example/notice-1",
+                            "summary": "The inflation and yield chart attribution was corrected.",
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    preview = build_news_flow_preview(
+        parse_news_flow_json(content, source_urls=("https://example.test/notices",))
+    )
+
+    assert preview.sector_themes == []
+    assert preview.key_issues == []
+    assert preview.caution_signals == []
+
+
 def test_news_flow_preview_detects_korean_theme_and_caution_terms() -> None:
     content = json.dumps(
         {

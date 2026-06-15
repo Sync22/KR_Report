@@ -7,9 +7,7 @@ client credentials have been issued.
 
 It does not approve account, asset, order-info, order-history, order creation,
 order modification, order cancellation, production DB writes, scheduler,
-Telegram, `admin-gui`, or default/public `web-view` integration. The only
-approved visual integration in this runbook is the explicit loopback-only
-top-2 lab preview described below.
+Telegram, `admin-gui`, or any `web-view` integration in main.
 
 The active implementation remains a manual lab CLI:
 
@@ -164,8 +162,7 @@ No account header, account/asset/order endpoint, DB write, scheduler, Telegram,
 | `stocks` / `005930` | Succeeded; `STOCK` limit header reported `5` |
 | `market-calendar/KR` | Succeeded; `MARKET_INFO` limit header reported `3` |
 | `prices` / `005930` after KR market close | Succeeded; provider timestamp remained at the final after-market time |
-| `prices` / `AAPL` during US market hours | Six samples changed provider timestamp and price across consecutive requests |
-| `AAPL` observed request latency | Approximately `144-153ms` per request |
+| Historical separate-lab US probe | `AAPL` was used only for early provider validation; the main manual profile now accepts six-digit Korean stock codes only. |
 | `MARKET_DATA` limit header | Reported `10`; requests were paced below the limit |
 | Post-check state | Local `LIVE_ENABLED` returned to `false` |
 
@@ -174,6 +171,10 @@ values during an active market session. It does not approve continuous polling,
 storage, public projection, account access, or execution.
 
 ## Integrated Web-View Lab Preview
+
+This section records the separate Toss lab branch experiment only. It is not
+implemented or approved in main, and its commands/tests apply only on that lab
+branch until the lab-to-web-view policy is explicitly changed.
 
 The optional visual test mode adds Toss current-price references directly to
 the existing top-two `오늘의 우선순위` rows without changing the default public

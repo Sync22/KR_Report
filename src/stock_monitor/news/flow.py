@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -53,6 +54,17 @@ CAUTION_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Supply disruption", ("disruption", "delay", "shortage", "차질", "지연", "부족")),
     ("Legal/dispute", ("lawsuit", "dispute", "litigation", "소송", "분쟁")),
     ("Macro pressure", ("rate", "yield", "fx", "inflation", "금리", "환율", "물가")),
+)
+
+LOW_SIGNAL_TITLE_MARKERS = (
+    "바로잡습니다",
+    "[인사]",
+    "[경제계 인사]",
+    "[부고]",
+    "[알림]",
+    "correction",
+    "appointments",
+    "personnel",
 )
 
 DRAFT_LABELS = {
@@ -470,6 +482,8 @@ def _rank_stock_mentions(articles: list[NewsFlowArticle]) -> list[NewsFlowStockM
     first_seen: dict[str, int] = {}
     rule_order = {name: order for order, (name, _aliases) in enumerate(COMPANY_RULES)}
     for index, article in enumerate(articles):
+        if _is_low_signal_flow_article(article):
+            continue
         text = article.text().casefold()
         for name, aliases in COMPANY_RULES:
             if not any(alias.casefold() in text for alias in aliases):
@@ -503,9 +517,11 @@ def _rank_topics(
     titles: dict[str, list[str]] = defaultdict(list)
     first_seen: dict[str, int] = {}
     for index, article in enumerate(articles):
+        if _is_low_signal_flow_article(article):
+            continue
         text = article.text().casefold()
         for label, terms in rules:
-            if not any(term.casefold() in text for term in terms):
+            if not any(_contains_topic_term(text, term) for term in terms):
                 continue
             counts[label] += 1
             source_urls[label].add(article.source_page_url)
@@ -525,6 +541,24 @@ def _rank_topics(
         )
         for label in ranked_labels[:8]
     ]
+
+
+def _is_low_signal_flow_article(article: NewsFlowArticle) -> bool:
+    title = article.title.casefold().strip()
+    return any(marker.casefold() in title for marker in LOW_SIGNAL_TITLE_MARKERS)
+
+
+def _contains_topic_term(text: str, term: str) -> bool:
+    normalized_term = term.casefold().strip()
+    if not normalized_term:
+        return False
+    if _is_ascii_word_phrase(normalized_term):
+        return re.search(rf"(?<![a-z0-9]){re.escape(normalized_term)}(?![a-z0-9])", text) is not None
+    return normalized_term in text
+
+
+def _is_ascii_word_phrase(value: str) -> bool:
+    return all(char.isascii() and (char.isalnum() or char.isspace()) for char in value)
 
 
 def _market_mood(
