@@ -79,6 +79,11 @@ from stock_monitor.fetch.naver_stock_theme import (
     fetch_stock_industry_memberships,
     fetch_stock_theme_memberships,
 )
+from stock_monitor.fetch.toss_openapi import (
+    TossOpenApiLabConfig,
+    build_toss_readonly_probe_plan,
+    run_toss_readonly_probe,
+)
 from stock_monitor.web_perf import (
     ApiPerfLogger,
     RequestMetrics,
@@ -198,6 +203,7 @@ READ_ONLY_SCHEMA_CURRENT_COMMANDS = {
     "market-briefing-readiness",
     "market-day-observation",
     "mini-pc-preflight",
+    "news-flow-preview",
     "news-intelligence-daily-brief",
     "news-intelligence-observations",
     "next-phase-readiness",
@@ -462,6 +468,13 @@ def build_parser() -> argparse.ArgumentParser:
     news_preview_parser.add_argument("--scrapling-exe", type=Path)
     news_preview_parser.add_argument("--db-path", type=Path)
     news_preview_parser.add_argument("--save-observation", action="store_true")
+    news_flow_parser = subparsers.add_parser(
+        "news-flow-preview",
+        help="Preview the article flow from operator-provided news source URLs using a fixture.",
+    )
+    news_flow_parser.add_argument("--source-url", action="append", required=True)
+    news_flow_parser.add_argument("--fixture", type=Path, required=True)
+    news_flow_parser.add_argument("--format", choices=("text", "json"), default="text")
     news_observations_parser = subparsers.add_parser(
         "news-intelligence-observations",
         help="Read saved operator-only news intelligence observations as JSON.",
@@ -1501,6 +1514,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     data_source_lane_audit_parser.add_argument("--json", action="store_true")
 
+    toss_openapi_probe_parser = subparsers.add_parser(
+        "toss-openapi-readonly-probe",
+        help="Plan or explicitly run a bounded Toss OpenAPI market-reference lab probe.",
+    )
+    toss_openapi_probe_parser.add_argument(
+        "--endpoint",
+        default="stocks",
+        help="Allowed read-only lab endpoint: stocks, market-calendar-kr, or prices.",
+    )
+    toss_openapi_probe_parser.add_argument(
+        "--symbol",
+        dest="symbols",
+        action="append",
+        default=[],
+        help="Stock symbol. Can be repeated up to 2 times for stocks or prices.",
+    )
+    toss_openapi_probe_parser.add_argument("--date", type=date.fromisoformat)
+    toss_openapi_probe_parser.add_argument("--live", action="store_true")
+    toss_openapi_probe_parser.add_argument("--confirm-token-reissue", action="store_true")
+    toss_openapi_probe_parser.add_argument("--json", action="store_true")
+
     web_view_parser = subparsers.add_parser(
         "web-view",
         help="Run the read-only user web view for StockMonitor archive and market summaries.",
@@ -1844,6 +1878,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "news-intelligence-preview":
         return _run_news_intelligence_preview(args)
+    if args.command == "news-flow-preview":
+        return _run_news_flow_preview(args)
     if args.command == "news-intelligence-observations":
         return _run_news_intelligence_observations(args)
     if args.command == "news-intelligence-daily-brief":
@@ -1863,6 +1899,15 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "data-source-lane-audit":
         return _run_data_source_lane_audit(as_json=args.json)
+    if args.command == "toss-openapi-readonly-probe":
+        return _run_toss_openapi_readonly_probe(
+            endpoint_selector=args.endpoint,
+            symbols=tuple(args.symbols),
+            query_date=args.date,
+            live=args.live,
+            confirm_token_reissue=args.confirm_token_reissue,
+            as_json=args.json,
+        )
 
     config = RuntimeConfig.from_env(headless=not getattr(args, "headed", False))
     config.ensure_runtime_dirs()
@@ -2775,6 +2820,72 @@ def _run_read_only_schema_not_current_report(
     for item in payload["requires_separate_approval"]:
         print(f"  - {item}")
     return 1
+
+
+def _run_news_flow_preview(args: argparse.Namespace) -> int:
+    from stock_monitor.news.flow import (
+        build_news_flow_preview,
+        format_news_flow_preview_text,
+        parse_news_flow_json,
+    )
+
+    source_urls = tuple(args.source_url or ())
+    try:
+        fixture_text = args.fixture.read_text(encoding="utf-8")
+        collection = parse_news_flow_json(fixture_text, source_urls=source_urls)
+        preview = build_news_flow_preview(collection)
+    except Exception as exc:
+        payload = _news_flow_preview_error_payload(
+            source_urls=source_urls,
+            fixture=args.fixture,
+            error=str(exc) or exc.__class__.__name__,
+        )
+        if args.format == "json":
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(_format_news_flow_preview_error_text(payload), end="")
+        return 1
+
+    if args.format == "json":
+        print(json.dumps(preview.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        print(format_news_flow_preview_text(preview), end="")
+    return 0
+
+
+def _news_flow_preview_error_payload(
+    *,
+    source_urls: tuple[str, ...],
+    fixture: Path,
+    error: str,
+) -> dict[str, object]:
+    return {
+        "surface": "news-flow-preview",
+        "operator_only": True,
+        "public_safe": False,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "connects_web_view": False,
+        "source_urls": list(source_urls),
+        "fixture": str(fixture),
+        "error": error,
+    }
+
+
+def _format_news_flow_preview_error_text(payload: dict[str, object]) -> str:
+    return "\n".join(
+        [
+            "News flow preview",
+            f"error: {payload.get('error')}",
+            "live_fetch: False",
+            "writes_db: False",
+            "sends_telegram: False",
+            "registers_scheduler: False",
+            "connects_web_view: False",
+        ]
+    ) + "\n"
 
 
 def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
@@ -5099,10 +5210,10 @@ def _build_data_source_lane_audit_payload() -> dict[str, object]:
         {
             "key": "toss_openapi",
             "label": "Toss OpenAPI",
-            "classification": "hold",
+            "classification": "lab",
             "source": "toss_openapi",
-            "runtime_status": "read_only_lab_contract_only",
-            "data_scope": "official_docs_inventory_and_readonly_lab_contract",
+            "runtime_status": "bounded_postkey_readonly_probe_disabled_by_default",
+            "data_scope": "stocks_market_calendar_kr_prices_only",
             "freshness_surface_keys": ["toss_openapi"],
             "read_only": True,
             "live_fetch": False,
@@ -5112,14 +5223,15 @@ def _build_data_source_lane_audit_payload() -> dict[str, object]:
             "registers_scheduler": False,
             "connects_admin_gui": False,
             "connects_web_view": False,
+            "requires_live_flag": True,
+            "requires_env_opt_in": True,
             "forbidden_runtime_groups": [
-                "oauth_token_call",
                 "account_or_asset_read",
                 "order_create_modify_cancel",
                 "production_db_write",
                 "telegram_scheduler_or_public_surface",
             ],
-            "notice": "No Toss runtime call is connected to dev/main output until explicit approval.",
+            "notice": "Manual read-only lab probe only; no public surface, DB, scheduler, Telegram, or admin connection.",
         },
         {
             "key": "x_public_recap",
@@ -5209,6 +5321,60 @@ def _run_data_source_lane_audit(*, as_json: bool) -> int:
     for command in payload["verification_commands"]:
         print(f"  - {command}")
     return 0 if payload["ready"] else 1
+
+
+def _run_toss_openapi_readonly_probe(
+    *,
+    endpoint_selector: str,
+    symbols: tuple[str, ...],
+    query_date: date | None,
+    live: bool,
+    confirm_token_reissue: bool,
+    as_json: bool,
+) -> int:
+    plan = build_toss_readonly_probe_plan(
+        endpoint_selector=endpoint_selector,
+        symbols=symbols,
+        query_date=query_date,
+    )
+    if not live:
+        payload = plan
+    else:
+        if not confirm_token_reissue:
+            raise RuntimeError("Pass --confirm-token-reissue before using --live.")
+        config = TossOpenApiLabConfig.from_env()
+        if not config.live_enabled:
+            raise RuntimeError("Set STOCK_MONITOR_TOSS_OPENAPI_LIVE_ENABLED=true before using --live.")
+        if not config.client_id or not config.client_secret:
+            raise RuntimeError(
+                "Set STOCK_MONITOR_TOSS_OPENAPI_CLIENT_ID and "
+                "STOCK_MONITOR_TOSS_OPENAPI_CLIENT_SECRET before using --live."
+            )
+        payload = run_toss_readonly_probe(
+            base_url=config.base_url,
+            client_id=config.client_id,
+            client_secret=config.client_secret,
+            endpoint_selector=endpoint_selector,
+            symbols=symbols,
+            query_date=query_date,
+            timeout_seconds=config.timeout_seconds,
+            live_enabled=config.live_enabled,
+            confirm_token_reissue=confirm_token_reissue,
+        )
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    print("Toss OpenAPI read-only probe")
+    print(f"- mode: {payload['mode']}")
+    print(f"- endpoint: {payload['endpoint']}")
+    print(f"- live_fetch: {str(payload['live_fetch']).lower()}")
+    print(f"- writes_db: {str(payload['writes_db']).lower()}")
+    if live:
+        print(f"- row_count: {payload['row_count']}")
+        print(f"- rate_limit: {payload['rate_limit']}")
+    else:
+        print("- next: review plan, set local env fields, then rerun with --live")
+    return 0
 
 
 def _docs_hygiene_patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:

@@ -1,0 +1,57 @@
+{
+  "sources": [
+    {
+      "source_url": "https://example.test/market-flow",
+      "source": "Market Desk",
+      "articles": [
+        {
+          "title": "Samsung Electronics and SK Hynix rise on AI chip supply news",
+          "date": "2026-06-01T09:10:00+09:00",
+          "url": "https://news.example/a",
+          "source": "Market Desk",
+          "summary": "Semiconductor demand and HBM supply contracts kept AI chip names in focus."
+        },
+        {
+          "title": "Samsung Electronics volatility caution after sharp move",
+          "date": "2026-06-01T10:20:00+09:00",
+          "url": "https://news.example/b",
+          "source": "Market Desk",
+          "summary": "Overheating and volatility risk were noted after the rally."
+        }
+      ]
+    },
+    {
+      "source_url": "https://example.test/sector-flow",
+      "source": "Sector Desk",
+      "articles": [
+        {
+          "title": "SK Hynix expands AI memory investment",
+          "date": "2026-06-01",
+          "url": "https://news.example/c",
+          "source": "Sector Desk",
+          "summary": "Semiconductor capex and AI memory investment remained a market theme."
+        },
+        {
+          "title": "Battery shares watch policy uncertainty",
+          "date": "2026-06-01T11:30:00+09:00",
+          "url": "https://news.example/d",
+          "source": "Sector Desk",
+          "summary": "Secondary battery names were cautious on subsidy and regulation uncertainty."
+        }
+      ]
+    },
+    {
+      "source_url": "https://outside.example/not-requested",
+      "source": "Outside Desk",
+      "articles": [
+        {
+          "title": "Outside article should not enter the selected source flow",
+          "date": "2026-06-01",
+          "url": "https://news.example/outside",
+          "source": "Outside Desk",
+          "summary": "This source was not provided by the operator."
+        }
+      ]
+    }
+  ]
+}

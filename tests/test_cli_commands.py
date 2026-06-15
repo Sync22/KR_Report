@@ -4,6 +4,8 @@ from argparse import Namespace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 import stock_monitor.cli as cli_module
 from stock_monitor.cli import (
     _build_check_command_response,
@@ -861,6 +863,94 @@ def test_data_source_lane_audit_parser_accepts_json() -> None:
 
     assert args.command == "data-source-lane-audit"
     assert args.json is True
+
+
+def test_toss_openapi_readonly_probe_parser_accepts_plan_and_live_fields() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "toss-openapi-readonly-probe",
+            "--endpoint",
+            "prices",
+            "--symbol",
+            "005930",
+            "--symbol",
+            "000660",
+            "--live",
+            "--confirm-token-reissue",
+            "--json",
+        ]
+    )
+
+    assert args.command == "toss-openapi-readonly-probe"
+    assert args.endpoint == "prices"
+    assert args.symbols == ["005930", "000660"]
+    assert args.live is True
+    assert args.confirm_token_reissue is True
+    assert args.json is True
+
+
+def test_toss_openapi_readonly_probe_defaults_to_no_network_plan(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        cli_module.TossOpenApiLabConfig,
+        "from_env",
+        classmethod(lambda cls, *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not read env"))),
+    )
+
+    exit_code = cli_module.main(
+        ["toss-openapi-readonly-probe", "--endpoint", "prices", "--symbol", "005930", "--json"]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["mode"] == "plan"
+    assert payload["live_fetch"] is False
+    assert payload["reads_secrets"] is False
+    assert payload["connects_web_view"] is False
+
+
+def test_toss_openapi_readonly_probe_rejects_forbidden_endpoint_before_reading_env(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        cli_module.TossOpenApiLabConfig,
+        "from_env",
+        classmethod(lambda cls, *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not read env"))),
+    )
+
+    with pytest.raises(RuntimeError, match="not allowed"):
+        cli_module.main(
+            [
+                "toss-openapi-readonly-probe",
+                "--endpoint",
+                "accounts",
+                "--live",
+                "--confirm-token-reissue",
+                "--json",
+            ]
+        )
+
+
+def test_toss_openapi_readonly_probe_live_requires_explicit_confirmation(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli_module.TossOpenApiLabConfig,
+        "from_env",
+        classmethod(lambda cls, *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not read env"))),
+    )
+
+    with pytest.raises(RuntimeError, match="confirm-token-reissue"):
+        cli_module.main(
+            [
+                "toss-openapi-readonly-probe",
+                "--endpoint",
+                "prices",
+                "--symbol",
+                "005930",
+                "--live",
+                "--json",
+            ]
+        )
 
 
 def test_db_migration_rehearsal_parser_accepts_work_dir_keep_copy_and_json(tmp_path) -> None:
@@ -2675,6 +2765,118 @@ def test_news_intelligence_preview_parser_accepts_operator_inputs() -> None:
     assert str(args.scrapling_exe).endswith("tools\\scrapling.exe")
     assert str(args.db_path).endswith("news-intelligence.db")
     assert args.save_observation is True
+
+
+def test_news_flow_preview_parser_accepts_source_urls_and_fixture() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "news-flow-preview",
+            "--source-url",
+            "https://example.test/market-flow",
+            "--source-url",
+            "https://example.test/sector-flow",
+            "--fixture",
+            "C:/tmp/news-flow.json",
+            "--format",
+            "json",
+        ]
+    )
+
+    assert args.command == "news-flow-preview"
+    assert args.source_url == [
+        "https://example.test/market-flow",
+        "https://example.test/sector-flow",
+    ]
+    assert str(args.fixture).endswith("news-flow.json")
+    assert args.format == "json"
+
+
+def test_news_flow_preview_cli_outputs_json_without_runtime_side_effects(tmp_path, capsys) -> None:
+    fixture = tmp_path / "news-flow.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "sources": [
+                    {
+                        "source_url": "https://example.test/market-flow",
+                        "source": "Market Desk",
+                        "articles": [
+                            {
+                                "title": "Samsung Electronics and SK Hynix rise on AI chip supply news",
+                                "date": "2026-06-01T09:10:00+09:00",
+                                "url": "https://news.example/a",
+                                "source": "Market Desk",
+                                "summary": "Semiconductor demand and HBM supply contracts kept AI chip names in focus.",
+                            },
+                            {
+                                "title": "Samsung Electronics volatility caution after sharp move",
+                                "date": "2026-06-01T10:20:00+09:00",
+                                "url": "https://news.example/b",
+                                "source": "Market Desk",
+                                "summary": "Overheating and volatility risk were noted after the rally.",
+                            },
+                        ],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = cli_module.main(
+        [
+            "news-flow-preview",
+            "--source-url",
+            "https://example.test/market-flow",
+            "--fixture",
+            str(fixture),
+            "--format",
+            "json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["surface"] == "news-flow-preview"
+    assert payload["source_urls"] == ["https://example.test/market-flow"]
+    assert payload["article_count"] == 2
+    assert payload["live_fetch"] is False
+    assert payload["writes_db"] is False
+    assert payload["sends_telegram"] is False
+    assert payload["registers_scheduler"] is False
+    assert payload["connects_web_view"] is False
+    assert "source URL" in payload["telegram_draft"]
+
+
+def test_news_flow_preview_cli_uses_repository_fixture(capsys) -> None:
+    fixture = Path("tests/fixtures/news_flow_preview/market_flow_2026_06_01.json")
+
+    exit_code = cli_module.main(
+        [
+            "news-flow-preview",
+            "--source-url",
+            "https://example.test/market-flow",
+            "--source-url",
+            "https://example.test/sector-flow",
+            "--fixture",
+            str(fixture),
+            "--format",
+            "text",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "News flow preview" in output
+    assert "source URLs: 2" in output
+    assert "telegram draft:" in output
+    assert "writes_db: False" in output
+    assert "sends_telegram: False" in output
+    assert "registers_scheduler: False" in output
+    assert "connects_web_view: False" in output
 
 
 def test_news_intelligence_preview_cli_outputs_operator_only_json(tmp_path, monkeypatch, capsys) -> None:
@@ -9396,8 +9598,8 @@ def test_data_source_lane_audit_json_classifies_production_lab_and_hold(capsys) 
     assert payload["connects_web_view"] is False
     assert payload["ready"] is True
     assert payload["classification_counts"] == {
-        "hold": 1,
-        "lab": 1,
+        "hold": 0,
+        "lab": 2,
         "production": 4,
         "production_limited": 1,
     }
@@ -9407,11 +9609,11 @@ def test_data_source_lane_audit_json_classifies_production_lab_and_hold(capsys) 
     assert lanes["etf_daily"]["classification"] == "production"
     assert lanes["etf_daily"]["constituents_available"] is False
     assert lanes["etf_daily"]["constituent_source_status"] == "not_loaded"
-    assert lanes["toss_openapi"]["classification"] == "hold"
+    assert lanes["toss_openapi"]["classification"] == "lab"
     assert lanes["toss_openapi"]["live_fetch"] is False
     assert lanes["toss_openapi"]["affects_ordering"] is False
+    assert lanes["toss_openapi"]["connects_web_view"] is False
     assert lanes["toss_openapi"]["forbidden_runtime_groups"] == [
-        "oauth_token_call",
         "account_or_asset_read",
         "order_create_modify_cancel",
         "production_db_write",
@@ -9437,7 +9639,7 @@ def test_data_source_lane_audit_text_prints_etf_toss_and_x_boundaries(capsys) ->
     assert exit_code == 0
     assert "Data source lane audit" in output
     assert "etf_daily | production | constituents=not_loaded" in output
-    assert "toss_openapi | hold | live_fetch=false | affects_ordering=false" in output
+    assert "toss_openapi | lab | live_fetch=false | affects_ordering=false" in output
     assert "x_public_recap | lab | separate_lab_branch=true | login_dependency_allowed=false" in output
 
 
