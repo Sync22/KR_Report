@@ -37,7 +37,7 @@ Use official Toss Securities documents first:
 | <https://openapi.tossinvest.com/openapi-docs/latest/api-reference/README.md> | Markdown API reference index. |
 | <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json> | Canonical OpenAPI document for exact endpoints and schemas. |
 
-Observed official-doc facts as of `2026-06-03`:
+Observed official-doc facts as of `2026-06-12`:
 
 - Base server is `https://openapi.tossinvest.com`.
 - Authentication uses OAuth 2.0 Client Credentials Grant.
@@ -130,7 +130,8 @@ Forbidden before key issuance:
 
 | Surface | Allowed now | Later condition |
 | --- | --- | --- |
-| `web-view` | Nothing Toss-connected. | Only public-safe source/freshness observation support after read-only lab proof and a separate projection review. |
+| Default/public `web-view` | Nothing Toss-connected. | Only public-safe source/freshness observation support after read-only lab proof and a separate projection review. |
+| Loopback lab `web-view --toss-lab-preview` | Latest stored business date's top-2 `오늘의 우선순위` current-price reference only. | Explicit live opt-in and token-reissue confirmation; latest-date top-2 server validation; bounded quote cache and stale fallback; no sharing or tunneling. |
 | `admin-gui` | Nothing Toss-connected. | Coarse readiness status only after lab contract and secret redaction are implemented; no token/account display. |
 | `operator-review` | Not implemented. | Preferred future surface for raw read-only Toss probe review and response comparison. |
 | Telegram | Nothing Toss-connected. | No current path. Any future message needs a separate public/operator wording review. |
@@ -161,10 +162,37 @@ Rules:
   test snapshots, or exception messages.
 - Do not add these values to `.env.example` with real-looking values.
 - Do not store access tokens in SQLite.
-- Token refresh behavior must be designed after official token lifetime and
-  invalidation behavior are verified with approved keys.
+- The loopback preview owns one memory-only token, issues it lazily on the first
+  quote request, and performs at most one reissue per server lifetime after a
+  `401` response. No provider-specific error-code spelling, periodic refresh,
+  or retry loop is assumed.
 
 ## Minimal Implementation Candidates
+
+Current post-key branch status:
+
+- Candidate 1 and the bounded portion of Candidate 2 are implemented.
+- `toss-openapi-readonly-probe` is no-network by default.
+- The only live allowlisted operations are `getStocks`,
+  `getKrMarketCalendar`, and `getPrices`.
+- Live use requires local credentials, env opt-in, `--live`, and
+  `--confirm-token-reissue`.
+- Account, asset, order-info/history, and order operations remain absent.
+- The optional loopback-only lab web-view projection uses only `getPrices`,
+  allows only the latest stored business date, revalidates that date's stored
+  top-2 priority symbols on the server,
+  and compares each available current price with that row's selected-date
+  stored KRX close. The comparison is explicitly labeled and does not affect
+  ordering; it is not a score or trading decision.
+- The preview merges concurrent identical requests, uses a 30-second fresh
+  cache, and may return a recent successful value for up to 5 minutes when
+  Toss is unavailable. The stale state is explicit and does not affect stored
+  data or ordering.
+- The preview requires both a loopback bind and a loopback HTTP `Host` header
+  and rejects cross-site browser requests so a tunnel, DNS-rebinding origin, or
+  external iframe cannot trigger credentialed Toss calls.
+- See
+  [toss-openapi-postkey-readonly-lab-runbook.md]({PROJECT_ROOT}/docs/codex/contracts/toss-openapi-postkey-readonly-lab-runbook.md).
 
 ### Candidate 1: Contract And Tests Only
 
@@ -204,7 +232,8 @@ After keys exist and the operator explicitly approves a post-key pass:
 7. Keep results in stdout or fixture files only until DB/source semantics are
    separately approved.
 8. Review whether source/freshness labels are clear enough for a public-safe
-   observation projection.
+   observation projection. The current loopback lab projection labels quotes
+   as `현재 기준`; default/public projection remains unapproved.
 9. Only after that, consider an operator-only account read probe.
 10. Keep all order `POST` endpoints blocked until a separate execution-lab
     contract is written and reviewed.

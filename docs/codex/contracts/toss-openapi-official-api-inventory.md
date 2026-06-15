@@ -15,8 +15,8 @@ This is not an approval to call Toss runtime APIs. The active safety contract is
 
 | Item | Value |
 | --- | --- |
-| Snapshot date | `2026-06-03` |
-| Official spec version | `1.0.3` |
+| Snapshot date | `2026-06-12` |
+| Official spec version | `1.1.1` |
 | Base server | `https://openapi.tossinvest.com` |
 | Operations | 21 |
 | Schema count | 53 |
@@ -238,3 +238,6 @@ This inventory was built from official documentation endpoints only:
 - No `POST /oauth2/token` call was made.
 - No `/api/v1/...` runtime endpoint was called.
 - No `.env` value, key, token, account, holding, or order value was read.
+- The `2026-06-12` `1.1.1` recheck retained `20` paths, `21` operations, and
+  `53` schemas. The bounded post-key lab implementation still allows only
+  `stocks`, `market-calendar/KR`, and `prices`.

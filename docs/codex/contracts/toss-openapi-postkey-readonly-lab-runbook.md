@@ -1,0 +1,222 @@
+# Toss OpenAPI Post-Key Read-Only Lab Runbook
+
+## Purpose
+
+This runbook covers the first bounded Toss Securities OpenAPI validation after
+client credentials have been issued.
+
+It does not approve account, asset, order-info, order-history, order creation,
+order modification, order cancellation, production DB writes, scheduler,
+Telegram, `admin-gui`, or default/public `web-view` integration. The only
+approved visual integration in this runbook is the explicit loopback-only
+top-2 lab preview described below.
+
+The active implementation remains a manual lab CLI:
+
+```text
+python -m stock_monitor toss-openapi-readonly-probe
+```
+
+The command is no-network by default. A live request requires all three gates:
+
+1. `--live`
+2. local `.env.toss-openapi` value `STOCK_MONITOR_TOSS_OPENAPI_LIVE_ENABLED=true`
+3. `--confirm-token-reissue`
+
+The third gate exists because official documentation says issuing a new token
+invalidates the client's previously issued token.
+
+## Official Basis
+
+Verified on `2026-06-12` against:
+
+- <https://developers.tossinvest.com/docs>
+- <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json>
+
+Current official spec snapshot:
+
+| Item | Value |
+| --- | --- |
+| OpenAPI version | `1.1.1` |
+| Paths | `20` |
+| Operations | `21` |
+| Schemas | `53` |
+
+## Local Key Input
+
+Do not paste credentials into chat, source files, commands, screenshots, logs,
+or test fixtures.
+
+Add only the real values to the local ignored `.env.toss-openapi` file. Use
+[.env.toss-openapi.example]({PROJECT_ROOT}/.env.toss-openapi.example) as the
+field template:
+
+```dotenv
+STOCK_MONITOR_TOSS_OPENAPI_CLIENT_ID=
+STOCK_MONITOR_TOSS_OPENAPI_CLIENT_SECRET=
+STOCK_MONITOR_TOSS_OPENAPI_LIVE_ENABLED=false
+STOCK_MONITOR_TOSS_OPENAPI_BASE_URL=https://openapi.tossinvest.com
+STOCK_MONITOR_TOSS_OPENAPI_TIMEOUT_SECONDS=15
+```
+
+The general project `.env` is not the Toss credential input path.
+
+Start with `STOCK_MONITOR_TOSS_OPENAPI_LIVE_ENABLED=false`. Change it to
+`true` only for an explicitly reviewed manual probe, then return it to `false`
+after the probe.
+
+No Toss account sequence field is prepared yet. Account-context APIs remain
+outside this lab profile.
+
+## Allowed Endpoints
+
+| CLI endpoint | Official operation | Required argument | Limit |
+| --- | --- | --- | --- |
+| `stocks` | `GET /api/v1/stocks` | one or two `--symbol` values | Reference only |
+| `market-calendar-kr` | `GET /api/v1/market-calendar/KR` | optional `--date` | Calendar comparison only |
+| `prices` | `GET /api/v1/prices` | one or two `--symbol` values | Intraday reference only |
+
+The CLI has no account, asset, order-info, order-history, or order endpoint
+selector.
+
+## Plan-Only Checks
+
+These commands do not read `.env`, issue a token, or call Toss:
+
+```powershell
+python -m stock_monitor toss-openapi-readonly-probe --endpoint stocks --symbol 005930 --json
+python -m stock_monitor toss-openapi-readonly-probe --endpoint market-calendar-kr --json
+python -m stock_monitor toss-openapi-readonly-probe --endpoint prices --symbol 005930 --json
+```
+
+Review that each output says:
+
+- `mode=plan`
+- `live_fetch=false`
+- credentials are not read
+- `writes_db=false`
+- `sends_telegram=false`
+- `registers_scheduler=false`
+- `connects_admin_gui=false`
+- `connects_web_view=false`
+
+## First Live Validation
+
+Run only after reviewing the plan and local `.env.toss-openapi` fields:
+
+```powershell
+python -m stock_monitor toss-openapi-readonly-probe --endpoint stocks --symbol 005930 --live --confirm-token-reissue --json
+python -m stock_monitor toss-openapi-readonly-probe --endpoint market-calendar-kr --live --confirm-token-reissue --json
+python -m stock_monitor toss-openapi-readonly-probe --endpoint prices --symbol 005930 --live --confirm-token-reissue --json
+```
+
+Use one command at a time. Every live command issues a new token and can
+invalidate a previously issued token.
+
+The live output may include the selected market-reference result and rate-limit
+headers. It must not contain client credentials or the access token.
+
+## Safety Properties
+
+- Credentials and live opt-in are accepted only from the dedicated local
+  `.env.toss-openapi` file; process environment values do not activate it.
+- Live credentials may be sent only to `https://openapi.tossinvest.com`.
+- HTTP redirects are rejected before credentials or Bearer tokens can be
+  forwarded to another origin.
+- The default command does not read secrets or use network access.
+- The direct client runner repeats the live-enable and token-reissue gates.
+- The low-level token helper repeats the same live-enable and token-reissue
+  gates.
+- The low-level GET helper also requires explicit live enablement.
+- The endpoint allowlist is immutable and revalidated immediately before GET.
+- Query parameters are revalidated immediately before GET.
+- Successful live responses must match the endpoint-level result container
+  shape and contain only official allowlisted response fields. Available
+  rate-limit headers are captured but are not assumed to be mandatory.
+- Symbols are limited to two per probe.
+- Results are printed only; no DB write path exists.
+- No retry loop, scheduler task, Telegram send, admin route, or public route is
+  connected.
+- Account and order endpoint groups remain blocked.
+
+## Stop Conditions
+
+Stop the probe sequence and keep `LIVE_ENABLED=false` when:
+
+- token issuance returns `400`, `401`, `403`, or `429`
+- the response shape differs from the official spec
+- rate-limit behavior is unexpected or returns `429`
+- the key appears to include permissions beyond the reviewed market-reference
+  scope
+- any output contains a credential, token, account identifier, or order context
+
+Do not continue to account or order APIs after a market-reference error.
+
+## First Live Validation Evidence
+
+Completed manually on `2026-06-12` with one-symbol read-only requests only.
+No account header, account/asset/order endpoint, DB write, scheduler, Telegram,
+`admin-gui`, or `web-view` connection was used.
+
+| Check | Result |
+| --- | --- |
+| OAuth token issuance | Succeeded; token remained memory-only |
+| `stocks` / `005930` | Succeeded; `STOCK` limit header reported `5` |
+| `market-calendar/KR` | Succeeded; `MARKET_INFO` limit header reported `3` |
+| `prices` / `005930` after KR market close | Succeeded; provider timestamp remained at the final after-market time |
+| `prices` / `AAPL` during US market hours | Six samples changed provider timestamp and price across consecutive requests |
+| `AAPL` observed request latency | Approximately `144-153ms` per request |
+| `MARKET_DATA` limit header | Reported `10`; requests were paced below the limit |
+| Post-check state | Local `LIVE_ENABLED` returned to `false` |
+
+This proves that the bounded `prices` probe can observe changing live market
+values during an active market session. It does not approve continuous polling,
+storage, public projection, account access, or execution.
+
+## Integrated Web-View Lab Preview
+
+The optional visual test mode adds Toss current-price references directly to
+the existing top-two `오늘의 우선순위` rows without changing the default public
+web-view:
+
+```powershell
+python -m stock_monitor web-view --host 127.0.0.1 --port 8792 --no-open --toss-lab-preview --confirm-token-reissue
+```
+
+- Requires explicit `--toss-lab-preview` and refuses non-loopback hosts.
+- Rejects requests whose HTTP `Host` header is not loopback, including
+  accidental tunnel and DNS-rebinding access.
+- Rejects cross-site browser requests and returns `X-Frame-Options: DENY` plus
+  a `frame-ancestors 'none'` policy on the lab page.
+- Adds the reference only to priority rows on that explicitly started local server.
+- Fetches current prices only for the latest stored business date's top-two
+  six-digit Korean stock codes. Historical dates do not call Toss.
+- Recomputes and verifies the latest stored date's top-two priority codes on
+  the server before calling Toss; arbitrary symbols are rejected.
+- Fetches only when priority rows load or the operator manually refreshes them.
+- Issues one memory-only token lazily on the first quote request. A `401`
+  response permits one token reissue and one repeated GET for the server
+  lifetime; no provider-specific error-code spelling or other automatic retry
+  loop is assumed.
+- Merges concurrent identical date/symbol requests so they produce one
+  MARKET_DATA call.
+- Reuses the same date/symbol response for 30 seconds. When Toss is
+  unavailable, a successful response no older than 5 minutes may be returned
+  with `cache=stale` and `stale_reason=upstream_unavailable`.
+- Labels the value as `현재 기준`; it is not the selected historical date's price.
+- When the selected-date stored KRX close exists, labels the factual percentage
+  comparison as `선택일 KRX 종가 대비`; it does not change priority ordering.
+- Reuses the existing `데이터 기준` section to show `loopback lab` and cache
+  state after a successful quote response; it does not add a separate Toss screen.
+- The normal `web-view` command does not expose the quote reference or lab route.
+- Exposes no account, order, DB write, scheduler, Telegram, or admin control.
+- Is a lab visualization only; it is not approved for tunneling or sharing.
+
+## Verification Commands
+
+```powershell
+python -m pytest tests/test_toss_openapi.py tests/test_config.py -q
+python -m pytest tests/test_cli_commands.py -q -k "data_source_lane_audit or toss_openapi_readonly_probe"
+python -m pytest tests/test_web_view.py -q -k "toss_lab"
+python -m stock_monitor data-source-lane-audit --json
+```
