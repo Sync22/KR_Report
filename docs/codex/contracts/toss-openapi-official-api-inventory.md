@@ -41,7 +41,7 @@ Official sources:
 | Refresh token | Not provided. Reissue through the token endpoint. | Token lifecycle must be designed post-key. |
 | Active token count | One valid access token per client; reissue invalidates previous token. | Avoid background token refresh by default. |
 | Account header | `X-Tossinvest-Account` uses `accountSeq` from `GET /api/v1/accounts` | Sensitive operational identifier. Operator-only. |
-| Public surface | None of these auth/account values may reach `web-view`. | Enforce through tests before any surface connection. |
+| Public surface | Auth/account/order values may not reach `web-view`; only bounded top-2 market price projection is approved. | Enforce through tests before any surface connection. |
 
 ## Rate Limits
 
@@ -213,7 +213,7 @@ narrow. Future patches should choose one profile explicitly.
 | `market_reference_lab` | `prices`, `stocks`, `stock warnings`, `market-calendar/KR`, maybe `trades` for freshness | Account, holdings, order info/history, order POST | Candidate after keys and approval. |
 | `operator_account_lab` | `accounts`, maybe `holdings` with redaction | Public surfaces, DB write, Telegram, scheduler, order POST | Not approved now. |
 | `execution_review_lab` | Order docs, order fixture schemas, safety tests | Real order create/modify/cancel | Separate contract required. |
-| `public_projection` | Source/freshness labels for top-2 observation candidates | Account, holdings, orders, buying power, sellable quantity, commissions, score/trading call | Not approved now. |
+| `public_projection` | Source/freshness labels and current prices for server-derived top-2 observation candidates | Account, holdings, orders, buying power, sellable quantity, commissions, score/trading call, arbitrary public symbols | Approved only for bounded `web-view` top-2 current-price projection. |
 
 ## Cut-Down Rules
 

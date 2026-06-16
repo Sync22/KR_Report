@@ -84,6 +84,7 @@ from stock_monitor.fetch.toss_openapi import (
     build_toss_readonly_probe_plan,
     run_toss_readonly_probe,
 )
+from stock_monitor.toss_openapi_web_view import TossPriorityQuoteProvider
 from stock_monitor.web_perf import (
     ApiPerfLogger,
     RequestMetrics,
@@ -17748,7 +17749,8 @@ def _market_briefing_source_freshness_lines(summary: dict) -> list[str]:
 def _market_briefing_source_freshness_item_text(item: dict[str, object]) -> str:
     status = _market_briefing_source_freshness_status_text(str(item.get("status") or "missing"))
     if item.get("key") == "toss_openapi":
-        return f"{status} (호출 없음)"
+        suffix = "우선확인 현재가" if item.get("live_fetch") else "호출 없음"
+        return f"{status} ({suffix})"
     reference_date = _market_briefing_source_reference_date_text(item.get("reference_date"))
     count = item.get("count")
     count_suffix = f" ({int(count)}건)" if isinstance(count, int) else ""
@@ -17758,6 +17760,12 @@ def _market_briefing_source_freshness_item_text(item: dict[str, object]) -> str:
 def _market_briefing_source_freshness_status_text(status: str) -> str:
     if status == "lab_hold":
         return "lab-hold"
+    if status == "ready":
+        return "ready"
+    if status == "current":
+        return "current"
+    if status == "disabled":
+        return "disabled"
     return status
 
 
@@ -20783,10 +20791,11 @@ def create_web_view_server(
     port: int,
     limit: int,
     allow_non_loopback: bool = False,
+    toss_quote_provider: TossPriorityQuoteProvider | None = None,
 ) -> ThreadingHTTPServer:
     _validate_web_view_host(host, allow_non_loopback=allow_non_loopback)
     repository.enable_wal_mode()
-    handler = _make_web_view_handler(config, repository, limit=limit)
+    handler = _make_web_view_handler(config, repository, limit=limit, toss_quote_provider=toss_quote_provider)
     return ThreadingHTTPServer((host, port), handler)
 
 
@@ -20920,11 +20929,15 @@ def _make_web_view_handler(
     repository: StockMonitorRepository,
     *,
     limit: int,
+    toss_quote_provider: TossPriorityQuoteProvider | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     response_cache: dict[str, tuple[float, bytes]] = {}
     response_cache_lock = threading.Lock()
     response_cache_ttl_seconds = 30.0
     api_perf_logger = ApiPerfLogger(config.root_dir / "logs")
+    toss_provider = toss_quote_provider or TossPriorityQuoteProvider(
+        config=TossOpenApiLabConfig.from_env(config.root_dir)
+    )
 
     def read_cached_json_payload(cache_key: str) -> dict | None:
         now_monotonic = time.monotonic()
@@ -20981,6 +20994,41 @@ def _make_web_view_handler(
             limit=market_top_limit,
             page_size=market_top_page_size,
         )
+
+    def build_toss_priority_quotes_payload(business_date: date) -> tuple[HTTPStatus, dict]:
+        archive = build_web_view_archive_snapshot(config, repository, limit=1)
+        latest_business_date = archive.get("latest_business_date")
+        if latest_business_date and business_date.isoformat() != latest_business_date:
+            return HTTPStatus.CONFLICT, {
+                "surface": "web-view-toss-priority-quotes",
+                "read_only": True,
+                "configured": getattr(toss_provider, "configured", False),
+                "live_fetch": False,
+                "writes_db": False,
+                "sends_telegram": False,
+                "registers_scheduler": False,
+                "affects_ordering": False,
+                "priority_date": business_date.isoformat(),
+                "latest_business_date": latest_business_date,
+                "symbols": [],
+                "quotes": [],
+                "reason": "latest_business_date_only",
+            }
+        evidence = build_web_view_candidate_evidence_snapshot(
+            config,
+            repository,
+            business_date=business_date,
+            limit=2,
+        )
+        symbols = tuple(
+            str(row.get("stock_code") or "").strip()
+            for row in evidence.get("rows", [])
+            if re.fullmatch(r"\d{6}", str(row.get("stock_code") or "").strip())
+        )[:2]
+        payload = toss_provider.get_quotes(priority_date=business_date, symbols=symbols)
+        payload["latest_business_date"] = latest_business_date
+        payload["derived_from"] = "web_view_candidate_evidence_top_2"
+        return HTTPStatus.OK, payload
 
     def write_cached_json_response(handler: BaseHTTPRequestHandler, cache_key: str, builder: Callable[[], dict]) -> None:
         total_start = time.perf_counter()
@@ -21097,6 +21145,41 @@ def _make_web_view_handler(
                         mention_threshold=mention_threshold,
                         limit=observation_limit,
                     ),
+                )
+                return
+            if path == "/api/toss-priority-quotes":
+                query_params = url_parse.parse_qs(query)
+                raw_date = query_params.get("date", [None])[0]
+                try:
+                    if not raw_date:
+                        raise ValueError
+                    business_date = date.fromisoformat(raw_date)
+                except ValueError:
+                    _write_http_response(self, HTTPStatus.BAD_REQUEST, "invalid date", content_type="text/plain; charset=utf-8")
+                    return
+                try:
+                    status, payload = build_toss_priority_quotes_payload(business_date)
+                except RuntimeError:
+                    status = HTTPStatus.BAD_GATEWAY
+                    payload = {
+                        "surface": "web-view-toss-priority-quotes",
+                        "read_only": True,
+                        "configured": getattr(toss_provider, "configured", False),
+                        "live_fetch": False,
+                        "writes_db": False,
+                        "sends_telegram": False,
+                        "registers_scheduler": False,
+                        "affects_ordering": False,
+                        "priority_date": business_date.isoformat(),
+                        "symbols": [],
+                        "quotes": [],
+                        "reason": "upstream_unavailable",
+                    }
+                _write_http_response(
+                    self,
+                    status,
+                    json.dumps(payload, ensure_ascii=False),
+                    content_type="application/json; charset=utf-8",
                 )
                 return
             if decoded_path.startswith("/api/daily/") and "/stocks/" in decoded_path:
@@ -23518,7 +23601,8 @@ def _render_web_view_html() -> str:
     .source-freshness-item span { color: var(--muted); line-height: 1.35; overflow-wrap: anywhere; }
     .source-freshness-status { display: inline-flex; width: fit-content; border-radius: 999px; padding: 2px 7px; background: #e2eee1; color: #245746; font-size: 11px; font-weight: 900; }
     .source-freshness-status.stale { background: #fff0cf; color: #7a5400; }
-    .source-freshness-status.missing, .source-freshness-status.lab-hold { background: #eef1f2; color: #5d676d; }
+    .source-freshness-status.ready, .source-freshness-status.current { background: #e2eee1; color: #245746; }
+    .source-freshness-status.missing, .source-freshness-status.disabled, .source-freshness-status.lab-hold { background: #eef1f2; color: #5d676d; }
     .intraday-overlap-panel { display: grid; gap: 8px; margin: 10px 0 12px; border: 1px solid #d8e8f5; border-radius: 8px; padding: 10px 12px; background: #f6fbff; }
     .intraday-overlap-panel[hidden] { display: none; }
     .intraday-overlap-meta { color: #1769aa; font-size: 11px; font-weight: 900; }
@@ -23593,6 +23677,9 @@ def _render_web_view_html() -> str:
     .top-two-card b { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 5px; color: var(--accent); font-size: 13px; }
     .top-two-card .status-pill { font-size: 11px; padding: 2px 7px; }
     .top-two-card span { display: block; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .top-two-card .priority-toss-quote { display: inline-flex; width: fit-content; border-radius: 999px; padding: 2px 7px; background: #eef7f2; color: #245746; font-size: 11px; font-weight: 900; }
+    .top-two-card .priority-toss-quote.muted { background: #eef1f2; color: #5d676d; }
+    .top-two-card .priority-toss-quote.stale { background: #fff0cf; color: #7a5400; }
     .candidate-card { border: 1px solid var(--line); border-radius: 18px; padding: 14px; background: #fffaf1; cursor: pointer; }
     .candidate-card:hover { border-color: var(--accent); box-shadow: inset 4px 0 0 var(--accent); }
     .candidate-card h3 { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 8px; font-size: 16px; }
@@ -23828,6 +23915,7 @@ def _render_web_view_html() -> str:
           <h2>오늘의 우선순위 <span class="muted" id="main-priority-date"></span></h2>
           <div class="summary-actions">
             <span class="status-pill">우선 확인 2종</span>
+            <button id="toss-priority-refresh" class="ghost-button" type="button" disabled>Toss 현재가 확인</button>
             <button id="intraday-market-top-check" class="ghost-button" type="button" disabled>장중 거래대금 확인</button>
           </div>
         </div>
@@ -24154,6 +24242,10 @@ def _render_web_view_html() -> str:
     const intradayMarketTopCooldownMs = 30_000;
     let intradayMarketTopLastLoadedAt = 0;
     let intradayMarketTopLastLoadedDate = null;
+    let tossPriorityLoading = false;
+    let tossPriorityRequestId = 0;
+    let tossPriorityRows = [];
+    let tossPriorityDate = null;
     let showSingleReportStocks = false;
     let dailyStockVisibleLimit = DAILY_STOCK_DEFAULT_LIMIT;
     let backtestObservationVisibleLimit = BACKTEST_OBSERVATION_DEFAULT_LIMIT;
@@ -24540,6 +24632,9 @@ def _render_web_view_html() -> str:
       renderNewsObservationSummary(data.news_observation_summary);
       document.getElementById("main-priority-date").textContent = `(${date})`;
       document.getElementById("main-priority-rows").innerHTML = '<span class="muted">오늘 우선순위를 불러오는 중입니다.</span>';
+      tossPriorityRows = [];
+      tossPriorityDate = date;
+      updateTossPriorityRefreshButton();
       document.getElementById("candidate-evidence-date").textContent = `(${date})`;
       document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">오늘의 관찰 후보를 불러오는 중입니다.</span>';
       document.getElementById("backtest-observation-date").textContent = `(${date})`;
@@ -24672,12 +24767,18 @@ def _render_web_view_html() -> str:
     function sourceFreshnessStatusLabel(status) {
       if (status === "exact") return "선택일";
       if (status === "stale") return "최근 저장";
+      if (status === "ready") return "준비됨";
+      if (status === "current") return "현재가";
+      if (status === "disabled") return "비활성";
       if (status === "lab_hold") return "lab 보류";
       return "없음";
     }
 
     function sourceFreshnessStatusClass(status) {
       if (status === "stale") return "stale";
+      if (status === "ready") return "ready";
+      if (status === "current") return "current";
+      if (status === "disabled") return "disabled";
       if (status === "lab_hold") return "lab-hold";
       if (status === "missing") return "missing";
       return "";
@@ -25638,9 +25739,15 @@ def _render_web_view_html() -> str:
       if (!rows.length) {
         document.getElementById("main-priority-rows").innerHTML = '<span class="muted">우선 확인 후보 데이터가 없습니다.</span>';
         document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">눈에 띄는 종목 데이터가 없습니다.</span>';
+        tossPriorityRows = [];
+        updateTossPriorityRefreshButton();
         return;
       }
       document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(rows);
+      tossPriorityRows = rows.slice(0, 2);
+      tossPriorityDate = evidence?.business_date || selectedDate;
+      updateTossPriorityRefreshButton();
+      loadTossPriorityQuotes(tossPriorityDate);
       document.getElementById("candidate-evidence-rows").innerHTML = rows.map((item, index) => {
         const report = item.report_summary || {};
         const targetMetrics = candidateTargetMetrics(report, item.target_price_progress);
@@ -25702,13 +25809,101 @@ def _render_web_view_html() -> str:
           : "";
         const newsLine = candidateNewsCompactLine(item.news_observation_badge);
         return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
-          <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span></b>
+          <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote="${esc(item.stock_code || "")}">Toss 현재가 확인 중</span></b>
           <span>왜 눈에 띄는지: ${esc(why)}</span>
           <span>장중 참고: ${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span>
           <span>${esc(newsLine)}</span>
           ${missingLine}
         </button>`;
       }).join("")}</section>`;
+    }
+
+    function updateTossPriorityRefreshButton() {
+      const button = document.getElementById("toss-priority-refresh");
+      if (!button) return;
+      button.disabled = tossPriorityLoading || !validDate(tossPriorityDate) || !tossPriorityRows.length;
+    }
+
+    function setTossQuoteNodes(label, className = "muted") {
+      document.querySelectorAll("[data-toss-quote]").forEach((node) => {
+        node.textContent = label;
+        node.className = `priority-toss-quote ${className}`.trim();
+      });
+    }
+
+    function setTossQuoteNode(stockCode, label, className = "") {
+      const node = Array.from(document.querySelectorAll("[data-toss-quote]"))
+        .find((candidate) => candidate.dataset.tossQuote === String(stockCode || ""));
+      if (!node) return;
+      node.textContent = label;
+      node.className = `priority-toss-quote ${className}`.trim();
+    }
+
+    function updateTossSourceFreshness(data) {
+      const summary = currentDailyData?.source_freshness_summary;
+      const items = Array.isArray(summary?.items) ? summary.items : [];
+      const item = items.find((candidate) => candidate?.key === "toss_openapi");
+      if (!item) return;
+      if (data?.configured === false) {
+        item.status = "disabled";
+        item.available = false;
+        item.live_fetch = false;
+        item.reference_date = null;
+        item.data_scope = "not_configured";
+      } else if (data?.live_fetch) {
+        item.status = data?.cache === "stale" ? "stale" : "current";
+        item.available = true;
+        item.live_fetch = true;
+        item.reference_date = data?.priority_date || selectedDate;
+        item.data_scope = "web_view_priority_top_2_prices";
+      }
+      renderSourceFreshnessSummary(summary);
+    }
+
+    async function loadTossPriorityQuotes(date) {
+      if (!validDate(date) || !tossPriorityRows.length || tossPriorityLoading) return;
+      const requestId = ++tossPriorityRequestId;
+      tossPriorityLoading = true;
+      updateTossPriorityRefreshButton();
+      setTossQuoteNodes("Toss 현재가 확인 중", "muted");
+      try {
+        const response = await fetch(`/api/toss-priority-quotes?date=${encodeURIComponent(date)}`, { cache: "no-store" });
+        const data = await response.json();
+        if (requestId !== tossPriorityRequestId || date !== selectedDate) return;
+        updateTossSourceFreshness(data);
+        if (response.status === 409) {
+          setTossQuoteNodes("Toss 현재가 최신일만", "muted");
+          return;
+        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (data.configured === false) {
+          setTossQuoteNodes("Toss 현재가 설정 대기", "muted");
+          return;
+        }
+        const quotes = Array.isArray(data.quotes) ? data.quotes : [];
+        const quoteBySymbol = new Map(quotes.map((item) => [String(item?.symbol || ""), item]));
+        tossPriorityRows.forEach((item) => {
+          const code = String(item?.stock_code || "");
+          const quote = quoteBySymbol.get(code);
+          if (!quote) {
+            setTossQuoteNode(code, "Toss 현재가 없음", "muted");
+            return;
+          }
+          const label = quote.lastPrice !== null && quote.lastPrice !== undefined
+            ? `Toss 현재가 ${price(quote.lastPrice)}`
+            : "Toss 현재가 확인";
+          setTossQuoteNode(code, label, data.cache === "stale" ? "stale" : "");
+        });
+      } catch (error) {
+        if (requestId === tossPriorityRequestId) {
+          setTossQuoteNodes("Toss 현재가 확인 실패", "muted");
+        }
+      } finally {
+        if (requestId === tossPriorityRequestId) {
+          tossPriorityLoading = false;
+          updateTossPriorityRefreshButton();
+        }
+      }
     }
 
     function candidateNewsCompactLine(badge) {
@@ -26389,6 +26584,9 @@ def _render_web_view_html() -> str:
     document.getElementById("backtest-observation-show-more").addEventListener("click", () => {
       backtestObservationVisibleLimit += BACKTEST_OBSERVATION_DEFAULT_LIMIT;
       if (currentBacktestObservationData) renderBacktestObservation(currentBacktestObservationData);
+    });
+    document.getElementById("toss-priority-refresh").addEventListener("click", () => {
+      loadTossPriorityQuotes(tossPriorityDate || selectedDate);
     });
     document.getElementById("intraday-market-top-check").addEventListener("click", () => {
       loadIntradayMarketTopForSelectedDate();
@@ -27182,6 +27380,7 @@ def build_web_view_daily_snapshot(
         report_count=report_count,
         recent_krx_snapshot_dates=recent_krx_snapshot_dates,
         recent_flow_dates=recent_flow_dates,
+        toss_openapi_ready=_web_view_toss_openapi_ready(config),
     )
     return {
         "now": current.isoformat(),
@@ -27261,6 +27460,7 @@ def _build_web_view_source_freshness_summary(
     report_count: int,
     recent_krx_snapshot_dates: list[date],
     recent_flow_dates: list[date],
+    toss_openapi_ready: bool = False,
 ) -> dict:
     krx_reference_date = recent_krx_snapshot_dates[0] if recent_krx_snapshot_dates else None
     flow_reference_date = recent_flow_dates[0] if recent_flow_dates else None
@@ -27318,17 +27518,26 @@ def _build_web_view_source_freshness_summary(
                 "key": "toss_openapi",
                 "label": "Toss OpenAPI",
                 "source": "toss_openapi",
-                "status": "lab_hold",
-                "reference_date": None,
+                "status": "ready" if toss_openapi_ready else "disabled",
+                "reference_date": business_date.isoformat() if toss_openapi_ready else None,
                 "exact_date_available": False,
-                "available": False,
-                "data_scope": "read_only_lab_contract",
-                "live_fetch": False,
+                "available": toss_openapi_ready,
+                "data_scope": "web_view_priority_top_2_prices" if toss_openapi_ready else "not_configured",
+                "live_fetch": toss_openapi_ready,
                 "affects_ordering": False,
-                "notice": "Read-only lab/hold contract only; web-view does not call Toss OpenAPI.",
+                "notice": (
+                    "Read-only Toss current prices are available for server-derived web-view priority candidates."
+                    if toss_openapi_ready
+                    else "Toss OpenAPI web-view current prices require .env.toss-openapi credentials and live opt-in."
+                ),
             },
         ],
     }
+
+
+def _web_view_toss_openapi_ready(config: RuntimeConfig) -> bool:
+    toss_config = TossOpenApiLabConfig.from_env(config.root_dir)
+    return bool(toss_config.live_enabled and toss_config.client_id and toss_config.client_secret)
 
 
 def _web_view_source_freshness_item(

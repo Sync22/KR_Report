@@ -1616,7 +1616,7 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
     assert source_freshness_items["etf_daily"]["status"] == "exact"
     assert source_freshness_items["investor_flow"]["status"] == "exact"
     assert source_freshness_items["investor_flow"]["source"] == "krx_data_market"
-    assert source_freshness_items["toss_openapi"]["status"] == "lab_hold"
+    assert source_freshness_items["toss_openapi"]["status"] == "disabled"
     assert source_freshness_items["toss_openapi"]["live_fetch"] is False
     assert source_freshness_items["toss_openapi"]["affects_ordering"] is False
     assert snapshot["krx_recent_flow"] == {
@@ -3302,7 +3302,7 @@ def test_web_view_daily_krx_context_is_exact_date_and_does_not_fallback_to_lates
     assert missing_freshness["krx_market"]["reference_date"] is None
     assert missing_freshness["etf_daily"]["status"] == "missing"
     assert missing_freshness["investor_flow"]["status"] == "missing"
-    assert missing_freshness["toss_openapi"]["status"] == "lab_hold"
+    assert missing_freshness["toss_openapi"]["status"] == "disabled"
     assert "최신 날짜 값으로 대체하지 않습니다" in missing_context_snapshot["krx_context"]["notice"]
 
     context = exact_context_snapshot["krx_context"]
@@ -3337,6 +3337,144 @@ def test_web_view_daily_krx_context_is_exact_date_and_does_not_fallback_to_lates
     assert "db_path" not in context
     _assert_public_safe_payload(missing_context_snapshot)
     _assert_public_safe_payload(exact_context_snapshot)
+
+
+def test_web_view_source_freshness_marks_toss_ready_from_dedicated_env(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    (tmp_path / ".env.toss-openapi").write_text(
+        "\n".join(
+            [
+                "STOCK_MONITOR_TOSS_OPENAPI_CLIENT_ID=test-client",
+                "STOCK_MONITOR_TOSS_OPENAPI_CLIENT_SECRET=test-secret",
+                "STOCK_MONITOR_TOSS_OPENAPI_LIVE_ENABLED=true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 8)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="삼성전자 점검",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 5, 8, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 5, 8, 9, 5, 0),
+                source_id="toss-ready-env-1",
+                identity_key="toss-ready-env-1",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    snapshot = cli_module.build_web_view_daily_snapshot(config, repository, business_date=business_date)
+
+    source_freshness_items = {
+        item["key"]: item for item in snapshot["source_freshness_summary"]["items"]
+    }
+    assert source_freshness_items["toss_openapi"]["status"] == "ready"
+    assert source_freshness_items["toss_openapi"]["available"] is True
+    assert source_freshness_items["toss_openapi"]["live_fetch"] is True
+    assert source_freshness_items["toss_openapi"]["affects_ordering"] is False
+
+
+def test_web_view_toss_priority_quotes_route_uses_server_derived_top_two_only(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 8)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="삼성전자 AI 반도체 점검",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 5, 8, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 5, 8, 9, 5, 0),
+                source_id="toss-route-1",
+                identity_key="toss-route-1",
+            ),
+            Report(
+                stock_name="SK하이닉스",
+                stock_code="000660",
+                title="SK하이닉스 HBM 점검",
+                broker_name="KB증권",
+                published_at=datetime(2026, 5, 8, 9, 30, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 5, 8, 9, 35, 0),
+                source_id="toss-route-2",
+                identity_key="toss-route-2",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    class FakeTossProvider:
+        configured = True
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[date, tuple[str, ...]]] = []
+
+        def get_quotes(self, *, priority_date: date, symbols: tuple[str, ...]) -> dict[str, object]:
+            self.calls.append((priority_date, symbols))
+            return {
+                "surface": "web-view-toss-priority-quotes",
+                "read_only": True,
+                "configured": True,
+                "live_fetch": True,
+                "writes_db": False,
+                "sends_telegram": False,
+                "registers_scheduler": False,
+                "affects_ordering": False,
+                "priority_date": priority_date.isoformat(),
+                "symbols": list(symbols),
+                "quotes": [{"symbol": symbol, "lastPrice": 1000, "currency": "KRW"} for symbol in symbols],
+                "cache": "miss",
+            }
+
+    provider = FakeTossProvider()
+    server = cli_module.create_web_view_server(
+        config,
+        repository,
+        host="127.0.0.1",
+        port=0,
+        limit=5,
+        toss_quote_provider=provider,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        with urllib.request.urlopen(
+            base_url + "/api/toss-priority-quotes?date=2026-05-08&symbols=999999",
+            timeout=5,
+        ) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert payload["surface"] == "web-view-toss-priority-quotes"
+    assert payload["read_only"] is True
+    assert payload["writes_db"] is False
+    assert payload["sends_telegram"] is False
+    assert payload["registers_scheduler"] is False
+    assert payload["affects_ordering"] is False
+    assert payload["derived_from"] == "web_view_candidate_evidence_top_2"
+    assert provider.calls
+    assert provider.calls[0][0] == business_date
+    assert set(provider.calls[0][1]) == {"005930", "000660"}
+    assert "999999" not in provider.calls[0][1]
 
 
 def test_web_view_etf_trend_snapshot_exposes_rotation_evidence_scope(tmp_path, monkeypatch) -> None:

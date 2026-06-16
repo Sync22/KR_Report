@@ -168,28 +168,26 @@ No account header, account/asset/order endpoint, DB write, scheduler, Telegram,
 
 This proves that the bounded `prices` probe can observe changing live market
 values during an active market session. It does not approve continuous polling,
-storage, public projection, account access, or execution.
+storage, account access, or execution. The only approved projection is the
+main `web-view` top-2 priority current-price reference described below.
 
-## Integrated Web-View Lab Preview
+## Promoted Web-View Priority Quote Projection
 
-This section records the separate Toss lab branch experiment only. It is not
-implemented or approved in main, and its commands/tests apply only on that lab
-branch until the lab-to-web-view policy is explicitly changed.
+The former lab preview was promoted to the main GET-only `web-view` in a
+bounded form.
 
-The optional visual test mode adds Toss current-price references directly to
-the existing top-two `오늘의 우선순위` rows without changing the default public
-web-view:
+The normal `web-view` command can show Toss current-price references directly
+in the existing top-two `우선 확인` rows when `.env.toss-openapi` has
+credentials and `STOCK_MONITOR_TOSS_OPENAPI_LIVE_ENABLED=true`:
 
 ```powershell
-python -m stock_monitor web-view --host 127.0.0.1 --port 8792 --no-open --toss-lab-preview --confirm-token-reissue
+python -m stock_monitor web-view --host 127.0.0.1 --port 8792 --no-open
 ```
 
-- Requires explicit `--toss-lab-preview` and refuses non-loopback hosts.
-- Rejects requests whose HTTP `Host` header is not loopback, including
-  accidental tunnel and DNS-rebinding access.
-- Rejects cross-site browser requests and returns `X-Frame-Options: DENY` plus
-  a `frame-ancestors 'none'` policy on the lab page.
-- Adds the reference only to priority rows on that explicitly started local server.
+- No extra Toss-specific CLI flag is required; `.env.toss-openapi` is the opt-in boundary.
+- Uses the existing `web-view` host/access boundary plus server-derived
+  top-2 symbols; it does not accept arbitrary public symbols.
+- Adds the reference only to priority rows on the web-view.
 - Fetches current prices only for the latest stored business date's top-two
   six-digit Korean stock codes. Historical dates do not call Toss.
 - Recomputes and verifies the latest stored date's top-two priority codes on
@@ -204,20 +202,18 @@ python -m stock_monitor web-view --host 127.0.0.1 --port 8792 --no-open --toss-l
 - Reuses the same date/symbol response for 30 seconds. When Toss is
   unavailable, a successful response no older than 5 minutes may be returned
   with `cache=stale` and `stale_reason=upstream_unavailable`.
-- Labels the value as `현재 기준`; it is not the selected historical date's price.
-- When the selected-date stored KRX close exists, labels the factual percentage
-  comparison as `선택일 KRX 종가 대비`; it does not change priority ordering.
-- Reuses the existing `데이터 기준` section to show `loopback lab` and cache
+- Labels the value as `Toss 현재가`; it is not the selected historical date's price.
+- Reuses the existing `데이터 기준` section to show `ready/current/disabled` and cache
   state after a successful quote response; it does not add a separate Toss screen.
-- The normal `web-view` command does not expose the quote reference or lab route.
+- The normal `web-view` command exposes only the bounded top-2 quote reference route.
 - Exposes no account, order, DB write, scheduler, Telegram, or admin control.
-- Is a lab visualization only; it is not approved for tunneling or sharing.
+- It is public-safe only as current-price reference beside server-derived priority candidates.
 
 ## Verification Commands
 
 ```powershell
 python -m pytest tests/test_toss_openapi.py tests/test_config.py -q
 python -m pytest tests/test_cli_commands.py -q -k "data_source_lane_audit or toss_openapi_readonly_probe"
-python -m pytest tests/test_web_view.py -q -k "toss_lab"
+python -m pytest tests/test_web_view.py -q -k "toss_priority or toss_ready"
 python -m stock_monitor data-source-lane-audit --json
 ```

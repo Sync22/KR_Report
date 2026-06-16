@@ -32,8 +32,8 @@ This is a permission and API boundary, not just a visual layout boundary.
 - `web-view` must not implement `POST`, `PUT`, `PATCH`, or `DELETE` data routes. The only allowed POST exception is `/auth/login` for the optional entry-code gate.
 - `web-view` must be implemented with a separate handler/router and a separate read-only DTO contract.
 - Shared DB/repository code is allowed. Shared HTTP control handlers are not allowed.
-- Broker or execution API work, including future Toss Securities Open API evaluation, must not be connected to `admin-gui`, Telegram, scheduler, production DB writes, broker secrets, or order routing by default. It belongs in a separate lab/staging lane until docs, permissions, sandbox/test keys, and read-only probes are verified.
-- A verified real-time quote/turnover/index lane may later feed `web-view` observation priority and top-2 `우선 확인` ordering. This is observation-candidate recommendation, not trading execution.
+- Broker or execution API work, including Toss Securities OpenAPI beyond the approved top-2 current-price projection, must not be connected to `admin-gui`, Telegram, scheduler, production DB writes, broker secrets, or order routing by default. It belongs in a separate lab/staging lane until docs, permissions, sandbox/test keys, and read-only probes are verified.
+- Toss OpenAPI is approved in `web-view` only as a GET-only current-price reference for server-derived latest-date top-2 `우선 확인` symbols. It must not accept arbitrary public symbols, expose account/order data, persist Toss data, or affect ordering without a separate review.
 - The current public `web-view` trading-wording ban is not a permanent denial of the product's long-term direction. Trading-decision support belongs in a future operator-only decision-support lane after stable real-time data, permissions, failure handling, and execution safety are proven.
 - External sharing candidates are limited to Tailscale for owner-only remote operation and Cloudflare Tunnel for a future friend-facing read-only `web-view` URL.
 - Direct router port forwarding is not a preferred exposure model for this project.
@@ -149,7 +149,7 @@ Source ownership and Korean display naming are fixed in [data-source-policy.md](
 
 The first `web-view` should prefer clarity over trading interpretation. It can say what was observed and recommend what to check first, but should avoid unsupported scoring.
 
-Future real-time or broker-origin data must be labeled and reviewed as a separate source lane before it affects the shared page. Until then, `web-view` copy should treat KRX/report/flow values as stored references and avoid implying live quote freshness.
+Broker-origin data is currently allowed only for the bounded Toss top-2 current-price reference. It must be labeled as `Toss 현재가`; KRX/report/flow values remain stored references, and the live quote must not imply a trading decision.
 
 When that future lane is approved, `read-only` still means no DB write, no Telegram/scheduler automation, no admin control path, no broker secret exposure, and no order routing. It does not mean the intraday reference is forbidden from changing `우선 확인`, `관찰 우선순위`, or main-card emphasis.
 
@@ -174,6 +174,7 @@ The current endpoint contract is GET-only:
 | `GET /api/intraday?date={date}` | Intraday history | Batch time, new report count, safe alert outcome summary. |
 | `GET /api/flow-trend?date={date}` | Investor-flow trend | Stored KRX Data Marketplace samples only; no live fetch, no public numeric scoring, no trading recommendation. |
 | `GET /api/etf-trend?date={date}` | ETF trend | Stored KRX ETF snapshots only; no live fetch, no public numeric scoring, no trading recommendation. |
+| `GET /api/toss-priority-quotes?date={date}` | Toss top-2 current-price reference | Latest stored business date only; server-derived top-2 candidate symbols only; no arbitrary symbol query, account/order data, DB write, scheduler, Telegram, scoring, or trading recommendation. |
 | `GET /api/category?date={date}&type=sector|theme&name=...` | Category detail | Same-date category stock list with KRX stock references when available. |
 | `GET /api/category-trend?type=sector|theme&name=...` | Category trend | Recent category report/stock counts, descriptive only; dated snapshot per date when available, latest stored category classification otherwise. |
 | `GET /api/market` | Latest KRX market reference | Kept for compatibility; the main user page should prefer selected-date `krx_context` from daily DTO. |
@@ -297,6 +298,7 @@ Cloudflare Tunnel rule:
 - `web-view` does not import or expose admin POST dispatcher logic.
 - `web-view` responses exclude scheduler controls, shutdown controls, secrets, `.env`, DB path, and raw operational internals.
 - `web-view` responses and HTML exclude safe settings, admin audit logs, operator profiles, and `/api/settings` routes.
+- `web-view` Toss current-price responses expose only `prices` for server-derived top-2 symbols and must not expose tokens, credentials, account ids, order ids, holdings, buying power, sellable quantity, commissions, or arbitrary public symbol lookups.
 - `admin-gui` remains loopback/local control by default.
 - `web-view` archive uses `business_date` and KST semantics.
 - Telegram notification filters and web archive scope are documented so differences are intentional.

@@ -5,13 +5,16 @@
 This contract defines what can be prepared before Toss Securities OpenAPI keys,
 accounts, tokens, or order permissions exist.
 
-The current decision is conservative:
+Current decision:
 
-- Toss OpenAPI work stays in a separate read-only lab lane.
-- Pre-key work is documentation, contract, fixture, and test preparation only.
-- No Toss runtime endpoint is called before keys and explicit post-key approval.
-- No broker execution, order routing, public trading call, or production surface
-  integration is approved by this contract.
+- Toss OpenAPI still has a read-only lab lane for docs, probes, and fixtures.
+- The only promoted main feature is a public-safe `web-view` current-price
+  projection for server-derived top-2 `우선 확인` candidates.
+- The promoted path may read local `.env.toss-openapi` and call only the
+  allowlisted `prices` market-data endpoint when live opt-in and credentials
+  are present.
+- No broker execution, order routing, public trading call, account data,
+  scheduler, Telegram, admin-gui, or production DB write is approved.
 
 Canonical project boundaries still live in:
 
@@ -53,13 +56,13 @@ Observed official-doc facts as of `2026-06-12`:
 
 | Role | Current status | Boundary |
 | --- | --- | --- |
-| Read-only quote/reference | Future lab candidate | Top-2 `우선 확인` candidates only at first, after keys and permission review. |
+| Read-only quote/reference | Promoted for `web-view` top-2 current price only | Server derives top-2 `우선 확인` symbols; no arbitrary public symbol query. |
 | Stock/reference metadata | Future lab candidate | May be compared with KRX/Naver identity data, but must not overwrite source facts by default. |
 | Market calendar/exchange rate | Future lab candidate | Reference only; label source/freshness if surfaced later. |
 | Account/balance read-only | Operator-only lab candidate | Never public. No production DB write. No scheduler or Telegram integration. |
 | Order history/order info | Operator-only lab candidate at most | Treat as execution-adjacent; keep away from public surfaces. |
 | Execution lab | Deferred | Requires separate order-safety, audit, permissions, failure, and rollback contract. |
-| Public `web-view` projection | Not approved now | Later possible only as public-safe source/freshness observation support, never account/order data. |
+| Public `web-view` projection | Approved only for top-2 current price | Public-safe source/freshness observation support; never account/order data. |
 
 Toss is not a replacement for the current source ownership model:
 
@@ -95,19 +98,24 @@ Allowed before key issuance:
 
 ## Pre-Key Forbidden Work
 
-Forbidden before key issuance:
+Forbidden outside the explicitly promoted top-2 current-price path:
 
-- Reading `.env` or any local secret store for Toss credentials.
+- Reading general `.env` or any non-dedicated secret store for Toss credentials.
 - Entering, storing, logging, or committing a real `client_id`,
   `client_secret`, access token, or account id.
-- Calling `POST /oauth2/token`.
-- Calling any Toss `/api/v1/...` runtime endpoint.
+- Calling `POST /oauth2/token` except through the promoted read-only
+  in-memory token owner after `.env.toss-openapi` live opt-in.
+- Calling any Toss `/api/v1/...` runtime endpoint except allowlisted
+  market/reference endpoints, currently `prices` for the promoted `web-view`
+  top-2 path and `stocks`/`market-calendar-kr` for manual probes.
 - Capturing real account, holding, order, buying-power, sellable-quantity, or
   commission data.
 - Writing Toss data into production SQLite.
 - Registering Toss scheduler tasks.
 - Sending Toss-derived Telegram messages.
-- Connecting Toss to `admin-gui`, public `web-view`, or current scheduler flows.
+- Connecting Toss to `admin-gui` or current scheduler flows.
+- Connecting Toss to public `web-view` beyond the top-2 current-price
+  projection described in this contract.
 - Implementing order creation, modification, cancellation, or routing.
 - Implementing public numeric scores, investment grades, buy/sell wording,
   entry/exit levels, target returns, conviction, or execution language.
@@ -117,7 +125,7 @@ Forbidden before key issuance:
 | Group | Endpoints | Pre-key classification |
 | --- | --- | --- |
 | Auth | `POST /oauth2/token` | Document only. No call before keys and explicit approval. |
-| Market Data | `GET /api/v1/prices`, `orderbook`, `trades`, `price-limits`, `candles` | Future read-only lab allowlist after token review. No public connection by default. |
+| Market Data | `GET /api/v1/prices`, `orderbook`, `trades`, `price-limits`, `candles` | `prices` only is allowlisted for top-2 web-view current price. Other market-data endpoints remain lab candidates. |
 | Stock Info | `GET /api/v1/stocks`, `GET /api/v1/stocks/{symbol}/warnings` | Future read-only lab allowlist after token review. |
 | Market Info | `GET /api/v1/exchange-rate`, `GET /api/v1/market-calendar/KR`, `GET /api/v1/market-calendar/US` | Future read-only lab allowlist after token review. |
 | Account | `GET /api/v1/accounts` | Operator-only lab candidate. Account id is sensitive operational context. |
@@ -130,8 +138,8 @@ Forbidden before key issuance:
 
 | Surface | Allowed now | Later condition |
 | --- | --- | --- |
-| Default/public `web-view` | Nothing Toss-connected. | Only public-safe source/freshness observation support after read-only lab proof and a separate projection review. |
-| Loopback lab `web-view` preview | Not approved in main. | Keep visual experiments on the separate Toss lab branch until the lab-to-web-view policy is explicitly changed. |
+| Default/public `web-view` | Top-2 `우선 확인` current-price projection only. | Server-derived latest-date symbols, GET-only, no arbitrary symbol query, no account/order data, no persistence. |
+| Loopback lab `web-view` preview | Superseded by the promoted top-2 projection. | New visual experiments still require separate review before broadening the main path. |
 | `admin-gui` | Nothing Toss-connected. | Coarse readiness status only after lab contract and secret redaction are implemented; no token/account display. |
 | `operator-review` | Not implemented. | Preferred future surface for raw read-only Toss probe review and response comparison. |
 | Telegram | Nothing Toss-connected. | No current path. Any future message needs a separate public/operator wording review. |
@@ -169,15 +177,19 @@ Rules:
 
 Current post-key branch status:
 
-- Candidate 1 and the bounded portion of Candidate 2 are implemented.
+- Candidate 1, the bounded portion of Candidate 2, and the promoted
+  `web-view` top-2 current-price projection are implemented.
 - `toss-openapi-readonly-probe` is no-network by default.
 - The only live allowlisted operations are `getStocks`,
   `getKrMarketCalendar`, and `getPrices`.
 - Live use requires local credentials, env opt-in, `--live`, and
   `--confirm-token-reissue`.
 - Account, asset, order-info/history, and order operations remain absent.
-- No Toss route or value is connected to default/public `web-view`,
-  `admin-gui`, Telegram, scheduler, or production DB.
+- The only default/public `web-view` Toss route is the top-2 current-price
+  projection. It uses server-derived candidate symbols, latest stored date
+  only, in-memory token/cache, and no DB writes.
+- No Toss value is connected to `admin-gui`, Telegram, scheduler, or
+  production DB.
 - See
   [toss-openapi-postkey-readonly-lab-runbook.md]({PROJECT_ROOT}/docs/codex/contracts/toss-openapi-postkey-readonly-lab-runbook.md).
 
@@ -218,8 +230,8 @@ After keys exist and the operator explicitly approves a post-key pass:
 6. Probe only the top-2 observation candidate symbols.
 7. Keep results in stdout or fixture files only until DB/source semantics are
    separately approved.
-8. Review whether source/freshness labels are clear enough for a future
-   public-safe observation projection. No projection is approved in main.
+8. Review whether source/freshness labels remain clear in the promoted top-2
+   `web-view` projection.
 9. Only after that, consider an operator-only account read probe.
 10. Keep all order `POST` endpoints blocked until a separate execution-lab
     contract is written and reviewed.
@@ -245,5 +257,6 @@ Pre-key preparation is complete when:
 - Tests or review notes prove no order endpoint can be selected by the default
   read-only profile.
 - No secret values are read, written, logged, or committed.
-- No production DB, scheduler, Telegram, `admin-gui`, or public `web-view`
-  connection exists.
+- No production DB, scheduler, Telegram, or `admin-gui` connection exists.
+- The only public `web-view` connection is the approved top-2 current-price
+  projection with no account/order data and no arbitrary symbol query.

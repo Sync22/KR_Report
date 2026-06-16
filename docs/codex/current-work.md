@@ -231,8 +231,8 @@ Closeout gate evidence (`2026-05-17 10:23 KST`): `next-phase-readiness` now expo
 | Boundary | Rule |
 | --- | --- |
 | `admin-gui` | Control-capable, local/operator-only. Do not expose publicly. |
-| `web-view` | GET-only/read-only, friend-facing candidate. Default API loads are stored-data based. The manual same-day `Naver 장중 참고` turnover overlap check remains display-only because it is not an approved stable intraday lane; a future approved real-time source may affect observation priority. No scheduler, shutdown, `.env`, DB path, Telegram token, settings, or admin audit exposure. |
-| Broker/API lab | Future Toss Securities Open API or other broker work starts outside production as documentation/permission review, sandbox/test-key check, and read-only quote/account/balance probes. No live trading hookup, broker secrets, production DB writes, scheduler/Telegram integration, admin-gui linkage, or public web-view linkage by default. |
+| `web-view` | GET-only/read-only, friend-facing candidate. Default API loads are stored-data based, with one approved Toss exception: latest stored date top-2 `우선 확인` rows may show `Toss 현재가` from server-derived symbols only. The manual same-day `Naver 장중 참고` turnover overlap check remains display-only. No scheduler, shutdown, DB path, Telegram token, settings, admin audit, account/order, arbitrary Toss symbol, or trading-call exposure. |
+| Broker/API lab | Toss Securities OpenAPI is promoted only for bounded `web-view` top-2 current-price reference and remains lab/manual for all other market/reference probes. Account/balance/order-info/order history stay operator-only lab candidates; live trading hookup, broker execution, order routing, production DB writes, scheduler/Telegram integration, and admin-gui linkage remain blocked. |
 | Reports | Naver source of truth. |
 | Price/volume/turnover/ETF/index | KRX Open API source of truth. |
 | Investor flow | KRX Data Marketplace source; stored read-only context. Automatic collection is limited to anchor-date mentioned stocks through `StockMonitor-KrxMentionedFlowBackfill`; broad scheduled ingest remains disabled. |

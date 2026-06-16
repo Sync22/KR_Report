@@ -5016,7 +5016,7 @@ def test_market_briefing_preview_includes_turnover_reference(tmp_path, capsys) -
     assert "KRX market: exact 26.05.14" in output
     assert "ETF daily: exact 26.05.14" in output
     assert "Investor flow: missing" in output
-    assert "Toss OpenAPI: lab-hold (호출 없음)" in output
+    assert "Toss OpenAPI: disabled (호출 없음)" in output
     assert "추천" not in output
     assert "점수" not in output
 
@@ -5110,11 +5110,11 @@ def test_market_briefing_json_preview_includes_slot_and_public_news_observation(
     assert source_freshness_items["krx_market"]["status"] == "exact"
     assert source_freshness_items["etf_daily"]["status"] == "exact"
     assert source_freshness_items["investor_flow"]["status"] == "missing"
-    assert source_freshness_items["toss_openapi"]["status"] == "lab_hold"
+    assert source_freshness_items["toss_openapi"]["status"] == "disabled"
     assert source_freshness_items["toss_openapi"]["live_fetch"] is False
     assert source_freshness_items["toss_openapi"]["affects_ordering"] is False
     assert "데이터 기준" in payload["message"]
-    assert "Toss OpenAPI: lab-hold (호출 없음)" in payload["message"]
+    assert "Toss OpenAPI: disabled (호출 없음)" in payload["message"]
     assert "뉴스 근거" in payload["message"]
     assert "삼성전자, AI 반도체 공급 계약 체결" in payload["message"]
     assert "sentiment_score" not in json.dumps(payload, ensure_ascii=False)
