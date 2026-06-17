@@ -7,6 +7,7 @@ from pathlib import Path
 from stock_monitor.news.flow import (
     build_news_flow_preview,
     format_news_flow_preview_text,
+    format_news_flow_slot_section,
     parse_news_flow_json,
 )
 
@@ -72,6 +73,23 @@ def test_format_news_flow_preview_text_includes_draft_and_source_boundaries() ->
     assert "telegram draft:" in output
     assert "writes_db: False" in output
     assert "sends_telegram: False" in output
+
+
+def test_format_news_flow_slot_section_uses_current_market_briefing_slots() -> None:
+    collection = parse_news_flow_json(_fixture_payload(), source_urls=SOURCE_URLS)
+    preview = build_news_flow_preview(collection)
+
+    mood_output = "\n".join(format_news_flow_slot_section(preview, slot="mood"))
+    lunch_output = "\n".join(format_news_flow_slot_section(preview, slot="lunch"))
+    preclose_output = "\n".join(format_news_flow_slot_section(preview, slot="preclose"))
+
+    assert "당일 흐름 참고" in mood_output
+    assert "오전 누적 확인" in lunch_output
+    assert "마감 전 유지 흐름" in preclose_output
+    for output in (mood_output, lunch_output, preclose_output):
+        assert "뉴스 source flow" in output
+        for forbidden in ("추천", "매수 기회", "전략 제안", "점수", "등급"):
+            assert forbidden not in output
 
 
 def test_news_flow_preview_does_not_match_short_terms_inside_unrelated_words() -> None:

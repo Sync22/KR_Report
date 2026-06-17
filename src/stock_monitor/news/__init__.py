@@ -14,6 +14,7 @@ from .flow import (
     NewsFlowPreview,
     build_news_flow_preview,
     format_news_flow_preview_text,
+    format_news_flow_slot_section,
     parse_news_flow_json,
     parse_news_flow_payload,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "build_report_linked_news_evidence",
     "build_news_intelligence_report",
     "format_news_flow_preview_text",
+    "format_news_flow_slot_section",
     "parse_news_flow_json",
     "parse_news_flow_payload",
 ]

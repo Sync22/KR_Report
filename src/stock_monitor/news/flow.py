@@ -347,6 +347,44 @@ def format_news_flow_preview_text(preview: NewsFlowPreview) -> str:
     return "\n".join(lines) + "\n"
 
 
+def format_news_flow_slot_section(preview: NewsFlowPreview, *, slot: str = "mood") -> list[str]:
+    source_basis = (
+        f"source URL {len(preview.source_urls)}개 / 기사 {preview.article_count}건 / "
+        f"분위기: {_draft_mood(preview.market_mood)}"
+    )
+    repeated = _compact_items(preview.repeated_stocks, name_attr="name")
+    themes = _compact_items(preview.sector_themes)
+    issues = _compact_items(preview.key_issues)
+    cautions = _compact_items(preview.caution_signals)
+
+    if slot == "lunch":
+        return [
+            "뉴스 source flow",
+            f"- 오전 누적 확인: {source_basis}",
+            f"- 겹쳐 보이는 흐름: {themes}",
+            f"- 주요 이슈: {issues}",
+            f"- 반복 등장 종목: {repeated}",
+            "- 낮게 반영: 정정/인사성 제목은 요약 축에서 제외했습니다",
+        ]
+    if slot == "preclose":
+        return [
+            "뉴스 source flow",
+            f"- 마감 전 유지 흐름: {themes}",
+            f"- 다음 확인 축: {issues}",
+            f"- 경계 신호: {cautions}",
+            f"- 반복 등장 종목: {repeated}",
+            f"- 기준: {source_basis}",
+        ]
+    return [
+        "뉴스 source flow",
+        f"- 당일 흐름 참고: {source_basis}",
+        f"- 넓은 언급: {themes}",
+        f"- 반복 등장 종목: {repeated}",
+        f"- 경계 신호: {cautions}",
+        "- 해석: source URL 기사 흐름만 요약하며 매매 판단과 분리합니다",
+    ]
+
+
 def _payload_sources(payload: object) -> list[object]:
     if isinstance(payload, dict):
         sources = payload.get("sources")

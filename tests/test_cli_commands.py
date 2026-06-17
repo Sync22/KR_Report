@@ -2793,6 +2793,32 @@ def test_news_flow_preview_parser_accepts_source_urls_and_fixture() -> None:
     assert args.format == "json"
 
 
+def test_news_flow_source_probe_parser_accepts_current_market_briefing_slot() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "news-flow-source-probe",
+            "--source-url",
+            "https://stock.naver.com/api/domestic/news/focus?sid=401&page=1&pageSize=20&date=20260606",
+            "--date",
+            "2026-06-06",
+            "--format",
+            "json",
+            "--slot",
+            "lunch",
+        ]
+    )
+
+    assert args.command == "news-flow-source-probe"
+    assert args.source_url == [
+        "https://stock.naver.com/api/domestic/news/focus?sid=401&page=1&pageSize=20&date=20260606"
+    ]
+    assert args.date == date(2026, 6, 6)
+    assert args.format == "json"
+    assert args.slot == "lunch"
+
+
 def test_news_flow_preview_cli_outputs_json_without_runtime_side_effects(tmp_path, capsys) -> None:
     fixture = tmp_path / "news-flow.json"
     fixture.write_text(
@@ -2849,6 +2875,87 @@ def test_news_flow_preview_cli_outputs_json_without_runtime_side_effects(tmp_pat
     assert payload["registers_scheduler"] is False
     assert payload["connects_web_view"] is False
     assert "source URL" in payload["telegram_draft"]
+
+
+def test_news_flow_source_probe_outputs_json_without_runtime_side_effects(capsys) -> None:
+    source_url = "https://stock.naver.com/api/domestic/news/focus?sid=401&page=1&pageSize=20&date=20260606"
+
+    def fake_transport(spec) -> str:
+        assert spec.page_url == source_url
+        return json.dumps(
+            {
+                "articles": [
+                    {
+                        "officeHName": "한국경제",
+                        "title": "Samsung Electronics AI chip supply contract",
+                        "subcontent": "Samsung Electronics and SK Hynix were both mentioned in AI chip demand.",
+                        "date": "20260606101000",
+                        "url": "https://n.news.naver.com/mnews/article/015/0000201",
+                    },
+                    {
+                        "officeHName": "매일경제",
+                        "title": "SK Hynix expands AI memory investment",
+                        "subcontent": "Semiconductor capex and AI memory remained a visible market theme.",
+                        "date": "20260606102000",
+                        "url": "https://n.news.naver.com/mnews/article/009/0000202",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    exit_code = cli_module._run_news_flow_source_probe(
+        Namespace(
+            source_url=[source_url],
+            date=date(2026, 6, 6),
+            scrapling_exe=None,
+            format="json",
+            slot="lunch",
+        ),
+        transport=fake_transport,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["surface"] == "news-flow-source-probe"
+    assert payload["live_fetch"] is True
+    assert payload["writes_db"] is False
+    assert payload["sends_telegram"] is False
+    assert payload["registers_scheduler"] is False
+    assert payload["connects_web_view"] is False
+    assert payload["slot"] == "lunch"
+    assert "lunch" in payload["slot_sections"]
+    assert "오전 누적 확인" in "\n".join(payload["slot_sections"]["lunch"])
+    assert payload["article_count"] == 2
+    assert payload["source_diagnostics"][0]["parsed_count"] == 2
+    assert "source URL" in payload["telegram_draft"]
+
+
+def test_news_flow_source_probe_rejects_unsupported_url_without_fetch(capsys) -> None:
+    called = False
+
+    def fake_transport(_spec) -> str:
+        nonlocal called
+        called = True
+        return "{}"
+
+    exit_code = cli_module._run_news_flow_source_probe(
+        Namespace(
+            source_url=["https://outside.example/not-approved"],
+            date=date(2026, 6, 6),
+            scrapling_exe=None,
+            format="json",
+            slot="mood",
+        ),
+        transport=fake_transport,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert called is False
+    assert payload["surface"] == "news-flow-source-probe"
+    assert payload["writes_db"] is False
+    assert payload["unsupported_urls"] == ["https://outside.example/not-approved"]
 
 
 def test_news_flow_preview_cli_uses_repository_fixture(capsys) -> None:
@@ -5119,6 +5226,105 @@ def test_market_briefing_json_preview_includes_slot_and_public_news_observation(
     assert "삼성전자, AI 반도체 공급 계약 체결" in payload["message"]
     assert "sentiment_score" not in json.dumps(payload, ensure_ascii=False)
     assert "operator_recommendation" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_market_briefing_preview_can_include_news_flow_fixture_without_send(tmp_path, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 4)
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name="삼성전자",
+                title="삼성전자 AI 반도체 점검",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 6, 4, 9, 0, 0),
+                collected_at=datetime(2026, 6, 4, 12, 0, 0),
+                stock_code="005930",
+                target_price_raw="100000",
+                target_price_value=100_000,
+                opinion_raw="매수",
+                opinion_normalized="buy",
+                source_id="market-news-flow-samsung-1",
+                identity_key="market-news-flow-samsung-1",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    fixture = tmp_path / "news-flow.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "sources": [
+                    {
+                        "source_url": "https://example.test/market-flow",
+                        "source": "Market Desk",
+                        "articles": [
+                            {
+                                "title": "Samsung Electronics and SK Hynix rise on AI chip supply news",
+                                "date": "2026-06-04T10:00:00+09:00",
+                                "url": "https://news.example/a",
+                                "source": "Market Desk",
+                                "summary": "Semiconductor demand and HBM supply contracts kept AI chip names in focus.",
+                            },
+                            {
+                                "title": "Samsung Electronics volatility caution after sharp move",
+                                "date": "2026-06-04T11:00:00+09:00",
+                                "url": "https://news.example/b",
+                                "source": "Market Desk",
+                                "summary": "Overheating and volatility risk were noted after the rally.",
+                            },
+                        ],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = _run_market_briefing(
+        config,
+        repository,
+        explicit_date=business_date,
+        limit=5,
+        send=False,
+        slot="lunch",
+        news_flow_source_urls=("https://example.test/market-flow",),
+        news_flow_fixture=fixture,
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "뉴스 source flow" in output
+    assert "오전 누적 확인" in output
+    assert "Samsung Electronics" in output
+    assert "sends_telegram" not in output
+    for forbidden in ("추천", "매수 기회", "전략 제안", "점수", "등급"):
+        assert forbidden not in output
+
+
+def test_market_briefing_rejects_news_flow_fixture_with_send(tmp_path, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    fixture = tmp_path / "news-flow.json"
+    fixture.write_text(json.dumps({"sources": []}), encoding="utf-8")
+
+    exit_code = _run_market_briefing(
+        config,
+        repository,
+        explicit_date=date(2026, 6, 4),
+        limit=5,
+        send=True,
+        news_flow_source_urls=("https://example.test/market-flow",),
+        news_flow_fixture=fixture,
+    )
+
+    assert exit_code == 1
+    assert "not allowed with --send" in capsys.readouterr().out
 
 
 def test_market_briefing_uses_stock_flow_reference_when_market_flow_missing(tmp_path, capsys) -> None:

@@ -476,6 +476,15 @@ def build_parser() -> argparse.ArgumentParser:
     news_flow_parser.add_argument("--source-url", action="append", required=True)
     news_flow_parser.add_argument("--fixture", type=Path, required=True)
     news_flow_parser.add_argument("--format", choices=("text", "json"), default="text")
+    news_flow_probe_parser = subparsers.add_parser(
+        "news-flow-source-probe",
+        help="Run an operator-only live source probe for approved Naver news source URLs.",
+    )
+    news_flow_probe_parser.add_argument("--source-url", action="append", required=True)
+    news_flow_probe_parser.add_argument("--date", type=date.fromisoformat)
+    news_flow_probe_parser.add_argument("--scrapling-exe", type=Path)
+    news_flow_probe_parser.add_argument("--format", choices=("text", "json"), default="text")
+    news_flow_probe_parser.add_argument("--slot", choices=tuple(MARKET_BRIEFING_SLOT_LABELS), default="mood")
     news_observations_parser = subparsers.add_parser(
         "news-intelligence-observations",
         help="Read saved operator-only news intelligence observations as JSON.",
@@ -1410,6 +1419,16 @@ def build_parser() -> argparse.ArgumentParser:
     market_briefing_parser.add_argument("--slot", choices=tuple(MARKET_BRIEFING_SLOT_LABELS), default="mood")
     market_briefing_parser.add_argument("--send", action="store_true", help="Send the briefing to Telegram instead of printing it.")
     market_briefing_parser.add_argument("--json", action="store_true")
+    market_briefing_parser.add_argument(
+        "--news-flow-source-url",
+        action="append",
+        help="Operator-provided news source URL to include in preview-only source-flow draft.",
+    )
+    market_briefing_parser.add_argument(
+        "--news-flow-fixture",
+        type=Path,
+        help="Fixture JSON for preview-only source-flow draft.",
+    )
 
     market_briefing_readiness_parser = subparsers.add_parser(
         "market-briefing-readiness",
@@ -1881,6 +1900,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_news_intelligence_preview(args)
     if args.command == "news-flow-preview":
         return _run_news_flow_preview(args)
+    if args.command == "news-flow-source-probe":
+        return _run_news_flow_source_probe(args)
     if args.command == "news-intelligence-observations":
         return _run_news_intelligence_observations(args)
     if args.command == "news-intelligence-daily-brief":
@@ -2511,6 +2532,8 @@ def main(argv: list[str] | None = None) -> int:
                 send=args.send,
                 slot=args.slot,
                 as_json=args.json,
+                news_flow_source_urls=tuple(args.news_flow_source_url or ()),
+                news_flow_fixture=args.news_flow_fixture,
             )
         if args.command == "market-briefing-readiness":
             return _run_market_briefing_readiness(
@@ -2852,6 +2875,206 @@ def _run_news_flow_preview(args: argparse.Namespace) -> int:
     else:
         print(format_news_flow_preview_text(preview), end="")
     return 0
+
+
+def _run_news_flow_source_probe(
+    args: argparse.Namespace,
+    *,
+    transport: Callable[[object], str] | None = None,
+) -> int:
+    from stock_monitor.news.collectors import (
+        ScraplingNewsTransport,
+        _parse_naver_news_response,
+        build_naver_news_request_specs,
+    )
+    from stock_monitor.news.flow import (
+        build_news_flow_preview,
+        format_news_flow_slot_section,
+        parse_news_flow_payload,
+    )
+
+    target_date = args.date or datetime.now(tz=ZoneInfo("Asia/Seoul")).date()
+    slot = str(getattr(args, "slot", "mood") or "mood")
+    source_urls = tuple(args.source_url or ())
+    specs_by_url = {spec.page_url: spec for spec in build_naver_news_request_specs(target_date)}
+    unsupported_urls = [url for url in source_urls if url not in specs_by_url]
+    if unsupported_urls:
+        payload = _news_flow_source_probe_error_payload(
+            source_urls=source_urls,
+            target_date=target_date,
+            slot=slot,
+            error="unsupported source URL for selected date",
+            unsupported_urls=unsupported_urls,
+        )
+        _print_news_flow_source_probe_payload(payload, output_format=args.format)
+        return 1
+
+    effective_transport = transport
+    if effective_transport is None:
+        scrapling_exe = _resolve_scrapling_exe(args.scrapling_exe)
+        if scrapling_exe is None:
+            payload = _news_flow_source_probe_error_payload(
+                source_urls=source_urls,
+                target_date=target_date,
+                slot=slot,
+                error="missing Scrapling executable",
+                unsupported_urls=[],
+            )
+            _print_news_flow_source_probe_payload(payload, output_format=args.format)
+            return 1
+        effective_transport = ScraplingNewsTransport(scrapling_exe=scrapling_exe)
+
+    source_rows: list[dict[str, object]] = []
+    diagnostics: list[dict[str, object]] = []
+    for source_url in source_urls:
+        spec = specs_by_url[source_url]
+        fetched = False
+        fetch_error: str | None = None
+        raw_chars = 0
+        parsed_articles = []
+        try:
+            response_text = effective_transport(spec)
+            fetched = True
+            raw_chars = len(response_text)
+            parsed_articles = _parse_naver_news_response(response_text, spec)
+        except Exception as exc:
+            fetch_error = str(exc) or exc.__class__.__name__
+        diagnostics.append(
+            {
+                "source": spec.source.value,
+                "source_url": spec.page_url,
+                "response_format": spec.response_format,
+                "fetched": fetched,
+                "fetch_error": fetch_error,
+                "raw_chars": raw_chars,
+                "parsed_count": len(parsed_articles),
+            }
+        )
+        source_rows.append(
+            {
+                "source_url": spec.page_url,
+                "source": spec.section_name or spec.source.value,
+                "articles": [
+                    {
+                        "title": article.title,
+                        "date": article.published_at.isoformat(),
+                        "url": article.url,
+                        "source": article.source or spec.source.value,
+                        "summary": article.summary,
+                    }
+                    for article in parsed_articles
+                ],
+            }
+        )
+
+    collection = parse_news_flow_payload({"sources": source_rows}, source_urls=source_urls)
+    preview = build_news_flow_preview(collection)
+    slot_sections = {
+        slot_name: format_news_flow_slot_section(preview, slot=slot_name)
+        for slot_name in MARKET_BRIEFING_SLOT_LABELS
+    }
+    payload = preview.to_dict()
+    payload.update(
+        {
+            "surface": "news-flow-source-probe",
+            "operator_only": True,
+            "public_safe": False,
+            "live_fetch": True,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "connects_web_view": False,
+            "target_date": target_date.isoformat(),
+            "slot": slot,
+            "slot_sections": slot_sections,
+            "source_diagnostics": diagnostics,
+        }
+    )
+    _print_news_flow_source_probe_payload(
+        payload,
+        output_format=args.format,
+        slot_section=slot_sections.get(slot),
+    )
+    return 0 if preview.article_count > 0 else 1
+
+
+def _news_flow_source_probe_error_payload(
+    *,
+    source_urls: tuple[str, ...],
+    target_date: date,
+    slot: str,
+    error: str,
+    unsupported_urls: list[str],
+) -> dict[str, object]:
+    return {
+        "surface": "news-flow-source-probe",
+        "operator_only": True,
+        "public_safe": False,
+        "live_fetch": True,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "connects_web_view": False,
+        "target_date": target_date.isoformat(),
+        "slot": slot,
+        "slot_sections": {},
+        "source_urls": list(source_urls),
+        "source_diagnostics": [],
+        "unsupported_urls": unsupported_urls,
+        "error": error,
+    }
+
+
+def _print_news_flow_source_probe_payload(
+    payload: dict[str, object],
+    *,
+    output_format: str,
+    slot_section: list[str] | None = None,
+) -> None:
+    if output_format == "json":
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    print(_format_news_flow_source_probe_text(payload, slot_section=slot_section), end="")
+
+
+def _format_news_flow_source_probe_text(
+    payload: dict[str, object],
+    *,
+    slot_section: list[str] | None,
+) -> str:
+    lines = [
+        "News flow source probe",
+        f"target_date: {payload.get('target_date')}",
+        "live_fetch: True",
+        "writes_db: False",
+        "sends_telegram: False",
+        "registers_scheduler: False",
+        "connects_web_view: False",
+    ]
+    if payload.get("error"):
+        lines.append(f"error: {payload.get('error')}")
+    unsupported_urls = payload.get("unsupported_urls")
+    if isinstance(unsupported_urls, list) and unsupported_urls:
+        lines.append("unsupported source URLs:")
+        lines.extend(f"- {url}" for url in unsupported_urls)
+    diagnostics = payload.get("source_diagnostics")
+    if isinstance(diagnostics, list) and diagnostics:
+        lines.extend(["", "source diagnostics:"])
+        for row in diagnostics:
+            if not isinstance(row, dict):
+                continue
+            lines.append(
+                "- "
+                f"{row.get('source')}: fetched={row.get('fetched')} "
+                f"parsed={row.get('parsed_count')} raw_chars={row.get('raw_chars')} "
+                f"error={row.get('fetch_error')}"
+            )
+    if slot_section:
+        lines.extend(["", *slot_section])
+    telegram_draft = payload.get("telegram_draft")
+    if telegram_draft:
+        lines.extend(["", "telegram draft:", str(telegram_draft)])
+    return "\n".join(lines) + "\n"
 
 
 def _news_flow_preview_error_payload(
@@ -15330,11 +15553,31 @@ def _run_market_briefing(
     send: bool,
     slot: str = "mood",
     as_json: bool = False,
+    news_flow_source_urls: tuple[str, ...] = (),
+    news_flow_fixture: Path | None = None,
 ) -> int:
     if as_json and send:
         raise ValueError("--json cannot be combined with --send for market-briefing.")
+    if bool(news_flow_source_urls) != bool(news_flow_fixture):
+        print("--news-flow-source-url and --news-flow-fixture must be provided together")
+        return 1
+    if send and news_flow_source_urls:
+        print("news-flow source preview is not allowed with --send")
+        return 1
     business_date = explicit_date or datetime.now(ZoneInfo(config.timezone)).date()
     message = _build_market_briefing_message(config, repository, business_date=business_date, limit=limit, slot=slot)
+    news_flow_lines: list[str] | None = None
+    if news_flow_source_urls and news_flow_fixture:
+        try:
+            news_flow_lines = _build_market_briefing_news_flow_lines(
+                source_urls=news_flow_source_urls,
+                fixture=news_flow_fixture,
+                slot=slot,
+            )
+        except Exception as exc:
+            print(f"news-flow source preview failed: {exc}")
+            return 1
+        message = _insert_market_briefing_section_before_check_points(message, news_flow_lines)
     issues = _collect_market_briefing_message_issues(message)
     if as_json:
         source_freshness_summary = _build_market_briefing_source_freshness_summary(
@@ -15353,6 +15596,15 @@ def _run_market_briefing(
             "public_safe_issue_count": len(issues),
             "public_safe_issues": issues,
             "news_observation_summary": _build_web_view_news_observation_summary(repository, business_date),
+            "news_flow_source_preview": {
+                "enabled": bool(news_flow_lines),
+                "source_urls": list(news_flow_source_urls),
+                "fixture": str(news_flow_fixture) if news_flow_fixture else None,
+                "sends_telegram": False,
+                "writes_db": False,
+                "registers_scheduler": False,
+                "connects_web_view": False,
+            },
             "source_freshness_summary": source_freshness_summary,
             "message": message,
         }
@@ -17655,6 +17907,22 @@ def _market_briefing_manual_review_commands(
         if len(commands) >= max_commands:
             break
     return commands
+
+
+def _build_market_briefing_news_flow_lines(
+    *,
+    source_urls: tuple[str, ...],
+    fixture: Path,
+    slot: str = "mood",
+) -> list[str]:
+    from stock_monitor.news.flow import (
+        build_news_flow_preview,
+        format_news_flow_slot_section,
+        parse_news_flow_json,
+    )
+
+    collection = parse_news_flow_json(fixture.read_text(encoding="utf-8"), source_urls=source_urls)
+    return format_news_flow_slot_section(build_news_flow_preview(collection), slot=slot)
 
 
 def _build_market_briefing_message(
@@ -21424,15 +21692,19 @@ def _make_web_view_handler(
             path, _, _query = self.path.partition("?")
             if path == "/auth/login" and not _access_http_gate(self, config, surface_label="사용자용 웹뷰", surface_key="web"):
                 return
+            _discard_http_request_body(self)
             _write_http_response(self, HTTPStatus.METHOD_NOT_ALLOWED, "method not allowed", content_type="text/plain; charset=utf-8")
 
         def do_PUT(self) -> None:
+            _discard_http_request_body(self)
             _write_http_response(self, HTTPStatus.METHOD_NOT_ALLOWED, "method not allowed", content_type="text/plain; charset=utf-8")
 
         def do_PATCH(self) -> None:
+            _discard_http_request_body(self)
             _write_http_response(self, HTTPStatus.METHOD_NOT_ALLOWED, "method not allowed", content_type="text/plain; charset=utf-8")
 
         def do_DELETE(self) -> None:
+            _discard_http_request_body(self)
             _write_http_response(self, HTTPStatus.METHOD_NOT_ALLOWED, "method not allowed", content_type="text/plain; charset=utf-8")
 
         def log_message(self, _format: str, *_args) -> None:
@@ -21827,6 +22099,19 @@ def _read_json_request(handler: BaseHTTPRequestHandler) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("JSON request body must be an object.")
     return payload
+
+
+def _discard_http_request_body(handler: BaseHTTPRequestHandler) -> None:
+    try:
+        content_length = int(handler.headers.get("Content-Length") or "0")
+    except ValueError:
+        return
+    if content_length <= 0:
+        return
+    try:
+        handler.rfile.read(content_length)
+    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+        return
 
 
 def _handle_admin_gui_post(

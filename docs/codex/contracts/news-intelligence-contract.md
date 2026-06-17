@@ -101,9 +101,11 @@ Partial source failures are allowed and should be represented in `sources[*].fet
 Allowed in v1:
 
 - Fixture-backed article flow parsing from an explicit `--source-url` allow-list.
+- Explicit operator-approved live source-probe from the supported Naver source URLs listed in this contract.
 - Article contract fields: `title`, `date`, `url`, `source`, and `summary`.
 - Per-source diagnostics: requested URL, source name, parsed article count, and warnings for missing or out-of-scope sources.
 - Whole-flow aggregation: repeated stock mentions, sector/theme flow, key issues, caution signals, market mood, text preview, JSON preview, and Telegram draft copy.
+- Preview-only `market-briefing` source-flow section injection from the same fixture contract.
 
 Blocked by default:
 
@@ -114,10 +116,14 @@ Blocked by default:
 Supported command:
 
 - `python -m stock_monitor news-flow-preview --source-url URL [--source-url URL ...] --fixture PATH [--format text|json]`
+- `python -m stock_monitor news-flow-source-probe --source-url URL [--source-url URL ...] [--date YYYY-MM-DD] [--format text|json]`
+- `python -m stock_monitor market-briefing --slot mood|lunch|preclose --news-flow-source-url URL [--news-flow-source-url URL ...] --news-flow-fixture PATH`
 
 The command must only include fixture sources whose `source_url` exactly matches one of the provided `--source-url` values. Fixture sources outside that allow-list are excluded and reported as warnings. Requested URLs missing from the fixture are also reported as warnings.
 
-The Telegram draft is preview text only. It must include the source URL basis and say that it summarizes article flow without trading judgment. It must not send Telegram messages.
+`news-flow-source-probe` is a manual live probe only. It may fetch only the supported Naver source URLs for the selected date, emits text/JSON diagnostics to stdout, and must not write DB rows, create fixture files, send Telegram messages, register schedulers, or connect to `admin-gui`/`web-view`.
+
+The Telegram draft and `market-briefing` source-flow section are preview text only. They must include the source URL basis and summarize article flow without trading judgment. The source-flow fixture options must be rejected with `--send` and must not send Telegram messages.
 
 ## Output Contract
 
