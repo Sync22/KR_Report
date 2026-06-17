@@ -2767,6 +2767,31 @@ def test_news_intelligence_preview_parser_accepts_operator_inputs() -> None:
     assert args.save_observation is True
 
 
+def test_news_intelligence_briefing_collect_parser_accepts_save_guard() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "news-intelligence-briefing-collect",
+            "--date",
+            "2026-06-04",
+            "--limit",
+            "2",
+            "--save-observation",
+            "--confirm-save",
+            "--format",
+            "json",
+        ]
+    )
+
+    assert args.command == "news-intelligence-briefing-collect"
+    assert args.date == date(2026, 6, 4)
+    assert args.limit == 2
+    assert args.save_observation is True
+    assert args.confirm_save is True
+    assert args.format == "json"
+
+
 def test_news_flow_preview_parser_accepts_source_urls_and_fixture() -> None:
     parser = cli_module.build_parser()
 
@@ -3525,6 +3550,139 @@ def test_news_intelligence_preview_cli_keeps_default_no_write_guard(tmp_path, mo
     assert payload["writes_db"] is False
     assert "saved_run_id" not in payload
     assert not db_path.exists()
+
+
+def test_news_intelligence_briefing_collect_saves_observations_for_actual_surfaces(
+    tmp_path,
+    capsys,
+) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 4)
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name="Samsung Electronics",
+                title="Samsung Electronics AI semiconductor report",
+                broker_name="NH",
+                published_at=datetime(2026, 6, 4, 9, 0, 0),
+                collected_at=datetime(2026, 6, 4, 12, 0, 0),
+                stock_code="005930",
+                target_price_raw="100000",
+                target_price_value=100_000,
+                opinion_raw="buy",
+                opinion_normalized="buy",
+                source_id="briefing-collect-samsung-1",
+                identity_key="briefing-collect-samsung-1",
+            ),
+            Report(
+                business_date=business_date,
+                stock_name="SK Hynix",
+                title="SK Hynix HBM demand report",
+                broker_name="KB",
+                published_at=datetime(2026, 6, 4, 9, 5, 0),
+                collected_at=datetime(2026, 6, 4, 12, 0, 0),
+                stock_code="000660",
+                target_price_raw="250000",
+                target_price_value=250_000,
+                opinion_raw="buy",
+                opinion_normalized="buy",
+                source_id="briefing-collect-hynix-1",
+                identity_key="briefing-collect-hynix-1",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    def fake_transport(spec) -> str:
+        if spec.response_format != "focus_json":
+            return ""
+        return json.dumps(
+            {
+                "articles": [
+                    {
+                        "officeHName": "한국경제",
+                        "title": "Samsung Electronics AI chip supply contract",
+                        "subcontent": "Samsung Electronics was mentioned in AI chip supply news.",
+                        "date": "20260604101000",
+                        "url": "https://n.news.naver.com/mnews/article/015/0000601",
+                    },
+                    {
+                        "officeHName": "매일경제",
+                        "title": "SK Hynix expands HBM memory investment",
+                        "subcontent": "SK Hynix remained visible in HBM and AI memory demand.",
+                        "date": "20260604102000",
+                        "url": "https://n.news.naver.com/mnews/article/009/0000602",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    exit_code = cli_module._run_news_intelligence_briefing_collect(
+        Namespace(
+            date=business_date,
+            limit=2,
+            stock_code=[],
+            scrapling_exe=None,
+            db_path=config.db_path,
+            save_observation=True,
+            confirm_save=True,
+            format="json",
+        ),
+        transport=fake_transport,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["surface"] == "news-intelligence-briefing-collect"
+    assert payload["operator_only"] is True
+    assert payload["live_fetch"] is True
+    assert payload["writes_db"] is True
+    assert payload["sends_telegram"] is False
+    assert payload["registers_scheduler"] is False
+    assert payload["connects_admin_gui"] is False
+    assert payload["connects_web_view"] is False
+    assert payload["target_stock_count"] == 2
+    assert payload["saved_observation_count"] == 2
+    assert payload["saved_evidence_count"] == 2
+    assert payload["saved_projection_surfaces"] == ["market-briefing", "web-view"]
+    assert {item["stock_code"] for item in payload["items"]} == {"005930", "000660"}
+    assert all(item["saved"] is True for item in payload["items"])
+
+    runs = repository.list_news_intelligence_runs(target_date=business_date, limit=10)
+    assert len(runs) == 2
+
+    assert _run_market_briefing(
+        config,
+        repository,
+        explicit_date=business_date,
+        limit=5,
+        send=False,
+        slot="lunch",
+        as_json=True,
+    ) == 0
+    briefing_payload = json.loads(capsys.readouterr().out)
+    assert briefing_payload["news_observation_summary"]["available"] is True
+    assert "뉴스 관찰" in briefing_payload["message"]
+    assert "저장 관찰 2종목" in briefing_payload["message"]
+    assert "직접 2건" in briefing_payload["message"]
+    assert "Samsung Electronics AI chip supply contract" in briefing_payload["message"]
+    assert "SK Hynix expands HBM memory investment" in briefing_payload["message"]
+    assert "sentiment_score" not in json.dumps(briefing_payload, ensure_ascii=False)
+    assert "operator_recommendation" not in json.dumps(briefing_payload, ensure_ascii=False)
+
+    daily_snapshot = cli_module.build_web_view_daily_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        now=datetime(2026, 6, 4, 12, 30, 0),
+    )
+    assert daily_snapshot["news_observation_summary"]["available"] is True
+    assert daily_snapshot["market_briefing"]["news_observation_summary"]["available"] is True
+    assert daily_snapshot["market_briefing"]["news_observation_summary"]["direct_count"] == 2
 
 
 def test_news_intelligence_preview_cli_saves_observation_only_when_explicit(tmp_path, monkeypatch, capsys) -> None:

@@ -54,8 +54,9 @@ The collector boundary is:
 Scrapling is the preferred active source-probe tool for rendered Naver source inspection and manual operator preview collection. The allowed v1 command is:
 
 - `python -m stock_monitor news-intelligence-preview --stock-name NAME [--stock-code CODE] [--alias ALIAS] [--date YYYY-MM-DD]`
+- `python -m stock_monitor news-intelligence-briefing-collect --date YYYY-MM-DD [--limit N] [--stock-code CODE ...] [--save-observation --confirm-save]`
 
-This command is manual and operator-only. It emits JSON to stdout, uses temporary files for Scrapling output, deletes those files after reading, and must not write live fetch results into the repository, SQLite, logs, scheduler state, Telegram, or public `web-view` by default. It also does not update `admin-gui` in v1; a future private `operator-review` surface is the review UI candidate, not an `admin-gui` expansion or a public-surface exception.
+These commands are manual and operator-only. They emit JSON/text to stdout, use temporary files for Scrapling output, delete those files after reading, and must not write live fetch results into the repository, SQLite, logs, scheduler state, Telegram, or public `web-view` by default. `news-intelligence-briefing-collect` selects target stocks from stored daily summaries, or an in-memory rebuild from stored reports when summaries are absent. It may save rows only when both `--save-observation` and `--confirm-save` are present. It also does not update `admin-gui` in v1; a future private `operator-review` surface is the review UI candidate, not an `admin-gui` expansion or a public-surface exception.
 
 Saved operator observations may be reviewed with:
 
@@ -67,10 +68,11 @@ These readback commands are operator-only and read-only. They compare saved runs
 Operator workflow:
 
 1. Run `news-intelligence-preview` without `--save-observation` to inspect live collection coverage and operator-only judgment fields.
-2. When the operator explicitly wants to keep the result, rerun with `--save-observation`; this is the only write path for news observations.
-3. Use `news-intelligence-observations --format text|json` to inspect saved run/evidence details by date, stock code, or run id.
-4. Use `news-intelligence-daily-brief --format text|json` to group saved runs by date and candidate-linkage label.
-5. Use `web-view` only as a stored-data, public-safe visibility check after observations already exist; it must not fetch news or trigger saving.
+2. When the operator explicitly wants to keep a single-stock result, rerun with `--save-observation`; this is an operator-only write path for news observations.
+3. For market-briefing target stocks, run `news-intelligence-briefing-collect --save-observation --confirm-save` to persist observations for multiple stored-summary stocks in one manual pass.
+4. Use `news-intelligence-observations --format text|json` to inspect saved run/evidence details by date, stock code, or run id.
+5. Use `news-intelligence-daily-brief --format text|json` to group saved runs by date and candidate-linkage label.
+6. Use `market-briefing` and `web-view` only as stored-data, public-safe visibility checks after observations already exist; they must not fetch news or trigger saving.
 
 The preview command is intentionally incomplete as a day-level collector:
 
@@ -223,8 +225,9 @@ The stored lane may include:
 Storage guardrails:
 
 - DB writes require the explicit operator save option `--save-observation`.
+- Batch market-briefing collection requires both `--save-observation` and `--confirm-save`; without both flags it is a preview/no-write command.
 - The default manual preview remains `writes_db=false`.
-- Stored rows are operator-only observation/evaluation data and must not be copied raw into public `web-view`, Telegram, or scheduler surfaces. The current `web-view` projection is allowed only as a thin stored-data summary that hides internal sentiment scores, impact scores, raw warnings, and operator-only recommendation-support fields. `admin-gui` remains operations/status/control only; fuller review rows belong in a future `operator-review` surface after a separate contract.
+- Stored rows are operator-only observation/evaluation data and must not be copied raw into public `web-view`, Telegram, or scheduler surfaces. The current `market-briefing` and `web-view` projections are allowed only as thin stored-data summaries that hide internal sentiment scores, impact scores, raw warnings, and operator-only recommendation-support fields. `admin-gui` remains operations/status/control only; fuller review rows belong in a future `operator-review` surface after a separate contract.
 - When KRX reference data comes from the nearest prior stored row, the preview/save payload must distinguish exact-date reference from stale fallback reference and warn rather than silently treating stale KRX data as same-day confirmation.
 - The stored lane must not contain broker secrets, order intent, order-routing instructions, or public buy/sell calls.
 

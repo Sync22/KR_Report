@@ -14,6 +14,8 @@ It is a runnable local MVP with:
 
 Current work is the main-PC next-phase continuation: KRX OpenAPI latest-date backfill evidence, stored-data `시황 예시` market-mood preview readiness, Task Scheduler/Startup fallback blockers, and market-briefing manual review gates. Historical mini-PC closeout evidence remains trace context, but it is not proof that the current main-PC gates are closed.
 
+Implementation note (`2026-06-17 KST`): news intelligence now has a real operator batch collection path for market-briefing target stocks. `news-intelligence-briefing-collect` reads stored daily-summary/report targets, runs the existing Naver news intelligence collection, and persists observations only with `--save-observation --confirm-save`. Saved rows are then visible through the actual `market-briefing` message as a `뉴스 관찰 / 뉴스 근거` section and through the public-safe stored `web-view` daily DTO at both `news_observation_summary` and `market_briefing.news_observation_summary`. This remains manual/operator-only for collection and does not register scheduler tasks, send Telegram by itself, connect to `admin-gui`, or add public live fetch/write behavior.
+
 ## Product Direction Reset
 
 As of `2026-05-15`, the product direction is reset around practical daily use rather than adding more intermediate validation screens.

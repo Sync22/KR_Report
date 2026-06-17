@@ -469,6 +469,18 @@ def build_parser() -> argparse.ArgumentParser:
     news_preview_parser.add_argument("--scrapling-exe", type=Path)
     news_preview_parser.add_argument("--db-path", type=Path)
     news_preview_parser.add_argument("--save-observation", action="store_true")
+    news_briefing_collect_parser = subparsers.add_parser(
+        "news-intelligence-briefing-collect",
+        help="Collect operator-only news observations for market-briefing target stocks.",
+    )
+    news_briefing_collect_parser.add_argument("--date", type=date.fromisoformat)
+    news_briefing_collect_parser.add_argument("--limit", type=int, default=3)
+    news_briefing_collect_parser.add_argument("--stock-code", action="append", default=[])
+    news_briefing_collect_parser.add_argument("--scrapling-exe", type=Path)
+    news_briefing_collect_parser.add_argument("--db-path", type=Path)
+    news_briefing_collect_parser.add_argument("--save-observation", action="store_true")
+    news_briefing_collect_parser.add_argument("--confirm-save", action="store_true")
+    news_briefing_collect_parser.add_argument("--format", choices=("json", "text"), default="json")
     news_flow_parser = subparsers.add_parser(
         "news-flow-preview",
         help="Preview the article flow from operator-provided news source URLs using a fixture.",
@@ -1898,6 +1910,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "news-intelligence-preview":
         return _run_news_intelligence_preview(args)
+    if args.command == "news-intelligence-briefing-collect":
+        return _run_news_intelligence_briefing_collect(args)
     if args.command == "news-flow-preview":
         return _run_news_flow_preview(args)
     if args.command == "news-flow-source-probe":
@@ -3110,6 +3124,259 @@ def _format_news_flow_preview_error_text(payload: dict[str, object]) -> str:
             "connects_web_view: False",
         ]
     ) + "\n"
+
+
+def _run_news_intelligence_briefing_collect(
+    args: argparse.Namespace,
+    *,
+    transport: Callable[[object], str] | None = None,
+) -> int:
+    from stock_monitor.news import build_news_intelligence_report
+    from stock_monitor.news.collectors import (
+        ScraplingNewsTransport,
+        StockNewsQuery,
+        collect_naver_news_preview,
+    )
+    from stock_monitor.news.report import _apply_match_quality_guard, analyze_news_article
+
+    target_date = args.date or datetime.now(tz=ZoneInfo("Asia/Seoul")).date()
+    db_path = args.db_path or Path("data") / "stock_monitor.db"
+    payload = _news_intelligence_briefing_collect_base_payload(
+        target_date=target_date,
+        db_path=db_path,
+        limit=args.limit,
+        stock_codes=tuple(args.stock_code or ()),
+        save_observation=bool(args.save_observation),
+    )
+    if args.save_observation and not args.confirm_save:
+        payload["writes_db"] = False
+        payload["error"] = "--confirm-save is required with --save-observation"
+        _print_news_intelligence_briefing_collect_payload(args, payload)
+        return 1
+    if not db_path.exists():
+        payload["writes_db"] = False
+        payload["error"] = "database does not exist"
+        _print_news_intelligence_briefing_collect_payload(args, payload)
+        return 1
+
+    repository = StockMonitorRepository(db_path)
+    status = repository.get_schema_migration_status()
+    if status.current_version != status.target_version or status.pending_versions:
+        payload["writes_db"] = False
+        payload["error"] = "database schema is not current"
+        payload["schema"] = {
+            "current_version": status.current_version,
+            "target_version": status.target_version,
+            "pending_versions": list(status.pending_versions),
+        }
+        _print_news_intelligence_briefing_collect_payload(args, payload)
+        return 1
+
+    target_summaries = _news_intelligence_briefing_target_summaries(
+        repository,
+        target_date=target_date,
+        limit=args.limit,
+        stock_codes=tuple(args.stock_code or ()),
+    )
+    payload["target_stock_count"] = len(target_summaries)
+    if not target_summaries:
+        payload["error"] = "no market briefing target summaries for date"
+        _print_news_intelligence_briefing_collect_payload(args, payload)
+        return 1
+
+    news_transport = transport
+    if news_transport is None:
+        scrapling_exe = _resolve_scrapling_exe(args.scrapling_exe)
+        if scrapling_exe is None:
+            payload["writes_db"] = False
+            payload["error"] = "missing Scrapling executable"
+            payload["warnings"].append("Scrapling executable is missing; set --scrapling-exe or SCRAPLING_EXE.")
+            _print_news_intelligence_briefing_collect_payload(args, payload)
+            return 1
+        news_transport = ScraplingNewsTransport(scrapling_exe=scrapling_exe)
+
+    saved_observation_count = 0
+    saved_evidence_count = 0
+    items: list[dict[str, object]] = []
+    warnings: list[str] = []
+    for summary in target_summaries:
+        query = StockNewsQuery(
+            stock_name=summary.stock_name,
+            stock_code=summary.stock_code,
+            aliases=(),
+            target_date=target_date,
+        )
+        preview = collect_naver_news_preview(query, transport=news_transport)
+        matched_articles = [_news_article_with_match_quality(match) for match in preview.articles]
+        analyzed_articles = [
+            _apply_match_quality_guard(analyze_news_article(article))
+            for article in matched_articles
+        ]
+        report = build_news_intelligence_report(
+            stock=query.stock_name,
+            stock_code=query.stock_code,
+            articles=matched_articles,
+        )
+        source_coverage = _news_intelligence_source_coverage(preview.sources)
+        item_warnings = [*preview.warnings]
+        if source_coverage["empty_source_lanes"]:
+            item_warnings.append("some source lanes produced no parsed articles for this date/mode")
+        operator_decision_notes = _news_intelligence_operator_decision_notes(
+            preview.articles,
+            analyzed_articles,
+            report_context_evaluated=bool(args.save_observation),
+            source_coverage=source_coverage,
+        )
+        save_result: dict[str, object] = {"writes_db": False}
+        saved = False
+        if args.save_observation and preview.matched_count > 0:
+            analyzed_matches = [
+                (match, _apply_match_quality_guard(analyze_news_article(_news_article_with_match_quality(match))))
+                for match in preview.articles
+            ]
+            save_result = _save_news_intelligence_observation(
+                db_path=db_path,
+                target_date=target_date,
+                query=query,
+                preview=preview,
+                report=report,
+                analyzed_matches=analyzed_matches,
+                run_warnings=item_warnings,
+            )
+            saved = True
+            saved_observation_count += 1
+            saved_evidence_count += int(save_result.get("saved_evidence_count") or 0)
+        elif args.save_observation:
+            item_warnings.append("save skipped: no matched articles")
+
+        warnings.extend(f"{summary.stock_name}: {warning}" for warning in item_warnings)
+        item_payload = {
+            "stock_name": summary.stock_name,
+            "stock_code": summary.stock_code,
+            "mention_count": summary.mention_count,
+            "parsed_count": preview.parsed_count,
+            "deduped_count": preview.deduped_count,
+            "matched_count": preview.matched_count,
+            "effective_source_count": source_coverage["effective_source_count"],
+            "empty_source_lanes": source_coverage["empty_source_lanes"],
+            "operator_decision_notes": operator_decision_notes,
+            "saved": saved,
+            "saved_run_id": save_result.get("saved_run_id"),
+            "saved_evidence_count": save_result.get("saved_evidence_count", 0),
+            "warnings": item_warnings,
+        }
+        items.append(item_payload)
+
+    payload.update(
+        {
+            "items": items,
+            "warnings": warnings,
+            "saved_observation_count": saved_observation_count,
+            "saved_evidence_count": saved_evidence_count,
+            "writes_db": bool(args.save_observation and saved_observation_count > 0),
+            "saved_projection_surfaces": (
+                ["market-briefing", "web-view"] if saved_observation_count > 0 else []
+            ),
+        }
+    )
+    _print_news_intelligence_briefing_collect_payload(args, payload)
+    return 0 if (not args.save_observation or saved_observation_count > 0) else 1
+
+
+def _news_intelligence_briefing_target_summaries(
+    repository: StockMonitorRepository,
+    *,
+    target_date: date,
+    limit: int,
+    stock_codes: tuple[str, ...],
+) -> list[DailyStockSummary]:
+    summaries = repository.list_daily_summaries(target_date)
+    if not summaries:
+        summaries = build_daily_summaries(
+            repository.list_reports_for_business_date(target_date),
+            timezone=repository.timezone,
+        )
+    requested_codes = {code.strip() for code in stock_codes if code and code.strip()}
+    if requested_codes:
+        summaries = [summary for summary in summaries if summary.stock_code in requested_codes]
+    sorted_summaries = sorted(
+        summaries,
+        key=lambda summary: (-summary.mention_count, summary.stock_name, summary.stock_code or ""),
+    )
+    return sorted_summaries[: max(0, limit)]
+
+
+def _news_intelligence_briefing_collect_base_payload(
+    *,
+    target_date: date,
+    db_path: Path,
+    limit: int,
+    stock_codes: tuple[str, ...],
+    save_observation: bool,
+) -> dict[str, object]:
+    return {
+        "surface": "news-intelligence-briefing-collect",
+        "target_date": target_date.isoformat(),
+        "db_path": str(db_path),
+        "operator_only": True,
+        "public_safe": False,
+        "live_fetch": True,
+        "writes_db": bool(save_observation),
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "connects_admin_gui": False,
+        "connects_web_view": False,
+        "limit": limit,
+        "stock_codes": list(stock_codes),
+        "target_stock_count": 0,
+        "saved_observation_count": 0,
+        "saved_evidence_count": 0,
+        "saved_projection_surfaces": [],
+        "items": [],
+        "warnings": [],
+        "contract": {
+            "write_guard": "--save-observation requires --confirm-save",
+            "projection": "saved observations may be read later by market-briefing and web-view",
+            "blocked_connections": ["telegram", "scheduler", "admin-gui", "public-live-fetch"],
+        },
+    }
+
+
+def _print_news_intelligence_briefing_collect_payload(
+    args: argparse.Namespace,
+    payload: dict[str, object],
+) -> None:
+    if getattr(args, "format", "json") == "json":
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    print(_format_news_intelligence_briefing_collect_text(payload))
+
+
+def _format_news_intelligence_briefing_collect_text(payload: dict[str, object]) -> str:
+    lines = [
+        "News intelligence briefing collect",
+        f"date: {payload.get('target_date')}",
+        f"targets: {payload.get('target_stock_count')}",
+        f"saved observations: {payload.get('saved_observation_count')}",
+        f"saved evidence: {payload.get('saved_evidence_count')}",
+        "live_fetch: True",
+        f"writes_db: {payload.get('writes_db')}",
+        "sends_telegram: False",
+        "registers_scheduler: False",
+        "connects_web_view: False",
+    ]
+    error = payload.get("error")
+    if error:
+        lines.append(f"error: {error}")
+    for item in payload.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        lines.append(
+            "- "
+            f"{item.get('stock_name') or item.get('stock_code')}: "
+            f"matched={item.get('matched_count')} saved={item.get('saved')}"
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _run_news_intelligence_preview(args: argparse.Namespace) -> int:
@@ -18064,14 +18331,27 @@ def _build_market_briefing_news_observation_lines(
     summary = _build_web_view_news_observation_summary(repository, business_date, limit=limit)
     if not summary.get("available"):
         return []
-    lines = ["뉴스 근거"]
+    lines = ["뉴스 관찰 / 뉴스 근거"]
     items = [item for item in summary.get("items", []) if isinstance(item, dict) and item.get("available")]
+    if items:
+        lines.append(
+            "- "
+            f"저장 관찰 {len(items)}종목 / "
+            f"직접 {int(summary.get('direct_count') or 0)}건 / "
+            f"주의 {int(summary.get('caution_count') or 0)}건 / "
+            f"시장맥락 {int(summary.get('market_context_count') or 0)}건"
+        )
     for item in items[: max(1, limit)]:
         stock = item.get("stock_name") or item.get("stock_code") or "-"
         label = item.get("display_label") or "뉴스 근거 있음"
         title = item.get("top_title") or item.get("reason") or ""
+        count_text = (
+            f"직접 {int(item.get('direct_count') or 0)}"
+            f"/주의 {int(item.get('caution_count') or 0)}"
+            f"/시장맥락 {int(item.get('market_context_count') or 0)}"
+        )
         suffix = f" | {title}" if title else ""
-        lines.append(f"- {stock}: {label}{suffix}")
+        lines.append(f"- {stock}: {label} ({count_text}){suffix}")
     if len(lines) == 1:
         label = summary.get("display_label") or "뉴스 근거 있음"
         titles = [str(title) for title in summary.get("top_titles", []) if title]
@@ -27652,6 +27932,7 @@ def build_web_view_daily_snapshot(
         checked_at=current,
     )
     news_observation_summary = _build_web_view_news_observation_summary(repository, business_date)
+    market_briefing["news_observation_summary"] = news_observation_summary
     report_count = sum(summary.mention_count for summary in summaries)
     krx_context = _build_web_view_krx_context(repository, business_date)
     krx_recent_flow = _build_web_view_krx_recent_flow(
