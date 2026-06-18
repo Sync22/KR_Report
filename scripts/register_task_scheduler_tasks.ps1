@@ -16,6 +16,10 @@ param(
     [int]$KrxMentionedFlowBackfillMentionThreshold = 1,
     [int]$KrxMentionedFlowBackfillMaxCalls = 300,
     [double]$KrxMentionedFlowBackfillSleepSeconds = 1,
+    [string]$MarketBriefingMoodTime = "09:15",
+    [string]$MarketBriefingLunchTime = "12:00",
+    [string]$MarketBriefingPrecloseTime = "15:15",
+    [int]$MarketBriefingLimit = 5,
     [string]$KrxFlowReminderTime = "16:45",
     [string]$KrxFlowPlannedTime = "16:50",
     [int]$KrxFlowReminderMinutesBefore = 5,
@@ -30,6 +34,7 @@ param(
     [switch]$SkipNotify,
     [switch]$SkipKrxDailyBackfill,
     [switch]$SkipKrxMentionedFlowBackfill,
+    [switch]$SkipMarketBriefing,
     [switch]$SkipTelegramCommands,
     [switch]$SkipWebViewRestart,
     [switch]$SkipShutdown
@@ -41,6 +46,7 @@ $pollScript = Join-Path $PSScriptRoot "run_scheduled_poll.ps1"
 $notifyScript = Join-Path $PSScriptRoot "run_scheduled_notify.ps1"
 $krxDailyBackfillScript = Join-Path $PSScriptRoot "run_scheduled_krx_daily_backfill.ps1"
 $krxMentionedFlowBackfillScript = Join-Path $PSScriptRoot "run_scheduled_krx_mentioned_flow_backfill.ps1"
+$marketBriefingSlotScript = Join-Path $PSScriptRoot "run_scheduled_market_briefing_slot.ps1"
 $krxFlowReminderScript = Join-Path $PSScriptRoot "run_krx_flow_login_reminder.ps1"
 $commandsScript = Join-Path $PSScriptRoot "run_process_telegram_commands.ps1"
 $webViewRestartScript = Join-Path $PSScriptRoot "restart_web_view.ps1"
@@ -121,6 +127,9 @@ $pollTaskName = "$TaskPrefix-Poll"
 $notifyTaskName = "$TaskPrefix-Notify"
 $krxDailyBackfillTaskName = "$TaskPrefix-KrxDailyBackfill"
 $krxMentionedFlowBackfillTaskName = "$TaskPrefix-KrxMentionedFlowBackfill"
+$marketBriefingMoodTaskName = "$TaskPrefix-MarketBriefingMood"
+$marketBriefingLunchTaskName = "$TaskPrefix-MarketBriefingLunch"
+$marketBriefingPrecloseTaskName = "$TaskPrefix-MarketBriefingPreclose"
 $krxFlowReminderTaskName = "$TaskPrefix-KrxFlowLoginReminder"
 $commandsTaskName = "$TaskPrefix-TelegramCommands"
 $webViewRestartTaskName = "$TaskPrefix-WebViewHourlyRestart"
@@ -186,6 +195,29 @@ if (-not $SkipKrxMentionedFlowBackfill) {
     Register-OrUpdateTask -TaskName $krxMentionedFlowBackfillTaskName -Action $krxMentionedFlowBackfillAction -Triggers $krxMentionedFlowBackfillTriggers -StartWhenAvailable $false
 }
 
+if (-not $SkipMarketBriefing) {
+    $marketBriefingMoodAction = New-StockMonitorAction `
+        -ScriptPath $marketBriefingSlotScript `
+        -PythonCommand $PythonExe `
+        -AdditionalArguments "-Slot mood -Limit $MarketBriefingLimit"
+    $marketBriefingMoodTriggers = @(New-WeekdayTriggerAt -AtTime $MarketBriefingMoodTime)
+    Register-OrUpdateTask -TaskName $marketBriefingMoodTaskName -Action $marketBriefingMoodAction -Triggers $marketBriefingMoodTriggers -StartWhenAvailable $false
+
+    $marketBriefingLunchAction = New-StockMonitorAction `
+        -ScriptPath $marketBriefingSlotScript `
+        -PythonCommand $PythonExe `
+        -AdditionalArguments "-Slot lunch -Limit $MarketBriefingLimit"
+    $marketBriefingLunchTriggers = @(New-WeekdayTriggerAt -AtTime $MarketBriefingLunchTime)
+    Register-OrUpdateTask -TaskName $marketBriefingLunchTaskName -Action $marketBriefingLunchAction -Triggers $marketBriefingLunchTriggers -StartWhenAvailable $false
+
+    $marketBriefingPrecloseAction = New-StockMonitorAction `
+        -ScriptPath $marketBriefingSlotScript `
+        -PythonCommand $PythonExe `
+        -AdditionalArguments "-Slot preclose -Limit $MarketBriefingLimit"
+    $marketBriefingPrecloseTriggers = @(New-WeekdayTriggerAt -AtTime $MarketBriefingPrecloseTime)
+    Register-OrUpdateTask -TaskName $marketBriefingPrecloseTaskName -Action $marketBriefingPrecloseAction -Triggers $marketBriefingPrecloseTriggers -StartWhenAvailable $false
+}
+
 if ($IncludeKrxFlowReminder) {
     $krxFlowReminderAction = New-StockMonitorAction `
         -ScriptPath $krxFlowReminderScript `
@@ -231,6 +263,11 @@ if (-not $SkipKrxDailyBackfill) {
 }
 if (-not $SkipKrxMentionedFlowBackfill) {
     Write-Output "- $krxMentionedFlowBackfillTaskName"
+}
+if (-not $SkipMarketBriefing) {
+    Write-Output "- $marketBriefingMoodTaskName"
+    Write-Output "- $marketBriefingLunchTaskName"
+    Write-Output "- $marketBriefingPrecloseTaskName"
 }
 if ($IncludeKrxFlowReminder) {
     Write-Output "- $krxFlowReminderTaskName"

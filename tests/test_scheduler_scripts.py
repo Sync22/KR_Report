@@ -52,6 +52,7 @@ REQUIRED_MIGRATION_ENTRIES = [
     "scripts/run_scheduled_notify.ps1",
     "scripts/run_scheduled_poll.ps1",
     "scripts/run_scheduled_krx_mentioned_flow_backfill.ps1",
+    "scripts/run_scheduled_market_briefing_slot.ps1",
     "scripts/run_process_telegram_commands.ps1",
     "scripts/run_scheduled_shutdown.ps1",
 ]
@@ -167,6 +168,7 @@ def test_verify_migration_archive_checks_sha256_sidecar() -> None:
     assert "scripts/run_scheduled_notify.ps1" in script
     assert "scripts/run_scheduled_krx_daily_backfill.ps1" in script
     assert "scripts/run_scheduled_krx_mentioned_flow_backfill.ps1" in script
+    assert "scripts/run_scheduled_market_briefing_slot.ps1" in script
     assert "Missing required migration entries" in script
     assert "required_entries: ok" in script
 
@@ -351,6 +353,7 @@ def test_python_entrypoint_wrappers_bootstrap_src_pythonpath() -> None:
         "run_scheduled_notify.ps1",
         "run_scheduled_krx_daily_backfill.ps1",
         "run_scheduled_krx_mentioned_flow_backfill.ps1",
+        "run_scheduled_market_briefing_slot.ps1",
         "run_process_telegram_commands.ps1",
         "run_krx_flow_login_reminder.ps1",
         "run_scheduled_shutdown.ps1",
@@ -542,6 +545,23 @@ def test_disable_source_desktop_scheduler_tasks_requires_explicit_confirm() -> N
     assert "source desktop" in script
 
 
+def test_register_task_scheduler_tasks_registers_market_briefing_slots() -> None:
+    script = (PROJECT_ROOT / "scripts" / "register_task_scheduler_tasks.ps1").read_text(encoding="utf-8")
+
+    assert '[string]$MarketBriefingMoodTime = "09:15"' in script
+    assert '[string]$MarketBriefingLunchTime = "12:00"' in script
+    assert '[string]$MarketBriefingPrecloseTime = "15:15"' in script
+    assert "[switch]$SkipMarketBriefing" in script
+    assert "run_scheduled_market_briefing_slot.ps1" in script
+    assert "$TaskPrefix-MarketBriefingMood" in script
+    assert "$TaskPrefix-MarketBriefingLunch" in script
+    assert "$TaskPrefix-MarketBriefingPreclose" in script
+    assert "-Slot mood" in script
+    assert "-Slot lunch" in script
+    assert "-Slot preclose" in script
+    assert "-StartWhenAvailable $false" in script
+
+
 def test_verify_task_scheduler_registration_checks_expected_tasks_and_actions() -> None:
     script = (PROJECT_ROOT / "scripts" / "verify_task_scheduler_registration.ps1").read_text(encoding="utf-8")
 
@@ -562,6 +582,9 @@ def test_verify_task_scheduler_registration_checks_expected_tasks_and_actions() 
     assert "StockMonitor-Notify" in script
     assert "StockMonitor-Poll" in script
     assert "StockMonitor-KrxMentionedFlowBackfill" in script
+    assert "StockMonitor-MarketBriefingMood" in script
+    assert "StockMonitor-MarketBriefingLunch" in script
+    assert "StockMonitor-MarketBriefingPreclose" in script
     assert "StockMonitor-TelegramCommands" in script
     assert "StockMonitor-WebViewHourlyRestart" in script
     assert "StockMonitor-KrxFlowLoginReminder" in script
@@ -570,6 +593,7 @@ def test_verify_task_scheduler_registration_checks_expected_tasks_and_actions() 
     assert "run_scheduled_notify.ps1" in script
     assert "run_scheduled_poll.ps1" in script
     assert "run_scheduled_krx_mentioned_flow_backfill.ps1" in script
+    assert "run_scheduled_market_briefing_slot.ps1" in script
     assert "run_process_telegram_commands.ps1" in script
     assert "restart_web_view.ps1" in script
     assert "run_krx_flow_login_reminder.ps1" in script

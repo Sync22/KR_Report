@@ -163,6 +163,12 @@ class _MarketBriefingFlowBackfillWindowDateTime(datetime):
         return cls(2026, 5, 12, 16, 0, 0, tzinfo=tz)
 
 
+class _MarketBriefingLunchSlotDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return cls(2026, 5, 12, 12, 0, 0, tzinfo=tz)
+
+
 def _upsert_test_krx_stock_metadata(
     repository: StockMonitorRepository,
     business_date: date,
@@ -2328,6 +2334,9 @@ def test_mini_pc_preflight_snapshot_reports_db_and_access_gate_state(tmp_path) -
     assert snapshot["scheduler_scripts"]["missing_required_scripts"]
     assert "StockMonitor-KrxDailyBackfill" in snapshot["expected_scheduler_tasks"]
     assert "StockMonitor-KrxMentionedFlowBackfill" in snapshot["expected_scheduler_tasks"]
+    assert "StockMonitor-MarketBriefingMood" in snapshot["expected_scheduler_tasks"]
+    assert "StockMonitor-MarketBriefingLunch" in snapshot["expected_scheduler_tasks"]
+    assert "StockMonitor-MarketBriefingPreclose" in snapshot["expected_scheduler_tasks"]
     assert "StockMonitor-WebViewHourlyRestart" in snapshot["expected_scheduler_tasks"]
     assert "StockMonitor-Shutdown" not in snapshot["expected_scheduler_tasks"]
     assert "StockMonitor-KrxFlowLoginReminder" not in snapshot["expected_scheduler_tasks"]
@@ -2347,6 +2356,10 @@ def test_operator_status_scheduler_task_names_include_web_view_hourly_restart() 
 
     assert "StockMonitor-WebViewHourlyRestart" in task_names
     assert cli_module._scheduler_task_key("StockMonitor", "StockMonitor-WebViewHourlyRestart") == "web-view-hourly-restart"
+    assert "StockMonitor-MarketBriefingMood" in task_names
+    assert "StockMonitor-MarketBriefingLunch" in task_names
+    assert "StockMonitor-MarketBriefingPreclose" in task_names
+    assert cli_module._scheduler_task_key("StockMonitor", "StockMonitor-MarketBriefingMood") == "market-briefing-mood"
 
 
 def test_mini_pc_preflight_snapshot_warns_external_manual_verification_when_access_required(tmp_path) -> None:
@@ -2561,6 +2574,7 @@ def test_mini_pc_preflight_snapshot_uses_configured_task_prefix(tmp_path, monkey
     )
 
     assert "MyMonitor-KrxDailyBackfill" in snapshot["expected_scheduler_tasks"]
+    assert "MyMonitor-MarketBriefingMood" in snapshot["expected_scheduler_tasks"]
     assert "MyMonitor-KrxFlowLoginReminder" in snapshot["optional_scheduler_tasks"]
     assert "StockMonitor-KrxDailyBackfill" not in snapshot["expected_scheduler_tasks"]
 
@@ -5088,6 +5102,19 @@ def test_scheduled_market_briefing_parser_defaults_to_guarded_dry_run_off() -> N
     assert args.limit == 4
 
 
+def test_scheduled_market_briefing_slot_parser_requires_slot() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(["scheduled-market-briefing-slot", "--slot", "lunch", "--dry-run", "--limit", "4"])
+
+    assert args.command == "scheduled-market-briefing-slot"
+    assert args.slot == "lunch"
+    assert args.dry_run is True
+    assert args.allow_repeat is False
+    assert args.allow_late is False
+    assert args.limit == 4
+
+
 def test_market_briefing_readiness_parser_defaults_to_read_only_json() -> None:
     parser = cli_module.build_parser()
 
@@ -5188,6 +5215,63 @@ def test_scheduled_market_briefing_requires_recorded_manual_review_sends(tmp_pat
     assert exit_code == 0
     assert "requires 3 recorded manual Telegram review sends" in output
     assert repository.list_recent_deliveries(limit=10) == []
+
+
+def test_scheduled_market_briefing_slot_sends_with_slot_delivery_channel(tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_CHAT_ID", "test-chat")
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    repository.set_app_setting(
+        AppSetting(
+            setting_key=cli_module.MARKET_BRIEFING_PHONE_REVIEW_SETTING,
+            setting_value="true",
+            value_type="bool",
+            updated_at=datetime(2026, 5, 12, 11, 0, 0),
+            updated_by="operator-cli",
+            detail="phone_acceptance",
+            restart_required=False,
+        ),
+        audit_actor="operator-cli",
+        audit_detail="phone_acceptance",
+    )
+    for index, business_date in enumerate((date(2026, 5, 8), date(2026, 5, 11), date(2026, 5, 12)), start=1):
+        repository.record_delivery(
+            DeliveryLog(
+                business_date=business_date,
+                channel=cli_module.MARKET_BRIEFING_DELIVERY_CHANNEL,
+                status="sent",
+                delivered_at=datetime(2026, 5, 12, 11, index, 0),
+                message_id=str(index),
+                detail="source=manual; market briefing",
+            )
+        )
+    monkeypatch.setattr(cli_module, "datetime", _MarketBriefingLunchSlotDateTime)
+    monkeypatch.setattr(cli_module, "_build_market_briefing_message", lambda *_args, **_kwargs: "lunch briefing")
+    monkeypatch.setattr(cli_module, "send_telegram_message", lambda *_args, **_kwargs: "42")
+
+    exit_code = cli_module._run_scheduled_market_briefing_slot(
+        config,
+        repository,
+        slot="lunch",
+        dry_run=False,
+        allow_repeat=False,
+        allow_late=False,
+        limit=5,
+    )
+
+    deliveries = repository.list_recent_deliveries(limit=10)
+    slot_deliveries = [
+        delivery
+        for delivery in deliveries
+        if delivery.channel == cli_module._market_briefing_slot_delivery_channel("lunch")
+    ]
+    assert exit_code == 0
+    assert "Market briefing lunch sent with message_id=42" in capsys.readouterr().out
+    assert len(slot_deliveries) == 1
+    assert slot_deliveries[0].business_date == date(2026, 5, 12)
+    assert "source=scheduled:lunch" in (slot_deliveries[0].detail or "")
 
 
 def test_scheduled_market_briefing_waits_until_after_flow_backfill_window(tmp_path, capsys, monkeypatch) -> None:

@@ -148,6 +148,7 @@ TEST_DELIVERY_CHANNEL = "telegram_test"
 MARKET_BRIEFING_DELIVERY_CHANNEL = "telegram_market_briefing"
 MARKET_BRIEFING_PHONE_REVIEW_SETTING = "market_briefing_phone_review_accepted"
 MARKET_BRIEFING_MIN_MANUAL_REVIEW_SENDS = 3
+MARKET_BRIEFING_SLOT_WINDOW_MINUTES = 30
 ASCII_STOCK_CODE_PATTERN = re.compile(r"^[0-9A-Z]{6}$")
 ADMIN_GUI_SCHEDULER_STATUS_CACHE_SECONDS = 20.0
 ACCESS_CODE_COOKIE_NAME = "StockMonitorAccess"
@@ -164,6 +165,11 @@ SCHEDULED_NOTIFY_EARLIEST_TIME = datetime_time(hour=8, minute=0)
 SCHEDULED_NOTIFY_LATEST_TIME = datetime_time(hour=8, minute=30)
 SCHEDULED_MARKET_BRIEFING_EARLIEST_TIME = datetime_time(hour=16, minute=10)
 SCHEDULED_MARKET_BRIEFING_LATEST_TIME = datetime_time(hour=16, minute=45)
+SCHEDULED_MARKET_BRIEFING_SLOT_TIMES = {
+    "mood": datetime_time(hour=9, minute=15),
+    "lunch": datetime_time(hour=12, minute=0),
+    "preclose": datetime_time(hour=15, minute=15),
+}
 TELEGRAM_COMMAND_LOOP_WORKER = "telegram_command_loop"
 OPERATOR_HEALTH_BAD_EXIT_CODE = 3
 MARKET_HOLIDAY_COVERAGE_WARNING_MONTH = 10
@@ -293,6 +299,9 @@ MINI_PC_EXPECTED_SCHEDULER_TASK_SUFFIXES = (
     "Notify",
     "Poll",
     "KrxMentionedFlowBackfill",
+    "MarketBriefingMood",
+    "MarketBriefingLunch",
+    "MarketBriefingPreclose",
     "TelegramCommands",
     "WebViewHourlyRestart",
 )
@@ -308,6 +317,7 @@ MINI_PC_REQUIRED_SCHEDULER_SCRIPTS = (
     "run_scheduled_notify.ps1",
     "run_scheduled_poll.ps1",
     "run_scheduled_krx_mentioned_flow_backfill.ps1",
+    "run_scheduled_market_briefing_slot.ps1",
     "run_process_telegram_commands.ps1",
     "restart_web_view.ps1",
     "run_scheduled_shutdown.ps1",
@@ -1494,6 +1504,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scheduled_market_briefing_parser.add_argument("--limit", type=int, default=5, help="Maximum notable report stocks to include.")
 
+    scheduled_market_briefing_slot_parser = subparsers.add_parser(
+        "scheduled-market-briefing-slot",
+        help="Guarded scheduled Telegram market briefing for one intraday slot.",
+    )
+    scheduled_market_briefing_slot_parser.add_argument("--slot", choices=tuple(MARKET_BRIEFING_SLOT_LABELS), required=True)
+    scheduled_market_briefing_slot_parser.add_argument("--dry-run", action="store_true")
+    scheduled_market_briefing_slot_parser.add_argument("--allow-repeat", action="store_true")
+    scheduled_market_briefing_slot_parser.add_argument(
+        "--allow-late",
+        action="store_true",
+        help="Allow scheduled-market-briefing-slot to send after the slot late-run guard.",
+    )
+    scheduled_market_briefing_slot_parser.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="Maximum notable report stocks to include.",
+    )
+
     status_parser = subparsers.add_parser(
         "operator-status",
         help="Print local operational status for scheduler/admin troubleshooting.",
@@ -1722,6 +1751,9 @@ def build_parser() -> argparse.ArgumentParser:
             "krx-daily-backfill",
             "krx-mentioned-flow-backfill",
             "krx-flow-login-reminder",
+            "market-briefing-mood",
+            "market-briefing-lunch",
+            "market-briefing-preclose",
             "telegram-commands",
             "web-view-hourly-restart",
             "web-view-manual",
@@ -2578,6 +2610,16 @@ def main(argv: list[str] | None = None) -> int:
             return _run_scheduled_market_briefing(
                 config,
                 repository,
+                dry_run=args.dry_run,
+                allow_repeat=args.allow_repeat,
+                allow_late=args.allow_late,
+                limit=args.limit,
+            )
+        if args.command == "scheduled-market-briefing-slot":
+            return _run_scheduled_market_briefing_slot(
+                config,
+                repository,
+                slot=args.slot,
                 dry_run=args.dry_run,
                 allow_repeat=args.allow_repeat,
                 allow_late=args.allow_late,
@@ -18120,6 +18162,21 @@ def _market_briefing_manual_review_dates(repository: StockMonitorRepository) -> 
     return sorted(dates, reverse=True)
 
 
+def _market_briefing_slot_delivery_channel(slot: str) -> str:
+    if slot not in MARKET_BRIEFING_SLOT_LABELS:
+        raise ValueError(f"Unknown market briefing slot: {slot}")
+    return f"{MARKET_BRIEFING_DELIVERY_CHANNEL}_{slot}"
+
+
+def _market_briefing_slot_window(slot: str) -> tuple[datetime_time, datetime_time]:
+    try:
+        start = SCHEDULED_MARKET_BRIEFING_SLOT_TIMES[slot]
+    except KeyError as exc:
+        raise ValueError(f"Unknown market briefing slot: {slot}") from exc
+    end_dt = datetime.combine(date(2000, 1, 1), start) + timedelta(minutes=MARKET_BRIEFING_SLOT_WINDOW_MINUTES)
+    return start, end_dt.time()
+
+
 def _validate_market_briefing_phone_review_acceptance_change(
     repository: StockMonitorRepository,
     *,
@@ -18453,6 +18510,7 @@ def _send_market_briefing_message(
     business_date: date,
     message: str,
     source: str,
+    channel: str = MARKET_BRIEFING_DELIVERY_CHANNEL,
 ) -> str:
     if not config.telegram_bot_token or not config.telegram_chat_id:
         raise RuntimeError(
@@ -18470,7 +18528,7 @@ def _send_market_briefing_message(
     repository.record_delivery(
         DeliveryLog(
             business_date=business_date,
-            channel=MARKET_BRIEFING_DELIVERY_CHANNEL,
+            channel=channel,
             status="sent",
             delivered_at=datetime.now(ZoneInfo(config.timezone)),
             message_id=str(message_id),
@@ -18611,6 +18669,138 @@ def _run_scheduled_market_briefing(
         source="scheduled",
     )
     print(f"Market briefing sent with message_id={message_id}")
+    return 0
+
+
+def _run_scheduled_market_briefing_slot(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    slot: str,
+    dry_run: bool,
+    allow_repeat: bool,
+    allow_late: bool,
+    limit: int,
+) -> int:
+    repository.initialize()
+    if slot not in MARKET_BRIEFING_SLOT_LABELS:
+        raise ValueError(f"Unknown market briefing slot: {slot}")
+    now = datetime.now(ZoneInfo(config.timezone))
+    today = now.date()
+    component = f"market-briefing-{slot}"
+    delivery_channel = _market_briefing_slot_delivery_channel(slot)
+    skip_reason = _scheduled_skip_reason(config, today, repository) or _operation_profile_skip_reason(
+        config,
+        repository,
+        component="market-briefing",
+    )
+    if skip_reason:
+        if not dry_run:
+            repository.record_operation_event(
+                _operation_event(
+                    config,
+                    component=component,
+                    event_type="run-guard",
+                    status="skipped",
+                    business_date=today,
+                    detail=skip_reason,
+                )
+            )
+        print(f"Skipping market briefing {slot}: {skip_reason}")
+        return 0
+    if not dry_run and not _effective_bool_setting(config, repository, MARKET_BRIEFING_PHONE_REVIEW_SETTING):
+        detail = (
+            "market_briefing_phone_review_accepted is false; run manual review sends and set the "
+            "operator setting only after phone readability is accepted."
+        )
+        repository.record_operation_event(
+            _operation_event(
+                config,
+                component=component,
+                event_type="run-guard",
+                status="skipped",
+                business_date=today,
+                detail=detail,
+            )
+        )
+        print(f"Skipping market briefing {slot}: {detail}")
+        return 0
+    if not dry_run:
+        manual_review_dates = _market_briefing_manual_review_dates(repository)
+        if len(manual_review_dates) < MARKET_BRIEFING_MIN_MANUAL_REVIEW_SENDS:
+            detail = (
+                f"market briefing requires {MARKET_BRIEFING_MIN_MANUAL_REVIEW_SENDS} recorded manual "
+                f"Telegram review sends before scheduled live send; found {len(manual_review_dates)}."
+            )
+            repository.record_operation_event(
+                _operation_event(
+                    config,
+                    component=component,
+                    event_type="run-guard",
+                    status="skipped",
+                    business_date=today,
+                    detail=detail,
+                )
+            )
+            print(f"Skipping market briefing {slot}: {detail}")
+            return 0
+    window_start, window_end = _market_briefing_slot_window(slot)
+    current_time = now.timetz().replace(tzinfo=None)
+    if current_time < window_start:
+        detail = (
+            f"{now.strftime('%H:%M')} is before the configured market briefing {slot} window "
+            f"{window_start.strftime('%H:%M')}~{window_end.strftime('%H:%M')}."
+        )
+        if not dry_run:
+            repository.record_operation_event(
+                _operation_event(
+                    config,
+                    component=component,
+                    event_type="time-window",
+                    status="skipped",
+                    business_date=today,
+                    detail=detail,
+                )
+            )
+        print(f"Skipping market briefing {slot}: {detail}")
+        return 0
+    if not allow_late and current_time > window_end:
+        detail = (
+            f"{now.strftime('%H:%M')} is after the configured market briefing {slot} window "
+            f"{window_start.strftime('%H:%M')}~{window_end.strftime('%H:%M')}."
+        )
+        if not dry_run:
+            repository.record_operation_event(
+                _operation_event(
+                    config,
+                    component=component,
+                    event_type="late-run",
+                    status="skipped",
+                    business_date=today,
+                    detail=detail,
+                )
+            )
+        print(f"Skipping market briefing {slot}: {detail}")
+        return 0
+
+    already_sent = repository.has_successful_delivery(today, delivery_channel)
+    if not allow_repeat and already_sent:
+        print(f"Market briefing {slot} already sent for {today.isoformat()}; skipping.")
+        return 0
+
+    message = _build_market_briefing_message(config, repository, business_date=today, limit=limit, slot=slot)
+    if dry_run:
+        print(message)
+        return 0
+    message_id = _send_market_briefing_message(
+        config,
+        repository,
+        business_date=today,
+        message=message,
+        source=f"scheduled:{slot}",
+        channel=delivery_channel,
+    )
+    print(f"Market briefing {slot} sent with message_id={message_id}")
     return 0
 
 
@@ -23296,6 +23486,9 @@ def _render_admin_gui_html() -> str:
       if (taskName.endsWith("-KrxMentionedFlowBackfill")) return "krx-mentioned-flow-backfill";
       if (taskName.endsWith("-KrxFlowLoginReminder")) return "krx-flow-login-reminder";
       if (taskName.endsWith("-KrxDailyBackfill")) return "krx-daily-backfill";
+      if (taskName.endsWith("-MarketBriefingMood")) return "market-briefing-mood";
+      if (taskName.endsWith("-MarketBriefingLunch")) return "market-briefing-lunch";
+      if (taskName.endsWith("-MarketBriefingPreclose")) return "market-briefing-preclose";
       if (taskName.endsWith("-TelegramCommands")) return "telegram-commands";
       if (taskName.endsWith("-Shutdown")) return "shutdown";
       return "";
@@ -32947,6 +33140,9 @@ def _resolve_scheduler_control_task_names(task_prefix: str, task_selector: str) 
         krx_daily_backfill,
         krx_mentioned_flow_backfill,
         krx_flow_login_reminder,
+        market_briefing_mood,
+        market_briefing_lunch,
+        market_briefing_preclose,
         telegram_commands,
         web_view_hourly_restart,
         shutdown,
@@ -32957,6 +33153,9 @@ def _resolve_scheduler_control_task_names(task_prefix: str, task_selector: str) 
         "krx-daily-backfill": krx_daily_backfill,
         "krx-mentioned-flow-backfill": krx_mentioned_flow_backfill,
         "krx-flow-login-reminder": krx_flow_login_reminder,
+        "market-briefing-mood": market_briefing_mood,
+        "market-briefing-lunch": market_briefing_lunch,
+        "market-briefing-preclose": market_briefing_preclose,
         "telegram-commands": telegram_commands,
         "web-view-hourly-restart": web_view_hourly_restart,
         "web-view-manual": f"{task_prefix}-WebViewManual",
@@ -32969,6 +33168,9 @@ def _resolve_scheduler_control_task_names(task_prefix: str, task_selector: str) 
             krx_daily_backfill,
             krx_mentioned_flow_backfill,
             krx_flow_login_reminder,
+            market_briefing_mood,
+            market_briefing_lunch,
+            market_briefing_preclose,
             telegram_commands,
             web_view_hourly_restart,
             f"{task_prefix}-WebViewManual",
@@ -33850,13 +34052,16 @@ $rows | ConvertTo-Json -Depth 4 -Compress
     return [_normalize_scheduler_task_status(task_name, by_name.get(task_name)) for task_name in task_names]
 
 
-def _scheduler_task_names(task_prefix: str) -> tuple[str, str, str, str, str, str, str, str]:
+def _scheduler_task_names(task_prefix: str) -> tuple[str, ...]:
     return (
         f"{task_prefix}-Notify",
         f"{task_prefix}-Poll",
         f"{task_prefix}-KrxDailyBackfill",
         f"{task_prefix}-KrxMentionedFlowBackfill",
         f"{task_prefix}-KrxFlowLoginReminder",
+        f"{task_prefix}-MarketBriefingMood",
+        f"{task_prefix}-MarketBriefingLunch",
+        f"{task_prefix}-MarketBriefingPreclose",
         f"{task_prefix}-TelegramCommands",
         f"{task_prefix}-WebViewHourlyRestart",
         f"{task_prefix}-Shutdown",
@@ -34019,6 +34224,9 @@ def _scheduler_task_key(task_prefix: str, task_name: str) -> str:
         "krxdailybackfill": "krx-daily-backfill",
         "krxmentionedflowbackfill": "krx-mentioned-flow-backfill",
         "krxflowloginreminder": "krx-flow-login-reminder",
+        "marketbriefingmood": "market-briefing-mood",
+        "marketbriefinglunch": "market-briefing-lunch",
+        "marketbriefingpreclose": "market-briefing-preclose",
         "telegramcommands": "telegram-commands",
         "webviewhourlyrestart": "web-view-hourly-restart",
         "shutdown": "shutdown",

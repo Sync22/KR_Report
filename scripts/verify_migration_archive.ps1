@@ -95,6 +95,7 @@ $requiredEntries = @(
     "scripts/run_scheduled_notify.ps1",
     "scripts/run_scheduled_poll.ps1",
     "scripts/run_scheduled_krx_mentioned_flow_backfill.ps1",
+    "scripts/run_scheduled_market_briefing_slot.ps1",
     "scripts/run_process_telegram_commands.ps1",
     "scripts/restart_web_view.ps1",
     "scripts/run_scheduled_shutdown.ps1"

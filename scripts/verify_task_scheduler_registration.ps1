@@ -66,6 +66,9 @@ function Get-ExpectedScheduledTaskInfo {
 # - StockMonitor-Notify
 # - StockMonitor-Poll
 # - StockMonitor-KrxMentionedFlowBackfill
+# - StockMonitor-MarketBriefingMood
+# - StockMonitor-MarketBriefingLunch
+# - StockMonitor-MarketBriefingPreclose
 # - StockMonitor-TelegramCommands
 # - StockMonitor-WebViewHourlyRestart
 # - StockMonitor-KrxFlowLoginReminder
@@ -74,6 +77,9 @@ $expectedTasks = @(
     @{ Name = "$TaskPrefix-Notify"; Script = "run_scheduled_notify.ps1" },
     @{ Name = "$TaskPrefix-Poll"; Script = "run_scheduled_poll.ps1" },
     @{ Name = "$TaskPrefix-KrxMentionedFlowBackfill"; Script = "run_scheduled_krx_mentioned_flow_backfill.ps1" },
+    @{ Name = "$TaskPrefix-MarketBriefingMood"; Script = "run_scheduled_market_briefing_slot.ps1" },
+    @{ Name = "$TaskPrefix-MarketBriefingLunch"; Script = "run_scheduled_market_briefing_slot.ps1" },
+    @{ Name = "$TaskPrefix-MarketBriefingPreclose"; Script = "run_scheduled_market_briefing_slot.ps1" },
     @{ Name = "$TaskPrefix-TelegramCommands"; Script = "run_process_telegram_commands.ps1" },
     @{ Name = "$TaskPrefix-WebViewHourlyRestart"; Script = "restart_web_view.ps1" }
 )

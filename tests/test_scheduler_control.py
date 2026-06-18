@@ -179,12 +179,24 @@ def test_scheduler_control_uses_configured_task_prefix() -> None:
     assert cli_module._resolve_scheduler_control_task_names("MyMonitor", "web-view-manual") == (
         "MyMonitor-WebViewManual",
     )
+    assert cli_module._resolve_scheduler_control_task_names("MyMonitor", "market-briefing-mood") == (
+        "MyMonitor-MarketBriefingMood",
+    )
+    assert cli_module._resolve_scheduler_control_task_names("MyMonitor", "market-briefing-lunch") == (
+        "MyMonitor-MarketBriefingLunch",
+    )
+    assert cli_module._resolve_scheduler_control_task_names("MyMonitor", "market-briefing-preclose") == (
+        "MyMonitor-MarketBriefingPreclose",
+    )
     assert cli_module._resolve_scheduler_control_task_names("MyMonitor", "all") == (
         "MyMonitor-Notify",
         "MyMonitor-Poll",
         "MyMonitor-KrxDailyBackfill",
         "MyMonitor-KrxMentionedFlowBackfill",
         "MyMonitor-KrxFlowLoginReminder",
+        "MyMonitor-MarketBriefingMood",
+        "MyMonitor-MarketBriefingLunch",
+        "MyMonitor-MarketBriefingPreclose",
         "MyMonitor-TelegramCommands",
         "MyMonitor-WebViewHourlyRestart",
         "MyMonitor-WebViewManual",
