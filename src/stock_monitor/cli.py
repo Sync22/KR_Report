@@ -26751,22 +26751,17 @@ def _render_web_view_html() -> str:
       return `<section class="top-two-candidates" aria-label="우선 확인 2개">${picked.map((item, index) => {
         const layers = candidateEvidenceLayers(item);
         const whyItems = candidateWhyDisplayItems(layers.primary);
-        const gapItems = candidateWhyDisplayItems(layers.gap);
         const why = whyItems.length
           ? candidateCompactLabel(whyItems, 2)
           : "근거 보강 필요";
-        const missingLine = gapItems.length
-          ? `<span>부족한 정보: ${esc(candidateCompactLabel(gapItems, 1))}</span>`
-          : "";
         const newsLine = candidateNewsCompactLine(item.news_observation_badge);
         const tossBaselineLine = candidateTossBaselineCompactLine(item.toss_baseline_reference);
         return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote="${esc(item.stock_code || "")}">Toss 현재가 확인 중</span></b>
           <span>왜 눈에 띄는지: ${esc(why)}</span>
           <span>장중 참고: ${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span>
-          <span>${esc(tossBaselineLine)}</span>
           <span>${esc(newsLine)}</span>
-          ${missingLine}
+          <span>${esc(tossBaselineLine)}</span>
         </button>`;
       }).join("")}</section>`;
     }

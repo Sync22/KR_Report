@@ -219,11 +219,19 @@ def test_web_view_main_layout_first_pass_static_markup() -> None:
     assert "top-two-candidates" in html
     assert "우선 확인 2개" in html
     top_two_renderer = html[
-        html.index("function renderTopTwoReviewCandidates") : html.index("function candidateIntradayReferenceLabel")
+        html.index("function renderTopTwoReviewCandidates") : html.index("function updateTossPriorityRefreshButton")
     ]
     assert "핵심 저장 정보 있음" not in top_two_renderer
-    assert "<span>부족한 정보: ${esc(candidateCompactLabel(gapItems, 1))}</span>" in top_two_renderer
-    assert "${missingLine}" in top_two_renderer
+    assert "candidateCompactLabel(gapItems, 1)" not in top_two_renderer
+    assert "${missingLine}" not in top_two_renderer
+    intraday_line = "candidateIntradayReferenceLabel(item.intraday_reference))}</span>"
+    news_line = "<span>${esc(newsLine)}</span>"
+    toss_baseline_line = "<span>${esc(tossBaselineLine)}</span>"
+    assert intraday_line in top_two_renderer
+    assert news_line in top_two_renderer
+    assert toss_baseline_line in top_two_renderer
+    assert top_two_renderer.index(intraday_line) < top_two_renderer.index(news_line)
+    assert top_two_renderer.index(news_line) < top_two_renderer.index(toss_baseline_line)
     assert "순환매 참고 종목" in html
     assert "순환매 참고 ETF" in html
     assert "renderTargetPriceTrailRows" in html
@@ -4756,7 +4764,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "renderQualityChips(supportEvidence, \"quality-chip--support\", 3)" in html
     assert "renderQualityChips(missingInformation, \"quality-chip--missing\", 1)" in html
     assert "candidateCompactLabel(whyItems, 2)" in html
-    assert "candidateCompactLabel(gapItems, 1)" in html
+    assert "candidateCompactLabel(gapItems, 1)" not in html
     assert "candidateEvidenceLayers(item)" in html
     assert "candidateWhyDisplayItems(layers.primary)" in html
     assert "return values;" in html
