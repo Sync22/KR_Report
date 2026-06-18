@@ -534,6 +534,18 @@ class ReportLinkedNewsEvidenceRecord:
 
 
 @dataclass(frozen=True)
+class TossPriorityQuoteBaseline:
+    business_date: date
+    stock_code: str
+    stock_name: str | None
+    baseline_time: str
+    last_price: int | None
+    currency: str | None
+    source: str
+    fetched_at: datetime
+
+
+@dataclass(frozen=True)
 class StockResearchEntry:
     stock_name: str
     stock_code: str

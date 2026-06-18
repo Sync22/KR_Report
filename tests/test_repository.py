@@ -22,6 +22,7 @@ from stock_monitor.models import (
     StockMarketDailySnapshot,
     StockMetadata,
     StockThemeMembership,
+    TossPriorityQuoteBaseline,
     WorkerState,
 )
 
@@ -103,7 +104,8 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
                       'market_investor_flow_daily',
                       'investor_net_buy_top_daily',
                       'category_master',
-                      'category_membership_snapshots'
+                      'category_membership_snapshots',
+                      'toss_priority_quote_baselines'
                   )
                 """
             ).fetchall()
@@ -123,6 +125,7 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
         (5, "category_snapshots"),
         (6, "news_intelligence_observation"),
         (7, "news_intelligence_reference_dates"),
+        (8, "toss_priority_quote_baselines"),
     ]
     assert snapshot_tables == {
         "stock_market_daily",
@@ -136,7 +139,31 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
         "investor_net_buy_top_daily",
         "category_master",
         "category_membership_snapshots",
+        "toss_priority_quote_baselines",
     }
+
+
+def test_repository_saves_toss_priority_quote_baselines(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+    business_date = date(2026, 6, 18)
+    row = TossPriorityQuoteBaseline(
+        business_date=business_date,
+        stock_code="005930",
+        stock_name="삼성전자",
+        baseline_time="20:00",
+        last_price=72000,
+        currency="KRW",
+        source="toss_openapi",
+        fetched_at=datetime(2026, 6, 18, 20, 0, 3),
+    )
+
+    repository.save_toss_priority_quote_baselines([row])
+
+    assert repository.list_toss_priority_quote_baselines(
+        business_date=business_date,
+        stock_codes=["005930"],
+    ) == [row]
 
 
 def test_repository_initializes_news_intelligence_observation_tables(tmp_path) -> None:
@@ -281,7 +308,7 @@ def test_repository_migrate_schema_reports_existing_status(tmp_path) -> None:
 
     assert status.current_version == SCHEMA_VERSION
     assert status.target_version == SCHEMA_VERSION
-    assert status.applied_versions == (1, 2, 3, 4, 5, 6, 7)
+    assert status.applied_versions == (1, 2, 3, 4, 5, 6, 7, 8)
     assert status.pending_versions == ()
 
 

@@ -304,7 +304,7 @@ def test_main_db_verify_json_reports_stale_schema_without_traceback(tmp_path, mo
     assert payload["schema_status"]["current"] is False
     assert payload["schema_status"]["current_version"] == 5
     assert payload["schema_status"]["target_version"] == SCHEMA_VERSION
-    assert payload["schema_status"]["pending_versions"] == [6, 7]
+    assert payload["schema_status"]["pending_versions"] == [6, 7, 8]
     assert payload["blockers"][0]["code"] == "default_db_schema_not_current"
     assert "python -m stock_monitor db-migrate --dry-run" in payload["recommended_commands"]
     assert "schema migration on operating PC" in payload["requires_separate_approval"]
@@ -894,6 +894,32 @@ def test_toss_openapi_readonly_probe_parser_accepts_plan_and_live_fields() -> No
     assert args.symbols == ["005930", "000660"]
     assert args.live is True
     assert args.confirm_token_reissue is True
+    assert args.json is True
+
+
+def test_toss_priority_baseline_collect_parser_accepts_live_save_gate() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "toss-priority-baseline-collect",
+            "--date",
+            "2026-06-18",
+            "--baseline-time",
+            "20:00",
+            "--live",
+            "--confirm-token-reissue",
+            "--confirm-save",
+            "--json",
+        ]
+    )
+
+    assert args.command == "toss-priority-baseline-collect"
+    assert args.date == date(2026, 6, 18)
+    assert args.baseline_time == "20:00"
+    assert args.live is True
+    assert args.confirm_token_reissue is True
+    assert args.confirm_save is True
     assert args.json is True
 
 

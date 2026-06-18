@@ -28,6 +28,7 @@ from stock_monitor.models import (
     StockMarketDailySnapshot,
     StockMetadata,
     StockThemeMembership,
+    TossPriorityQuoteBaseline,
 )
 
 
@@ -3475,6 +3476,69 @@ def test_web_view_toss_priority_quotes_route_uses_server_derived_top_two_only(tm
     assert provider.calls[0][0] == business_date
     assert set(provider.calls[0][1]) == {"005930", "000660"}
     assert "999999" not in provider.calls[0][1]
+
+
+def test_web_view_candidate_evidence_uses_stored_toss_2000_baseline(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 18)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="삼성전자 AI 반도체 점검",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 6, 18, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 18, 9, 5, 0),
+                source_id="toss-baseline-view-1",
+                identity_key="toss-baseline-view-1",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.save_toss_priority_quote_baselines(
+        [
+            TossPriorityQuoteBaseline(
+                business_date=business_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                baseline_time="20:00",
+                last_price=72000,
+                currency="KRW",
+                source="toss_openapi",
+                fetched_at=datetime(2026, 6, 18, 20, 0, 4),
+            )
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=2,
+    )
+
+    reference = snapshot["rows"][0]["toss_baseline_reference"]
+    assert reference == {
+        "available": True,
+        "source": "toss_openapi",
+        "read_only": True,
+        "live_fetch": False,
+        "writes_db": False,
+        "baseline_time": "20:00",
+        "reference_time": "2026-06-18T20:00:04",
+        "last_price": 72000,
+        "currency": "KRW",
+        "affects_ordering": False,
+        "notice": "Toss 20:00 기준 저장값",
+    }
+    assert snapshot["rows"][0]["intraday_reference"]["affects_ordering"] is False
+    _assert_public_safe_payload(snapshot)
 
 
 def test_web_view_etf_trend_snapshot_exposes_rotation_evidence_scope(tmp_path, monkeypatch) -> None:

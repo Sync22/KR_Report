@@ -47,6 +47,7 @@ from stock_monitor.models import (
     StockThemeMembership,
     ReportLinkedNewsEvidenceRecord,
     ThemeDailyRollup,
+    TossPriorityQuoteBaseline,
     WorkerState,
 )
 from stock_monitor.summary import build_daily_summaries
@@ -307,6 +308,67 @@ class StockMonitorRepository:
                 tuple(params),
             ).fetchall()
         return [self._row_to_report_linked_news_evidence(row) for row in rows]
+
+    def save_toss_priority_quote_baselines(self, rows: list[TossPriorityQuoteBaseline]) -> None:
+        with self.connect() as connection:
+            with connection:
+                connection.executemany(
+                    """
+                    INSERT OR REPLACE INTO toss_priority_quote_baselines (
+                        business_date,
+                        stock_code,
+                        stock_name,
+                        baseline_time,
+                        last_price,
+                        currency,
+                        source,
+                        fetched_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            row.business_date.isoformat(),
+                            row.stock_code,
+                            row.stock_name,
+                            row.baseline_time,
+                            row.last_price,
+                            row.currency,
+                            row.source,
+                            row.fetched_at.isoformat(),
+                        )
+                        for row in rows
+                    ],
+                )
+
+    def list_toss_priority_quote_baselines(
+        self,
+        *,
+        business_date: date,
+        stock_codes: list[str] | tuple[str, ...],
+        baseline_time: str = "20:00",
+    ) -> list[TossPriorityQuoteBaseline]:
+        normalized_codes = [code.strip() for code in stock_codes if code and code.strip()]
+        if not normalized_codes:
+            return []
+        placeholders = ",".join("?" for _ in normalized_codes)
+        params: list[object] = [business_date.isoformat(), baseline_time, *normalized_codes]
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT *
+                FROM toss_priority_quote_baselines
+                WHERE business_date = ?
+                  AND baseline_time = ?
+                  AND stock_code IN ({placeholders})
+                ORDER BY fetched_at DESC, stock_code ASC
+                """,
+                tuple(params),
+            ).fetchall()
+        latest_by_code: dict[str, TossPriorityQuoteBaseline] = {}
+        for row in rows:
+            baseline = self._row_to_toss_priority_quote_baseline(row)
+            latest_by_code.setdefault(baseline.stock_code, baseline)
+        return [latest_by_code[code] for code in normalized_codes if code in latest_by_code]
 
     def insert_reports(self, reports: list[Report], *, queue_intraday_alerts: bool = False) -> InsertResult:
         normalized = [report.with_identity() for report in reports]
@@ -3288,6 +3350,19 @@ class StockMonitorRepository:
             recommendation_reason=row["recommendation_reason"],
             operator_summary_snapshot=row["operator_summary_snapshot"],
             created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+    @staticmethod
+    def _row_to_toss_priority_quote_baseline(row: sqlite3.Row) -> TossPriorityQuoteBaseline:
+        return TossPriorityQuoteBaseline(
+            business_date=date.fromisoformat(row["business_date"]),
+            stock_code=row["stock_code"],
+            stock_name=row["stock_name"],
+            baseline_time=row["baseline_time"],
+            last_price=int(row["last_price"]) if row["last_price"] is not None else None,
+            currency=row["currency"],
+            source=row["source"],
+            fetched_at=datetime.fromisoformat(row["fetched_at"]),
         )
 
     @staticmethod

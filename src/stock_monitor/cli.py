@@ -114,6 +114,7 @@ from stock_monitor.models import (
     StockInvestorFlowDaily,
     StockMarketDailySnapshot,
     StockMetadata,
+    TossPriorityQuoteBaseline,
     WorkerState,
 )
 from stock_monitor.notify.control import (
@@ -1596,6 +1597,17 @@ def build_parser() -> argparse.ArgumentParser:
     toss_openapi_probe_parser.add_argument("--confirm-token-reissue", action="store_true")
     toss_openapi_probe_parser.add_argument("--json", action="store_true")
 
+    toss_priority_baseline_parser = subparsers.add_parser(
+        "toss-priority-baseline-collect",
+        help="Collect and save Toss 20:00 quote baselines for server-derived web-view priority candidates.",
+    )
+    toss_priority_baseline_parser.add_argument("--date", type=date.fromisoformat, required=True)
+    toss_priority_baseline_parser.add_argument("--baseline-time", default="20:00")
+    toss_priority_baseline_parser.add_argument("--live", action="store_true")
+    toss_priority_baseline_parser.add_argument("--confirm-token-reissue", action="store_true")
+    toss_priority_baseline_parser.add_argument("--confirm-save", action="store_true")
+    toss_priority_baseline_parser.add_argument("--json", action="store_true")
+
     web_view_parser = subparsers.add_parser(
         "web-view",
         help="Run the read-only user web view for StockMonitor archive and market summaries.",
@@ -1981,6 +1993,17 @@ def main(argv: list[str] | None = None) -> int:
     config.ensure_runtime_dirs()
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
 
+    if args.command == "toss-priority-baseline-collect":
+        return _run_toss_priority_baseline_collect(
+            config,
+            repository,
+            business_date=args.date,
+            baseline_time=args.baseline_time,
+            live=args.live,
+            confirm_token_reissue=args.confirm_token_reissue,
+            confirm_save=args.confirm_save,
+            as_json=args.json,
+        )
     if args.command == "db-migrate":
         return _run_db_migrate(repository, dry_run=args.dry_run)
     if args.command == "ops-sync-preview":
@@ -5908,6 +5931,176 @@ def _run_toss_openapi_readonly_probe(
     else:
         print("- next: review plan, set local env fields, then rerun with --live")
     return 0
+
+
+def _run_toss_priority_baseline_collect(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    business_date: date,
+    baseline_time: str,
+    live: bool,
+    confirm_token_reissue: bool,
+    confirm_save: bool,
+    as_json: bool,
+) -> int:
+    normalized_baseline_time = _normalize_toss_priority_baseline_time(baseline_time)
+    plan = {
+        "surface": "toss-priority-baseline-collect",
+        "mode": "plan",
+        "operator_only": True,
+        "read_only": True,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "connects_admin_gui": False,
+        "connects_web_view": False,
+        "affects_ordering": False,
+        "business_date": business_date.isoformat(),
+        "baseline_time": normalized_baseline_time,
+        "source": "toss_openapi",
+        "scope": "web_view_priority_top_2",
+        "requires_live_flag": True,
+        "requires_token_reissue_confirmation": True,
+        "requires_save_confirmation": True,
+    }
+    if not live:
+        _print_toss_priority_baseline_collect_payload(plan, as_json=as_json)
+        return 0
+    if not confirm_token_reissue:
+        raise RuntimeError("Pass --confirm-token-reissue before using --live.")
+    if not confirm_save:
+        raise RuntimeError("Pass --confirm-save before saving Toss priority quote baselines.")
+
+    if repository.db_path.exists():
+        status = repository.get_schema_migration_status()
+        if status.current_version != status.target_version or status.pending_versions:
+            raise RuntimeError(
+                "Database schema is not current for toss-priority-baseline-collect; "
+                "run an approved `python -m stock_monitor db-migrate` first."
+            )
+    else:
+        repository.initialize()
+
+    evidence = build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=2,
+    )
+    candidate_rows = list(evidence.get("rows") or [])[:2]
+    symbols = tuple(
+        str(row.get("stock_code") or "").strip()
+        for row in candidate_rows
+        if re.fullmatch(r"\d{6}", str(row.get("stock_code") or "").strip())
+    )
+    stock_names_by_code = {
+        str(row.get("stock_code") or "").strip(): str(row.get("stock_name") or "").strip() or None
+        for row in candidate_rows
+    }
+    if not symbols:
+        payload = {
+            **plan,
+            "mode": "live",
+            "read_only": False,
+            "live_fetch": False,
+            "writes_db": False,
+            "target_symbols": [],
+            "saved_count": 0,
+            "reason": "no_priority_symbols",
+        }
+        _print_toss_priority_baseline_collect_payload(payload, as_json=as_json)
+        return 0
+
+    toss_config = TossOpenApiLabConfig.from_env(config.root_dir)
+    if not toss_config.live_enabled:
+        raise RuntimeError("Set STOCK_MONITOR_TOSS_OPENAPI_LIVE_ENABLED=true before using --live.")
+    if not toss_config.client_id or not toss_config.client_secret:
+        raise RuntimeError(
+            "Set STOCK_MONITOR_TOSS_OPENAPI_CLIENT_ID and "
+            "STOCK_MONITOR_TOSS_OPENAPI_CLIENT_SECRET before using --live."
+        )
+    fetched_at_fallback = datetime.now(ZoneInfo(config.timezone))
+    toss_payload = run_toss_readonly_probe(
+        base_url=toss_config.base_url,
+        client_id=toss_config.client_id,
+        client_secret=toss_config.client_secret,
+        endpoint_selector="prices",
+        symbols=symbols,
+        query_date=None,
+        timeout_seconds=toss_config.timeout_seconds,
+        live_enabled=toss_config.live_enabled,
+        confirm_token_reissue=confirm_token_reissue,
+    )
+    rows: list[TossPriorityQuoteBaseline] = []
+    for item in toss_payload.get("result") or []:
+        if not isinstance(item, dict):
+            continue
+        symbol = str(item.get("symbol") or "").strip()
+        if symbol not in symbols:
+            continue
+        rows.append(
+            TossPriorityQuoteBaseline(
+                business_date=business_date,
+                stock_code=symbol,
+                stock_name=stock_names_by_code.get(symbol),
+                baseline_time=normalized_baseline_time,
+                last_price=_safe_optional_int(item.get("lastPrice")),
+                currency=str(item.get("currency") or "").strip() or None,
+                source="toss_openapi",
+                fetched_at=_parse_toss_quote_timestamp(item.get("timestamp"), fetched_at_fallback),
+            )
+        )
+    repository.save_toss_priority_quote_baselines(rows)
+    payload = {
+        **plan,
+        "mode": "live",
+        "read_only": False,
+        "live_fetch": True,
+        "writes_db": True,
+        "target_symbols": list(symbols),
+        "quote_count": len(toss_payload.get("result") or []),
+        "saved_count": len(rows),
+        "rate_limit": toss_payload.get("rate_limit"),
+        "token_expires_in": toss_payload.get("token_expires_in"),
+    }
+    _print_toss_priority_baseline_collect_payload(payload, as_json=as_json)
+    return 0
+
+
+def _normalize_toss_priority_baseline_time(value: str) -> str:
+    normalized = str(value or "").strip()
+    if not re.fullmatch(r"\d{2}:\d{2}", normalized):
+        raise RuntimeError("Toss priority baseline time must use HH:MM.")
+    hour, minute = (int(part) for part in normalized.split(":", 1))
+    if hour > 23 or minute > 59:
+        raise RuntimeError("Toss priority baseline time must use HH:MM.")
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _parse_toss_quote_timestamp(value: object, fallback: datetime) -> datetime:
+    if isinstance(value, str) and value.strip():
+        raw = value.strip()
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return fallback
+    return fallback
+
+
+def _print_toss_priority_baseline_collect_payload(payload: dict[str, object], *, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    print("Toss priority baseline collect")
+    print(f"- mode: {payload['mode']}")
+    print(f"- business_date: {payload['business_date']}")
+    print(f"- baseline_time: {payload['baseline_time']}")
+    print(f"- live_fetch: {str(payload['live_fetch']).lower()}")
+    print(f"- writes_db: {str(payload['writes_db']).lower()}")
+    if "saved_count" in payload:
+        print(f"- saved_count: {payload['saved_count']}")
 
 
 def _docs_hygiene_patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
@@ -26566,10 +26759,12 @@ def _render_web_view_html() -> str:
           ? `<span>부족한 정보: ${esc(candidateCompactLabel(gapItems, 1))}</span>`
           : "";
         const newsLine = candidateNewsCompactLine(item.news_observation_badge);
+        const tossBaselineLine = candidateTossBaselineCompactLine(item.toss_baseline_reference);
         return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote="${esc(item.stock_code || "")}">Toss 현재가 확인 중</span></b>
           <span>왜 눈에 띄는지: ${esc(why)}</span>
           <span>장중 참고: ${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span>
+          <span>${esc(tossBaselineLine)}</span>
           <span>${esc(newsLine)}</span>
           ${missingLine}
         </button>`;
@@ -26662,6 +26857,15 @@ def _render_web_view_html() -> str:
           updateTossPriorityRefreshButton();
         }
       }
+    }
+
+    function candidateTossBaselineCompactLine(reference) {
+      if (!reference || reference.available !== true) return "Toss 20:00 기준: 저장값 없음";
+      const baselineTime = reference.baseline_time || "20:00";
+      const priceText = reference.last_price !== null && reference.last_price !== undefined
+        ? price(reference.last_price)
+        : "-";
+      return `Toss ${baselineTime} 기준: ${priceText}`;
     }
 
     function candidateNewsCompactLine(badge) {
@@ -30677,6 +30881,14 @@ def build_web_view_candidate_evidence_snapshot(
         stock_codes=[summary.stock_code or "" for summary in summaries],
         stock_names_by_code={summary.stock_code or "": summary.stock_name for summary in summaries if summary.stock_code},
     )
+    toss_baselines_by_code = {
+        row.stock_code: row
+        for row in repository.list_toss_priority_quote_baselines(
+            business_date=business_date,
+            stock_codes=[summary.stock_code or "" for summary in summaries],
+            baseline_time="20:00",
+        )
+    }
     same_day_flow_by_code = batch_context["same_day_flow_by_code"]
     flow_window_rows_by_code = batch_context["flow_window_rows_by_code"]
     price_history_by_code = batch_context["price_history_by_code"]
@@ -30800,6 +31012,10 @@ def build_web_view_candidate_evidence_snapshot(
                     stock_code,
                     _web_view_empty_candidate_news_badge(),
                 ),
+                "toss_baseline_reference": _web_view_toss_baseline_reference(
+                    toss_baselines_by_code.get(stock_code),
+                    baseline_time="20:00",
+                ),
                 "quality_flags": quality_flags,
                 "evidence_notes": notes,
                 "_internal_candidate_signals": candidate_profile["internal_candidate_signals"],
@@ -30863,6 +31079,38 @@ def build_web_view_candidate_evidence_snapshot(
             key=lambda row: (_web_view_market_sort_key(row.market), _web_view_investor_sort_key(row.investor_type)),
         )],
         "rows": picked_rows,
+    }
+
+
+def _web_view_toss_baseline_reference(
+    row: TossPriorityQuoteBaseline | None,
+    *,
+    baseline_time: str,
+) -> dict[str, object]:
+    base = {
+        "source": "toss_openapi",
+        "read_only": True,
+        "live_fetch": False,
+        "writes_db": False,
+        "baseline_time": baseline_time,
+        "affects_ordering": False,
+    }
+    if row is None:
+        return {
+            **base,
+            "available": False,
+            "reference_time": None,
+            "last_price": None,
+            "currency": None,
+            "notice": "Toss 20:00 기준 저장값 없음",
+        }
+    return {
+        **base,
+        "available": True,
+        "reference_time": row.fetched_at.isoformat(),
+        "last_price": row.last_price,
+        "currency": row.currency,
+        "notice": "Toss 20:00 기준 저장값",
     }
 
 
