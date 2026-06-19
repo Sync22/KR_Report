@@ -147,7 +147,7 @@ Source ownership and Korean display naming are fixed in [data-source-policy.md](
 | Missing category mapping | Internal placeholders such as `N/A` may remain in raw DTO fields, but user-facing labels must render as `업종 미확인` or `테마 미확인`. |
 | Selected-date KRX | Missing selected-date KRX data must remain missing; do not silently fall back to the latest snapshot. |
 
-The first `web-view` should prefer clarity over trading interpretation. It can say what was observed and recommend what to check first, but should avoid unsupported scoring.
+The first `web-view` should prefer clarity over trading interpretation. It can say what was observed, identify what is still missing, and recommend what to check first, but should avoid unsupported scoring.
 
 Broker-origin data is currently allowed only for the bounded Toss top-2 current-price reference. It must be labeled as `Toss 현재가`; KRX/report/flow values remain stored references, and the live quote must not imply a trading decision.
 
@@ -182,9 +182,11 @@ The current endpoint contract is GET-first, with one explicit operator-triggered
 
 Daily and category DTOs may include public display labels such as `sector_display_name`, `theme_display_name`, or `category_display_name`. They must not include scheduler, worker heartbeat, DB path, `.env`, Telegram secrets, safe settings, or admin audit data.
 
-Daily DTOs may include a public contract block with read-only/source-scope/trading-recommendation/control-exposure flags. This block is user-facing safety copy, not an operator health model. Observation-candidate recommendation is allowed when it is expressed as `오늘의 관찰 후보`, `우선 확인`, `관찰 우선순위`, `관심도 높은 흐름`, or `왜 눈에 띄는지`. The web-view may show graph-like sector/theme breadth bars, a top-2 `우선 확인` observation shortlist, and `순환매 참고 종목`/`순환매 참고 ETF` reference slots when they are stored-data-only and accompanied by missing-information labels where evidence is absent.
+Daily DTOs may include a public contract block with read-only/source-scope/trading-recommendation/control-exposure flags. This block is user-facing safety copy, not an operator health model. Observation-candidate recommendation is allowed when it is expressed as `오늘의 관찰 후보`, `우선 확인`, `관찰 우선순위`, `관심도 높은 흐름`, `왜 눈에 띄는지`, or a top-card `판단 상태` label. The web-view may show graph-like sector/theme breadth bars, a top-2 `우선 확인` observation shortlist, and `순환매 참고 종목`/`순환매 참고 ETF` reference slots when they are stored-data-only and accompanied by missing-information labels where evidence is absent.
 
 Daily and candidate DTOs may include public-safe news observation fields when they are derived from stored `news_intelligence_runs` / `report_linked_news_evidence` rows. The current visible fields are `news_observation_summary`, candidate-row `news_observation_badge`, stock-detail `news_observation_detail`, and archive `news_observation_count`. Empty state should be actionable rather than invisible: `뉴스 근거 수집 전`, `뉴스 근거 있음`, `뉴스로 후보 강화`, `주의 뉴스 확인`, `시장 맥락 참고`, `KRX 기준일 확인 필요`, or `추가 확인 필요` is preferable to hiding the block until the model is perfect.
+
+Candidate DTOs may also include a public-safe `value_profile` that mixes visible candidate evidence, saved news observation status, selected-date KRX/flow availability, and approved Toss top-2 reference state. This field may adjust top-card emphasis and ordering only through visible labels such as `뉴스 근거 확인`, `정보 보강`, `뉴스 매칭 없음`, `실시간 확인 대기`, or `저장 근거 확인`. It must not expose numeric scores, raw model weights, raw sentiment/impact, buy/sell wording, broker execution, or order-routing language.
 
 Investor-flow DTOs must clearly mark that they are stored sample/read-only data, do not trigger live KRX fetches from the user page, and do not provide public numeric scoring or trading recommendations.
 

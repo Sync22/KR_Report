@@ -25362,7 +25362,7 @@ def _render_web_view_html() -> str:
     let tossPriorityRows = [];
     let tossPriorityDate = null;
     let newsObservationCollectLoading = false;
-    let newsObservationCollectAttemptedDate = null;
+    let newsObservationCollectAttemptedKey = null;
     let showSingleReportStocks = false;
     let dailyStockVisibleLimit = DAILY_STOCK_DEFAULT_LIMIT;
     let backtestObservationVisibleLimit = BACKTEST_OBSERVATION_DEFAULT_LIMIT;
@@ -26025,8 +26025,29 @@ def _render_web_view_html() -> str:
 
     function maybeAutoCollectNewsObservation(summary) {
       if (!selectedDate || summary?.available === true) return;
-      if (newsObservationCollectLoading || newsObservationCollectAttemptedDate === selectedDate) return;
-      newsObservationCollectAttemptedDate = selectedDate;
+      const collectKey = newsObservationCollectKey();
+      if (newsObservationCollectLoading || newsObservationCollectAttemptedKey === collectKey) return;
+      newsObservationCollectAttemptedKey = collectKey;
+      window.setTimeout(() => collectNewsObservationForSelectedDate({ automatic: true }), 0);
+    }
+
+    function newsObservationCollectKey() {
+      const codes = tossPriorityRows
+        .map((row) => String(row?.stock_code || "").trim())
+        .filter(Boolean)
+        .slice(0, 2)
+        .join(",");
+      return `${selectedDate || ""}:${codes}`;
+    }
+
+    function maybeAutoCollectNewsObservationForPriorityRows(rows) {
+      const picked = (Array.isArray(rows) ? rows : []).slice(0, 2);
+      if (!selectedDate || !picked.length) return;
+      const needsNewsCollect = picked.some((row) => row?.news_observation_badge?.available !== true);
+      if (!needsNewsCollect) return;
+      const collectKey = newsObservationCollectKey();
+      if (newsObservationCollectLoading || newsObservationCollectAttemptedKey === collectKey) return;
+      newsObservationCollectAttemptedKey = collectKey;
       window.setTimeout(() => collectNewsObservationForSelectedDate({ automatic: true }), 0);
     }
 
@@ -26958,6 +26979,7 @@ def _render_web_view_html() -> str:
       tossPriorityRows = rows.slice(0, 2);
       tossPriorityDate = evidence?.business_date || selectedDate;
       updateTossPriorityRefreshButton();
+      maybeAutoCollectNewsObservationForPriorityRows(tossPriorityRows);
       loadTossPriorityQuotes(tossPriorityDate);
       document.getElementById("candidate-evidence-rows").innerHTML = rows.map((item, index) => {
         const report = item.report_summary || {};
@@ -27016,8 +27038,13 @@ def _render_web_view_html() -> str:
           : "근거 보강 필요";
         const newsLine = candidateNewsCompactLine(item.news_observation_badge);
         const tossBaselineLine = candidateTossBaselineCompactLine(item.toss_baseline_reference);
+        const valueProfile = item.value_profile || {};
+        const valueLine = valueProfile.value_label
+          ? `판단 상태: ${valueProfile.value_label}${valueProfile.value_reason ? ` · ${valueProfile.value_reason}` : ""}`
+          : "판단 상태: 저장 근거 확인";
         return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote="${esc(item.stock_code || "")}">Toss 현재가 확인 중</span></b>
+          <span>${esc(valueLine)}</span>
           <span>장중 참고: ${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span>
           <span>${esc(newsLine)}</span>
           <span>${esc(tossBaselineLine)}</span>
@@ -27809,7 +27836,7 @@ def _render_web_view_html() -> str:
       loadIntradayMarketTopForSelectedDate();
     });
     document.getElementById("news-observation-collect").addEventListener("click", () => {
-      newsObservationCollectAttemptedDate = null;
+      newsObservationCollectAttemptedKey = null;
       collectNewsObservationForSelectedDate({ automatic: false });
     });
     document.getElementById("report-no-opinion-toggle").addEventListener("change", (event) => {
@@ -31268,6 +31295,24 @@ def build_web_view_candidate_evidence_snapshot(
             flow_window_reference=flow_window_reference,
             price_volume_reference=price_volume_reference,
         )
+        news_badge = news_badges_by_code.get(
+            stock_code,
+            _web_view_empty_candidate_news_badge(),
+        )
+        toss_baseline_reference = _web_view_toss_baseline_reference(
+            toss_baselines_by_code.get(stock_code),
+            baseline_time="20:00",
+        )
+        value_profile = _web_view_candidate_value_profile(
+            candidate_profile=candidate_profile,
+            news_badge=news_badge,
+            toss_baseline_reference=toss_baseline_reference,
+            market_reference=market_reference,
+            stock_flow_rows=stock_flow_rows,
+            rank_reference=rank_reference,
+            current=current,
+            business_date=business_date,
+        )
         evidence_layers = _web_view_candidate_evidence_layers(
             primary=candidate_profile["why_notable"],
             support=_web_view_candidate_support_evidence(
@@ -31282,7 +31327,8 @@ def build_web_view_candidate_evidence_snapshot(
                 "business_date": summary.business_date.isoformat(),
                 "stock_code": stock_code,
                 "stock_name": summary.stock_name,
-                "observation_priority": candidate_profile["observation_priority"],
+                "observation_priority": value_profile["observation_priority"],
+                "value_profile": value_profile,
                 "why_notable": candidate_profile["why_notable"],
                 "missing_information": candidate_profile["missing_information"],
                 "evidence_layers": evidence_layers,
@@ -31313,24 +31359,20 @@ def build_web_view_candidate_evidence_snapshot(
                     "foreign_top_rank": rank_reference.rank if rank_reference else None,
                     "market": _web_view_market_display(rank_reference.market) if rank_reference else None,
                 },
-                "news_observation_badge": news_badges_by_code.get(
-                    stock_code,
-                    _web_view_empty_candidate_news_badge(),
-                ),
-                "toss_baseline_reference": _web_view_toss_baseline_reference(
-                    toss_baselines_by_code.get(stock_code),
-                    baseline_time="20:00",
-                ),
+                "news_observation_badge": news_badge,
+                "toss_baseline_reference": toss_baseline_reference,
                 "quality_flags": quality_flags,
                 "evidence_notes": notes,
                 "_internal_candidate_signals": candidate_profile["internal_candidate_signals"],
                 "_internal_missing_information": candidate_profile["internal_missing_information"],
                 "_sort_density": candidate_profile["sort_density"],
                 "_sort_signal": candidate_profile["sort_signal"],
+                "_sort_value_signal": value_profile["sort_value_signal"],
             }
         )
     rows.sort(
         key=lambda item: (
+            int(item.get("_sort_value_signal") or 0),
             int(item.get("_sort_signal") or 0),
             int(item.get("_sort_density") or 0),
             int((item["report_summary"] or {}).get("report_count") or 0),
@@ -31341,7 +31383,13 @@ def build_web_view_candidate_evidence_snapshot(
         reverse=True,
     )
     picked_rows: list[dict[str, object]] = []
-    internal_keys = {"_internal_candidate_signals", "_internal_missing_information", "_sort_density", "_sort_signal"}
+    internal_keys = {
+        "_internal_candidate_signals",
+        "_internal_missing_information",
+        "_sort_density",
+        "_sort_signal",
+        "_sort_value_signal",
+    }
     for index, row in enumerate(rows[:limit]):
         item = {key: value for key, value in row.items() if key not in internal_keys}
         if index < 2:
@@ -31571,6 +31619,109 @@ def _web_view_observation_candidate_profile(
         "internal_missing_information": internal_missing,
         "sort_density": sort_density,
         "sort_signal": sort_signal,
+    }
+
+
+def _web_view_candidate_value_profile(
+    *,
+    candidate_profile: dict,
+    news_badge: dict,
+    toss_baseline_reference: dict,
+    market_reference: object | None,
+    stock_flow_rows: list[object],
+    rank_reference: object | None,
+    current: datetime,
+    business_date: date,
+) -> dict[str, object]:
+    direct_count = int(news_badge.get("direct_count") or 0)
+    caution_count = int(news_badge.get("caution_count") or 0)
+    market_context_count = int(news_badge.get("market_context_count") or 0)
+    news_available = news_badge.get("available") is True
+    news_label = str(news_badge.get("display_label") or news_badge.get("connection_label") or "").strip()
+    has_actionable_news = direct_count > 0 or caution_count > 0 or market_context_count > 0
+    news_collected_no_match = news_available and not has_actionable_news
+    has_market_reference = market_reference is not None
+    has_stock_flow = bool(stock_flow_rows)
+    has_toss_baseline = toss_baseline_reference.get("available") is True
+    has_rank_reference = rank_reference is not None
+    why_notable = [str(item) for item in candidate_profile.get("why_notable") or []]
+    target_only = bool(why_notable) and all(item.startswith("목표가") for item in why_notable)
+    base_signal = int(candidate_profile.get("sort_signal") or 0)
+    value_signal = base_signal
+    if has_actionable_news:
+        value_signal += 4
+    elif news_collected_no_match:
+        value_signal -= 2
+    else:
+        value_signal -= 1
+    if has_market_reference:
+        value_signal += 1
+    else:
+        value_signal -= 1
+    if has_stock_flow:
+        value_signal += 1
+    else:
+        value_signal -= 1
+    if has_toss_baseline:
+        value_signal += 1
+    same_day = business_date == current.date()
+    current_time = current.time()
+    if same_day and datetime_time(9, 0) <= current_time <= datetime_time(15, 30):
+        time_mode = "intraday"
+    elif same_day and current_time >= datetime_time(20, 0):
+        time_mode = "toss_20_baseline"
+    elif same_day:
+        time_mode = "same_day_after_hours"
+    else:
+        time_mode = "stored_history"
+
+    if has_actionable_news:
+        observation_priority = "우선 확인" if caution_count <= 0 else "주의 확인"
+        value_label = "뉴스 근거 확인"
+        value_reason = (
+            "직접 뉴스가 후보 근거를 보강합니다."
+            if direct_count > 0
+            else "주의/시장맥락 뉴스가 있어 저장 근거와 함께 확인합니다."
+        )
+    elif target_only and news_collected_no_match and (not has_market_reference or not has_stock_flow):
+        observation_priority = "정보 보강"
+        value_label = "정보 보강"
+        value_reason = "목표가 변화 단독이고 뉴스 매칭/KRX/수급 확인이 부족합니다."
+    elif news_collected_no_match:
+        observation_priority = str(candidate_profile.get("observation_priority") or "확인 후보")
+        value_label = "뉴스 매칭 없음"
+        value_reason = "뉴스 수집은 완료됐지만 후보와 직접 연결된 기사는 없었습니다."
+    elif not news_available and time_mode == "intraday":
+        observation_priority = str(candidate_profile.get("observation_priority") or "확인 후보")
+        value_label = "실시간 확인 대기"
+        value_reason = "장중에는 뉴스/거래대금 확인 후 우선순위를 다시 봐야 합니다."
+    else:
+        observation_priority = str(candidate_profile.get("observation_priority") or "확인 후보")
+        value_label = "저장 근거 확인"
+        value_reason = "저장 리포트와 시장 참고값 기준 후보입니다."
+
+    reference_notes: list[str] = []
+    if news_label:
+        reference_notes.append(f"뉴스 {news_label}")
+    if not has_market_reference:
+        reference_notes.append("KRX missing")
+    if not has_stock_flow:
+        reference_notes.append("수급 missing")
+    if has_toss_baseline:
+        reference_notes.append("Toss 20:00 저장")
+    return {
+        "observation_priority": observation_priority,
+        "value_label": value_label,
+        "value_reason": value_reason,
+        "time_mode": time_mode,
+        "news_confirmed": has_actionable_news,
+        "news_collected": news_available,
+        "market_reference_available": has_market_reference,
+        "stock_flow_available": has_stock_flow,
+        "toss_20_available": has_toss_baseline,
+        "rank_reference_available": has_rank_reference,
+        "reference_notes": reference_notes[:4],
+        "sort_value_signal": value_signal,
     }
 
 

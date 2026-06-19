@@ -100,6 +100,7 @@ Per-stock row:
 | `evidence_layers.primary` | Short public reasons copied from `why_notable` | derived display projection | report, target-revision, and `[12009]` flow-persistence reasons only; no internal sort vocabulary |
 | `evidence_layers.support` | Stored context that supports the reasons | KRX/price-volume/rank derived display projection | KRX price, turnover, 52-week position, volume-position labels, and `[12010]` rank-reference labels only when stored evidence exists |
 | `evidence_layers.gap` | Missing public evidence copied from `missing_information` | derived display projection | missing context, not negative evidence |
+| `value_profile` | Public-safe observation value state | candidate/news/KRX/flow/Toss reference mix | labels whether the row is `뉴스 근거 확인`, `정보 보강`, `뉴스 매칭 없음`, `실시간 확인 대기`, or stored-reference-only; no numeric score |
 | `intraday_reference` | Top-2-only future real-time reference slot | disabled source placeholder now; approved intraday source later | disabled placeholders use `source_configured=false`, `live_fetch=false`, `affects_ordering=false`; approved sources may set `affects_ordering=true` only for observation priority/display ordering, never trading execution |
 | `quality_flags` | Missing/fallback markers | derived | required |
 | `evidence_notes` | Flat fact labels only | derived | no score text |
@@ -109,14 +110,16 @@ Internal sort and operator diagnostics are separate from public labels.
 - `why_notable` and `missing_information` are public-visible display vocabulary for `web-view`.
 - Sort-only signals such as broker breadth, target-range availability, turnover availability, and price/volume position must not be exposed by relying on frontend filtering.
 - Every candidate signal must be classified as `rank-driving evidence`, `context-only support`, or `gap-only missing context` before it is added to the DTO.
-- `rank-driving evidence` is limited to report focus, stored report target revision, and exact-date `[12009]` flow-persistence evidence.
+- `rank-driving evidence` is limited to report focus, stored report target revision, exact-date `[12009]` flow-persistence evidence, and public-safe `value_profile` adjustments that are visibly derived from news/KRX/flow/Toss reference state.
 - `context-only support` includes stored KRX price/turnover, 52-week position, volume position, target range/opinion details, and `[12010]` rank reference.
 - `gap-only missing context` includes selected-date KRX missing, selected-date `[12009]` stock flow missing, and target/opinion/price-volume context missing.
-- Context-only and gap-only signals must not change public row ordering, `observation_priority`, or top-2 composition by themselves.
+- Context-only and gap-only signals must not change public row ordering, `observation_priority`, or top-2 composition by themselves. They may lower a target-only row only when the visible `value_profile` also explains that news matching, KRX, flow, or Toss evidence is missing.
 - `[12010]` rank presence is a reference-level support signal only. It may appear publicly as a cautious rank-reference label in `evidence_layers.support`, but it must not appear in `why_notable` or `evidence_layers.primary`, and it must not dominate candidates that have composite stored evidence.
 - Flow-persistence wording is public-primary evidence only when selected-date `[12009]` stock flow exists. Without stock-level flow rows, persistence remains internal/readiness context and the public card should show the flow gap as missing context.
 - Exact-date `[12009]` stock flow plus a public non-report reason such as target revision is stronger observation evidence than `[12010]` rank presence without stock-level flow.
 - `missing_stock_flow_reference` is an evidence gap, not negative evidence about the stock.
+- Direct/caution/market-context news evidence may raise a row's observation emphasis when it is shown through public-safe labels and counts. A completed news collection with no matched article should not remain equal to a candidate with direct news support.
+- A public top-2 card may show `판단 상태` text from `value_profile`, but it must not expose a numeric score, internal weight, raw sentiment/impact label, or operator recommendation-support vocabulary.
 - Operator/readiness commands may inspect internal candidate signals, but those counts must be named separately from visible label counts.
 - No hidden factor may determine public inclusion or ordering unless a public-safe rank-driving label for the same factor is visible on the row.
 - `candidate-evidence-readiness` should report visible label counts and internal signal counts separately so operator review and friend-facing cards do not use different hidden vocabularies.

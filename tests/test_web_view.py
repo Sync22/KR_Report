@@ -4745,6 +4745,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "candidateIntradayReferenceLabel(item.intraday_reference)" in html
     assert "renderCandidateNewsBadge(item.news_observation_badge)" in html
     assert "candidateNewsCompactLine(item.news_observation_badge)" in html
+    assert "item.value_profile || {}" in html
+    assert "판단 상태:" in html
     assert "candidate-news-badge" in html
     assert ".candidate-news-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; border: 1px solid #e7d8bf;" in html
     assert "candidate-intraday-line" in html
@@ -5463,6 +5465,10 @@ def test_web_view_news_observation_collect_button_and_api_contract(tmp_path, mon
     assert "collectNewsObservationForSelectedDate" in html
     assert "/api/news-observations/collect" in html
     assert "maybeAutoCollectNewsObservation(summary)" in html
+    assert "function maybeAutoCollectNewsObservationForPriorityRows(rows)" in html
+    assert "function newsObservationCollectKey()" in html
+    assert "newsObservationCollectAttemptedKey" in html
+    assert "maybeAutoCollectNewsObservationForPriorityRows(tossPriorityRows)" in html
 
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
@@ -5582,6 +5588,69 @@ def test_web_view_news_observation_collect_uses_candidate_priority_top_two(tmp_p
     assert payload["ok"] is True
     assert payload["saved_observation_count"] == 2
     assert [args.stock_code for args in captured_args] == [["229640", "138930"]]
+
+
+def test_web_view_candidate_value_profile_downgrades_target_only_no_match() -> None:
+    profile = cli_module._web_view_candidate_value_profile(
+        candidate_profile={
+            "observation_priority": "확인 후보",
+            "why_notable": ["목표가 하향"],
+            "missing_information": ["선택일 KRX 저장값 없음", "종목 수급 저장값 없음"],
+            "sort_signal": 3,
+            "sort_density": 1,
+        },
+        news_badge={
+            "available": True,
+            "display_label": "매칭 뉴스 없음",
+            "direct_count": 0,
+            "caution_count": 0,
+            "market_context_count": 0,
+        },
+        toss_baseline_reference={"available": False},
+        market_reference=None,
+        stock_flow_rows=[],
+        rank_reference=None,
+        current=datetime(2026, 6, 19, 10, 0, 0),
+        business_date=date(2026, 6, 19),
+    )
+
+    assert profile["observation_priority"] == "정보 보강"
+    assert profile["value_label"] == "정보 보강"
+    assert profile["time_mode"] == "intraday"
+    assert "목표가 변화 단독" in profile["value_reason"]
+    assert int(profile["sort_value_signal"]) < 3
+    assert "score" not in json.dumps(profile, ensure_ascii=False).lower()
+
+
+def test_web_view_candidate_value_profile_promotes_direct_news_context() -> None:
+    profile = cli_module._web_view_candidate_value_profile(
+        candidate_profile={
+            "observation_priority": "확인 후보",
+            "why_notable": ["목표가 상향"],
+            "missing_information": [],
+            "sort_signal": 1,
+            "sort_density": 1,
+        },
+        news_badge={
+            "available": True,
+            "display_label": "직접 뉴스",
+            "connection_label": "뉴스로 후보 강화",
+            "direct_count": 1,
+            "caution_count": 0,
+            "market_context_count": 0,
+        },
+        toss_baseline_reference={"available": False},
+        market_reference=object(),
+        stock_flow_rows=[object()],
+        rank_reference=None,
+        current=datetime(2026, 6, 19, 10, 0, 0),
+        business_date=date(2026, 6, 19),
+    )
+
+    assert profile["observation_priority"] == "우선 확인"
+    assert profile["value_label"] == "뉴스 근거 확인"
+    assert "직접 뉴스" in profile["value_reason"]
+    assert int(profile["sort_value_signal"]) > 1
 
 
 def test_web_view_access_code_gate_protects_content_until_login(tmp_path, monkeypatch) -> None:
