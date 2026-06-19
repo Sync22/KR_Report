@@ -22460,10 +22460,21 @@ def _collect_web_view_news_observations(
     business_date: date,
     limit: int,
 ) -> tuple[HTTPStatus, dict[str, object]]:
+    candidate_snapshot = build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=limit,
+    )
+    stock_codes = [
+        str(row.get("stock_code") or "").strip()
+        for row in list(candidate_snapshot.get("rows") or [])[:limit]
+        if str(row.get("stock_code") or "").strip()
+    ]
     args = argparse.Namespace(
         date=business_date,
         limit=limit,
-        stock_code=[],
+        stock_code=stock_codes,
         scrapling_exe=_resolve_web_view_scrapling_exe(config),
         db_path=config.db_path,
         save_observation=True,

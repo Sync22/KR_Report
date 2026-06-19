@@ -5528,6 +5528,62 @@ def test_web_view_news_observation_collect_button_and_api_contract(tmp_path, mon
     assert calls == [(config, repository, business_date, 2)]
 
 
+def test_web_view_news_observation_collect_uses_candidate_priority_top_two(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 19)
+    captured_args = []
+
+    def fake_candidate_snapshot(config_arg, repository_arg, *, business_date, limit):
+        assert config_arg is config
+        assert repository_arg is repository
+        assert business_date == date(2026, 6, 19)
+        assert limit == 2
+        return {
+            "rows": [
+                {"stock_name": "LS에코에너지", "stock_code": "229640"},
+                {"stock_name": "BNK금융지주", "stock_code": "138930"},
+                {"stock_name": "BGF리테일", "stock_code": "282330"},
+            ]
+        }
+
+    def fake_run(args):
+        captured_args.append(args)
+        print(
+            json.dumps(
+                {
+                    "saved_observation_count": 2,
+                    "saved_evidence_count": 0,
+                    "target_stock_count": 2,
+                    "live_fetch": True,
+                    "writes_db": True,
+                    "items": [],
+                    "warnings": [],
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    monkeypatch.setattr(cli_module, "build_web_view_candidate_evidence_snapshot", fake_candidate_snapshot)
+    monkeypatch.setattr(cli_module, "_run_news_intelligence_briefing_collect", fake_run)
+
+    status, payload = cli_module._collect_web_view_news_observations(
+        config,
+        repository,
+        business_date=business_date,
+        limit=2,
+    )
+
+    assert status == HTTPStatus.OK
+    assert payload["ok"] is True
+    assert payload["saved_observation_count"] == 2
+    assert [args.stock_code for args in captured_args] == [["229640", "138930"]]
+
+
 def test_web_view_access_code_gate_protects_content_until_login(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
