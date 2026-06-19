@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import io
+from contextlib import redirect_stdout
 from dataclasses import asdict, dataclass, replace
 import getpass
 import hashlib
@@ -3294,11 +3296,17 @@ def _run_news_intelligence_briefing_collect(
         )
         save_result: dict[str, object] = {"writes_db": False}
         saved = False
-        if args.save_observation and preview.matched_count > 0:
-            analyzed_matches = [
-                (match, _apply_match_quality_guard(analyze_news_article(_news_article_with_match_quality(match))))
-                for match in preview.articles
-            ]
+        if args.save_observation:
+            analyzed_matches = (
+                [
+                    (match, _apply_match_quality_guard(analyze_news_article(_news_article_with_match_quality(match))))
+                    for match in preview.articles
+                ]
+                if preview.matched_count > 0
+                else []
+            )
+            if preview.matched_count <= 0:
+                item_warnings.append("saved empty observation: no matched articles")
             save_result = _save_news_intelligence_observation(
                 db_path=db_path,
                 target_date=target_date,
@@ -3311,8 +3319,6 @@ def _run_news_intelligence_briefing_collect(
             saved = True
             saved_observation_count += 1
             saved_evidence_count += int(save_result.get("saved_evidence_count") or 0)
-        elif args.save_observation:
-            item_warnings.append("save skipped: no matched articles")
 
         warnings.extend(f"{summary.stock_name}: {warning}" for warning in item_warnings)
         item_payload = {
@@ -22353,7 +22359,78 @@ def _make_web_view_handler(
 
         def do_POST(self) -> None:
             path, _, _query = self.path.partition("?")
-            if path == "/auth/login" and not _access_http_gate(self, config, surface_label="사용자용 웹뷰", surface_key="web"):
+            if path == "/auth/login":
+                if not _access_http_gate(self, config, surface_label="사용자용 웹뷰", surface_key="web"):
+                    return
+                _discard_http_request_body(self)
+                _write_http_response(
+                    self,
+                    HTTPStatus.METHOD_NOT_ALLOWED,
+                    "method not allowed",
+                    content_type="text/plain; charset=utf-8",
+                )
+                return
+            if path == "/api/news-observations/collect":
+                if not _access_http_gate(self, config, surface_label="사용자용 웹뷰", surface_key="web"):
+                    return
+                if self.headers.get("X-Stock-Monitor-Web-Action") != "news-observation-collect":
+                    _discard_http_request_body(self)
+                    _write_http_response(
+                        self,
+                        HTTPStatus.FORBIDDEN,
+                        json.dumps(
+                            {
+                                "surface": "web-view-news-observation-collect",
+                                "ok": False,
+                                "error": "missing web action header",
+                                "live_fetch": False,
+                                "writes_db": False,
+                            },
+                            ensure_ascii=False,
+                        ),
+                        content_type="application/json; charset=utf-8",
+                    )
+                    return
+                try:
+                    request = _read_json_request(self)
+                    raw_date = str(request.get("date") or "").strip()
+                    if not raw_date:
+                        raise ValueError("date is required")
+                    business_date = date.fromisoformat(raw_date)
+                    collect_limit = min(max(int(request.get("limit") or 2), 1), 5)
+                    status, payload = _collect_web_view_news_observations(
+                        config,
+                        repository,
+                        business_date=business_date,
+                        limit=collect_limit,
+                    )
+                    if status == HTTPStatus.OK:
+                        with response_cache_lock:
+                            response_cache.clear()
+                except ValueError as exc:
+                    status = HTTPStatus.BAD_REQUEST
+                    payload = {
+                        "surface": "web-view-news-observation-collect",
+                        "ok": False,
+                        "error": str(exc),
+                        "live_fetch": False,
+                        "writes_db": False,
+                    }
+                except Exception as exc:
+                    status = HTTPStatus.BAD_GATEWAY
+                    payload = {
+                        "surface": "web-view-news-observation-collect",
+                        "ok": False,
+                        "error": str(exc),
+                        "live_fetch": False,
+                        "writes_db": False,
+                    }
+                _write_http_response(
+                    self,
+                    status,
+                    json.dumps(payload, ensure_ascii=False),
+                    content_type="application/json; charset=utf-8",
+                )
                 return
             _discard_http_request_body(self)
             _write_http_response(self, HTTPStatus.METHOD_NOT_ALLOWED, "method not allowed", content_type="text/plain; charset=utf-8")
@@ -22374,6 +22451,78 @@ def _make_web_view_handler(
             return
 
     return WebViewHandler
+
+
+def _collect_web_view_news_observations(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    business_date: date,
+    limit: int,
+) -> tuple[HTTPStatus, dict[str, object]]:
+    args = argparse.Namespace(
+        date=business_date,
+        limit=limit,
+        stock_code=[],
+        scrapling_exe=_resolve_web_view_scrapling_exe(config),
+        db_path=config.db_path,
+        save_observation=True,
+        confirm_save=True,
+        format="json",
+    )
+    stdout = io.StringIO()
+    with redirect_stdout(stdout):
+        exit_code = _run_news_intelligence_briefing_collect(args)
+    raw_output = stdout.getvalue().strip()
+    try:
+        raw_payload = json.loads(raw_output) if raw_output else {}
+    except json.JSONDecodeError:
+        raw_payload = {"error": "news collect did not return JSON"}
+    ok = exit_code == 0 and int(raw_payload.get("saved_observation_count") or 0) > 0
+    summary = _build_web_view_news_observation_summary(repository, business_date)
+    payload = {
+        "surface": "web-view-news-observation-collect",
+        "ok": ok,
+        "operator_triggered": True,
+        "live_fetch": bool(raw_payload.get("live_fetch", True)),
+        "writes_db": bool(raw_payload.get("writes_db", False)),
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "business_date": business_date.isoformat(),
+        "target_stock_count": int(raw_payload.get("target_stock_count") or 0),
+        "saved_observation_count": int(raw_payload.get("saved_observation_count") or 0),
+        "saved_evidence_count": int(raw_payload.get("saved_evidence_count") or 0),
+        "news_observation_summary": summary,
+        "warnings": list(raw_payload.get("warnings") or [])[:10],
+    }
+    if raw_payload.get("error"):
+        payload["error"] = str(raw_payload.get("error"))
+    items = []
+    for item in list(raw_payload.get("items") or [])[:5]:
+        if not isinstance(item, dict):
+            continue
+        items.append(
+            {
+                "stock_name": item.get("stock_name"),
+                "stock_code": item.get("stock_code"),
+                "matched_count": item.get("matched_count"),
+                "saved": bool(item.get("saved")),
+                "saved_evidence_count": item.get("saved_evidence_count", 0),
+                "warnings": list(item.get("warnings") or [])[:5],
+            }
+        )
+    payload["items"] = items
+    return (HTTPStatus.OK if ok else HTTPStatus.BAD_GATEWAY), payload
+
+
+def _resolve_web_view_scrapling_exe(config: RuntimeConfig) -> Path | None:
+    configured = _resolve_scrapling_exe(None)
+    if configured is not None:
+        return configured
+    canonical = config.root_dir.parent / "_tools" / "scrapling" / ".venv" / "Scripts" / "scrapling.exe"
+    if canonical.exists():
+        return canonical
+    return None
 
 
 def _compact_web_view_json_payload(cache_key: str, payload: dict) -> dict:
@@ -24238,7 +24387,7 @@ def _render_web_view_v2_html() -> str:
     }
 
     function newsKindLabel(badge) {
-      if (!badge || badge.available !== true) return "저장 뉴스 근거 없음";
+      if (!badge || badge.available !== true) return "뉴스 근거 수집 전";
       if (Number(badge.direct_count || 0) > 0) return "직접 뉴스";
       if (Number(badge.caution_count || 0) > 0) return "주의 뉴스";
       if (Number(badge.market_context_count || 0) > 0) return "시장맥락 위주";
@@ -24248,7 +24397,7 @@ def _render_web_view_v2_html() -> str:
     function renderCandidateNewsLine(badge) {
       const label = badge?.connection_label || newsKindLabel(badge);
       if (!badge || badge.available !== true) {
-        return `<span class="v2-chip warn">${esc(label)}</span><span class="v2-news-line">${esc(badge?.reason || "같은 종목의 저장 뉴스 관찰이 없습니다.")}</span>`;
+        return `<span class="v2-chip warn">${esc(label)}</span><span class="v2-news-line">${esc(badge?.reason || "저장 뉴스 근거를 아직 수집하지 않았습니다.")}</span>`;
       }
       const krx = badge.krx_reference_status || "missing";
       const title = badge.top_title || badge.reason || "";
@@ -24294,7 +24443,7 @@ def _render_web_view_v2_html() -> str:
       const reportLine = `${number(daily?.market_mood?.total_reports || 0)}건 · ${number(daily?.market_mood?.stock_count || daily?.stocks?.length || 0)}종목`;
       const newsLine = summary.available
         ? `${esc(summary.display_label)} · 직접 ${number(summary.direct_count)} · 주의 ${number(summary.caution_count)} · 시장맥락 ${number(summary.market_context_count)}`
-        : esc(summary.empty_state || "저장 뉴스 근거 없음");
+        : esc(summary.empty_state || "뉴스 근거 수집 전");
       const krxLine = daily?.market_briefing?.index_summary?.reference_date
         ? `지수 기준 ${esc(daily.market_briefing.index_summary.reference_date)}`
         : "저장 KRX 기준 확인 필요";
@@ -24879,6 +25028,10 @@ def _render_web_view_html() -> str:
           <div class="news-observation-summary-head"><b>뉴스 관찰</b><span class="status-pill">저장 데이터</span></div>
           <p class="news-observation-summary-reason">날짜를 선택하면 저장된 뉴스 관찰을 확인합니다.</p>
           <p class="news-observation-summary-connection">우선 확인 후보와 함께 읽는 뉴스 근거입니다.</p>
+          <div class="news-observation-actions">
+            <button id="news-observation-collect" class="ghost-button" type="button" disabled>뉴스 근거 저장</button>
+            <span id="news-observation-collect-status" class="muted">저장 뉴스 근거를 확인합니다.</span>
+          </div>
         </div>
         <div id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden></div>
         <p class="main-priority-note">저장 리포트, KRX, [12009] 수급 참고값 기준이며 실시간 시세가 아닙니다.</p>
@@ -25197,6 +25350,8 @@ def _render_web_view_html() -> str:
     let tossPriorityRequestId = 0;
     let tossPriorityRows = [];
     let tossPriorityDate = null;
+    let newsObservationCollectLoading = false;
+    let newsObservationCollectAttemptedDate = null;
     let showSingleReportStocks = false;
     let dailyStockVisibleLimit = DAILY_STOCK_DEFAULT_LIMIT;
     let backtestObservationVisibleLimit = BACKTEST_OBSERVATION_DEFAULT_LIMIT;
@@ -25819,8 +25974,8 @@ def _render_web_view_html() -> str:
       const node = document.getElementById("news-observation-summary");
       if (!node) return;
       const available = summary?.available === true;
-      const label = summary?.display_label || summary?.empty_state || "뉴스 관찰 없음";
-      const reason = summary?.reason || summary?.empty_state || "저장된 뉴스 관찰 없음";
+      const label = summary?.display_label || summary?.empty_state || "뉴스 근거 수집 전";
+      const reason = summary?.reason || summary?.empty_state || "저장 뉴스 근거를 아직 수집하지 않았습니다.";
       const connection = summary?.connection_note || (available ? "우선 확인 후보와 함께 읽는 뉴스 근거입니다." : "우선 확인 후보와 연결할 저장 뉴스 관찰이 없습니다.");
       const candidateOverlapNames = Array.isArray(summary?.candidate_overlap_names) ? summary.candidate_overlap_names.filter(Boolean).slice(0, 3) : [];
       const direct = Number(summary?.direct_count || 0);
@@ -25841,6 +25996,64 @@ def _render_web_view_html() -> str:
         ${items.length ? `<ul class="news-observation-summary-items">${items.map(renderNewsObservationSummaryItem).join("")}</ul>` : ""}
         ${titles.length ? `<ul class="news-observation-summary-titles">${titles.map((title) => `<li>${esc(title)}</li>`).join("")}</ul>` : ""}
       `;
+      updateNewsObservationCollectButton(summary);
+      maybeAutoCollectNewsObservation(summary);
+    }
+
+    function updateNewsObservationCollectButton(summary) {
+      const button = document.getElementById("news-observation-collect");
+      const statusNode = document.getElementById("news-observation-collect-status");
+      if (!button) return;
+      button.disabled = !selectedDate || newsObservationCollectLoading;
+      if (statusNode && !newsObservationCollectLoading) {
+        statusNode.textContent = summary?.available === true
+          ? "저장 뉴스 근거가 반영되었습니다."
+          : "저장 뉴스 근거가 없으면 자동으로 수집합니다.";
+      }
+    }
+
+    function maybeAutoCollectNewsObservation(summary) {
+      if (!selectedDate || summary?.available === true) return;
+      if (newsObservationCollectLoading || newsObservationCollectAttemptedDate === selectedDate) return;
+      newsObservationCollectAttemptedDate = selectedDate;
+      window.setTimeout(() => collectNewsObservationForSelectedDate({ automatic: true }), 0);
+    }
+
+    async function collectNewsObservationForSelectedDate(options = {}) {
+      if (!selectedDate || newsObservationCollectLoading) return;
+      const button = document.getElementById("news-observation-collect");
+      const statusNode = document.getElementById("news-observation-collect-status");
+      newsObservationCollectLoading = true;
+      if (button) button.disabled = true;
+      if (statusNode) statusNode.textContent = options.automatic ? "뉴스 근거 자동 수집 중" : "뉴스 근거 수집 중";
+      try {
+        const response = await fetch("/api/news-observations/collect", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Stock-Monitor-Web-Action": "news-observation-collect",
+          },
+          body: JSON.stringify({ date: selectedDate, limit: 2 }),
+        });
+        const payload = await response.json();
+        if (!response.ok || payload.ok === false) throw new Error(payload.error || `HTTP ${response.status}`);
+        if (payload.news_observation_summary) renderNewsObservationSummary(payload.news_observation_summary);
+        await loadCandidateEvidence(selectedDate);
+        if (currentDailyData) {
+          currentDailyData = {
+            ...currentDailyData,
+            news_observation_summary: payload.news_observation_summary || currentDailyData.news_observation_summary,
+          };
+        }
+        if (statusNode) {
+          statusNode.textContent = `뉴스 근거 저장 ${number(payload.saved_observation_count || 0)}건`;
+        }
+      } catch (error) {
+        if (statusNode) statusNode.textContent = `뉴스 근거 수집 실패: ${String(error.message || error)}`;
+      } finally {
+        newsObservationCollectLoading = false;
+        updateNewsObservationCollectButton(currentDailyData?.news_observation_summary);
+      }
     }
 
     function renderNewsObservationSummaryItem(item) {
@@ -25866,7 +26079,7 @@ def _render_web_view_html() -> str:
     }
 
     function newsObservationMetaChips(available, direct, caution, marketContext, krx, candidateOverlapNames) {
-      if (!available) return ["저장된 뉴스 관찰 없음"];
+      if (!available) return ["뉴스 근거 수집 전"];
       const chips = [
         `뉴스 근거 직접 ${number(direct)}`,
         `주의 ${number(caution)}`,
@@ -25949,6 +26162,7 @@ def _render_web_view_html() -> str:
         renderBriefingOneLineComments(data?.market_commentary);
         renderIntradayMarketTopStatus(data?.market_commentary);
         renderIntradayMarketTopOverlap(data?.market_commentary);
+        applyIntradayMarketTopToPriorityRows(data?.market_commentary);
         intradayMarketTopLastLoadedAt = Date.now();
         intradayMarketTopLastLoadedDate = selectedDate;
         setViewTab("main");
@@ -25969,6 +26183,41 @@ def _render_web_view_html() -> str:
           const latestStatus = currentDailyData?.market_commentary?.same_day_report_status || {};
           button.disabled = !selectedDate || latestStatus.can_overlap_intraday_market_top === false;
         }
+      }
+    }
+
+    function applyIntradayMarketTopToPriorityRows(commentary) {
+      const reference = commentary?.intraday_market_top_reference || {};
+      const items = Array.isArray(reference.items) ? reference.items : [];
+      if (!tossPriorityRows.length || !items.length) return;
+      const itemByCode = new Map(items.map((item) => [String(item?.stock_code || ""), item]));
+      let changed = false;
+      tossPriorityRows = tossPriorityRows.map((row) => {
+        const code = String(row?.stock_code || "");
+        const item = itemByCode.get(code);
+        if (!item) return row;
+        changed = true;
+        return {
+          ...row,
+          intraday_reference: {
+            available: true,
+            source_configured: true,
+            read_only: true,
+            live_fetch: true,
+            scope: "intraday_market_top_overlap",
+            reference_time: item.trade_time || item.checked_at || reference.checked_at || null,
+            price: item.price ?? item.current_price ?? null,
+            change_percent: item.change_percent ?? null,
+            turnover: item.trade_amount ?? null,
+            market_status: item.market_status || null,
+            rank: item.rank ?? null,
+            affects_ordering: false,
+            notice: "Naver 장중 거래대금 상위 겹침",
+          },
+        };
+      });
+      if (changed) {
+        document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(tossPriorityRows);
       }
     }
 
@@ -26527,8 +26776,8 @@ def _render_web_view_html() -> str:
           : "KRX 없음";
       if (!detail.available) {
         return `<div class="detail-item stock-news-observation-detail muted">
-          <b>${esc(detail.connection_label || detail.display_label || "저장 뉴스 근거 없음")}</b>
-          <span class="detail-meta">${esc(detail.connection_reason || detail.empty_state || detail.reason || "같은 종목의 저장 뉴스 observation이 없습니다.")}</span>
+          <b>${esc(detail.connection_label || detail.display_label || "뉴스 근거 수집 전")}</b>
+          <span class="detail-meta">${esc(detail.connection_reason || detail.empty_state || detail.reason || "저장 뉴스 근거를 아직 수집하지 않았습니다.")}</span>
         </div>`;
       }
       const direct = Number(detail.direct_count || 0);
@@ -26758,10 +27007,10 @@ def _render_web_view_html() -> str:
         const tossBaselineLine = candidateTossBaselineCompactLine(item.toss_baseline_reference);
         return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote="${esc(item.stock_code || "")}">Toss 현재가 확인 중</span></b>
-          <span>왜 눈에 띄는지: ${esc(why)}</span>
           <span>장중 참고: ${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span>
           <span>${esc(newsLine)}</span>
           <span>${esc(tossBaselineLine)}</span>
+          <span class="muted">관찰 사유: ${esc(why)}</span>
         </button>`;
       }).join("")}</section>`;
     }
@@ -26855,7 +27104,7 @@ def _render_web_view_html() -> str:
     }
 
     function candidateTossBaselineCompactLine(reference) {
-      if (!reference || reference.available !== true) return "Toss 20:00 기준: 저장값 없음";
+      if (!reference || reference.available !== true) return "Toss 20:00 기준: 저장 전";
       const baselineTime = reference.baseline_time || "20:00";
       const priceText = reference.last_price !== null && reference.last_price !== undefined
         ? price(reference.last_price)
@@ -26864,7 +27113,7 @@ def _render_web_view_html() -> str:
     }
 
     function candidateNewsCompactLine(badge) {
-      if (!badge || badge.available !== true) return "뉴스 근거: 저장 뉴스 근거 없음";
+      if (!badge || badge.available !== true) return "뉴스 근거: 수집 전";
       const label = badge.connection_label || badge.display_label || "뉴스 근거 있음";
       const krx = badge.krx_reference_status || "missing";
       return `뉴스 근거: ${label} · KRX ${krx}`;
@@ -26872,8 +27121,8 @@ def _render_web_view_html() -> str:
 
     function renderCandidateNewsBadge(badge) {
       if (!badge || badge.available !== true) {
-        const label = badge?.connection_label || badge?.display_label || "저장 뉴스 근거 없음";
-        const reason = badge?.connection_reason || badge?.reason || "같은 종목의 저장 뉴스 observation이 없습니다.";
+        const label = badge?.connection_label || badge?.display_label || "뉴스 근거 수집 전";
+        const reason = badge?.connection_reason || badge?.reason || "저장 뉴스 근거를 아직 수집하지 않았습니다.";
         return `<div class="candidate-news-badge"><span class="quality-chip quality-chip--missing">${esc(label)}</span><span>${esc(reason)}</span></div>`;
       }
       const connectionLabel = badge.connection_label || badge.display_label || "뉴스 근거 있음";
@@ -26891,10 +27140,10 @@ def _render_web_view_html() -> str:
 
     function candidateIntradayReferenceLabel(reference) {
       if (!reference || reference.source_configured === false) {
-        return "실시간 소스 미확정";
+        return "확인 전";
       }
       if (!reference.available) {
-        return reference.notice || "장중 참고값 없음";
+        return reference.notice || "확인 전";
       }
       const time = reference.reference_time || "장중";
       const priceText = reference.price !== null && reference.price !== undefined ? price(reference.price) : "-";
@@ -27547,6 +27796,10 @@ def _render_web_view_html() -> str:
     });
     document.getElementById("intraday-market-top-check").addEventListener("click", () => {
       loadIntradayMarketTopForSelectedDate();
+    });
+    document.getElementById("news-observation-collect").addEventListener("click", () => {
+      newsObservationCollectAttemptedDate = null;
+      collectNewsObservationForSelectedDate({ automatic: false });
     });
     document.getElementById("report-no-opinion-toggle").addEventListener("change", (event) => {
       hideNoOpinionReports = Boolean(event.target.checked);
@@ -29150,16 +29403,16 @@ def _build_web_view_news_observation_summary(
         evidence_rows.extend(rows)
         evidence_rows_by_key[run.stock_code or run.stock_name] = rows
 
-    if not evidence_rows:
+    if not representative_runs:
         return {
             "source": "stored_news_intelligence_observation",
             "read_only": True,
             "live_fetch": False,
             "available": False,
             "business_date": business_date.isoformat(),
-            "display_label": "뉴스 관찰 없음",
-            "reason": "저장된 뉴스 관찰 없음",
-            "connection_note": "우선 확인 후보와 연결할 저장 뉴스 관찰이 없습니다.",
+            "display_label": "뉴스 근거 수집 전",
+            "reason": "저장 뉴스 근거를 아직 수집하지 않았습니다.",
+            "connection_note": "웹뷰에서 뉴스 근거 저장을 실행하면 우선 확인 후보와 연결됩니다.",
             "candidate_overlap_count": 0,
             "candidate_overlap_names": [],
             "direct_count": 0,
@@ -29168,10 +29421,10 @@ def _build_web_view_news_observation_summary(
             "krx_reference_status": "missing",
             "top_titles": [],
             "items": [],
-            "empty_state": "저장된 뉴스 관찰 없음",
+            "empty_state": "뉴스 근거 수집 전",
             "missing_context": ["stored_news_observation"],
-            "connection_label": "뉴스 근거 부족",
-            "connection_reason": "우선 확인 후보와 연결할 저장 뉴스 관찰이 없습니다.",
+            "connection_label": "뉴스 근거 수집 전",
+            "connection_reason": "웹뷰에서 뉴스 근거 저장을 실행하면 우선 확인 후보와 연결됩니다.",
         }
 
     direct_count = sum(1 for row in evidence_rows if row.relevance == "direct")
@@ -29188,23 +29441,30 @@ def _build_web_view_news_observation_summary(
         )
         for run in representative_runs
     ]
-    display_label, reason = _web_view_news_observation_label(
-        direct_count=direct_count,
-        caution_count=caution_count,
-        market_context_count=market_context_count,
-        krx_reference_status=krx_reference_status,
-    )
-    connection_label, connection_reason = _web_view_news_observation_connection(
-        direct_count=direct_count,
-        caution_count=caution_count,
-        market_context_count=market_context_count,
-        krx_reference_status=krx_reference_status,
-    )
-    connection_note = (
-        "우선 확인 후보와 겹친 뉴스 근거: " + ", ".join(candidate_overlap_names)
-        if candidate_overlap_names
-        else "우선 확인 후보와 함께 읽는 뉴스 근거입니다."
-    )
+    if not evidence_rows:
+        display_label = "뉴스 수집 완료"
+        reason = "5-lane 뉴스 수집은 완료됐지만 우선 후보와 매칭된 기사는 없습니다."
+        connection_label = "매칭 뉴스 없음"
+        connection_reason = "수집은 실행됐고, 선택 날짜의 후보와 직접 연결된 뉴스는 없었습니다."
+        connection_note = "뉴스 수집 결과 매칭 0건입니다."
+    else:
+        display_label, reason = _web_view_news_observation_label(
+            direct_count=direct_count,
+            caution_count=caution_count,
+            market_context_count=market_context_count,
+            krx_reference_status=krx_reference_status,
+        )
+        connection_label, connection_reason = _web_view_news_observation_connection(
+            direct_count=direct_count,
+            caution_count=caution_count,
+            market_context_count=market_context_count,
+            krx_reference_status=krx_reference_status,
+        )
+        connection_note = (
+            "우선 확인 후보와 겹친 뉴스 근거: " + ", ".join(candidate_overlap_names)
+            if candidate_overlap_names
+            else "우선 확인 후보와 함께 읽는 뉴스 근거입니다."
+        )
     return {
         "source": "stored_news_intelligence_observation",
         "read_only": True,
@@ -29221,7 +29481,7 @@ def _build_web_view_news_observation_summary(
         "market_context_count": market_context_count,
         "krx_reference_status": krx_reference_status,
         "top_titles": top_titles,
-        "items": [item for item in items if item["available"]],
+        "items": items,
         "missing_context": [],
         "connection_label": connection_label,
         "connection_reason": connection_reason,
@@ -29234,6 +29494,21 @@ def _web_view_news_observation_summary_item(
     *,
     business_date: date,
 ) -> dict[str, object]:
+    if not rows:
+        return {
+            "available": True,
+            "stock_name": run.stock_name,
+            "stock_code": run.stock_code,
+            "display_label": "매칭 뉴스 없음",
+            "reason": "수집은 완료됐지만 이 후보와 직접 연결된 뉴스는 없었습니다.",
+            "direct_count": 0,
+            "caution_count": 0,
+            "market_context_count": 0,
+            "krx_reference_status": "missing",
+            "top_title": None,
+            "connection_label": "매칭 뉴스 없음",
+            "connection_reason": "수집은 실행됐고, 선택 날짜의 후보와 직접 연결된 뉴스는 없었습니다.",
+        }
     badge = _web_view_candidate_news_badge(rows, business_date=business_date)
     return {
         "available": bool(badge["available"]),
@@ -30411,6 +30686,7 @@ def _web_view_candidate_news_badges_by_code(
         if normalized_name and stock_code in stock_code_set
     }
     rows_by_code: dict[str, list[ReportLinkedNewsEvidenceRecord]] = {stock_code: [] for stock_code in stock_code_set}
+    collected_without_evidence_by_code: dict[str, bool] = {stock_code: False for stock_code in stock_code_set}
     runs = repository.list_news_intelligence_runs(target_date=business_date, limit=100)
     for run in runs:
         target_stock_code = run.stock_code if run.stock_code in stock_code_set else None
@@ -30419,6 +30695,8 @@ def _web_view_candidate_news_badges_by_code(
         if target_stock_code is None:
             continue
         evidence_rows = repository.list_report_linked_news_evidence(run_id=run.run_id, limit=20)
+        if not evidence_rows:
+            collected_without_evidence_by_code[target_stock_code] = True
         target_stock_name = normalized_names_by_code.get(target_stock_code, "")
         rows_by_code.setdefault(target_stock_code, []).extend(
             row
@@ -30427,7 +30705,13 @@ def _web_view_candidate_news_badges_by_code(
             or (target_stock_name and _web_view_normalize_news_identity(row.stock_name) == target_stock_name)
         )
     return {
-        stock_code: _web_view_candidate_news_badge(rows, business_date=business_date)
+        stock_code: (
+            _web_view_candidate_news_badge(rows, business_date=business_date)
+            if rows
+            else _web_view_collected_empty_candidate_news_badge()
+            if collected_without_evidence_by_code.get(stock_code)
+            else _web_view_empty_candidate_news_badge()
+        )
         for stock_code, rows in rows_by_code.items()
     }
 
@@ -30439,10 +30723,25 @@ def _web_view_normalize_news_identity(value: str | None) -> str:
 def _web_view_empty_candidate_news_badge() -> dict[str, object]:
     return {
         "available": False,
-        "display_label": "저장 뉴스 근거 없음",
-        "reason": "같은 종목의 저장 뉴스 observation이 없습니다.",
-        "connection_label": "뉴스 근거 부족",
-        "connection_reason": "같은 종목의 저장 뉴스 관찰이 없습니다.",
+        "display_label": "뉴스 근거 수집 전",
+        "reason": "저장 뉴스 근거를 아직 수집하지 않았습니다.",
+        "connection_label": "뉴스 근거 수집 전",
+        "connection_reason": "웹뷰에서 뉴스 근거 저장을 실행하면 후보와 연결됩니다.",
+        "direct_count": 0,
+        "caution_count": 0,
+        "market_context_count": 0,
+        "krx_reference_status": "missing",
+        "top_title": None,
+    }
+
+
+def _web_view_collected_empty_candidate_news_badge() -> dict[str, object]:
+    return {
+        "available": True,
+        "display_label": "매칭 뉴스 없음",
+        "reason": "수집은 완료됐지만 이 후보와 직접 연결된 뉴스는 없었습니다.",
+        "connection_label": "매칭 뉴스 없음",
+        "connection_reason": "수집은 실행됐고, 선택 날짜의 후보와 직접 연결된 뉴스는 없었습니다.",
         "direct_count": 0,
         "caution_count": 0,
         "market_context_count": 0,

@@ -25,7 +25,7 @@ Do not mix report collection semantics with market-data semantics.
 | ETF daily reference | KRX Open API | `etf_daily_snapshots`, `etf-trend` DTO | KRX only. Keep separate from company-report summaries. |
 | Market index reference | KRX Open API | `market_index_daily` | KRX only. |
 | Investor flow | KRX Data Marketplace | `stock_investor_flow_daily`, `market_investor_flow_daily`, `investor_net_buy_top_daily` | KRX Data Marketplace is the validation source. Scheduled ingest remains disabled until separate approval. |
-| Future intraday quote/turnover reference | Toss Securities Open API or another approved source | Separate lab/staging DTO before any production surface | Starts read-only for top-2 `우선 확인`. After source approval it may affect observation priority. Trading-decision support is a later operator-only lane, not public `web-view`. |
+| Intraday quote/turnover reference | Naver market-top overlap and approved Toss Securities OpenAPI current-price reference | `web-view` top-2 priority DTOs and Toss baseline table when saved | Read-only observation support for top-2 `우선 확인`. It may affect observation priority/main-card emphasis, but not trading-decision support, broker execution, or public trading calls. |
 | Industry / theme labels | Naver industry/theme pages plus operator-managed snapshots | `stock_metadata`, `stock_theme_memberships`, `category_master`, `category_membership_snapshots` | Keep as taxonomy data, not market reference data. Do not call it KRX-owned until a verified KRX taxonomy source exists. |
 
 ## Category Refreshability
@@ -49,7 +49,7 @@ Use these names in user-facing Korean copy:
 | `테마` | `theme` | A many-to-many theme grouping. | A stock can belong to multiple themes. |
 | `카테고리` | `category` | Generic umbrella for 업종 + 테마. | Use only when one UI/API handles both. |
 | `시장 참고` | KRX market reference | Price, volume, turnover, ETF, index, investor-flow reference. | Must be labeled as stored KRX data. |
-| `장중 참고` | approved intraday source | Future quote/turnover/index reference. | Must show source/freshness and may affect observation priority only after approval. |
+| `장중 참고` | approved intraday source | Naver market-top overlap and future quote/turnover/index references. | Must show source/freshness and may affect observation priority only as observation support. |
 | `리포트 요약` | Naver report summary | Report count, broker, target price, opinion summary. | Must not imply KRX ownership. |
 
 Avoid these in user-facing copy unless explaining internals:

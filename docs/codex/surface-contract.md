@@ -29,7 +29,7 @@ This is a permission and API boundary, not just a visual layout boundary.
 - Do not add Telegram commands that open, bind, or expose `admin-gui` as a remote control surface.
 - Do not proxy or reuse `admin-gui` `/api/status` as the `web-view` API.
 - Do not hide buttons in the UI while leaving the same control APIs reachable.
-- `web-view` must not implement `POST`, `PUT`, `PATCH`, or `DELETE` data routes. The only allowed POST exception is `/auth/login` for the optional entry-code gate.
+- `web-view` user data routes remain GET-first, but a narrow access-gated operator action may use `POST /api/news-observations/collect` to turn the selected-date top priority news lane from `수집 전` into saved observation rows. The existing `/auth/login` POST remains the entry-code exception. No other public write/control POST route is allowed without a separate contract.
 - `web-view` must be implemented with a separate handler/router and a separate read-only DTO contract.
 - Shared DB/repository code is allowed. Shared HTTP control handlers are not allowed.
 - Broker or execution API work, including Toss Securities OpenAPI beyond the approved top-2 current-price projection, must not be connected to `admin-gui`, Telegram, scheduler, production DB writes, broker secrets, or order routing by default. It belongs in a separate lab/staging lane until docs, permissions, sandbox/test keys, and read-only probes are verified.
@@ -159,11 +159,11 @@ Operator-only news intelligence may produce sentiment scores, event impact label
 
 `news-flow-preview` is also operator-only, but it is source-flow oriented rather than stock/candidate oriented. It accepts only operator-provided source URLs through a fixture contract, emits text/JSON preview plus a Telegram draft, may run an explicitly approved `news-flow-source-probe` for supported Naver source URLs, and may feed a preview-only `market-briefing` source-flow section. It must remain disconnected from DB writes, Telegram real sends, scheduler tasks, `admin-gui`, and public `web-view` until a separate contract explicitly changes that boundary.
 
-Once observations are saved, `market-briefing` and `web-view` should be allowed to show a thin public-safe projection instead of keeping the work invisible. That projection must be stored-data-only and may show labels such as `뉴스로 후보 강화`, `주의 뉴스 확인`, `시장 맥락 참고`, `KRX 기준일 확인 필요`, direct/caution/market-context counts, KRX reference status, and one to three article titles. It must not expose internal sentiment scores, numeric impact, operator recommendation-support labels, trading calls, broker/execution language, or any live fetch/write action.
+Once observations are saved, `market-briefing` and `web-view` should be allowed to show a thin public-safe projection instead of keeping the work invisible. That projection may show labels such as `뉴스로 후보 강화`, `주의 뉴스 확인`, `시장 맥락 참고`, `KRX 기준일 확인 필요`, direct/caution/market-context counts, KRX reference status, and one to three article titles. The web-view may also expose one access-gated operator action, `POST /api/news-observations/collect`, which runs the existing news briefing collection for the selected date/top candidates and saves only `news_intelligence_runs` / `report_linked_news_evidence` rows. It must not expose internal sentiment scores, numeric impact, operator recommendation-support labels, trading calls, broker/execution language, raw warnings, scheduler/Telegram/admin behavior, or broker/order data.
 
 ## Web-View API Contract
 
-The current endpoint contract is GET-only:
+The current endpoint contract is GET-first, with one explicit operator-triggered collection exception:
 
 | Endpoint | Purpose | Notes |
 | --- | --- | --- |
@@ -175,6 +175,7 @@ The current endpoint contract is GET-only:
 | `GET /api/flow-trend?date={date}` | Investor-flow trend | Stored KRX Data Marketplace samples only; no live fetch, no public numeric scoring, no trading recommendation. |
 | `GET /api/etf-trend?date={date}` | ETF trend | Stored KRX ETF snapshots only; no live fetch, no public numeric scoring, no trading recommendation. |
 | `GET /api/toss-priority-quotes?date={date}` | Toss top-2 current-price reference | Latest stored business date only; server-derived top-2 candidate symbols only; no arbitrary symbol query, account/order data, DB write, scheduler, Telegram, scoring, or trading recommendation. |
+| `POST /api/news-observations/collect` | Access-gated news evidence collection | Selected-date/top-priority operator action only. It may live-fetch Naver news through the existing news-intelligence briefing collector and write saved observation/evidence rows, then returns only a public-safe summary. It must not send Telegram, register scheduler tasks, expose raw operator payloads, expose sentiment/impact scores, or accept broker/order actions. |
 | `GET /api/category?date={date}&type=sector|theme&name=...` | Category detail | Same-date category stock list with KRX stock references when available. |
 | `GET /api/category-trend?type=sector|theme&name=...` | Category trend | Recent category report/stock counts, descriptive only; dated snapshot per date when available, latest stored category classification otherwise. |
 | `GET /api/market` | Latest KRX market reference | Kept for compatibility; the main user page should prefer selected-date `krx_context` from daily DTO. |
@@ -183,7 +184,7 @@ Daily and category DTOs may include public display labels such as `sector_displa
 
 Daily DTOs may include a public contract block with read-only/source-scope/trading-recommendation/control-exposure flags. This block is user-facing safety copy, not an operator health model. Observation-candidate recommendation is allowed when it is expressed as `오늘의 관찰 후보`, `우선 확인`, `관찰 우선순위`, `관심도 높은 흐름`, or `왜 눈에 띄는지`. The web-view may show graph-like sector/theme breadth bars, a top-2 `우선 확인` observation shortlist, and `순환매 참고 종목`/`순환매 참고 ETF` reference slots when they are stored-data-only and accompanied by missing-information labels where evidence is absent.
 
-Daily and candidate DTOs may include public-safe news observation fields when they are derived only from stored `news_intelligence_runs` / `report_linked_news_evidence` rows. The current visible fields are `news_observation_summary`, candidate-row `news_observation_badge`, stock-detail `news_observation_detail`, and archive `news_observation_count`. Empty state should be explicit rather than invisible: `저장된 뉴스 관찰 없음`, `저장 뉴스 근거 없음`, `뉴스 근거 부족`, or `추가 확인 필요` is preferable to hiding the block until the model is perfect.
+Daily and candidate DTOs may include public-safe news observation fields when they are derived from stored `news_intelligence_runs` / `report_linked_news_evidence` rows. The current visible fields are `news_observation_summary`, candidate-row `news_observation_badge`, stock-detail `news_observation_detail`, and archive `news_observation_count`. Empty state should be actionable rather than invisible: `뉴스 근거 수집 전`, `뉴스 근거 있음`, `뉴스로 후보 강화`, `주의 뉴스 확인`, `시장 맥락 참고`, `KRX 기준일 확인 필요`, or `추가 확인 필요` is preferable to hiding the block until the model is perfect.
 
 Investor-flow DTOs must clearly mark that they are stored sample/read-only data, do not trigger live KRX fetches from the user page, and do not provide public numeric scoring or trading recommendations.
 
@@ -197,7 +198,7 @@ Before any Cloudflare Tunnel URL is shared, confirm this checklist:
 | --- | --- |
 | Target port | Only the `web-view` port, for example `<loopback web-view target>`. |
 | Local bind | Keep `web-view` bound to `127.0.0.1` unless a deliberate private-network exception uses `--allow-non-loopback`. |
-| HTTP methods | `GET` only for user data routes; write methods return `405`. `/auth/login` is the only allowed POST exception. |
+| HTTP methods | User data reads stay `GET`. Write/control methods return `405` except `/auth/login` and the access-gated `POST /api/news-observations/collect` operator action. |
 | Admin separation | `admin-gui`, `/api/status`, scheduler/operator/settings POST routes, shutdown controls, `.env`, DB files, and Telegram secrets are not exposed. |
 | Access gate | Prefer Cloudflare Access or another simple allow-list before wider sharing. |
 | Access cookie | App entry-code cookies are `HttpOnly`, `SameSite=Lax`, and become `Secure` when the request arrives through an HTTPS proxy such as Cloudflare Tunnel. |
@@ -294,7 +295,7 @@ Cloudflare Tunnel rule:
 
 ## Validation Gates
 
-- `web-view` has no write/data-mutation routes. `/auth/login` is only an access gate endpoint.
+- `web-view` has no admin/control write routes. `/auth/login` is only an access gate endpoint; `POST /api/news-observations/collect` is the only approved data-write exception and is limited to saved news observation/evidence rows for the selected date/top candidates.
 - `web-view` does not import or expose admin POST dispatcher logic.
 - `web-view` responses exclude scheduler controls, shutdown controls, secrets, `.env`, DB path, and raw operational internals.
 - `web-view` responses and HTML exclude safe settings, admin audit logs, operator profiles, and `/api/settings` routes.
@@ -305,7 +306,7 @@ Cloudflare Tunnel rule:
 - Historical sector/theme responses use dated snapshots when available and label the latest stored category classification only when no prior snapshot exists.
 - Selected-date daily pages must not silently fall back to the latest KRX snapshot when that date has no KRX data.
 - Missing category placeholders such as internal `N/A` must use public labels in the user page.
-- Stored news-observation projection must remain read-only and public-safe: no live news fetch, no `--save-observation` trigger, no internal sentiment score, no numeric impact, no raw `stock_impact`, no operator recommendation-support field, and no buy/sell/trading-call wording.
+- Stored news-observation projection must remain public-safe: the page may trigger the approved access-gated news observation collect action, but visible DTO/DOM output must still hide internal sentiment score, numeric impact, raw `stock_impact`, operator recommendation-support fields, raw warnings, and buy/sell/trading-call wording.
 - Public-safe wording QA is context-based. It may allow explanatory copy such as `추천 판단 아님`, `점수 없이 저장 근거만 확인`, `등급 없음`, `리포트 의견 참고`, and `뉴스 근거`; it must block explicit trading-call or scored labels such as `매수 추천`, `매수 기회`, `전략 제안`, `점수: 92`, and `등급: A`.
 - `web-view-browser-smoke` must pass before treating mobile/browser review as locally clean: desktop/tablet/large-mobile/mobile render without major horizontal overflow, the exact top-tab order is `메인`/`관찰`/`종목`/`시장`/`순환매`, each non-main tab opens its representative panel, stock search exists, write methods stay blocked, and `/api/status` remains unavailable. The `/v2` preview route should be browser-checked separately while it is experimental.
 - `external-web-view-smoke --record-success` must pass against the final Cloudflare/Tailscale URL before the URL is shared. If the access-code or Cloudflare Access gate blocks unauthenticated user data routes with `401`/`403` or a recognizable Cloudflare Access HTML/login page, that is acceptable; `/api/status` and admin scheduler/operator/settings POST routes must never return a public admin/control payload.

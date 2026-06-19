@@ -56,7 +56,7 @@ Scrapling is the preferred active source-probe tool for rendered Naver source in
 - `python -m stock_monitor news-intelligence-preview --stock-name NAME [--stock-code CODE] [--alias ALIAS] [--date YYYY-MM-DD]`
 - `python -m stock_monitor news-intelligence-briefing-collect --date YYYY-MM-DD [--limit N] [--stock-code CODE ...] [--save-observation --confirm-save]`
 
-These commands are manual and operator-only. They emit JSON/text to stdout, use temporary files for Scrapling output, delete those files after reading, and must not write live fetch results into the repository, SQLite, logs, scheduler state, Telegram, or public `web-view` by default. `news-intelligence-briefing-collect` selects target stocks from stored daily summaries, or an in-memory rebuild from stored reports when summaries are absent. It may save rows only when both `--save-observation` and `--confirm-save` are present. It also does not update `admin-gui` in v1; a future private `operator-review` surface is the review UI candidate, not an `admin-gui` expansion or a public-surface exception.
+These commands are manual and operator-only. They emit JSON/text to stdout, use temporary files for Scrapling output, delete those files after reading, and must not write live fetch results into the repository, SQLite, logs, scheduler state, Telegram, or public `web-view` by default. `news-intelligence-briefing-collect` selects target stocks from stored daily summaries, or an in-memory rebuild from stored reports when summaries are absent. It may save rows only when both `--save-observation` and `--confirm-save` are present. The web-view may call this same batch collector only through the access-gated `POST /api/news-observations/collect` operator action, which is limited to selected-date top priority candidates and returns only the public-safe stored summary after saving. It also does not update `admin-gui` in v1; a future private `operator-review` surface is the review UI candidate, not an `admin-gui` expansion.
 
 Saved operator observations may be reviewed with:
 
@@ -72,7 +72,7 @@ Operator workflow:
 3. For market-briefing target stocks, run `news-intelligence-briefing-collect --save-observation --confirm-save` to persist observations for multiple stored-summary stocks in one manual pass.
 4. Use `news-intelligence-observations --format text|json` to inspect saved run/evidence details by date, stock code, or run id.
 5. Use `news-intelligence-daily-brief --format text|json` to group saved runs by date and candidate-linkage label.
-6. Use `market-briefing` and `web-view` only as stored-data, public-safe visibility checks after observations already exist; they must not fetch news or trigger saving.
+6. Use `market-briefing` as a stored-data, public-safe visibility check after observations already exist. `web-view` may either show the stored projection or, when access-gated and operator-triggered, run `POST /api/news-observations/collect` to create the missing saved observation rows for the selected date/top candidates before re-rendering the same public-safe projection.
 
 The preview command is intentionally incomplete as a day-level collector:
 
@@ -227,7 +227,8 @@ Storage guardrails:
 - DB writes require the explicit operator save option `--save-observation`.
 - Batch market-briefing collection requires both `--save-observation` and `--confirm-save`; without both flags it is a preview/no-write command.
 - The default manual preview remains `writes_db=false`.
-- Stored rows are operator-only observation/evaluation data and must not be copied raw into public `web-view`, Telegram, or scheduler surfaces. The current `market-briefing` and `web-view` projections are allowed only as thin stored-data summaries that hide internal sentiment scores, impact scores, raw warnings, and operator-only recommendation-support fields. `admin-gui` remains operations/status/control only; fuller review rows belong in a future `operator-review` surface after a separate contract.
+- When live collection succeeds but no article matches the target stock, the batch collector may still save an empty observation run with `matched_count=0` and `saved_evidence_count=0`. This records that collection actually ran, so `web-view` can show `뉴스 수집 완료` / `매칭 뉴스 없음` instead of pretending the feature has not run.
+- Stored rows are operator-only observation/evaluation data and must not be copied raw into public `web-view`, Telegram, or scheduler surfaces. The current `market-briefing` and `web-view` projections are allowed only as thin summaries that hide internal sentiment scores, impact scores, raw warnings, and operator-only recommendation-support fields. The access-gated web-view collect action may save the rows needed for that projection; it must not expose the raw collector payload. `admin-gui` remains operations/status/control only; fuller review rows belong in a future `operator-review` surface after a separate contract.
 - When KRX reference data comes from the nearest prior stored row, the preview/save payload must distinguish exact-date reference from stale fallback reference and warn rather than silently treating stale KRX data as same-day confirmation.
 - The stored lane must not contain broker secrets, order intent, order-routing instructions, or public buy/sell calls.
 
@@ -235,10 +236,10 @@ Storage guardrails:
 
 News intelligence should not remain invisible after saved observations exist. The product direction is to surface an incomplete-but-clearly-labeled summary in `web-view` rather than waiting for perfect news judgment.
 
-Allowed public-safe projection, stored-data only:
+Allowed public-safe projection:
 
 - Availability state: `news_observation_available=true|false`.
-- Display labels derived from existing operator labels, such as `뉴스로 후보 강화`, `주의 뉴스 확인`, `시장 맥락 참고`, `KRX 기준일 확인 필요`, and `뉴스 근거 부족`.
+- Display labels derived from existing operator labels, such as `뉴스 근거 수집 전`, `뉴스로 후보 강화`, `주의 뉴스 확인`, `시장 맥락 참고`, `KRX 기준일 확인 필요`, and `추가 확인 필요`.
 - Compact counts such as direct-news count, caution count, and market-context count.
 - KRX reference status as `exact`, `stale`, or `missing`.
 - One to three article titles/sources when they are already stored in observation rows.
@@ -255,14 +256,14 @@ Current visible slice:
 Forbidden in public projection:
 
 - `overall_sentiment`, article `sentiment_score`, numeric impact, conviction, target-return, investment grade, buy/sell, entry/exit, take-profit, one-pick, broker, or order-routing wording.
-- Live Naver fetch from `web-view`.
-- Triggering `--save-observation` from `web-view`.
-- Scheduler, Telegram, admin control, or DB mutation from the public route.
+- Unbounded live Naver fetch from `web-view`. The only approved live-fetch/write path is the access-gated `POST /api/news-observations/collect` operator action, which calls the existing briefing collector with explicit save/confirm behavior for selected-date top candidates.
+- Any other `--save-observation` trigger from `web-view`.
+- Scheduler, Telegram, admin control, broker/account/order mutation, or arbitrary DB mutation from the public route.
 
 Placement direction:
 
 - The first visible slice is a small stored-data block in the `메인` summary area plus compact badges in candidate/stock detail surfaces.
-- If there are no saved observations, the page should show a simple missing state such as `저장된 뉴스 관찰 없음` instead of hiding the feature entirely.
+- If there are no saved observations, the page should show an actionable state such as `뉴스 근거 수집 전` plus the collect action instead of hiding the feature entirely.
 - Low coverage, indirect-only, or market-context-heavy results should still be visible as `참고` or `추가 확인 필요`; do not hard-block visibility solely because the analysis is imperfect.
 
 Future Toss Securities Open API or another verified quote/turnover source may strengthen this projection by confirming market reaction freshness. That use remains read-only observation support and must not become broker execution, order routing, or public trading advice.

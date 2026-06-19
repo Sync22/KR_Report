@@ -6,6 +6,7 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time as datetime_time
+from http import HTTPStatus
 
 import pytest
 
@@ -267,7 +268,7 @@ def test_web_view_v2_preview_static_markup_reuses_public_read_only_apis() -> Non
     assert "/api/candidate-evidence?date=${encodeURIComponent(date)}&limit=8" in html
     assert "/api/etf-trend?date=${encodeURIComponent(date)}&limit=4" in html
     assert "/api/daily/${encodeURIComponent(state.selectedDate)}/stocks/" in html
-    assert "저장 뉴스 근거 없음" in html
+    assert "뉴스 근거 수집 전" in html
     assert "직접 뉴스" in html
     assert "주의 뉴스" in html
     assert "시장맥락 위주" in html
@@ -308,9 +309,9 @@ def test_web_view_daily_snapshot_exposes_news_observation_empty_state(tmp_path, 
         "live_fetch": False,
         "available": False,
         "business_date": "2026-06-02",
-        "display_label": "뉴스 관찰 없음",
-        "reason": "저장된 뉴스 관찰 없음",
-        "connection_note": "우선 확인 후보와 연결할 저장 뉴스 관찰이 없습니다.",
+        "display_label": "뉴스 근거 수집 전",
+        "reason": "저장 뉴스 근거를 아직 수집하지 않았습니다.",
+        "connection_note": "웹뷰에서 뉴스 근거 저장을 실행하면 우선 확인 후보와 연결됩니다.",
         "candidate_overlap_count": 0,
         "candidate_overlap_names": [],
         "direct_count": 0,
@@ -319,10 +320,10 @@ def test_web_view_daily_snapshot_exposes_news_observation_empty_state(tmp_path, 
         "krx_reference_status": "missing",
         "top_titles": [],
         "items": [],
-        "empty_state": "저장된 뉴스 관찰 없음",
+        "empty_state": "뉴스 근거 수집 전",
         "missing_context": ["stored_news_observation"],
-        "connection_label": "뉴스 근거 부족",
-        "connection_reason": "우선 확인 후보와 연결할 저장 뉴스 관찰이 없습니다.",
+        "connection_label": "뉴스 근거 수집 전",
+        "connection_reason": "웹뷰에서 뉴스 근거 저장을 실행하면 우선 확인 후보와 연결됩니다.",
     }
     _assert_public_safe_payload(snapshot)
 
@@ -749,10 +750,10 @@ def test_web_view_candidate_evidence_projects_empty_news_badge(tmp_path, monkeyp
 
     assert snapshot["rows"][0]["news_observation_badge"] == {
         "available": False,
-        "display_label": "저장 뉴스 근거 없음",
-        "reason": "같은 종목의 저장 뉴스 observation이 없습니다.",
-        "connection_label": "뉴스 근거 부족",
-        "connection_reason": "같은 종목의 저장 뉴스 관찰이 없습니다.",
+        "display_label": "뉴스 근거 수집 전",
+        "reason": "저장 뉴스 근거를 아직 수집하지 않았습니다.",
+        "connection_label": "뉴스 근거 수집 전",
+        "connection_reason": "웹뷰에서 뉴스 근거 저장을 실행하면 후보와 연결됩니다.",
         "direct_count": 0,
         "caution_count": 0,
         "market_context_count": 0,
@@ -4747,7 +4748,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "candidate-news-badge" in html
     assert ".candidate-news-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; border: 1px solid #e7d8bf;" in html
     assert "candidate-intraday-line" in html
-    assert "실시간 소스 미확정" in html
+    assert "확인 전" in html
     assert "candidate-info-grid" in html
     assert "candidate-title-stock" in html
     assert "candidate-stock-name" in html
@@ -5435,6 +5436,10 @@ def test_web_view_intraday_market_top_button_js_has_safe_click_flow() -> None:
     html = cli_module._render_web_view_html()
 
     assert "currentStatus.can_overlap_intraday_market_top === false" in html
+    assert "applyIntradayMarketTopToPriorityRows(data?.market_commentary)" in html
+    assert "function applyIntradayMarketTopToPriorityRows(commentary)" in html
+    assert "tossPriorityRows = tossPriorityRows.map((row) =>" in html
+    assert "renderTopTwoReviewCandidates(tossPriorityRows)" in html
     assert "장중 참고 데이터를 가져오지 못했습니다. 저장된 요약을 계속 표시합니다." in html
     assert "Naver 장중 참고 오류" in html
     assert "장중 거래대금 상위와 리포트 언급이 겹친 종목이 없습니다." in html
@@ -5450,6 +5455,77 @@ def test_web_view_intraday_market_top_button_js_has_safe_click_flow() -> None:
     assert "setViewTab(\"main\");" in html
     assert "setViewTab(\"watch\");" not in html
     assert "scrollIntoView({ block: \"nearest\" })" in html
+
+
+def test_web_view_news_observation_collect_button_and_api_contract(tmp_path, monkeypatch) -> None:
+    html = cli_module._render_web_view_html()
+    assert 'id="news-observation-collect"' in html
+    assert "collectNewsObservationForSelectedDate" in html
+    assert "/api/news-observations/collect" in html
+    assert "maybeAutoCollectNewsObservation(summary)" in html
+
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 8)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="업황 회복",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 5, 8, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 5, 8, 9, 5, 0),
+                source_id="news-collect-api-1",
+                identity_key="news-collect-api-1",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    calls = []
+
+    def fake_collect(config_arg, repository_arg, *, business_date, limit):
+        calls.append((config_arg, repository_arg, business_date, limit))
+        return HTTPStatus.OK, {
+            "surface": "web-view-news-observation-collect",
+            "ok": True,
+            "live_fetch": True,
+            "writes_db": True,
+            "saved_observation_count": 1,
+            "saved_evidence_count": 2,
+            "news_observation_summary": {"available": True, "display_label": "뉴스 근거 있음"},
+        }
+
+    monkeypatch.setattr(cli_module, "_collect_web_view_news_observations", fake_collect)
+    server = cli_module.create_web_view_server(config, repository, host="127.0.0.1", port=0, limit=5)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        request = urllib.request.Request(
+            base_url + "/api/news-observations/collect",
+            data=json.dumps({"date": business_date.isoformat(), "limit": 2}).encode("utf-8"),
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-Stock-Monitor-Web-Action": "news-observation-collect",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert payload["ok"] is True
+    assert payload["writes_db"] is True
+    assert payload["saved_observation_count"] == 1
+    assert calls == [(config, repository, business_date, 2)]
 
 
 def test_web_view_access_code_gate_protects_content_until_login(tmp_path, monkeypatch) -> None:

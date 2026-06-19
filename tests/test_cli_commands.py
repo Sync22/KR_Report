@@ -3725,6 +3725,100 @@ def test_news_intelligence_briefing_collect_saves_observations_for_actual_surfac
     assert daily_snapshot["market_briefing"]["news_observation_summary"]["direct_count"] == 2
 
 
+def test_news_intelligence_briefing_collect_saves_empty_observation_for_no_match(
+    tmp_path,
+    capsys,
+) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 19)
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name="BGF리테일",
+                title="편의점 업황 점검",
+                broker_name="NH",
+                published_at=datetime(2026, 6, 19, 9, 0, 0),
+                collected_at=datetime(2026, 6, 19, 12, 0, 0),
+                stock_code="282330",
+                target_price_raw="150000",
+                target_price_value=150_000,
+                opinion_raw="hold",
+                opinion_normalized="hold",
+                source_id="briefing-collect-empty-bgf-1",
+                identity_key="briefing-collect-empty-bgf-1",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    def fake_transport(spec) -> str:
+        if spec.response_format != "focus_json":
+            return ""
+        return json.dumps(
+            {
+                "articles": [
+                    {
+                        "officeHName": "한국경제",
+                        "title": "반도체 업황 회복",
+                        "subcontent": "삼성전자와 SK하이닉스 중심의 반도체 기사입니다.",
+                        "date": "20260619101000",
+                        "url": "https://n.news.naver.com/mnews/article/015/0000701",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    exit_code = cli_module._run_news_intelligence_briefing_collect(
+        Namespace(
+            date=business_date,
+            limit=1,
+            stock_code=[],
+            scrapling_exe=None,
+            db_path=config.db_path,
+            save_observation=True,
+            confirm_save=True,
+            format="json",
+        ),
+        transport=fake_transport,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["writes_db"] is True
+    assert payload["saved_observation_count"] == 1
+    assert payload["saved_evidence_count"] == 0
+    assert payload["items"][0]["saved"] is True
+    assert payload["items"][0]["matched_count"] == 0
+    assert "saved empty observation: no matched articles" in payload["items"][0]["warnings"]
+
+    runs = repository.list_news_intelligence_runs(target_date=business_date, limit=10)
+    assert len(runs) == 1
+    assert runs[0].matched_count == 0
+    assert repository.list_report_linked_news_evidence(run_id=runs[0].run_id, limit=10) == []
+
+    daily_snapshot = cli_module.build_web_view_daily_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        now=datetime(2026, 6, 19, 12, 30, 0),
+    )
+    assert daily_snapshot["news_observation_summary"]["available"] is True
+    assert daily_snapshot["news_observation_summary"]["display_label"] == "뉴스 수집 완료"
+    assert daily_snapshot["news_observation_summary"]["items"][0]["display_label"] == "매칭 뉴스 없음"
+
+    candidate_snapshot = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=1,
+    )
+    assert candidate_snapshot["rows"][0]["news_observation_badge"]["display_label"] == "매칭 뉴스 없음"
+
+
 def test_news_intelligence_preview_cli_saves_observation_only_when_explicit(tmp_path, monkeypatch, capsys) -> None:
     scrapling_exe = tmp_path / "scrapling.exe"
     scrapling_exe.write_text("fake", encoding="utf-8")
