@@ -24696,6 +24696,9 @@ def _render_web_view_html() -> str:
     .news-observation-summary-meta { display: flex; flex-wrap: wrap; gap: 6px; }
     .news-observation-summary-titles { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; color: var(--ink); font-size: 12px; }
     .news-observation-summary-titles li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .news-observation-summary-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .news-observation-summary-group { display: grid; gap: 5px; min-width: 0; border-top: 1px solid #eadfcb; padding-top: 7px; }
+    .news-observation-summary-group-title { color: var(--accent); font-size: 12px; font-weight: 900; }
     .news-observation-summary-items { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
     .news-observation-summary-item { display: grid; gap: 3px; padding: 6px 0 0; border-top: 1px solid #eadfcb; font-size: 12px; }
     .news-observation-summary-link { display: grid; gap: 3px; width: 100%; padding: 0; border: 0; background: transparent; text-align: left; font: inherit; cursor: pointer; }
@@ -24717,6 +24720,10 @@ def _render_web_view_html() -> str:
     .intraday-overlap-panel { display: grid; gap: 8px; margin: 10px 0 12px; border: 1px solid #d8e8f5; border-radius: 8px; padding: 10px 12px; background: #f6fbff; }
     .intraday-overlap-panel[hidden] { display: none; }
     .intraday-overlap-meta { color: #1769aa; font-size: 11px; font-weight: 900; }
+    .intraday-top-two-status { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .intraday-top-two-status-item { display: grid; gap: 3px; border: 1px solid #d9e8f3; border-radius: 10px; padding: 8px 9px; background: #fff; color: var(--ink); font-size: 12px; }
+    .intraday-top-two-status-item b { color: var(--accent); font-size: 12px; }
+    .intraday-top-two-status-item span { color: var(--muted); font-size: 11px; line-height: 1.35; }
     .intraday-overlap-chips { display: flex; flex-wrap: wrap; gap: 8px; }
     .intraday-overlap-chip { border: 1px solid #c8dced; border-radius: 999px; padding: 7px 10px; background: #fff; color: var(--ink); cursor: pointer; font: inherit; font-size: 12px; font-weight: 900; text-align: left; }
     .intraday-overlap-chip span { margin-left: 5px; color: var(--muted); font-size: 11px; font-weight: 700; }
@@ -25945,7 +25952,8 @@ def _render_web_view_html() -> str:
       button.disabled = !selectedDate || intradayMarketTopLoading || !canOverlap;
       if (reference.live_fetch && items.length) {
         const names = items.slice(0, 3).map((item) => item.stock_name || item.stock_code || "-").join(", ");
-        node.textContent = `Naver 거래대금 상위와 리포트 언급이 겹친 종목: ${names} · ${intradayMarketTopReferenceMeta(reference)}`;
+        const extra = items.length > 3 ? ` 외 ${number(items.length - 3)}` : "";
+        node.textContent = `Naver 거래대금 상위 겹침 ${number(items.length)}종 · ${names}${extra} · ${intradayMarketTopReferenceMeta(reference)}`;
       } else if (reference.live_fetch && reference.empty_reason) {
         node.textContent = `${reference.empty_reason} · ${intradayMarketTopReferenceMeta(reference)}`;
       } else if (status.reason) {
@@ -25958,8 +25966,9 @@ def _render_web_view_html() -> str:
     function intradayMarketTopReferenceMeta(reference) {
       const calls = Number(reference?.calls || 0);
       const errors = Array.isArray(reference?.errors) ? reference.errors.length : 0;
+      const checked = intradayCheckedAtLabel(reference?.checked_at);
       if (!reference?.live_fetch) return "Naver 장중 참고 대기";
-      return `Naver 장중 참고 · 호출 ${number(calls)}회${errors ? ` · 오류 ${number(errors)}건` : ""}`;
+      return `Naver 장중 참고${checked ? ` · ${checked}` : ""} · 호출 ${number(calls)}회${errors ? ` · 오류 ${number(errors)}건` : ""}`;
     }
 
     function marketStatusLabel(status) {
@@ -25981,6 +25990,23 @@ def _render_web_view_html() -> str:
       return parts.join(" · ");
     }
 
+    function intradayCheckedAtLabel(value) {
+      if (!value) return "";
+      const text = String(value).replace("T", " ");
+      const hhmm = text.slice(11, 16);
+      return hhmm ? `확인 ${hhmm}` : "";
+    }
+
+    function intradayReferenceTimeLabel(reference) {
+      const status = marketStatusLabel(reference?.market_status);
+      const raw = reference?.trade_time || reference?.reference_time || reference?.checked_at;
+      const checked = intradayCheckedAtLabel(reference?.checked_at || reference?.reference_time);
+      if (!raw) return status || "장중";
+      const text = String(raw).replace("T", " ");
+      const hhmm = text.slice(11, 16);
+      return [status, hhmm ? `${hhmm} 기준` : checked].filter(Boolean).join(" · ");
+    }
+
     function renderNewsObservationSummary(summary) {
       const node = document.getElementById("news-observation-summary");
       if (!node) return;
@@ -25994,8 +26020,9 @@ def _render_web_view_html() -> str:
       const marketContext = Number(summary?.market_context_count || 0);
       const krx = summary?.krx_reference_status || "missing";
       const titles = Array.isArray(summary?.top_titles) ? summary.top_titles.filter(Boolean).slice(0, 3) : [];
-      const items = Array.isArray(summary?.items) ? summary.items.filter(Boolean).slice(0, 3) : [];
+      const items = Array.isArray(summary?.items) ? summary.items.filter(Boolean).slice(0, 6) : [];
       const metaChips = newsObservationMetaChips(available, direct, caution, marketContext, krx, candidateOverlapNames);
+      const groups = newsObservationSummaryGroups(items);
       node.innerHTML = `
         <div class="news-observation-summary-head">
           <b>${esc(label)}</b>
@@ -26004,7 +26031,7 @@ def _render_web_view_html() -> str:
         <p class="news-observation-summary-reason">${esc(reason)}</p>
         <p class="news-observation-summary-connection">${esc(connection)}</p>
         <div class="news-observation-summary-meta">${metaChips.map((item) => `<span class="quality-chip">${esc(item)}</span>`).join("")}</div>
-        ${items.length ? `<ul class="news-observation-summary-items">${items.map(renderNewsObservationSummaryItem).join("")}</ul>` : ""}
+        ${groups.length ? `<div class="news-observation-summary-groups">${groups.map((group) => renderNewsObservationSummaryGroup(group.title, group.items)).join("")}</div>` : ""}
         ${titles.length ? `<ul class="news-observation-summary-titles">${titles.map((title) => `<li>${esc(title)}</li>`).join("")}</ul>` : ""}
       `;
       updateNewsObservationCollectButton(summary);
@@ -26088,11 +26115,30 @@ def _render_web_view_html() -> str:
       }
     }
 
+    function newsObservationSummaryGroups(items) {
+      const rows = Array.isArray(items) ? items.filter(Boolean) : [];
+      const priority = rows.filter((item) => Number(item?.direct_count || 0) > 0 && Number(item?.caution_count || 0) <= 0);
+      const caution = rows.filter((item) => Number(item?.caution_count || 0) > 0);
+      const others = rows.filter((item) => !priority.includes(item) && !caution.includes(item));
+      const groups = [];
+      if (priority.length) groups.push({ title: "우선 뉴스 확인", items: priority });
+      if (caution.length) groups.push({ title: "주의 뉴스 확인", items: caution });
+      if (!groups.length && others.length) groups.push({ title: "뉴스 참고", items: others });
+      return groups;
+    }
+
+    function renderNewsObservationSummaryGroup(title, items) {
+      return `<div class="news-observation-summary-group">
+        <div class="news-observation-summary-group-title">${esc(title)}</div>
+        <ul class="news-observation-summary-items">${items.map(renderNewsObservationSummaryItem).join("")}</ul>
+      </div>`;
+    }
+
     function renderNewsObservationSummaryItem(item) {
       const stock = [item.stock_name, item.stock_code].filter(Boolean).join(" ");
       const label = item.display_label || "뉴스 근거 있음";
-      const krx = item.krx_reference_status || "missing";
-      const counts = `직접 ${number(item.direct_count || 0)} · 주의 ${number(item.caution_count || 0)} · 시장맥락 ${number(item.market_context_count || 0)} · KRX ${krx}`;
+      const krx = krxNewsReferenceLabel(item.krx_reference_status);
+      const counts = `직접 ${number(item.direct_count || 0)} · 주의 ${number(item.caution_count || 0)} · 시장맥락 ${number(item.market_context_count || 0)} · ${krx}`;
       const title = item.top_title || item.reason || "";
       const content = `
         <b>${esc(stock || "-")} · ${esc(label)}</b>
@@ -26116,7 +26162,7 @@ def _render_web_view_html() -> str:
         `뉴스 근거 직접 ${number(direct)}`,
         `주의 ${number(caution)}`,
         `시장맥락 ${number(marketContext)}`,
-        `KRX ${krx || "missing"}`
+        krxNewsReferenceLabel(krx)
       ];
       if (candidateOverlapNames.length) {
         chips.unshift(`관찰 후보 겹침 ${candidateOverlapNames.join(", ")}`);
@@ -26146,8 +26192,11 @@ def _render_web_view_html() -> str:
         return;
       }
       node.hidden = false;
+      const topTwoRows = Array.isArray(tossPriorityRows) ? tossPriorityRows.slice(0, 2) : [];
+      const topTwoStatus = renderIntradayTopTwoStatus(topTwoRows, reference, items);
       node.innerHTML = `
         <div class="intraday-overlap-meta">${esc(meta)}</div>
+        ${topTwoStatus}
         <div class="intraday-overlap-chips">
           ${items.slice(0, 8).map((item) => {
             const code = item.stock_code || "";
@@ -26164,6 +26213,24 @@ def _render_web_view_html() -> str:
           }).join("")}
         </div>
       `;
+    }
+
+    function renderIntradayTopTwoStatus(rows, reference, items) {
+      if (!rows.length) return "";
+      const itemByCode = new Map((Array.isArray(items) ? items : []).map((item) => [String(item?.stock_code || ""), item]));
+      return `<div class="intraday-top-two-status">${rows.map((row) => {
+        const code = String(row?.stock_code || "");
+        const item = itemByCode.get(code);
+        const name = row?.stock_name || item?.stock_name || code || "-";
+        if (item) {
+          const rank = item.rank ? `${number(item.rank)}위` : "순위 확인";
+          const amount = item.trade_amount ? compactTurnover(item.trade_amount) : "거래대금 확인";
+          const freshness = intradayMarketTopFreshnessLabel(item);
+          return `<div class="intraday-top-two-status-item"><b>${esc(name)} 포함</b><span>${esc(rank)} · ${esc(amount)}${freshness ? ` · ${esc(freshness)}` : ""}</span></div>`;
+        }
+        const checked = intradayCheckedAtLabel(reference?.checked_at);
+        return `<div class="intraday-top-two-status-item"><b>${esc(name)} 미포함</b><span>Naver 거래대금 상위 ${reference?.live_fetch ? "확인됨" : "확인 전"}${checked ? ` · ${esc(checked)}` : ""}</span></div>`;
+      }).join("")}</div>`;
     }
 
     async function loadIntradayMarketTopForSelectedDate() {
@@ -26223,12 +26290,16 @@ def _render_web_view_html() -> str:
       const items = Array.isArray(reference.items) ? reference.items : [];
       if (!tossPriorityRows.length || !items.length) return;
       const itemByCode = new Map(items.map((item) => [String(item?.stock_code || ""), item]));
-      let changed = false;
+      const firstMarketStatus = items.find((item) => item?.market_status)?.market_status || reference.market_status || null;
       tossPriorityRows = tossPriorityRows.map((row) => {
         const code = String(row?.stock_code || "");
         const item = itemByCode.get(code);
-        if (!item) return row;
-        changed = true;
+        if (!item) {
+          return {
+            ...row,
+            intraday_reference: topTwoIntradayReferenceForRow(row, reference, firstMarketStatus),
+          };
+        }
         return {
           ...row,
           intraday_reference: {
@@ -26238,6 +26309,8 @@ def _render_web_view_html() -> str:
             live_fetch: true,
             scope: "intraday_market_top_overlap",
             reference_time: item.trade_time || item.checked_at || reference.checked_at || null,
+            checked_at: item.checked_at || reference.checked_at || null,
+            trade_time: item.trade_time || null,
             price: item.price ?? item.current_price ?? null,
             change_percent: item.change_percent ?? null,
             turnover: item.trade_amount ?? null,
@@ -26248,9 +26321,26 @@ def _render_web_view_html() -> str:
           },
         };
       });
-      if (changed) {
-        document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(tossPriorityRows);
-      }
+      document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(tossPriorityRows);
+    }
+
+    function topTwoIntradayReferenceForRow(row, reference, marketStatus = null) {
+      return {
+        available: false,
+        source_configured: true,
+        read_only: true,
+        live_fetch: reference?.live_fetch === true,
+        scope: "intraday_market_top_overlap",
+        reference_time: reference?.checked_at || null,
+        checked_at: reference?.checked_at || null,
+        price: null,
+        change_percent: null,
+        turnover: null,
+        market_status: marketStatus,
+        rank: null,
+        affects_ordering: false,
+        notice: "Naver 거래대금 상위 미포함",
+      };
     }
 
     function renderTimeSlotMoodCard(card) {
@@ -27044,11 +27134,11 @@ def _render_web_view_html() -> str:
           : "판단 상태: 저장 근거 확인";
         return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote="${esc(item.stock_code || "")}">Toss 현재가 확인 중</span></b>
+          <span class="muted">관찰 사유: ${esc(why)}</span>
           <span>${esc(valueLine)}</span>
           <span>장중 참고: ${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span>
           <span>${esc(newsLine)}</span>
           <span>${esc(tossBaselineLine)}</span>
-          <span class="muted">관찰 사유: ${esc(why)}</span>
         </button>`;
       }).join("")}</section>`;
     }
@@ -27152,9 +27242,22 @@ def _render_web_view_html() -> str:
 
     function candidateNewsCompactLine(badge) {
       if (!badge || badge.available !== true) return "뉴스 근거: 수집 전";
-      const label = badge.connection_label || badge.display_label || "뉴스 근거 있음";
-      const krx = badge.krx_reference_status || "missing";
-      return `뉴스 근거: ${label} · KRX ${krx}`;
+      const label = candidateNewsPrimaryLabel(badge);
+      return `뉴스 근거: ${label} · ${krxNewsReferenceLabel(badge.krx_reference_status)}`;
+    }
+
+    function candidateNewsPrimaryLabel(badge) {
+      if (!badge) return "뉴스 근거 있음";
+      if (Number(badge.caution_count || 0) > 0 && badge.display_label) return badge.display_label;
+      if (Number(badge.direct_count || 0) > 0 && badge.display_label) return badge.display_label;
+      return badge.connection_label || badge.display_label || "뉴스 근거 있음";
+    }
+
+    function krxNewsReferenceLabel(status) {
+      const value = String(status || "missing").trim();
+      if (value === "exact") return "뉴스 기준일 일치";
+      if (value === "stale" || value === "stale_reference") return "뉴스 기준일 이전값";
+      return "뉴스 기준일 없음";
     }
 
     function renderCandidateNewsBadge(badge) {
@@ -27170,7 +27273,7 @@ def _render_web_view_html() -> str:
         `직접 ${number(badge.direct_count || 0)}`,
         `주의 ${number(badge.caution_count || 0)}`,
         `시장맥락 ${number(badge.market_context_count || 0)}`,
-        `KRX ${badge.krx_reference_status || "missing"}`
+        krxNewsReferenceLabel(badge.krx_reference_status)
       ];
       const title = badge.top_title || badge.reason || "";
       return `<div class="candidate-news-badge">${chips.map((item) => `<span class="quality-chip">${esc(item)}</span>`).join("")}${connectionReason ? `<span><b>연결</b> ${esc(connectionReason)}</span>` : ""}${title ? `<span><b>근거</b> ${esc(title)}</span>` : ""}</div>`;
@@ -27181,13 +27284,17 @@ def _render_web_view_html() -> str:
         return "확인 전";
       }
       if (!reference.available) {
+        if (reference.live_fetch) {
+          const timeLabel = intradayReferenceTimeLabel(reference);
+          return `${reference.notice || "Naver 상위 미포함"}${timeLabel ? ` · ${timeLabel}` : ""}`;
+        }
         return reference.notice || "확인 전";
       }
-      const time = reference.reference_time || "장중";
+      const time = intradayReferenceTimeLabel(reference);
       const priceText = reference.price !== null && reference.price !== undefined ? price(reference.price) : "-";
       const changeText = reference.change_percent !== null && reference.change_percent !== undefined ? percent(reference.change_percent) : "-";
       const turnoverText = reference.turnover !== null && reference.turnover !== undefined ? compactTurnover(reference.turnover) : "-";
-      return `${time} 기준 ${priceText} · ${changeText} · 거래대금 ${turnoverText}`;
+      return `${time} ${priceText} · ${changeText} · 거래대금 ${turnoverText}`;
     }
 
     function metricPercent(value) {

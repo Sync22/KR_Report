@@ -4747,6 +4747,17 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "candidateNewsCompactLine(item.news_observation_badge)" in html
     assert "item.value_profile || {}" in html
     assert "판단 상태:" in html
+    assert "topTwoIntradayReferenceForRow(row, reference, firstMarketStatus)" in html
+    assert "Naver 상위 미포함" in html
+    assert "뉴스 기준일 이전값" in html
+    assert "뉴스 기준일 stale" not in html
+    top_two_body = html.split("function renderTopTwoReviewCandidates(rows)", 1)[1].split(
+        "function updateTossPriorityRefreshButton", 1
+    )[0]
+    assert top_two_body.index("관찰 사유:") < top_two_body.index("esc(valueLine)")
+    assert top_two_body.index("esc(valueLine)") < top_two_body.index("candidateIntradayReferenceLabel")
+    assert top_two_body.index("candidateIntradayReferenceLabel") < top_two_body.index("esc(newsLine)")
+    assert top_two_body.index("esc(newsLine)") < top_two_body.index("esc(tossBaselineLine)")
     assert "candidate-news-badge" in html
     assert ".candidate-news-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; border: 1px solid #e7d8bf;" in html
     assert "candidate-intraday-line" in html
@@ -5440,6 +5451,8 @@ def test_web_view_intraday_market_top_button_js_has_safe_click_flow() -> None:
     assert "currentStatus.can_overlap_intraday_market_top === false" in html
     assert "applyIntradayMarketTopToPriorityRows(data?.market_commentary)" in html
     assert "function applyIntradayMarketTopToPriorityRows(commentary)" in html
+    assert "function topTwoIntradayReferenceForRow(row, reference, marketStatus = null)" in html
+    assert "function intradayReferenceTimeLabel(reference)" in html
     assert "tossPriorityRows = tossPriorityRows.map((row) =>" in html
     assert "renderTopTwoReviewCandidates(tossPriorityRows)" in html
     assert "장중 참고 데이터를 가져오지 못했습니다. 저장된 요약을 계속 표시합니다." in html
@@ -5457,6 +5470,18 @@ def test_web_view_intraday_market_top_button_js_has_safe_click_flow() -> None:
     assert "setViewTab(\"main\");" in html
     assert "setViewTab(\"watch\");" not in html
     assert "scrollIntoView({ block: \"nearest\" })" in html
+
+
+def test_web_view_news_observation_summary_splits_priority_and_caution_sections() -> None:
+    html = cli_module._render_web_view_html()
+
+    assert "function newsObservationSummaryGroups(items)" in html
+    assert "function renderNewsObservationSummaryGroup(title, items)" in html
+    assert "우선 뉴스 확인" in html
+    assert "주의 뉴스 확인" in html
+    assert "news-observation-summary-groups" in html
+    assert "뉴스 기준일 이전값" in html
+    assert "KRX stale" not in html
 
 
 def test_web_view_news_observation_collect_button_and_api_contract(tmp_path, monkeypatch) -> None:
