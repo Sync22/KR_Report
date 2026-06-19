@@ -4751,6 +4751,11 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "Naver 상위 미포함" in html
     assert "뉴스 기준일 이전값" in html
     assert "뉴스 기준일 stale" not in html
+    news_compact_body = html.split("function candidateNewsCompactLine(badge)", 1)[1].split(
+        "function candidateNewsPrimaryLabel", 1
+    )[0]
+    assert "보조 확인" in news_compact_body
+    assert "krxNewsReferenceLabel" not in news_compact_body
     top_two_body = html.split("function renderTopTwoReviewCandidates(rows)", 1)[1].split(
         "function updateTossPriorityRefreshButton", 1
     )[0]
@@ -5674,7 +5679,7 @@ def test_web_view_candidate_value_profile_promotes_direct_news_context() -> None
 
     assert profile["observation_priority"] == "우선 확인"
     assert profile["value_label"] == "뉴스 근거 확인"
-    assert "직접 뉴스" in profile["value_reason"]
+    assert profile["value_reason"] == "직접 뉴스 1건이 후보 근거를 보강합니다."
     assert int(profile["sort_value_signal"]) > 1
 
 
@@ -5705,7 +5710,7 @@ def test_web_view_candidate_value_profile_keeps_direct_news_ahead_of_support_cau
 
     assert profile["observation_priority"] == "우선 확인"
     assert profile["value_label"] == "뉴스 근거 확인"
-    assert "직접 뉴스" in profile["value_reason"]
+    assert profile["value_reason"] == "직접 뉴스 2건이 후보 근거를 보강합니다. · 보조 확인 1건 · 시장맥락 1건"
 
 
 def test_web_view_access_code_gate_protects_content_until_login(tmp_path, monkeypatch) -> None:

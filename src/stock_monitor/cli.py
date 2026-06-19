@@ -27242,14 +27242,29 @@ def _render_web_view_html() -> str:
 
     function candidateNewsCompactLine(badge) {
       if (!badge || badge.available !== true) return "뉴스 근거: 수집 전";
-      const label = candidateNewsPrimaryLabel(badge);
-      return `뉴스 근거: ${label} · ${krxNewsReferenceLabel(badge.krx_reference_status)}`;
+      const direct = Number(badge.direct_count || 0);
+      const caution = Number(badge.caution_count || 0);
+      const marketContext = Number(badge.market_context_count || 0);
+      const parts = [];
+      if (direct > 0) {
+        parts.push(`직접 뉴스 ${number(direct)}건`);
+        if (caution > 0) parts.push(`보조 확인 ${number(caution)}건`);
+        if (marketContext > 0) parts.push(`시장맥락 ${number(marketContext)}건`);
+      } else if (caution > 0) {
+        parts.push(`주의 뉴스 ${number(caution)}건`);
+        if (marketContext > 0) parts.push(`시장맥락 ${number(marketContext)}건`);
+      } else if (marketContext > 0) {
+        parts.push(`시장맥락 ${number(marketContext)}건`);
+      } else {
+        parts.push(candidateNewsPrimaryLabel(badge));
+      }
+      return `뉴스 근거: ${parts.join(" · ")}`;
     }
 
     function candidateNewsPrimaryLabel(badge) {
       if (!badge) return "뉴스 근거 있음";
-      if (Number(badge.caution_count || 0) > 0 && badge.display_label) return badge.display_label;
       if (Number(badge.direct_count || 0) > 0 && badge.display_label) return badge.display_label;
+      if (Number(badge.caution_count || 0) > 0 && badge.display_label) return badge.display_label;
       return badge.connection_label || badge.display_label || "뉴스 근거 있음";
     }
 
@@ -31824,13 +31839,18 @@ def _web_view_candidate_value_profile(
         caution_dominant = news_label.startswith("주의")
         observation_priority = "주의 확인" if caution_dominant else "우선 확인"
         value_label = "뉴스 근거 확인"
-        value_reason = (
-            "주의 뉴스가 있어 리포트 근거와 함께 확인합니다."
-            if caution_dominant
-            else "직접 뉴스가 후보 근거를 보강합니다."
-            if direct_count > 0
-            else "시장맥락 뉴스가 있어 저장 근거와 함께 확인합니다."
-        )
+        if caution_dominant:
+            value_reason = f"직접 주의 뉴스 {caution_count}건이 있어 리포트 근거와 함께 확인합니다."
+        elif direct_count > 0:
+            support_parts = []
+            if caution_count > 0:
+                support_parts.append(f"보조 확인 {caution_count}건")
+            if market_context_count > 0:
+                support_parts.append(f"시장맥락 {market_context_count}건")
+            support_note = " · " + " · ".join(support_parts) if support_parts else ""
+            value_reason = f"직접 뉴스 {direct_count}건이 후보 근거를 보강합니다.{support_note}"
+        else:
+            value_reason = f"시장맥락 뉴스 {market_context_count}건은 직접 후보 판단과 분리해 확인합니다."
     elif target_only and news_collected_no_match and (not has_market_reference or not has_stock_flow):
         observation_priority = "정보 보강"
         value_label = "정보 보강"
