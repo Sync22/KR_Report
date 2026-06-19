@@ -5678,6 +5678,36 @@ def test_web_view_candidate_value_profile_promotes_direct_news_context() -> None
     assert int(profile["sort_value_signal"]) > 1
 
 
+def test_web_view_candidate_value_profile_explains_caution_news_first() -> None:
+    profile = cli_module._web_view_candidate_value_profile(
+        candidate_profile={
+            "observation_priority": "확인 후보",
+            "why_notable": ["목표가 유지"],
+            "missing_information": [],
+            "sort_signal": 1,
+            "sort_density": 1,
+        },
+        news_badge={
+            "available": True,
+            "display_label": "주의 뉴스",
+            "connection_label": "주의 뉴스 확인",
+            "direct_count": 2,
+            "caution_count": 1,
+            "market_context_count": 1,
+        },
+        toss_baseline_reference={"available": False},
+        market_reference=object(),
+        stock_flow_rows=[object()],
+        rank_reference=None,
+        current=datetime(2026, 6, 19, 10, 0, 0),
+        business_date=date(2026, 6, 19),
+    )
+
+    assert profile["observation_priority"] == "주의 확인"
+    assert profile["value_label"] == "뉴스 근거 확인"
+    assert "주의" in profile["value_reason"]
+
+
 def test_web_view_access_code_gate_protects_content_until_login(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)

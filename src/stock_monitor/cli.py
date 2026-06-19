@@ -31786,9 +31786,11 @@ def _web_view_candidate_value_profile(
         observation_priority = "우선 확인" if caution_count <= 0 else "주의 확인"
         value_label = "뉴스 근거 확인"
         value_reason = (
-            "직접 뉴스가 후보 근거를 보강합니다."
+            "주의 뉴스가 있어 리포트 근거와 함께 확인합니다."
+            if caution_count > 0
+            else "직접 뉴스가 후보 근거를 보강합니다."
             if direct_count > 0
-            else "주의/시장맥락 뉴스가 있어 저장 근거와 함께 확인합니다."
+            else "시장맥락 뉴스가 있어 저장 근거와 함께 확인합니다."
         )
     elif target_only and news_collected_no_match and (not has_market_reference or not has_stock_flow):
         observation_priority = "정보 보강"
