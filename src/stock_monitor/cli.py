@@ -24415,7 +24415,7 @@ def _render_web_view_v2_html() -> str:
       const connection = badge.connection_reason || "";
       return [
         `<span class="v2-chip strong">${esc(label)}</span>`,
-        `<span class="v2-chip">직접 ${number(badge.direct_count)} · 주의 ${number(badge.caution_count)} · 시장맥락 ${number(badge.market_context_count)}</span>`,
+        `<span class="v2-chip">직접 ${number(badge.direct_count)} · ${newsCautionCountText(badge.direct_count, badge.caution_count, label)} · 시장맥락 ${number(badge.market_context_count)}</span>`,
         `<span class="v2-chip ${krx === "stale" ? "warn" : ""}">KRX ${esc(krx)}</span>`,
         connection ? `<span class="v2-news-line">${esc(connection)}</span>` : "",
         title ? `<span class="v2-news-line">${esc(title)}</span>` : "",
@@ -24453,7 +24453,7 @@ def _render_web_view_v2_html() -> str:
         .filter(Boolean)[0];
       const reportLine = `${number(daily?.market_mood?.total_reports || 0)}건 · ${number(daily?.market_mood?.stock_count || daily?.stocks?.length || 0)}종목`;
       const newsLine = summary.available
-        ? `${esc(summary.display_label)} · 직접 ${number(summary.direct_count)} · 주의 ${number(summary.caution_count)} · 시장맥락 ${number(summary.market_context_count)}`
+        ? `${esc(summary.display_label)} · 직접 ${number(summary.direct_count)} · ${newsCautionCountText(summary.direct_count, summary.caution_count, summary.display_label)} · 시장맥락 ${number(summary.market_context_count)}`
         : esc(summary.empty_state || "뉴스 근거 수집 전");
       const krxLine = daily?.market_briefing?.index_summary?.reference_date
         ? `지수 기준 ${esc(daily.market_briefing.index_summary.reference_date)}`
@@ -26138,7 +26138,7 @@ def _render_web_view_html() -> str:
       const stock = [item.stock_name, item.stock_code].filter(Boolean).join(" ");
       const label = item.display_label || "뉴스 근거 있음";
       const krx = krxNewsReferenceLabel(item.krx_reference_status);
-      const counts = `직접 ${number(item.direct_count || 0)} · 주의 ${number(item.caution_count || 0)} · 시장맥락 ${number(item.market_context_count || 0)} · ${krx}`;
+      const counts = `직접 ${number(item.direct_count || 0)} · ${newsCautionCountText(item.direct_count, item.caution_count, label)} · 시장맥락 ${number(item.market_context_count || 0)} · ${krx}`;
       const title = item.top_title || item.reason || "";
       const content = `
         <b>${esc(stock || "-")} · ${esc(label)}</b>
@@ -26160,7 +26160,7 @@ def _render_web_view_html() -> str:
       if (!available) return ["뉴스 근거 수집 전"];
       const chips = [
         `뉴스 근거 직접 ${number(direct)}`,
-        `주의 ${number(caution)}`,
+        newsCautionCountText(direct, caution),
         `시장맥락 ${number(marketContext)}`,
         krxNewsReferenceLabel(krx)
       ];
@@ -26168,6 +26168,14 @@ def _render_web_view_html() -> str:
         chips.unshift(`관찰 후보 겹침 ${candidateOverlapNames.join(", ")}`);
       }
       return chips;
+    }
+
+    function newsCautionCountText(direct, caution, label = "") {
+      const directCount = Number(direct || 0);
+      const cautionCount = Number(caution || 0);
+      const labelText = String(label || "");
+      const cautionWord = directCount > 0 && !labelText.startsWith("주의") ? "보조 확인" : "주의";
+      return `${cautionWord} ${number(cautionCount)}`;
     }
 
     function renderIntradayMarketTopOverlap(commentary) {
@@ -26905,7 +26913,7 @@ def _render_web_view_html() -> str:
       const direct = Number(detail.direct_count || 0);
       const caution = Number(detail.caution_count || 0);
       const marketContext = Number(detail.market_context_count || 0);
-      const countLine = `뉴스 근거 직접 ${number(direct)} · 주의 ${number(caution)} · 시장맥락 ${number(marketContext)} · ${status}`;
+      const countLine = `뉴스 근거 직접 ${number(direct)} · ${newsCautionCountText(direct, caution, detail.connection_label || detail.display_label)} · 시장맥락 ${number(marketContext)} · ${status}`;
       const titles = Array.isArray(detail.top_titles) ? detail.top_titles.slice(0, 3) : [];
       const titleList = titles.length
         ? `<ul class="stock-news-title-list">${titles.map((title) => `<li>${esc(title)}</li>`).join("")}</ul>`
@@ -27286,7 +27294,7 @@ def _render_web_view_html() -> str:
       const chips = [
         connectionLabel,
         `직접 ${number(badge.direct_count || 0)}`,
-        `주의 ${number(badge.caution_count || 0)}`,
+        newsCautionCountText(badge.direct_count, badge.caution_count, connectionLabel),
         `시장맥락 ${number(badge.market_context_count || 0)}`,
         krxNewsReferenceLabel(badge.krx_reference_status)
       ];
