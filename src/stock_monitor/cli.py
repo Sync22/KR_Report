@@ -26117,8 +26117,8 @@ def _render_web_view_html() -> str:
 
     function newsObservationSummaryGroups(items) {
       const rows = Array.isArray(items) ? items.filter(Boolean) : [];
-      const priority = rows.filter((item) => Number(item?.direct_count || 0) > 0 && Number(item?.caution_count || 0) <= 0);
-      const caution = rows.filter((item) => Number(item?.caution_count || 0) > 0);
+      const priority = rows.filter((item) => Number(item?.direct_count || 0) > 0);
+      const caution = rows.filter((item) => Number(item?.direct_count || 0) <= 0 && Number(item?.caution_count || 0) > 0);
       const others = rows.filter((item) => !priority.includes(item) && !caution.includes(item));
       const groups = [];
       if (priority.length) groups.push({ title: "우선 뉴스 확인", items: priority });
@@ -29574,6 +29574,8 @@ def _build_web_view_news_observation_summary(
 
     direct_count = sum(1 for row in evidence_rows if row.relevance == "direct")
     caution_count = sum(1 for row in evidence_rows if _web_view_news_observation_is_caution(row))
+    positive_direct_count = _web_view_news_observation_positive_direct_count(evidence_rows)
+    primary_caution_count = _web_view_news_observation_primary_caution_count(evidence_rows)
     market_context_count = sum(1 for row in evidence_rows if row.relevance == "market_context")
     krx_reference_status = _web_view_news_observation_krx_status(evidence_rows, business_date)
     candidate_overlap_names = _web_view_news_candidate_overlap_names(evidence_rows, limit=3)
@@ -29596,12 +29598,16 @@ def _build_web_view_news_observation_summary(
         display_label, reason = _web_view_news_observation_label(
             direct_count=direct_count,
             caution_count=caution_count,
+            positive_direct_count=positive_direct_count,
+            primary_caution_count=primary_caution_count,
             market_context_count=market_context_count,
             krx_reference_status=krx_reference_status,
         )
         connection_label, connection_reason = _web_view_news_observation_connection(
             direct_count=direct_count,
             caution_count=caution_count,
+            positive_direct_count=positive_direct_count,
+            primary_caution_count=primary_caution_count,
             market_context_count=market_context_count,
             krx_reference_status=krx_reference_status,
         )
@@ -29681,6 +29687,24 @@ def _web_view_news_observation_is_caution(row: ReportLinkedNewsEvidenceRecord) -
     )
 
 
+def _web_view_news_observation_is_positive_direct(row: ReportLinkedNewsEvidenceRecord) -> bool:
+    return row.relevance == "direct" and (
+        row.sentiment == "Positive" or row.stock_impact in {"Positive", "Strong Positive"}
+    )
+
+
+def _web_view_news_observation_is_primary_caution(row: ReportLinkedNewsEvidenceRecord) -> bool:
+    return row.relevance == "direct" and _web_view_news_observation_is_caution(row)
+
+
+def _web_view_news_observation_positive_direct_count(rows: list[ReportLinkedNewsEvidenceRecord]) -> int:
+    return sum(1 for row in rows if _web_view_news_observation_is_positive_direct(row))
+
+
+def _web_view_news_observation_primary_caution_count(rows: list[ReportLinkedNewsEvidenceRecord]) -> int:
+    return sum(1 for row in rows if _web_view_news_observation_is_primary_caution(row))
+
+
 def _web_view_news_observation_krx_status(
     rows: list[ReportLinkedNewsEvidenceRecord],
     business_date: date,
@@ -29717,15 +29741,19 @@ def _web_view_news_observation_label(
     *,
     direct_count: int,
     caution_count: int,
+    positive_direct_count: int,
+    primary_caution_count: int,
     market_context_count: int,
     krx_reference_status: str,
 ) -> tuple[str, str]:
+    if primary_caution_count > 0 and positive_direct_count <= 0:
+        return "주의 뉴스 확인", "주의 문구가 있어 리포트 근거와 함께 확인합니다."
+    if direct_count > 0:
+        return "뉴스로 후보 강화", "직접 뉴스가 있어 후보 확인 근거를 보강합니다."
     if caution_count > 0:
         return "주의 뉴스 확인", "주의 문구가 있어 리포트 근거와 함께 확인합니다."
     if krx_reference_status == "stale":
         return "KRX 기준일 확인 필요", "KRX 기준일이 선택 날짜와 달라 시장 반응 확인이 필요합니다."
-    if direct_count > 0:
-        return "뉴스로 후보 강화", "직접 뉴스가 있어 후보 확인 근거를 보강합니다."
     if market_context_count > 0:
         return "시장 맥락 참고", "시장/업종 맥락 중심이라 종목 직접 근거로 과신하지 않습니다."
     return "뉴스 근거 부족", "저장된 뉴스가 있지만 직접 판단 근거는 부족합니다."
@@ -29735,15 +29763,19 @@ def _web_view_news_observation_connection(
     *,
     direct_count: int,
     caution_count: int,
+    positive_direct_count: int,
+    primary_caution_count: int,
     market_context_count: int,
     krx_reference_status: str,
 ) -> tuple[str, str]:
-    if krx_reference_status == "stale":
-        return "KRX 기준일 확인 필요", "KRX 기준일이 선택 날짜와 달라 뉴스 연결 전 시장 반응 기준일을 먼저 확인해야 합니다."
-    if caution_count > 0:
+    if primary_caution_count > 0 and positive_direct_count <= 0:
         return "주의 뉴스 확인", "주의/혼합 성격의 뉴스가 있어 리포트 근거와 함께 확인합니다."
     if direct_count > 0:
         return "뉴스로 후보 강화", "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다."
+    if caution_count > 0:
+        return "주의 뉴스 확인", "주의/혼합 성격의 뉴스가 있어 리포트 근거와 함께 확인합니다."
+    if krx_reference_status == "stale":
+        return "KRX 기준일 확인 필요", "KRX 기준일이 선택 날짜와 달라 뉴스 연결 전 시장 반응 기준일을 먼저 확인해야 합니다."
     if market_context_count > 0:
         return "시장 맥락 참고", "업종/시장 맥락 뉴스라 종목 직접 근거로 과신하지 않습니다."
     return "뉴스 근거 부족", "저장 뉴스가 있지만 후보와 직접 연결할 근거는 부족합니다."
@@ -30904,11 +30936,15 @@ def _web_view_candidate_news_badge(
         return _web_view_empty_candidate_news_badge()
     direct_count = sum(1 for row in rows if row.relevance == "direct")
     caution_count = sum(1 for row in rows if _web_view_news_observation_is_caution(row))
+    positive_direct_count = _web_view_news_observation_positive_direct_count(rows)
+    primary_caution_count = _web_view_news_observation_primary_caution_count(rows)
     market_context_count = sum(1 for row in rows if row.relevance == "market_context")
     krx_reference_status = _web_view_news_observation_krx_status(rows, business_date)
     connection_label, connection_reason = _web_view_news_observation_connection(
         direct_count=direct_count,
         caution_count=caution_count,
+        positive_direct_count=positive_direct_count,
+        primary_caution_count=primary_caution_count,
         market_context_count=market_context_count,
         krx_reference_status=krx_reference_status,
     )
@@ -30921,10 +30957,12 @@ def _web_view_candidate_news_badge(
         ),
     )
     top_title = next((title for title in _web_view_unique_texts([row.title for row in ordered_rows], limit=1)), None)
-    if caution_count:
+    if primary_caution_count and positive_direct_count <= 0:
         display_label = "주의 뉴스"
     elif direct_count:
         display_label = "직접 뉴스"
+    elif caution_count:
+        display_label = "주의 뉴스"
     elif market_context_count:
         display_label = "시장맥락 위주"
     else:
@@ -31783,11 +31821,12 @@ def _web_view_candidate_value_profile(
         time_mode = "stored_history"
 
     if has_actionable_news:
-        observation_priority = "우선 확인" if caution_count <= 0 else "주의 확인"
+        caution_dominant = news_label.startswith("주의")
+        observation_priority = "주의 확인" if caution_dominant else "우선 확인"
         value_label = "뉴스 근거 확인"
         value_reason = (
             "주의 뉴스가 있어 리포트 근거와 함께 확인합니다."
-            if caution_count > 0
+            if caution_dominant
             else "직접 뉴스가 후보 근거를 보강합니다."
             if direct_count > 0
             else "시장맥락 뉴스가 있어 저장 근거와 함께 확인합니다."

@@ -359,10 +359,10 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
 
     summary = snapshot["news_observation_summary"]
     assert summary["available"] is True
-    assert summary["display_label"] == "주의 뉴스 확인"
-    assert summary["reason"] == "주의 문구가 있어 리포트 근거와 함께 확인합니다."
-    assert summary["connection_label"] == "주의 뉴스 확인"
-    assert summary["connection_reason"] == "주의/혼합 성격의 뉴스가 있어 리포트 근거와 함께 확인합니다."
+    assert summary["display_label"] == "뉴스로 후보 강화"
+    assert summary["reason"] == "직접 뉴스가 있어 후보 확인 근거를 보강합니다."
+    assert summary["connection_label"] == "뉴스로 후보 강화"
+    assert summary["connection_reason"] == "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다."
     assert summary["connection_note"] == "우선 확인 후보와 겹친 뉴스 근거: 삼성전자"
     assert summary["candidate_overlap_count"] == 1
     assert summary["candidate_overlap_names"] == ["삼성전자"]
@@ -379,15 +379,15 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
             "available": True,
             "stock_name": "삼성전자",
             "stock_code": "005930",
-            "display_label": "주의 뉴스",
+            "display_label": "직접 뉴스",
             "reason": "삼성전자, AI 반도체 공급 계약 체결",
             "direct_count": 1,
             "caution_count": 1,
             "market_context_count": 1,
             "krx_reference_status": "exact",
             "top_title": "삼성전자, AI 반도체 공급 계약 체결",
-            "connection_label": "주의 뉴스 확인",
-            "connection_reason": "주의/혼합 성격의 뉴스가 있어 리포트 근거와 함께 확인합니다.",
+            "connection_label": "뉴스로 후보 강화",
+            "connection_reason": "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다.",
         }
     ]
     assert "overall_sentiment" not in summary
@@ -608,14 +608,14 @@ def test_web_view_candidate_evidence_projects_public_safe_news_badge(tmp_path, m
 
     badge = snapshot["rows"][0]["news_observation_badge"]
     assert badge["available"] is True
-    assert badge["display_label"] == "주의 뉴스"
+    assert badge["display_label"] == "직접 뉴스"
     assert badge["reason"] == direct_evidence.title
     assert badge["direct_count"] == 1
     assert badge["caution_count"] == 1
     assert badge["market_context_count"] == 1
     assert badge["krx_reference_status"] == "stale"
-    assert badge["connection_label"] == "KRX 기준일 확인 필요"
-    assert badge["connection_reason"] == "KRX 기준일이 선택 날짜와 달라 뉴스 연결 전 시장 반응 기준일을 먼저 확인해야 합니다."
+    assert badge["connection_label"] == "뉴스로 후보 강화"
+    assert badge["connection_reason"] == "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다."
     assert badge["top_title"] == direct_evidence.title
     payload = json.dumps(snapshot, ensure_ascii=False)
     assert "sentiment_score" not in payload
@@ -826,8 +826,8 @@ def test_web_view_stock_detail_projects_public_safe_news_observation_detail(tmp_
     assert detail["caution_count"] == 1
     assert detail["market_context_count"] == 1
     assert detail["krx_reference_status"] == "exact"
-    assert detail["connection_label"] == "주의 뉴스 확인"
-    assert detail["connection_reason"] == "주의/혼합 성격의 뉴스가 있어 리포트 근거와 함께 확인합니다."
+    assert detail["connection_label"] == "뉴스로 후보 강화"
+    assert detail["connection_reason"] == "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다."
     assert detail["top_titles"] == [
         "Samsung expands AI semiconductor supply",
         "Semiconductor volatility caution",
@@ -5678,7 +5678,7 @@ def test_web_view_candidate_value_profile_promotes_direct_news_context() -> None
     assert int(profile["sort_value_signal"]) > 1
 
 
-def test_web_view_candidate_value_profile_explains_caution_news_first() -> None:
+def test_web_view_candidate_value_profile_keeps_direct_news_ahead_of_support_caution() -> None:
     profile = cli_module._web_view_candidate_value_profile(
         candidate_profile={
             "observation_priority": "확인 후보",
@@ -5689,8 +5689,8 @@ def test_web_view_candidate_value_profile_explains_caution_news_first() -> None:
         },
         news_badge={
             "available": True,
-            "display_label": "주의 뉴스",
-            "connection_label": "주의 뉴스 확인",
+            "display_label": "직접 뉴스",
+            "connection_label": "뉴스로 후보 강화",
             "direct_count": 2,
             "caution_count": 1,
             "market_context_count": 1,
@@ -5703,9 +5703,9 @@ def test_web_view_candidate_value_profile_explains_caution_news_first() -> None:
         business_date=date(2026, 6, 19),
     )
 
-    assert profile["observation_priority"] == "주의 확인"
+    assert profile["observation_priority"] == "우선 확인"
     assert profile["value_label"] == "뉴스 근거 확인"
-    assert "주의" in profile["value_reason"]
+    assert "직접 뉴스" in profile["value_reason"]
 
 
 def test_web_view_access_code_gate_protects_content_until_login(tmp_path, monkeypatch) -> None:
