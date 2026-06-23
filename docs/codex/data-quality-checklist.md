@@ -11,6 +11,8 @@ Missing or non-actionable source values are not data points.
 
 They can be preserved for detail review, but they must not distort aggregate calculations, rankings, ranges, or representative labels.
 
+A completed news collection with no matched article is a coverage result, not negative evidence. Show `매칭 뉴스 없음` clearly, but do not lower a report/market-supported observation candidate solely because the bounded collection returned zero matches. Direct positive or direct caution evidence may change observation ordering; an empty match must not cause the top-two cohort to churn into newly uncollected rows.
+
 ## Product-Intent Rule
 
 Data quality is not the same as product usefulness.
@@ -110,7 +112,25 @@ Before implementing a data or display change, verify:
 | Daily/Intraday summary | Show only aggregate values that survive missing-value filtering. |
 | Stock detail / stock search | Show each source report, including missing target/opinion as `목표가 -` and `의견 없음`. |
 | Admin/operator diagnostics | May show raw/failure context when useful, but must avoid secrets and keep source labels clear. |
-| User web-view | Show observation values, missing states, and observation-candidate recommendations; do not show public numeric scores, investment grades, trading calls, or inferred certainty. |
+| User web-view | Show observation values, missing states, and source-labelled candidate assessments. A directional label must be reproducible from direct evidence and distinguish supporting, cautionary, conflicting, and missing evidence; it must not be a hidden score or unsupported certainty. |
+
+## Evidence Direction Rule
+
+`리포트 가설`, `직접 뉴스`, `보조/시장맥락 뉴스`, `장중 반응`, `Toss 20:00 저장 기준값`, and `KRX 기준일` are separate evidence layers. Do not let one layer silently replace another.
+
+- Direct positive and direct caution news may produce `상승 근거 우세`, `하방 위험 우세`, or `직접 근거 상충` only when their respective counts are visible.
+- Indirect or market-context rows may add context but must not overturn direct-evidence direction by themselves.
+- The same article is counted once per candidate/date by its stored evidence key. A later completed collection with no new match must keep already stored same-date direct evidence visible and expose its later collection time separately.
+- Web-view and Telegram candidate summaries must use the same selected candidate codes and the same deduplicated evidence set. A date-wide run list must not replace a candidate-linked summary with unrelated or older empty runs.
+- `종목별 [12009]` flow freshness must be calculated from the same stock-level rows shown in the detail lines. If selected candidates have different dates, show each row date and label the source as partial rather than presenting the newest row as the date of every item.
+- `Naver 거래대금 상위` overlap and a bounded top-two Naver quote are separate intraday references. A non-overlap result does not erase the candidate's price, change, turnover, market status, or checked/trade time.
+- KRX exact/stale/missing is freshness metadata, not price direction.
+- Intraday turnover/price confirms a time-bounded market reaction only when the candidate overlaps the fetched row and the display includes market status plus trade or checked time.
+- A Toss 20:00 value is an end-of-day stored baseline. It is not a substitute for intraday confirmation or direct news evidence.
+- A target-price reach day is a retrospective result inside the stored post-report KRX window. Show its observed window and missing state; never present it as a promised outcome, probability, or future trading instruction.
+- If the layers conflict or lack direct evidence, display `추가 확인` or `직접 근거 부족`; do not manufacture a stronger conclusion.
+
+Time-series validation belongs after these layers are stored consistently across multiple dates. It should test whether a declared evidence state improves later observation outcomes versus the report-only baseline; it must not be used to retrofit a single-day label.
 
 ## Agent Review Checklist
 

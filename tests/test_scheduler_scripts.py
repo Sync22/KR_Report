@@ -53,6 +53,7 @@ REQUIRED_MIGRATION_ENTRIES = [
     "scripts/run_scheduled_poll.ps1",
     "scripts/run_scheduled_krx_mentioned_flow_backfill.ps1",
     "scripts/run_scheduled_market_briefing_slot.ps1",
+    "scripts/run_scheduled_toss_priority_baseline.ps1",
     "scripts/run_process_telegram_commands.ps1",
     "scripts/run_scheduled_shutdown.ps1",
 ]
@@ -354,6 +355,7 @@ def test_python_entrypoint_wrappers_bootstrap_src_pythonpath() -> None:
         "run_scheduled_krx_daily_backfill.ps1",
         "run_scheduled_krx_mentioned_flow_backfill.ps1",
         "run_scheduled_market_briefing_slot.ps1",
+        "run_scheduled_toss_priority_baseline.ps1",
         "run_process_telegram_commands.ps1",
         "run_krx_flow_login_reminder.ps1",
         "run_scheduled_shutdown.ps1",
@@ -525,6 +527,8 @@ def test_restart_web_view_script_restarts_loopback_web_view_only() -> None:
     assert "netstat -ano" in script
     assert "Stop-Process" in script
     assert "Invoke-WebRequest" in script
+    assert 'Join-Path $projectRoot ".venv\\Scripts\\python.exe"' in script
+    assert '$PythonExe -eq "python"' in script
     assert "/health" in script
     assert "admin-gui" in script
     assert "Cloudflare" in script
@@ -562,6 +566,16 @@ def test_register_task_scheduler_tasks_registers_market_briefing_slots() -> None
     assert "-StartWhenAvailable $false" in script
 
 
+def test_register_task_scheduler_tasks_registers_toss_priority_baseline_at_2000() -> None:
+    script = (PROJECT_ROOT / "scripts" / "register_task_scheduler_tasks.ps1").read_text(encoding="utf-8")
+
+    assert '[string]$TossPriorityBaselineTime = "20:00"' in script
+    assert "[switch]$SkipTossPriorityBaseline" in script
+    assert "run_scheduled_toss_priority_baseline.ps1" in script
+    assert "$TaskPrefix-TossPriorityBaseline" in script
+    assert "-StartWhenAvailable $false" in script
+
+
 def test_verify_task_scheduler_registration_checks_expected_tasks_and_actions() -> None:
     script = (PROJECT_ROOT / "scripts" / "verify_task_scheduler_registration.ps1").read_text(encoding="utf-8")
 
@@ -587,6 +601,7 @@ def test_verify_task_scheduler_registration_checks_expected_tasks_and_actions() 
     assert "StockMonitor-MarketBriefingPreclose" in script
     assert "StockMonitor-TelegramCommands" in script
     assert "StockMonitor-WebViewHourlyRestart" in script
+    assert "StockMonitor-TossPriorityBaseline" in script
     assert "StockMonitor-KrxFlowLoginReminder" in script
     assert "StockMonitor-Shutdown" in script
     assert "run_scheduled_krx_daily_backfill.ps1" in script
@@ -594,6 +609,7 @@ def test_verify_task_scheduler_registration_checks_expected_tasks_and_actions() 
     assert "run_scheduled_poll.ps1" in script
     assert "run_scheduled_krx_mentioned_flow_backfill.ps1" in script
     assert "run_scheduled_market_briefing_slot.ps1" in script
+    assert "run_scheduled_toss_priority_baseline.ps1" in script
     assert "run_process_telegram_commands.ps1" in script
     assert "restart_web_view.ps1" in script
     assert "run_krx_flow_login_reminder.ps1" in script
@@ -617,4 +633,5 @@ def test_register_mini_pc_scheduler_tasks_skips_shutdown_by_default() -> None:
     assert "$verifyArgs.IncludeKrxFlowReminder = $true" in script
     assert "StockMonitor-Shutdown is intentionally not registered" in script
     assert "StockMonitor-WebViewHourlyRestart" in script
+    assert "StockMonitor-TossPriorityBaseline" in script
     assert "web_view_hourly_restart" in script

@@ -20,6 +20,7 @@ param(
     [string]$MarketBriefingLunchTime = "12:00",
     [string]$MarketBriefingPrecloseTime = "15:15",
     [int]$MarketBriefingLimit = 5,
+    [string]$TossPriorityBaselineTime = "20:00",
     [string]$KrxFlowReminderTime = "16:45",
     [string]$KrxFlowPlannedTime = "16:50",
     [int]$KrxFlowReminderMinutesBefore = 5,
@@ -35,6 +36,7 @@ param(
     [switch]$SkipKrxDailyBackfill,
     [switch]$SkipKrxMentionedFlowBackfill,
     [switch]$SkipMarketBriefing,
+    [switch]$SkipTossPriorityBaseline,
     [switch]$SkipTelegramCommands,
     [switch]$SkipWebViewRestart,
     [switch]$SkipShutdown
@@ -47,6 +49,7 @@ $notifyScript = Join-Path $PSScriptRoot "run_scheduled_notify.ps1"
 $krxDailyBackfillScript = Join-Path $PSScriptRoot "run_scheduled_krx_daily_backfill.ps1"
 $krxMentionedFlowBackfillScript = Join-Path $PSScriptRoot "run_scheduled_krx_mentioned_flow_backfill.ps1"
 $marketBriefingSlotScript = Join-Path $PSScriptRoot "run_scheduled_market_briefing_slot.ps1"
+$tossPriorityBaselineScript = Join-Path $PSScriptRoot "run_scheduled_toss_priority_baseline.ps1"
 $krxFlowReminderScript = Join-Path $PSScriptRoot "run_krx_flow_login_reminder.ps1"
 $commandsScript = Join-Path $PSScriptRoot "run_process_telegram_commands.ps1"
 $webViewRestartScript = Join-Path $PSScriptRoot "restart_web_view.ps1"
@@ -130,6 +133,7 @@ $krxMentionedFlowBackfillTaskName = "$TaskPrefix-KrxMentionedFlowBackfill"
 $marketBriefingMoodTaskName = "$TaskPrefix-MarketBriefingMood"
 $marketBriefingLunchTaskName = "$TaskPrefix-MarketBriefingLunch"
 $marketBriefingPrecloseTaskName = "$TaskPrefix-MarketBriefingPreclose"
+$tossPriorityBaselineTaskName = "$TaskPrefix-TossPriorityBaseline"
 $krxFlowReminderTaskName = "$TaskPrefix-KrxFlowLoginReminder"
 $commandsTaskName = "$TaskPrefix-TelegramCommands"
 $webViewRestartTaskName = "$TaskPrefix-WebViewHourlyRestart"
@@ -218,6 +222,14 @@ if (-not $SkipMarketBriefing) {
     Register-OrUpdateTask -TaskName $marketBriefingPrecloseTaskName -Action $marketBriefingPrecloseAction -Triggers $marketBriefingPrecloseTriggers -StartWhenAvailable $false
 }
 
+if (-not $SkipTossPriorityBaseline) {
+    $tossPriorityBaselineAction = New-StockMonitorAction `
+        -ScriptPath $tossPriorityBaselineScript `
+        -PythonCommand $PythonExe
+    $tossPriorityBaselineTriggers = @(New-WeekdayTriggerAt -AtTime $TossPriorityBaselineTime)
+    Register-OrUpdateTask -TaskName $tossPriorityBaselineTaskName -Action $tossPriorityBaselineAction -Triggers $tossPriorityBaselineTriggers -StartWhenAvailable $false
+}
+
 if ($IncludeKrxFlowReminder) {
     $krxFlowReminderAction = New-StockMonitorAction `
         -ScriptPath $krxFlowReminderScript `
@@ -268,6 +280,9 @@ if (-not $SkipMarketBriefing) {
     Write-Output "- $marketBriefingMoodTaskName"
     Write-Output "- $marketBriefingLunchTaskName"
     Write-Output "- $marketBriefingPrecloseTaskName"
+}
+if (-not $SkipTossPriorityBaseline) {
+    Write-Output "- $tossPriorityBaselineTaskName"
 }
 if ($IncludeKrxFlowReminder) {
     Write-Output "- $krxFlowReminderTaskName"

@@ -22,7 +22,7 @@ Blocked by default in v1:
 
 - Automatic live news crawling or provider smoke.
 - SQLite writes or migrations unless the operator explicitly passes `--save-observation` for the operator-only observation tables.
-- Scheduler registration, scheduler execution, or unattended collection.
+- Generic scheduler registration, unbounded unattended collection, or source-wide crawling. The bounded `scheduled-market-briefing-slot` exception is documented below.
 - Telegram send or Telegram candidate alerts.
 - Direct public `web-view` exposure of raw/operator-only payloads. A later public-safe, stored-data-only projection is allowed when this contract and `surface-contract.md` define the exact fields.
 - Broker secrets, broker execution, order routing, or order suggestions.
@@ -69,7 +69,7 @@ Operator workflow:
 
 1. Run `news-intelligence-preview` without `--save-observation` to inspect live collection coverage and operator-only judgment fields.
 2. When the operator explicitly wants to keep a single-stock result, rerun with `--save-observation`; this is an operator-only write path for news observations.
-3. For market-briefing target stocks, run `news-intelligence-briefing-collect --save-observation --confirm-save` to persist observations for multiple stored-summary stocks in one manual pass.
+3. For market-briefing target stocks, run `news-intelligence-briefing-collect --save-observation --confirm-save` to persist observations for multiple stored-summary stocks in one manual pass. The enabled scheduled market-briefing slot may perform the same save internally for its server-derived current top two after delivery/time guards have passed.
 4. Use `news-intelligence-observations --format text|json` to inspect saved run/evidence details by date, stock code, or run id.
 5. Use `news-intelligence-daily-brief --format text|json` to group saved runs by date and candidate-linkage label.
 6. Use `market-briefing` as a stored-data, public-safe visibility check after observations already exist. `web-view` may either show the stored projection or, when access-gated and operator-triggered, run `POST /api/news-observations/collect` to create the missing saved observation rows for the selected date/top candidates before re-rendering the same public-safe projection.
@@ -156,7 +156,7 @@ The manual preview wrapper must also include contract flags:
 
 `overall_sentiment` and article `sentiment_score` are internal operator values on the `-100..100` scale. They are not public scores and must not be copied into public `web-view` or Telegram output without a later policy change.
 
-`stock_impact` is an operator-only news impact assessment. It describes how news may change review priority; it is not a price target, investment grade, or buy/sell recommendation. Supported labels are `Strong Positive`, `Positive`, `Neutral`, `Caution`, `Negative`, and `Strong Negative`.
+`stock_impact` is an operator-only news impact assessment. It describes how news may change review priority; it is not a price target, investment grade, or broker/order instruction. Supported labels are `Strong Positive`, `Positive`, `Neutral`, `Caution`, `Negative`, and `Strong Negative`. Public surfaces must not copy the raw label, but may derive a source-labelled direction from direct evidence only: `상승 근거 우세`, `하방 위험 우세`, `직접 근거 상충`, `직접 근거 중립`, or `직접 근거 부족`.
 
 Supported sentiment labels are `Positive`, `Neutral`, `Negative`, `Caution`, and `Mixed`.
 
@@ -228,7 +228,7 @@ Storage guardrails:
 - Batch market-briefing collection requires both `--save-observation` and `--confirm-save`; without both flags it is a preview/no-write command.
 - The default manual preview remains `writes_db=false`.
 - When live collection succeeds but no article matches the target stock, the batch collector may still save an empty observation run with `matched_count=0` and `saved_evidence_count=0`. This records that collection actually ran, so `web-view` can show `뉴스 수집 완료` / `매칭 뉴스 없음` instead of pretending the feature has not run.
-- Stored rows are operator-only observation/evaluation data and must not be copied raw into public `web-view`, Telegram, or scheduler surfaces. The current `market-briefing` and `web-view` projections are allowed only as thin summaries that hide internal sentiment scores, impact scores, raw warnings, and operator-only recommendation-support fields. The access-gated web-view collect action may save the rows needed for that projection; it must not expose the raw collector payload. `admin-gui` remains operations/status/control only; fuller review rows belong in a future `operator-review` surface after a separate contract.
+- Stored rows are operator-only observation/evaluation data and must not be copied raw into public `web-view`, Telegram, or scheduler surfaces. The current `market-briefing` and `web-view` projections are allowed only as thin summaries that hide internal sentiment scores, impact scores, raw warnings, and operator-only recommendation-support fields. The access-gated web-view collect action may save the rows needed for that projection; the bounded scheduled market-briefing slot may do the same for its current top two before composing its compact Telegram projection. Neither path may expose the raw collector payload. `admin-gui` remains operations/status/control only; fuller review rows belong in a future `operator-review` surface after a separate contract.
 - When KRX reference data comes from the nearest prior stored row, the preview/save payload must distinguish exact-date reference from stale fallback reference and warn rather than silently treating stale KRX data as same-day confirmation.
 - The stored lane must not contain broker secrets, order intent, order-routing instructions, or public buy/sell calls.
 
@@ -253,9 +253,11 @@ Current visible slice:
 - Stock detail may include `news_observation_detail` with the same compact public-safe counts, KRX status, and top titles.
 - Daily summary items with a valid stock code may link to the stock detail view so the operator can move from the main summary to the stock-level evidence without exposing raw operator payloads.
 
+Public projection must preserve evidence direction rather than suppress it into a generic badge. A derived direction is allowed only when it includes direct supporting/caution counts, keeps indirect and market-context rows separate, and shows KRX freshness as metadata rather than direction.
+
 Forbidden in public projection:
 
-- `overall_sentiment`, article `sentiment_score`, numeric impact, conviction, target-return, investment grade, buy/sell, entry/exit, take-profit, one-pick, broker, or order-routing wording.
+- `overall_sentiment`, article `sentiment_score`, numeric impact, hidden conviction score, target-return, investment-grade shorthand, broker, or order-routing wording. An attributed source opinion and a reproducible derived evidence direction are allowed; neither may conceal contrary direct evidence or become an unsupported action instruction.
 - Unbounded live Naver fetch from `web-view`. The only approved live-fetch/write path is the access-gated `POST /api/news-observations/collect` operator action, which calls the existing briefing collector with explicit save/confirm behavior for selected-date top candidates.
 - Any other `--save-observation` trigger from `web-view`.
 - Scheduler, Telegram, admin control, broker/account/order mutation, or arbitrary DB mutation from the public route.
@@ -277,7 +279,7 @@ Operating real-data validation is separate from the fixture visible-flow work. F
 3. If the operator explicitly approves, run `--save-observation` for only the selected stocks.
 4. Read back with `news-intelligence-observations` and `news-intelligence-daily-brief`.
 5. Open `web-view` and confirm archive count, daily summary, candidate badge, and stock detail projection.
-6. Do not connect the result to scheduler, Telegram, broker/execution, or order routing.
+6. Do not connect the result to broker/execution or order routing. The only production automation exception is the bounded scheduled market-briefing collection and compact projection described above; it is limited to the server-derived top two and the existing slot guards.
 
 ## Integration Boundary
 

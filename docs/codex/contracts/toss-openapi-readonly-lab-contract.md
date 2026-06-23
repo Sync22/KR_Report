@@ -56,7 +56,7 @@ Observed official-doc facts as of `2026-06-12`:
 
 | Role | Current status | Boundary |
 | --- | --- | --- |
-| Read-only quote/reference | Promoted for `web-view` top-2 current price only | Server derives top-2 `우선 확인` symbols; no arbitrary public symbol query. |
+| Read-only quote/reference | Promoted for `web-view` and scheduled market-briefing top-2 current price | Server derives up to two `우선 확인` symbols; no arbitrary symbol query. |
 | Stock/reference metadata | Future lab candidate | May be compared with KRX/Naver identity data, but must not overwrite source facts by default. |
 | Market calendar/exchange rate | Future lab candidate | Reference only; label source/freshness if surfaced later. |
 | Account/balance read-only | Operator-only lab candidate | Never public. No production DB write. No scheduler or Telegram integration. |
@@ -111,9 +111,9 @@ Forbidden outside the explicitly promoted top-2 current-price path:
 - Capturing real account, holding, order, buying-power, sellable-quantity, or
   commission data.
 - Writing Toss data into production SQLite.
-- Registering Toss scheduler tasks.
-- Sending Toss-derived Telegram messages.
-- Connecting Toss to `admin-gui` or current scheduler flows.
+- Registering a standalone Toss scheduler task beyond the approved 20:00 baseline task.
+- Sending Toss-derived Telegram messages outside the approved `09:15`/`12:00`/`15:15` market-briefing slots.
+- Connecting Toss to `admin-gui` or any scheduler flow other than the approved market-briefing slots and 20:00 baseline task.
 - Connecting Toss to public `web-view` beyond the top-2 current-price
   projection described in this contract.
 - Implementing order creation, modification, cancellation, or routing.
@@ -142,8 +142,8 @@ Forbidden outside the explicitly promoted top-2 current-price path:
 | Loopback lab `web-view` preview | Superseded by the promoted top-2 projection. | New visual experiments still require separate review before broadening the main path. |
 | `admin-gui` | Nothing Toss-connected. | Coarse readiness status only after lab contract and secret redaction are implemented; no token/account display. |
 | `operator-review` | Not implemented. | Preferred future surface for raw read-only Toss probe review and response comparison. |
-| Telegram | Nothing Toss-connected. | No current path. Any future message needs a separate public/operator wording review. |
-| Scheduler | Nothing Toss-connected. | No current path. Lab probes must remain manual until approved. |
+| Telegram | Scheduled market-briefing slots may show up to two server-derived current prices with source and checked time. | No account/order data, arbitrary symbols, numerical score, or trading instruction. |
+| Scheduler | The three scheduled market-briefing slots may issue the bounded read-only top-2 quote call; the 20:00 baseline task may persist its separate baseline. | No broad Toss polling, no account/order endpoints, and no current-quote DB persistence. |
 | Production DB | Nothing Toss-connected. | No write until schema, source semantics, replay, retention, and privacy are reviewed. |
 
 If an approved future intraday reference affects `우선 확인` or

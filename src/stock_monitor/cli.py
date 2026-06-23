@@ -166,8 +166,8 @@ WEB_VIEW_DEFAULT_HOST = "127.0.0.1"
 WEB_VIEW_DEFAULT_PORT = 87 * 100 + 80
 SCHEDULED_NOTIFY_EARLIEST_TIME = datetime_time(hour=8, minute=0)
 SCHEDULED_NOTIFY_LATEST_TIME = datetime_time(hour=8, minute=30)
-SCHEDULED_MARKET_BRIEFING_EARLIEST_TIME = datetime_time(hour=16, minute=10)
-SCHEDULED_MARKET_BRIEFING_LATEST_TIME = datetime_time(hour=16, minute=45)
+SCHEDULED_TOSS_PRIORITY_BASELINE_EARLIEST_TIME = datetime_time(hour=20, minute=0)
+SCHEDULED_TOSS_PRIORITY_BASELINE_LATEST_TIME = datetime_time(hour=20, minute=15)
 SCHEDULED_MARKET_BRIEFING_SLOT_TIMES = {
     "mood": datetime_time(hour=9, minute=15),
     "lunch": datetime_time(hour=12, minute=0),
@@ -1494,19 +1494,6 @@ def build_parser() -> argparse.ArgumentParser:
     market_day_observation_parser.add_argument("--date", type=date.fromisoformat, help="Market observation date.")
     market_day_observation_parser.add_argument("--json", action="store_true")
 
-    scheduled_market_briefing_parser = subparsers.add_parser(
-        "scheduled-market-briefing",
-        help="Guarded scheduled candidate for the closing-market Telegram briefing.",
-    )
-    scheduled_market_briefing_parser.add_argument("--dry-run", action="store_true")
-    scheduled_market_briefing_parser.add_argument("--allow-repeat", action="store_true")
-    scheduled_market_briefing_parser.add_argument(
-        "--allow-late",
-        action="store_true",
-        help="Allow scheduled-market-briefing to send after the 16:45 KST late-run guard.",
-    )
-    scheduled_market_briefing_parser.add_argument("--limit", type=int, default=5, help="Maximum notable report stocks to include.")
-
     scheduled_market_briefing_slot_parser = subparsers.add_parser(
         "scheduled-market-briefing-slot",
         help="Guarded scheduled Telegram market briefing for one intraday slot.",
@@ -1608,6 +1595,11 @@ def build_parser() -> argparse.ArgumentParser:
     toss_priority_baseline_parser.add_argument("--live", action="store_true")
     toss_priority_baseline_parser.add_argument("--confirm-token-reissue", action="store_true")
     toss_priority_baseline_parser.add_argument("--confirm-save", action="store_true")
+    toss_priority_baseline_parser.add_argument(
+        "--scheduled",
+        action="store_true",
+        help="Apply the business-day and 20:00~20:15 scheduler guard.",
+    )
     toss_priority_baseline_parser.add_argument("--json", action="store_true")
 
     web_view_parser = subparsers.add_parser(
@@ -2004,6 +1996,7 @@ def main(argv: list[str] | None = None) -> int:
             live=args.live,
             confirm_token_reissue=args.confirm_token_reissue,
             confirm_save=args.confirm_save,
+            scheduled=args.scheduled,
             as_json=args.json,
         )
     if args.command == "db-migrate":
@@ -2630,15 +2623,6 @@ def main(argv: list[str] | None = None) -> int:
                 repository,
                 explicit_date=args.date,
                 as_json=args.json,
-            )
-        if args.command == "scheduled-market-briefing":
-            return _run_scheduled_market_briefing(
-                config,
-                repository,
-                dry_run=args.dry_run,
-                allow_repeat=args.allow_repeat,
-                allow_late=args.allow_late,
-                limit=args.limit,
             )
         if args.command == "scheduled-market-briefing-slot":
             return _run_scheduled_market_briefing_slot(
@@ -5948,6 +5932,7 @@ def _run_toss_priority_baseline_collect(
     live: bool,
     confirm_token_reissue: bool,
     confirm_save: bool,
+    scheduled: bool,
     as_json: bool,
 ) -> int:
     normalized_baseline_time = _normalize_toss_priority_baseline_time(baseline_time)
@@ -5970,10 +5955,53 @@ def _run_toss_priority_baseline_collect(
         "requires_live_flag": True,
         "requires_token_reissue_confirmation": True,
         "requires_save_confirmation": True,
+        "scheduled": scheduled,
     }
     if not live:
         _print_toss_priority_baseline_collect_payload(plan, as_json=as_json)
         return 0
+    if scheduled:
+        current = datetime.now(ZoneInfo(config.timezone))
+        skip_reason = _scheduled_skip_reason(config, business_date, repository)
+        if skip_reason:
+            repository.record_operation_event(
+                _operation_event(
+                    config,
+                    component="toss-priority-baseline",
+                    event_type="run-guard",
+                    status="skipped",
+                    business_date=business_date,
+                    detail=skip_reason,
+                )
+            )
+            print(f"Skipping scheduled Toss priority baseline: {skip_reason}")
+            return 0
+        current_time = current.timetz().replace(tzinfo=None)
+        if current_time < SCHEDULED_TOSS_PRIORITY_BASELINE_EARLIEST_TIME:
+            detail = (
+                "too_early; "
+                f"earliest={SCHEDULED_TOSS_PRIORITY_BASELINE_EARLIEST_TIME.strftime('%H:%M')}"
+            )
+        elif current_time > SCHEDULED_TOSS_PRIORITY_BASELINE_LATEST_TIME:
+            detail = (
+                "late_run; "
+                f"latest={SCHEDULED_TOSS_PRIORITY_BASELINE_LATEST_TIME.strftime('%H:%M')}"
+            )
+        else:
+            detail = None
+        if detail:
+            repository.record_operation_event(
+                _operation_event(
+                    config,
+                    component="toss-priority-baseline",
+                    event_type="time-window",
+                    status="skipped",
+                    business_date=business_date,
+                    detail=detail,
+                )
+            )
+            print(f"Skipping scheduled Toss priority baseline: {detail}")
+            return 0
     if not confirm_token_reissue:
         raise RuntimeError("Pass --confirm-token-reissue before using --live.")
     if not confirm_save:
@@ -6019,6 +6047,42 @@ def _run_toss_priority_baseline_collect(
         _print_toss_priority_baseline_collect_payload(payload, as_json=as_json)
         return 0
 
+    existing_rows = repository.list_toss_priority_quote_baselines(
+        business_date=business_date,
+        stock_codes=list(symbols),
+        baseline_time=normalized_baseline_time,
+    )
+    existing_codes = {row.stock_code for row in existing_rows}
+    symbols_to_fetch = tuple(symbol for symbol in symbols if symbol not in existing_codes)
+    if not symbols_to_fetch:
+        payload = {
+            **plan,
+            "mode": "live",
+            "read_only": False,
+            "live_fetch": False,
+            "writes_db": False,
+            "target_symbols": list(symbols),
+            "existing_count": len(existing_rows),
+            "saved_count": 0,
+            "reason": "all_priority_baselines_exist",
+        }
+        if scheduled:
+            repository.record_operation_event(
+                _operation_event(
+                    config,
+                    component="toss-priority-baseline",
+                    event_type="collect",
+                    status="skipped",
+                    business_date=business_date,
+                    detail=(
+                        f"baseline_time={normalized_baseline_time}; reason=all_priority_baselines_exist; "
+                        f"existing_count={len(existing_rows)}"
+                    ),
+                )
+            )
+        _print_toss_priority_baseline_collect_payload(payload, as_json=as_json)
+        return 0
+
     toss_config = TossOpenApiLabConfig.from_env(config.root_dir)
     if not toss_config.live_enabled:
         raise RuntimeError("Set STOCK_MONITOR_TOSS_OPENAPI_LIVE_ENABLED=true before using --live.")
@@ -6033,7 +6097,7 @@ def _run_toss_priority_baseline_collect(
         client_id=toss_config.client_id,
         client_secret=toss_config.client_secret,
         endpoint_selector="prices",
-        symbols=symbols,
+        symbols=symbols_to_fetch,
         query_date=None,
         timeout_seconds=toss_config.timeout_seconds,
         live_enabled=toss_config.live_enabled,
@@ -6044,7 +6108,7 @@ def _run_toss_priority_baseline_collect(
         if not isinstance(item, dict):
             continue
         symbol = str(item.get("symbol") or "").strip()
-        if symbol not in symbols:
+        if symbol not in symbols_to_fetch:
             continue
         rows.append(
             TossPriorityQuoteBaseline(
@@ -6065,12 +6129,28 @@ def _run_toss_priority_baseline_collect(
         "read_only": False,
         "live_fetch": True,
         "writes_db": True,
-        "target_symbols": list(symbols),
+        "target_symbols": list(symbols_to_fetch),
+        "existing_count": len(existing_rows),
         "quote_count": len(toss_payload.get("result") or []),
         "saved_count": len(rows),
         "rate_limit": toss_payload.get("rate_limit"),
         "token_expires_in": toss_payload.get("token_expires_in"),
     }
+    if scheduled:
+        repository.record_operation_event(
+            _operation_event(
+                config,
+                component="toss-priority-baseline",
+                event_type="collect",
+                status="completed" if rows else "empty",
+                business_date=business_date,
+                detail=(
+                    f"baseline_time={normalized_baseline_time}; targets={len(symbols_to_fetch)}; "
+                    f"existing_count={len(existing_rows)}; quote_count={payload['quote_count']}; "
+                    f"saved_count={len(rows)}"
+                ),
+            )
+        )
     _print_toss_priority_baseline_collect_payload(payload, as_json=as_json)
     return 0
 
@@ -8832,6 +8912,7 @@ def _build_market_commentary_practice_snapshot(
     include_intraday_quotes: bool = False,
     intraday_quote_limit: int = 10,
     intraday_quote_delay_seconds: float = 1.0,
+    intraday_quote_summaries: list[DailyStockSummary] | None = None,
     include_intraday_market_top: bool = False,
     intraday_market_top_limit: int = 100,
     intraday_market_top_page_size: int = 20,
@@ -8899,10 +8980,11 @@ def _build_market_commentary_practice_snapshot(
         for line in briefing_context.get("flow_reference_lines", [])[1:4]
         if isinstance(line, str)
     ]
+    quote_summaries = intraday_quote_summaries if intraday_quote_summaries is not None else summaries
     intraday_quote_reference = (
         _build_intraday_mentioned_quote_reference(
             config,
-            summaries,
+            quote_summaries,
             limit=intraday_quote_limit,
             delay_seconds=intraday_quote_delay_seconds,
         )
@@ -15570,6 +15652,7 @@ def _build_daily_briefing_flow_reference_lines(
     *,
     summaries: list[DailyStockSummary] | None = None,
     stock_limit: int = 3,
+    priority_stock_codes: tuple[str, ...] | list[str] | None = None,
 ) -> list[str]:
     flow_dates = repository.list_recent_investor_flow_dates(on_or_before=business_date, limit=1)
     if not flow_dates:
@@ -15578,6 +15661,7 @@ def _build_daily_briefing_flow_reference_lines(
             business_date,
             summaries=summaries or [],
             limit=stock_limit,
+            priority_stock_codes=priority_stock_codes,
         )
     flow_date = flow_dates[0]
     market_rows = repository.list_market_investor_flow_daily(flow_date, "STK")
@@ -15587,6 +15671,7 @@ def _build_daily_briefing_flow_reference_lines(
             business_date,
             summaries=summaries or [],
             limit=stock_limit,
+            priority_stock_codes=priority_stock_codes,
         )
     by_investor = {row.investor_type: row for row in market_rows}
     pieces: list[str] = []
@@ -15601,6 +15686,7 @@ def _build_daily_briefing_flow_reference_lines(
             business_date,
             summaries=summaries or [],
             limit=stock_limit,
+            priority_stock_codes=priority_stock_codes,
         )
     suffix = "" if flow_date == business_date else " / 리포트일 전 최신"
     return [
@@ -15615,13 +15701,11 @@ def _build_stock_flow_briefing_reference_lines(
     *,
     summaries: list[DailyStockSummary],
     limit: int,
+    priority_stock_codes: tuple[str, ...] | list[str] | None = None,
 ) -> list[str]:
     if limit <= 0 or not summaries:
         return []
-    ordered = sorted(
-        [summary for summary in summaries if summary.stock_code],
-        key=lambda item: (-item.mention_count, item.stock_name),
-    )
+    ordered = _ordered_stock_flow_summaries(summaries, priority_stock_codes=priority_stock_codes)
     items: list[dict] = []
     for summary in ordered:
         reference = _web_view_stock_flow_window_item(repository, summary, business_date=business_date)
@@ -15636,12 +15720,87 @@ def _build_stock_flow_briefing_reference_lines(
         for item in items
         if item.get("reference_date")
     ]
-    reference_date = max(reference_dates) if reference_dates else business_date
-    suffix = "" if reference_date == business_date else " / 리포트일 전 최신"
+    unique_reference_dates = sorted(set(reference_dates), reverse=True)
+    uniform_reference_date = unique_reference_dates[0] if len(unique_reference_dates) == 1 else None
+    if uniform_reference_date is not None:
+        suffix = "" if uniform_reference_date == business_date else " / 리포트일 전 최신"
+        header = f"수급 참고 · {uniform_reference_date.strftime('%y.%m.%d')} 종목별 [12009] 저장값{suffix}"
+        lines = [f"- {item['display']}" for item in items]
+    else:
+        header = "수급 참고 · 종목별 [12009] 저장값 / 기준일 혼합"
+        lines = [
+            f"- [{str(item.get('reference_date') or '')[2:].replace('-', '.')}] {item['display']}"
+            for item in items
+        ]
     return [
-        f"수급 참고 · {reference_date.strftime('%y.%m.%d')} 종목별 [12009] 저장값{suffix}",
-        *[f"- {item['display']}" for item in items],
+        header,
+        *lines,
     ]
+
+
+def _ordered_stock_flow_summaries(
+    summaries: list[DailyStockSummary],
+    *,
+    priority_stock_codes: tuple[str, ...] | list[str] | None = None,
+) -> list[DailyStockSummary]:
+    ordered = sorted(
+        [summary for summary in summaries if summary.stock_code],
+        key=lambda item: (-item.mention_count, item.stock_name),
+    )
+    requested_codes = [str(code).strip() for code in priority_stock_codes or () if str(code).strip()]
+    if not requested_codes:
+        return ordered
+    by_code = {str(summary.stock_code or "").strip(): summary for summary in ordered}
+    preferred = [by_code[code] for code in requested_codes if code in by_code]
+    preferred_codes = {str(summary.stock_code or "").strip() for summary in preferred}
+    return [*preferred, *(summary for summary in ordered if str(summary.stock_code or "").strip() not in preferred_codes)]
+
+
+def _build_stock_flow_source_freshness_item(
+    repository: StockMonitorRepository,
+    business_date: date,
+    *,
+    summaries: list[DailyStockSummary],
+    priority_stock_codes: tuple[str, ...] | list[str] | None = None,
+) -> dict[str, object] | None:
+    requested_codes = [str(code).strip() for code in priority_stock_codes or () if str(code).strip()]
+    selected = _ordered_stock_flow_summaries(summaries, priority_stock_codes=requested_codes)
+    if requested_codes:
+        selected = selected[: len(requested_codes)]
+    else:
+        selected = selected[:3]
+    items = [
+        _web_view_stock_flow_window_item(repository, summary, business_date=business_date)
+        for summary in selected
+    ]
+    available_items = [item for item in items if item.get("available") and item.get("reference_date")]
+    if not available_items:
+        return None
+    reference_dates = [date.fromisoformat(str(item["reference_date"])) for item in available_items]
+    exact_count = sum(1 for reference_date in reference_dates if reference_date == business_date)
+    expected_count = len(requested_codes) if requested_codes else len(selected)
+    if expected_count and exact_count == expected_count:
+        status = "exact"
+    elif exact_count:
+        status = "partial"
+    else:
+        status = "stale"
+    latest_reference_date = max(reference_dates)
+    return {
+        "key": "investor_flow",
+        "label": "Investor flow",
+        "source": "krx_data_market",
+        "status": status,
+        "reference_date": latest_reference_date.isoformat(),
+        "reference_dates": sorted({reference_date.isoformat() for reference_date in reference_dates}, reverse=True),
+        "exact_date_available": status == "exact",
+        "available": True,
+        "data_scope": "stored_stock_level_12009_selected_candidates",
+        "coverage_count": len(available_items),
+        "candidate_count": expected_count,
+        "live_fetch": False,
+        "notice": "Selected candidate stock-level [12009] references; market-wide flow is not substituted.",
+    }
 
 
 def _build_market_briefing_turnover_lines(
@@ -16073,7 +16232,19 @@ def _run_market_briefing(
         print("news-flow source preview is not allowed with --send")
         return 1
     business_date = explicit_date or datetime.now(ZoneInfo(config.timezone)).date()
-    message = _build_market_briefing_message(config, repository, business_date=business_date, limit=limit, slot=slot)
+    toss_context = _build_market_briefing_toss_priority_context(
+        config,
+        repository,
+        business_date=business_date,
+    )
+    message = _build_market_briefing_message(
+        config,
+        repository,
+        business_date=business_date,
+        limit=limit,
+        slot=slot,
+        toss_context=toss_context,
+    )
     news_flow_lines: list[str] | None = None
     if news_flow_source_urls and news_flow_fixture:
         try:
@@ -16088,9 +16259,24 @@ def _run_market_briefing(
         message = _insert_market_briefing_section_before_check_points(message, news_flow_lines)
     issues = _collect_market_briefing_message_issues(message)
     if as_json:
+        summaries = repository.list_daily_summaries(business_date)
+        candidate_snapshot = build_web_view_candidate_evidence_snapshot(
+            config,
+            repository,
+            business_date=business_date,
+            limit=2,
+        )
+        priority_stock_codes = tuple(
+            str(row.get("stock_code") or "").strip()
+            for row in candidate_snapshot.get("rows", [])
+            if isinstance(row, dict) and str(row.get("stock_code") or "").strip()
+        )
         source_freshness_summary = _build_market_briefing_source_freshness_summary(
             repository,
             business_date,
+            toss_context=toss_context,
+            summaries=summaries,
+            priority_stock_codes=priority_stock_codes,
         )
         payload = {
             "surface": "market-briefing",
@@ -16103,7 +16289,11 @@ def _run_market_briefing(
             "registers_scheduler": False,
             "public_safe_issue_count": len(issues),
             "public_safe_issues": issues,
-            "news_observation_summary": _build_web_view_news_observation_summary(repository, business_date),
+            "news_observation_summary": _build_web_view_news_observation_summary(
+                repository,
+                business_date,
+                stock_codes=priority_stock_codes,
+            ),
             "news_flow_source_preview": {
                 "enabled": bool(news_flow_lines),
                 "source_urls": list(news_flow_source_urls),
@@ -16220,11 +16410,11 @@ def _run_market_briefing_readiness(
     print(f"- manual Telegram review sends: {payload['manual_review_send_count']}/{enforced_min_manual_reviews}")
     print(f"- phone review accepted: {str(payload['phone_review_accepted']).lower()}")
     print(f"- schedule_candidate_ready: {str(payload['schedule_candidate_ready']).lower()}")
-    print(
-        "- schedule window: "
-        f"{schedule_window['earliest_time']}~{schedule_window['latest_time']} "
-        f"({schedule_window['flow_backfill_conflict_guard']})"
+    slot_windows = ", ".join(
+        f"{item['slot']} {item['scheduled_time']}~{item['latest_time']}"
+        for item in schedule_window["slots"]
     )
+    print(f"- schedule windows: {slot_windows} ({schedule_window['flow_backfill_conflict_guard']})")
     if block_reasons:
         print("- schedule block reasons:")
         for reason in block_reasons:
@@ -16247,11 +16437,17 @@ def _run_market_briefing_readiness(
 
 def _market_briefing_schedule_window_payload() -> dict[str, object]:
     return {
-        "earliest_time": SCHEDULED_MARKET_BRIEFING_EARLIEST_TIME.strftime("%H:%M"),
-        "latest_time": SCHEDULED_MARKET_BRIEFING_LATEST_TIME.strftime("%H:%M"),
+        "slots": [
+            {
+                "slot": slot,
+                "scheduled_time": start.strftime("%H:%M"),
+                "latest_time": _market_briefing_slot_window(slot)[1].strftime("%H:%M"),
+            }
+            for slot, start in SCHEDULED_MARKET_BRIEFING_SLOT_TIMES.items()
+        ],
         "flow_backfill_time": "16:00",
         "flow_backfill_conflict_guard": (
-            "scheduled-market-briefing starts after the 16:00 KRX mentioned-stock flow backfill window"
+            "preclose slot ends before the 16:00 KRX mentioned-stock flow backfill window"
         ),
     }
 
@@ -18455,18 +18651,63 @@ def _build_market_briefing_message(
     business_date: date,
     limit: int,
     slot: str = "mood",
+    toss_quote_provider: object | None = None,
+    toss_context: dict[str, object] | None = None,
+    include_live_candidate_quotes: bool = False,
+    naver_quote_fetcher: Callable[..., StockQuoteSnapshot] | None = None,
+    candidate_stock_codes: tuple[str, ...] | None = None,
 ) -> str:
-    _ = config
     summaries = repository.list_daily_summaries(business_date)
     if not summaries:
         summaries = repository.rebuild_daily_summaries(business_date)
     report_count = sum(summary.mention_count for summary in summaries)
-    news_observation_lines = _build_market_briefing_news_observation_lines(repository, business_date)
+    requested_candidate_codes = tuple(
+        code for code in (candidate_stock_codes or ()) if re.fullmatch(r"\d{6}", code)
+    )
+    candidate_snapshot = build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=max(len(summaries), len(requested_candidate_codes), 2),
+    )
+    all_candidate_rows = [row for row in candidate_snapshot.get("rows", []) if isinstance(row, dict)]
+    if requested_candidate_codes:
+        rows_by_code = {str(row.get("stock_code") or "").strip(): row for row in all_candidate_rows}
+        candidate_rows = [rows_by_code[code] for code in requested_candidate_codes if code in rows_by_code][:2]
+    else:
+        candidate_rows = all_candidate_rows[:2]
+    effective_toss_context = toss_context or _build_market_briefing_toss_priority_context(
+        config,
+        repository,
+        business_date=business_date,
+        toss_quote_provider=toss_quote_provider,
+        candidate_rows=candidate_rows,
+    )
+    priority_lines = (
+        _build_market_briefing_priority_candidate_lines(
+            candidate_rows,
+            toss_context=effective_toss_context,
+            include_live_candidate_quotes=True,
+            naver_quote_fetcher=naver_quote_fetcher,
+            timeout_seconds=config.telegram_timeout_seconds,
+        )
+        if include_live_candidate_quotes
+        else []
+    )
+    news_observation_lines = _build_market_briefing_news_observation_lines(
+        repository,
+        business_date,
+        stock_codes=[str(row.get("stock_code") or "").strip() for row in candidate_rows],
+    )
     source_freshness_lines = _build_market_briefing_source_freshness_lines(
         repository,
         business_date,
         report_count=report_count,
+        toss_context=effective_toss_context,
+        summaries=summaries,
+        priority_stock_codes=tuple(str(row.get("stock_code") or "").strip() for row in candidate_rows),
     )
+    toss_quote_lines = _build_market_briefing_toss_priority_quote_lines(effective_toss_context)
     message = format_market_close_briefing_message(
         business_date,
         report_count=report_count,
@@ -18478,6 +18719,7 @@ def _build_market_briefing_message(
             business_date,
             summaries=summaries,
             stock_limit=limit,
+            priority_stock_codes=tuple(str(row.get("stock_code") or "").strip() for row in candidate_rows),
         ),
         notable_lines=_build_market_briefing_notable_lines(summaries, limit=limit),
         check_point_lines=_build_market_briefing_check_point_lines(repository, business_date),
@@ -18485,10 +18727,206 @@ def _build_market_briefing_message(
     message = _apply_market_briefing_slot_header(message, business_date=business_date, slot=slot)
     if news_observation_lines:
         message = _insert_market_briefing_section_before_check_points(message, news_observation_lines)
+    if priority_lines:
+        message = _insert_market_briefing_section_before_check_points(message, priority_lines)
+    if toss_quote_lines and not priority_lines:
+        message = _insert_market_briefing_section_before_check_points(message, toss_quote_lines)
     if source_freshness_lines:
         message = _insert_market_briefing_section_before_check_points(message, source_freshness_lines)
     _ensure_market_briefing_message_public_safe(message)
     return message
+
+
+def _build_market_briefing_toss_priority_context(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    business_date: date,
+    toss_quote_provider: object | None = None,
+    candidate_rows: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    if candidate_rows is None:
+        evidence = build_web_view_candidate_evidence_snapshot(
+            config,
+            repository,
+            business_date=business_date,
+            limit=2,
+        )
+        candidate_rows = [row for row in evidence.get("rows", []) if isinstance(row, dict)][:2]
+    symbols = tuple(
+        str(row.get("stock_code") or "").strip()
+        for row in candidate_rows
+        if re.fullmatch(r"\d{6}", str(row.get("stock_code") or "").strip())
+    )
+    names_by_symbol = {
+        str(row.get("stock_code") or "").strip(): str(row.get("stock_name") or "").strip()
+        for row in candidate_rows
+    }
+    provider = toss_quote_provider or TossPriorityQuoteProvider(
+        config=TossOpenApiLabConfig.from_env(config.root_dir)
+    )
+    try:
+        payload = provider.get_quotes(priority_date=business_date, symbols=symbols)
+    except RuntimeError:
+        payload = {
+            "configured": bool(getattr(provider, "configured", False)),
+            "live_fetch": False,
+            "priority_date": business_date.isoformat(),
+            "quotes": [],
+            "reason": "upstream_unavailable",
+        }
+    return {
+        "payload": payload,
+        "symbols": symbols,
+        "names_by_symbol": names_by_symbol,
+        "source_item": _market_briefing_toss_source_freshness_item(payload, business_date=business_date),
+    }
+
+
+def _build_market_briefing_priority_candidate_lines(
+    candidate_rows: list[dict[str, object]],
+    *,
+    toss_context: dict[str, object],
+    include_live_candidate_quotes: bool,
+    naver_quote_fetcher: Callable[..., StockQuoteSnapshot] | None,
+    timeout_seconds: float,
+) -> list[str]:
+    if not candidate_rows:
+        return []
+    quote_fetcher = naver_quote_fetcher or fetch_stock_quote_snapshot
+    toss_payload = toss_context.get("payload") if isinstance(toss_context.get("payload"), dict) else {}
+    toss_quotes = {
+        str(item.get("symbol") or "").strip(): item
+        for item in toss_payload.get("quotes", [])
+        if isinstance(item, dict) and str(item.get("symbol") or "").strip()
+    }
+    lines = ["우선 확인 후보"]
+    for index, row in enumerate(candidate_rows, start=1):
+        stock_code = str(row.get("stock_code") or "").strip()
+        stock_name = str(row.get("stock_name") or stock_code or "-").strip()
+        priority = str(row.get("observation_priority") or "확인 후보").strip()
+        value_profile = row.get("value_profile") if isinstance(row.get("value_profile"), dict) else {}
+        report_summary = row.get("report_summary") if isinstance(row.get("report_summary"), dict) else {}
+        reason = str(value_profile.get("value_reason") or "").strip()
+        if not reason:
+            reasons = [str(item) for item in row.get("why_notable") or [] if str(item).strip()]
+            reason = " · ".join(reasons[:2]) or "저장 리포트 근거를 확인합니다."
+        report_count = int(report_summary.get("report_count") or 0)
+        lines.append(f"{index}. {stock_name} {stock_code} · {priority}")
+        lines.append(f"- 관찰 사유: {reason} / 리포트 {report_count}건")
+
+        if include_live_candidate_quotes and stock_code:
+            try:
+                quote = quote_fetcher(stock_code, timeout_seconds=timeout_seconds)
+            except Exception:
+                lines.append("- 장중 참고: Naver 현재 참고값을 이번 회차에 확인하지 못했습니다.")
+            else:
+                lines.append(f"- 장중 참고: {_format_market_briefing_naver_quote(quote)}")
+
+        badge = row.get("news_observation_badge") if isinstance(row.get("news_observation_badge"), dict) else {}
+        news_label = str(badge.get("display_label") or badge.get("connection_label") or "뉴스 근거 수집 전").strip()
+        news_reason = str(badge.get("top_title") or badge.get("reason") or "").strip()
+        lines.append(f"- 뉴스 근거: {news_label}{f' · {news_reason}' if news_reason else ''}")
+
+        toss_quote = toss_quotes.get(stock_code)
+        toss_price = _safe_optional_int(toss_quote.get("lastPrice")) if toss_quote else None
+        if toss_price is not None:
+            checked_at = _market_briefing_toss_checked_time(
+                toss_quote.get("timestamp") or toss_payload.get("fetched_at")
+            )
+            line = f"- Toss 현재가: {toss_price:,}원"
+            if checked_at:
+                line += f" · 조회 {checked_at}"
+            lines.append(line)
+    return lines
+
+
+def _format_market_briefing_naver_quote(quote: StockQuoteSnapshot) -> str:
+    price = f"{quote.current_price:,}원" if quote.current_price is not None else "현재가 확인 불가"
+    change = _format_signed_percent(quote.prev_change_rate)
+    turnover = _format_krx_flow_amount(quote.trade_amount) if quote.trade_amount is not None else "거래대금 확인 불가"
+    status = _market_briefing_naver_market_status(quote.market_status)
+    checked_at = quote.trade_time.strftime("%H:%M") if quote.trade_time else None
+    parts = [price]
+    if change:
+        parts.append(change)
+    parts.append(f"거래대금 {turnover}")
+    if status:
+        parts.append(status)
+    if checked_at:
+        parts.append(f"확인 {checked_at}")
+    return " · ".join(parts)
+
+
+def _market_briefing_naver_market_status(value: object) -> str | None:
+    status = str(value or "").strip().upper()
+    if status in {"OPEN", "ACTIVE", "TRADING"}:
+        return "장중"
+    if status in {"CLOSE", "CLOSED", "AFTER_HOURS"}:
+        return "마감"
+    return str(value or "").strip() or None
+
+
+def _market_briefing_toss_source_freshness_item(payload: dict[str, object], *, business_date: date) -> dict[str, object]:
+    live_fetch = payload.get("live_fetch") is True
+    configured = payload.get("configured") is True
+    cache = str(payload.get("cache") or "").strip()
+    if live_fetch:
+        status = "stale" if cache == "stale" else "current"
+    elif configured and str(payload.get("reason") or "") == "upstream_unavailable":
+        status = "unavailable"
+    elif configured:
+        status = "missing"
+    else:
+        status = "disabled"
+    return {
+        "key": "toss_openapi",
+        "label": "Toss OpenAPI",
+        "source": "toss_openapi",
+        "status": status,
+        "reference_date": str(payload.get("priority_date") or business_date.isoformat()),
+        "exact_date_available": False,
+        "available": live_fetch,
+        "data_scope": "market_briefing_priority_top_2_quotes" if live_fetch else "not_called_or_unavailable",
+        "live_fetch": live_fetch,
+        "affects_ordering": False,
+        "notice": "Scheduled market briefing top-two current-price reference.",
+    }
+
+
+def _build_market_briefing_toss_priority_quote_lines(toss_context: dict[str, object]) -> list[str]:
+    payload = toss_context.get("payload") if isinstance(toss_context.get("payload"), dict) else {}
+    if payload.get("live_fetch") is not True:
+        if payload.get("configured") is True and payload.get("reason") == "upstream_unavailable":
+            return ["Toss 우선확인 현재가", "- 공급자 응답 없음"]
+        return []
+    names_by_symbol = toss_context.get("names_by_symbol")
+    if not isinstance(names_by_symbol, dict):
+        names_by_symbol = {}
+    quote_rows = payload.get("quotes") if isinstance(payload.get("quotes"), list) else []
+    fetched_at = payload.get("fetched_at")
+    lines: list[str] = []
+    for quote in quote_rows:
+        if not isinstance(quote, dict):
+            continue
+        symbol = str(quote.get("symbol") or "").strip()
+        if not symbol:
+            continue
+        last_price = _safe_optional_int(quote.get("lastPrice"))
+        if last_price is None:
+            continue
+        stock_name = str(names_by_symbol.get(symbol) or symbol)
+        checked_at = _market_briefing_toss_checked_time(quote.get("timestamp") or fetched_at)
+        line = f"- {stock_name} {last_price:,}원"
+        if checked_at:
+            line += f" · 조회 {checked_at}"
+        lines.append(line)
+    return ["Toss 우선확인 현재가", *lines] if lines else ["Toss 우선확인 현재가", "- 조회 결과 없음"]
+
+
+def _market_briefing_toss_checked_time(value: object) -> str | None:
+    raw = str(value or "").strip().replace("T", " ")
+    return raw[11:16] if len(raw) >= 16 and raw[11:16].count(":") == 1 else None
 
 
 def _build_market_briefing_source_freshness_summary(
@@ -18496,15 +18934,40 @@ def _build_market_briefing_source_freshness_summary(
     business_date: date,
     *,
     report_count: int | None = None,
+    toss_context: dict[str, object] | None = None,
+    summaries: list[DailyStockSummary] | None = None,
+    priority_stock_codes: tuple[str, ...] | list[str] | None = None,
 ) -> dict:
     if report_count is None:
         report_count = sum(summary.mention_count for summary in repository.list_daily_summaries(business_date))
-    return _build_web_view_source_freshness_summary(
+    summary = _build_web_view_source_freshness_summary(
         business_date=business_date,
         report_count=report_count,
         recent_krx_snapshot_dates=repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=1),
         recent_flow_dates=repository.list_recent_investor_flow_dates(on_or_before=business_date, limit=1),
+        investor_flow_item=(
+            _build_stock_flow_source_freshness_item(
+                repository,
+                business_date,
+                summaries=summaries,
+                priority_stock_codes=priority_stock_codes,
+            )
+            if summaries is not None
+            else None
+        ),
     )
+    if not toss_context:
+        return summary
+    toss_item = toss_context.get("source_item")
+    if not isinstance(toss_item, dict):
+        return summary
+    summary["items"] = [
+        toss_item if item.get("key") == "toss_openapi" else item
+        for item in summary.get("items", [])
+        if isinstance(item, dict)
+    ]
+    summary["live_fetch"] = toss_item.get("live_fetch") is True
+    return summary
 
 
 def _build_market_briefing_source_freshness_lines(
@@ -18512,11 +18975,17 @@ def _build_market_briefing_source_freshness_lines(
     business_date: date,
     *,
     report_count: int,
+    toss_context: dict[str, object] | None = None,
+    summaries: list[DailyStockSummary] | None = None,
+    priority_stock_codes: tuple[str, ...] | list[str] | None = None,
 ) -> list[str]:
     summary = _build_market_briefing_source_freshness_summary(
         repository,
         business_date,
         report_count=report_count,
+        toss_context=toss_context,
+        summaries=summaries,
+        priority_stock_codes=priority_stock_codes,
     )
     return _market_briefing_source_freshness_lines(summary)
 
@@ -18583,8 +19052,14 @@ def _build_market_briefing_news_observation_lines(
     business_date: date,
     *,
     limit: int = 3,
+    stock_codes: list[str] | tuple[str, ...] | None = None,
 ) -> list[str]:
-    summary = _build_web_view_news_observation_summary(repository, business_date, limit=limit)
+    summary = _build_web_view_news_observation_summary(
+        repository,
+        business_date,
+        limit=limit,
+        stock_codes=stock_codes,
+    )
     if not summary.get("available"):
         return []
     lines = ["뉴스 관찰 / 뉴스 근거"]
@@ -18747,130 +19222,6 @@ def _send_market_briefing_message(
     return str(message_id)
 
 
-def _run_scheduled_market_briefing(
-    config: RuntimeConfig,
-    repository: StockMonitorRepository,
-    *,
-    dry_run: bool,
-    allow_repeat: bool,
-    allow_late: bool,
-    limit: int,
-) -> int:
-    repository.initialize()
-    now = datetime.now(ZoneInfo(config.timezone))
-    today = now.date()
-    skip_reason = _scheduled_skip_reason(config, today, repository) or _operation_profile_skip_reason(
-        config,
-        repository,
-        component="market-briefing",
-    )
-    if skip_reason:
-        repository.record_operation_event(
-            _operation_event(
-                config,
-                component="market-briefing",
-                event_type="run-guard",
-                status="skipped",
-                business_date=today,
-                detail=skip_reason,
-            )
-        )
-        print(f"Skipping market briefing: {skip_reason}")
-        return 0
-    if not dry_run and not _effective_bool_setting(config, repository, MARKET_BRIEFING_PHONE_REVIEW_SETTING):
-        detail = (
-            "market_briefing_phone_review_accepted is false; run manual review sends and set the "
-            "operator setting only after phone readability is accepted."
-        )
-        repository.record_operation_event(
-            _operation_event(
-                config,
-                component="market-briefing",
-                event_type="run-guard",
-                status="skipped",
-                business_date=today,
-                detail=detail,
-            )
-        )
-        print(f"Skipping market briefing: {detail}")
-        return 0
-    if not dry_run:
-        manual_review_dates = _market_briefing_manual_review_dates(repository)
-        if len(manual_review_dates) < MARKET_BRIEFING_MIN_MANUAL_REVIEW_SENDS:
-            detail = (
-                f"market briefing requires {MARKET_BRIEFING_MIN_MANUAL_REVIEW_SENDS} recorded manual "
-                f"Telegram review sends before scheduled live send; found {len(manual_review_dates)}."
-            )
-            repository.record_operation_event(
-                _operation_event(
-                    config,
-                    component="market-briefing",
-                    event_type="run-guard",
-                    status="skipped",
-                    business_date=today,
-                    detail=detail,
-                )
-            )
-            print(f"Skipping market briefing: {detail}")
-            return 0
-    current_time = now.timetz().replace(tzinfo=None)
-    if current_time < SCHEDULED_MARKET_BRIEFING_EARLIEST_TIME:
-        detail = (
-            f"{now.strftime('%H:%M')} is before the configured market briefing window "
-            f"{SCHEDULED_MARKET_BRIEFING_EARLIEST_TIME.strftime('%H:%M')}~"
-            f"{SCHEDULED_MARKET_BRIEFING_LATEST_TIME.strftime('%H:%M')}."
-        )
-        repository.record_operation_event(
-            _operation_event(
-                config,
-                component="market-briefing",
-                event_type="time-window",
-                status="skipped",
-                business_date=today,
-                detail=detail,
-            )
-        )
-        print(f"Skipping market briefing: {detail}")
-        return 0
-    if not allow_late and current_time > SCHEDULED_MARKET_BRIEFING_LATEST_TIME:
-        detail = (
-            f"{now.strftime('%H:%M')} is after the configured market briefing window "
-            f"{SCHEDULED_MARKET_BRIEFING_EARLIEST_TIME.strftime('%H:%M')}~"
-            f"{SCHEDULED_MARKET_BRIEFING_LATEST_TIME.strftime('%H:%M')}."
-        )
-        repository.record_operation_event(
-            _operation_event(
-                config,
-                component="market-briefing",
-                event_type="late-run",
-                status="skipped",
-                business_date=today,
-                detail=detail,
-            )
-        )
-        print(f"Skipping market briefing: {detail}")
-        return 0
-
-    already_sent = repository.has_successful_delivery(today, MARKET_BRIEFING_DELIVERY_CHANNEL)
-    if not allow_repeat and already_sent:
-        print(f"Market briefing already sent for {today.isoformat()}; skipping.")
-        return 0
-
-    message = _build_market_briefing_message(config, repository, business_date=today, limit=limit)
-    if dry_run:
-        print(message)
-        return 0
-    message_id = _send_market_briefing_message(
-        config,
-        repository,
-        business_date=today,
-        message=message,
-        source="scheduled",
-    )
-    print(f"Market briefing sent with message_id={message_id}")
-    return 0
-
-
 def _run_scheduled_market_briefing_slot(
     config: RuntimeConfig,
     repository: StockMonitorRepository,
@@ -18924,6 +19275,7 @@ def _run_scheduled_market_briefing_slot(
         )
         print(f"Skipping market briefing {slot}: {detail}")
         return 0
+    news_collection: dict[str, object] = {"target_stock_codes": []}
     if not dry_run:
         manual_review_dates = _market_briefing_manual_review_dates(repository)
         if len(manual_review_dates) < MARKET_BRIEFING_MIN_MANUAL_REVIEW_SENDS:
@@ -18987,7 +19339,51 @@ def _run_scheduled_market_briefing_slot(
         print(f"Market briefing {slot} already sent for {today.isoformat()}; skipping.")
         return 0
 
-    message = _build_market_briefing_message(config, repository, business_date=today, limit=limit, slot=slot)
+    send_channel = delivery_channel
+    send_source = f"scheduled:{slot}"
+    if allow_repeat and already_sent:
+        send_channel = f"{delivery_channel}:repeat:{now.strftime('%Y%m%d%H%M%S')}"
+        send_source = f"scheduled:{slot}:repeat"
+
+    if not dry_run:
+        news_collection = _collect_scheduled_market_briefing_news_observations(
+            config,
+            repository,
+            business_date=today,
+            limit=min(max(limit, 1), 2),
+        )
+        collection_status = "completed" if news_collection.get("ok") else "failed"
+        collection_detail = (
+            f"saved_observation_count={int(news_collection.get('saved_observation_count') or 0)}; "
+            f"saved_evidence_count={int(news_collection.get('saved_evidence_count') or 0)}"
+        )
+        if news_collection.get("error"):
+            collection_detail += f"; error={str(news_collection['error'])}"
+        repository.record_operation_event(
+            _operation_event(
+                config,
+                component=component,
+                event_type="news-observation-collect",
+                status=collection_status,
+                business_date=today,
+                detail=collection_detail,
+            )
+        )
+
+    candidate_stock_codes = tuple(
+        str(code).strip()
+        for code in news_collection.get("target_stock_codes") or []
+        if re.fullmatch(r"\d{6}", str(code).strip())
+    )
+    message = _build_market_briefing_message(
+        config,
+        repository,
+        business_date=today,
+        limit=limit,
+        slot=slot,
+        include_live_candidate_quotes=True,
+        candidate_stock_codes=candidate_stock_codes or None,
+    )
     if dry_run:
         print(message)
         return 0
@@ -18996,8 +19392,8 @@ def _run_scheduled_market_briefing_slot(
         repository,
         business_date=today,
         message=message,
-        source=f"scheduled:{slot}",
-        channel=delivery_channel,
+        source=send_source,
+        channel=send_channel,
     )
     print(f"Market briefing {slot} sent with message_id={message_id}")
     return 0
@@ -20764,6 +21160,35 @@ def _collect_web_view_browser_render_smoke_issues(
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             try:
+                preview_context = browser.new_context(viewport={"width": 1366, "height": 900})
+                try:
+                    preview_page = preview_context.new_page()
+                    preview_page.goto(
+                        f"{base_url}/v2?date={business_date.isoformat()}",
+                        wait_until="domcontentloaded",
+                        timeout=timeout_ms,
+                    )
+                    preview_page.wait_for_selector("#v2-candidate-list", timeout=timeout_ms)
+                    preview_page.wait_for_function(
+                        """
+                        () => !String(document.querySelector('#v2-candidate-list')?.textContent || '')
+                          .includes('후보를 불러오는 중입니다.')
+                        """,
+                        timeout=timeout_ms,
+                    )
+                    v2_runtime_error = "불러오기 오류:" in preview_page.locator("#v2-candidate-list").inner_text(
+                        timeout=timeout_ms
+                    )
+                    if v2_runtime_error:
+                        issues.append(
+                            {
+                                "code": "v2_preview_runtime_error",
+                                "path": "/v2",
+                                "message": "web-view v2 candidate layer reported a runtime error",
+                            }
+                        )
+                finally:
+                    preview_context.close()
                 for spec in viewport_specs:
                     context = browser.new_context(viewport={"width": spec["width"], "height": spec["height"]})
                     page = context.new_page()
@@ -20849,6 +21274,52 @@ def _collect_web_view_browser_render_smoke_issues(
                                 stock_search_flow["clicked_visible_result"] = True
                                 detail_text = page.locator("#stock-detail").inner_text(timeout=timeout_ms)
                                 stock_search_flow["visible_empty_state"] = "선택 날짜에 등록된 리포트가 없습니다." in detail_text
+                        candidate_journey_flow = {
+                            "candidate_action_found": False,
+                            "stock_observation_journey_visible": False,
+                            "journey_market_current": False,
+                            "journey_rotation_current": False,
+                        }
+                        page.locator('[data-view-tab="watch"]').click(timeout=timeout_ms)
+                        page.wait_for_timeout(250)
+                        candidate_action = page.locator("#candidate-evidence-rows .candidate-detail-action").first
+                        if candidate_action.count():
+                            candidate_journey_flow["candidate_action_found"] = True
+                            candidate_code = candidate_action.get_attribute("data-stock-code") or ""
+                            candidate_action.click(timeout=timeout_ms)
+                            if candidate_code:
+                                page.wait_for_function(
+                                    """
+                                    (stockCode) => {
+                                      const searchInput = document.getElementById("stock-search-input");
+                                      const journey = document.querySelector("#stock-context .stock-observation-journey");
+                                      return Boolean(journey && searchInput && searchInput.value.includes(stockCode));
+                                    }
+                                    """,
+                                    arg=candidate_code,
+                                    timeout=timeout_ms,
+                                )
+                            else:
+                                page.wait_for_selector("#stock-context .stock-observation-journey", timeout=timeout_ms)
+                            candidate_journey_flow["stock_observation_journey_visible"] = page.locator(
+                                "#stock-context .stock-observation-journey"
+                            ).is_visible()
+                            market_action = page.locator('#stock-context [data-journey-view="market"]').first
+                            if market_action.count():
+                                market_action.dispatch_event("click")
+                                page.wait_for_timeout(250)
+                                candidate_journey_flow["journey_market_current"] = (
+                                    page.locator('[data-view-tab="market"]').get_attribute("aria-current") == "page"
+                                )
+                            page.locator('[data-view-tab="stock"]').click(timeout=timeout_ms)
+                            page.wait_for_timeout(250)
+                            rotation_action = page.locator('#stock-context [data-journey-view="rotation"]').first
+                            if rotation_action.count():
+                                rotation_action.dispatch_event("click")
+                                page.wait_for_timeout(250)
+                                candidate_journey_flow["journey_rotation_current"] = (
+                                    page.locator('[data-view-tab="rotation"]').get_attribute("aria-current") == "page"
+                                )
                         page.locator('[data-view-tab="market"]').click(timeout=timeout_ms)
                         page.wait_for_timeout(250)
                         market_panel_visible = page.locator("#market-reference-card").is_visible()
@@ -20878,6 +21349,7 @@ def _collect_web_view_browser_render_smoke_issues(
                             "watch_observation_summary_visible": watch_observation_summary_visible,
                             "stock_panel_clickable": stock_panel_visible,
                             "stock_search_flow": stock_search_flow,
+                            "candidate_journey_flow": candidate_journey_flow,
                             "market_panel_clickable": market_panel_visible,
                             "rotation_panel_clickable": rotation_panel_visible,
                             "watch_tab_current": watch_tab_current,
@@ -21004,6 +21476,36 @@ def _collect_web_view_browser_render_smoke_issues(
                                     "code": "stock_search_empty_state_api_missing",
                                     "path": f"viewport[{spec['name']}].stock_search",
                                     "message": "stored no-report stock did not expose report_empty_state through stock detail API",
+                                }
+                            )
+                        if candidate_journey_flow["candidate_action_found"] and not candidate_journey_flow[
+                            "stock_observation_journey_visible"
+                        ]:
+                            issues.append(
+                                {
+                                    "code": "candidate_journey_missing_in_stock_detail",
+                                    "path": f"viewport[{spec['name']}].candidate_journey",
+                                    "message": "candidate detail action did not preserve observation context in stock detail",
+                                }
+                            )
+                        if candidate_journey_flow["candidate_action_found"] and not candidate_journey_flow[
+                            "journey_market_current"
+                        ]:
+                            issues.append(
+                                {
+                                    "code": "candidate_journey_market_navigation_failed",
+                                    "path": f"viewport[{spec['name']}].candidate_journey",
+                                    "message": "candidate journey market action did not activate the market tab",
+                                }
+                            )
+                        if candidate_journey_flow["candidate_action_found"] and not candidate_journey_flow[
+                            "journey_rotation_current"
+                        ]:
+                            issues.append(
+                                {
+                                    "code": "candidate_journey_rotation_navigation_failed",
+                                    "path": f"viewport[{spec['name']}].candidate_journey",
+                                    "message": "candidate journey rotation action did not activate the rotation tab",
                                 }
                             )
                         if (
@@ -22503,6 +23005,7 @@ def _collect_web_view_news_observations(
         "target_stock_count": int(raw_payload.get("target_stock_count") or 0),
         "saved_observation_count": int(raw_payload.get("saved_observation_count") or 0),
         "saved_evidence_count": int(raw_payload.get("saved_evidence_count") or 0),
+        "target_stock_codes": stock_codes,
         "news_observation_summary": summary,
         "warnings": list(raw_payload.get("warnings") or [])[:10],
     }
@@ -22524,6 +23027,28 @@ def _collect_web_view_news_observations(
         )
     payload["items"] = items
     return (HTTPStatus.OK if ok else HTTPStatus.BAD_GATEWAY), payload
+
+
+def _collect_scheduled_market_briefing_news_observations(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    business_date: date,
+    limit: int,
+) -> dict[str, object]:
+    status, payload = _collect_web_view_news_observations(
+        config,
+        repository,
+        business_date=business_date,
+        limit=min(max(limit, 1), 2),
+    )
+    return {
+        "ok": status == HTTPStatus.OK and payload.get("ok") is True,
+        "saved_observation_count": int(payload.get("saved_observation_count") or 0),
+        "saved_evidence_count": int(payload.get("saved_evidence_count") or 0),
+        "target_stock_codes": list(payload.get("target_stock_codes") or []),
+        "error": payload.get("error"),
+    }
 
 
 def _resolve_web_view_scrapling_exe(config: RuntimeConfig) -> Path | None:
@@ -24346,6 +24871,13 @@ def _render_web_view_v2_html() -> str:
     const validDate = (value) => /^\\d{4}-\\d{2}-\\d{2}$/.test(String(value || ""));
     const validStockCode = (value) => /^\\d{6}$/.test(String(value || ""));
 
+    function newsCautionCountText(direct, caution, label = "") {
+      const directCount = Number(direct || 0);
+      const cautionCount = Number(caution || 0);
+      const cautionWord = directCount > 0 && !String(label || "").startsWith("주의") ? "보조 확인" : "주의";
+      return `${cautionWord} ${number(cautionCount)}`;
+    }
+
     async function fetchJson(path) {
       const response = await fetch(path, { cache: "no-store" });
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
@@ -24847,6 +25379,16 @@ def _render_web_view_html() -> str:
     .detail-meta { color: var(--muted); font-size: 13px; }
     .stock-news-observation-detail { display: grid; gap: 6px; border-color: #e7d8bf; background: #fff; }
     .stock-news-observation-detail b { color: var(--accent); }
+    .stock-observation-journey { display: grid; gap: 7px; border-color: rgba(37,99,80,.28); background: #f3f8f3; }
+    .stock-observation-journey b { color: var(--accent); }
+    .stock-observation-journey span { color: var(--ink); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+    .journey-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+    .journey-link, .candidate-detail-action { border: 1px solid rgba(37,99,80,.26); border-radius: 999px; background: #fff; color: var(--accent); cursor: pointer; font: inherit; font-size: 12px; font-weight: 800; padding: 6px 9px; }
+    .journey-link:hover, .candidate-detail-action:hover { border-color: var(--accent); background: var(--accent-soft); }
+    .candidate-detail-action { margin-top: 10px; }
+    .target-progress-detail { display: grid; gap: 2px; margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+    .target-progress-detail b { color: var(--accent); font-size: 12px; }
+    .target-progress-detail span { color: var(--muted); font-size: 12px; }
     .stock-news-title-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; color: var(--ink); font-size: 12px; line-height: 1.45; }
     .stock-news-title-list li { overflow-wrap: anywhere; }
     .volume-bars { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 8px; align-items: end; min-height: 126px; margin-top: 8px; }
@@ -25047,7 +25589,7 @@ def _render_web_view_html() -> str:
           <p class="news-observation-summary-reason">날짜를 선택하면 저장된 뉴스 관찰을 확인합니다.</p>
           <p class="news-observation-summary-connection">우선 확인 후보와 함께 읽는 뉴스 근거입니다.</p>
           <div class="news-observation-actions">
-            <button id="news-observation-collect" class="ghost-button" type="button" disabled>뉴스 근거 저장</button>
+            <button id="news-observation-collect" class="ghost-button" type="button" disabled>뉴스 근거 새로 확인</button>
             <span id="news-observation-collect-status" class="muted">저장 뉴스 근거를 확인합니다.</span>
           </div>
         </div>
@@ -25368,6 +25910,7 @@ def _render_web_view_html() -> str:
     let tossPriorityRequestId = 0;
     let tossPriorityRows = [];
     let tossPriorityDate = null;
+    let mainPriorityCohort = { date: null, codes: [] };
     let newsObservationCollectLoading = false;
     let newsObservationCollectAttemptedKey = null;
     let showSingleReportStocks = false;
@@ -25385,6 +25928,7 @@ def _render_web_view_html() -> str:
     let stockSearchResults = [];
     let stockSearchRequestId = 0;
     let activeViewTab = "main";
+    let tossPriorityQuoteByCode = new Map();
 
     function setViewTab(tabName) {
       activeViewTab = tabName || "main";
@@ -25570,11 +26114,18 @@ def _render_web_view_html() -> str:
       document.getElementById("stock-search-results").hidden = true;
       const picked = stockSearchResults.find((item) => item.stock_code === stockCode)
         || (currentDailyData?.stocks || []).find((item) => item.stock_code === stockCode);
+      const pickedLabel = picked
+        ? `${picked.stock_name || "-"} ${picked.stock_code || ""}`.trim()
+        : stockCode;
       if (picked) {
-        document.getElementById("stock-search-input").value = `${picked.stock_name || "-"} ${picked.stock_code || ""}`.trim();
-        updateStockSearchStatus(`${picked.stock_name || "-"} ${picked.stock_code || ""}`.trim() + " 선택");
+        document.getElementById("stock-search-input").value = pickedLabel;
+        updateStockSearchStatus(pickedLabel + " 선택");
       }
+      setActiveStockSelection(stockCode, pickedLabel, "search");
       setViewTab("stock");
+      document.getElementById("stock-context").innerHTML = '<span class="muted">종목 상세를 불러오는 중입니다.</span>';
+      document.getElementById("stock-detail").innerHTML = '<span class="muted">저장 리포트를 불러오는 중입니다.</span>';
+      document.getElementById("report-filter-status").textContent = "종목 상세를 불러오는 중입니다.";
       loadStockDetail(selectedDate, stockCode, { scrollToDetail: true, userSelected: true }).then(() => {
         syncCategoryFromStock(picked);
       }).catch((error) => {
@@ -25668,8 +26219,8 @@ def _render_web_view_html() -> str:
       }
     }
 
-    async function loadCandidateEvidence(date) {
-      if (candidateEvidenceLoadedDate === date && currentCandidateEvidenceData) return;
+    async function loadCandidateEvidence(date, options = {}) {
+      if (!options.force && candidateEvidenceLoadedDate === date && currentCandidateEvidenceData) return;
       document.getElementById("candidate-evidence-date").textContent = `(${date})`;
       document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">관찰 후보를 불러오는 중입니다.</span>';
       const data = await fetch(`/api/candidate-evidence?date=${encodeURIComponent(date)}&limit=20`, { cache: "no-store" }).then((response) => response.json());
@@ -25879,11 +26430,14 @@ def _render_web_view_html() -> str:
       const status = String(item?.status || "missing");
       const reference = item?.reference_date ? `기준 ${item.reference_date}` : "기준일 없음";
       const count = item?.count !== undefined && item?.count !== null ? ` · ${number(item.count)}건` : "";
+      const coverage = item?.coverage_count !== undefined && item?.candidate_count !== undefined
+        ? ` · 후보 ${number(item.coverage_count)}/${number(item.candidate_count)}`
+        : "";
       const scope = item?.data_scope ? ` · ${item.data_scope}` : "";
       return `<div class="source-freshness-item">
         <b>${esc(item?.label || item?.key || "-")}</b>
         <span class="source-freshness-status ${esc(sourceFreshnessStatusClass(status))}">${esc(sourceFreshnessStatusLabel(status))}</span>
-        <span>${esc(reference)}${esc(count)}</span>
+        <span>${esc(reference)}${esc(count)}${esc(coverage)}</span>
         <span>${esc(item?.source || "-")}${esc(scope)}</span>
       </div>`;
     }
@@ -25891,6 +26445,7 @@ def _render_web_view_html() -> str:
     function sourceFreshnessStatusLabel(status) {
       if (status === "exact") return "선택일";
       if (status === "stale") return "최근 저장";
+      if (status === "partial") return "일부 최신";
       if (status === "ready") return "준비됨";
       if (status === "current") return "현재가";
       if (status === "disabled") return "비활성";
@@ -25900,6 +26455,7 @@ def _render_web_view_html() -> str:
 
     function sourceFreshnessStatusClass(status) {
       if (status === "stale") return "stale";
+      if (status === "partial") return "stale";
       if (status === "ready") return "ready";
       if (status === "current") return "current";
       if (status === "disabled") return "disabled";
@@ -26019,6 +26575,7 @@ def _render_web_view_html() -> str:
       const caution = Number(summary?.caution_count || 0);
       const marketContext = Number(summary?.market_context_count || 0);
       const krx = summary?.krx_reference_status || "missing";
+      const observedAt = newsObservationTimeLabel(summary);
       const titles = Array.isArray(summary?.top_titles) ? summary.top_titles.filter(Boolean).slice(0, 3) : [];
       const items = Array.isArray(summary?.items) ? summary.items.filter(Boolean).slice(0, 6) : [];
       const metaChips = newsObservationMetaChips(available, direct, caution, marketContext, krx, candidateOverlapNames);
@@ -26027,6 +26584,7 @@ def _render_web_view_html() -> str:
         <div class="news-observation-summary-head">
           <b>${esc(label)}</b>
           <span class="status-pill">저장 뉴스</span>
+          ${observedAt ? `<span class="muted">${esc(observedAt)}</span>` : ""}
         </div>
         <p class="news-observation-summary-reason">${esc(reason)}</p>
         <p class="news-observation-summary-connection">${esc(connection)}</p>
@@ -26044,8 +26602,9 @@ def _render_web_view_html() -> str:
       if (!button) return;
       button.disabled = !selectedDate || newsObservationCollectLoading;
       if (statusNode && !newsObservationCollectLoading) {
+        const observedAt = newsObservationTimeLabel(summary);
         statusNode.textContent = summary?.available === true
-          ? "저장 뉴스 근거가 반영되었습니다."
+          ? `저장 뉴스 근거가 반영되었습니다.${observedAt ? ` ${observedAt}` : ""}`
           : "저장 뉴스 근거가 없으면 자동으로 수집합니다.";
       }
     }
@@ -26065,6 +26624,29 @@ def _render_web_view_html() -> str:
         .slice(0, 2)
         .join(",");
       return `${selectedDate || ""}:${codes}`;
+    }
+
+    function selectStablePriorityRows(rows, businessDate) {
+      const availableRows = Array.isArray(rows) ? rows.filter(Boolean) : [];
+      const dateKey = String(businessDate || selectedDate || "");
+      if (mainPriorityCohort.date !== dateKey || !mainPriorityCohort.codes.length) {
+        mainPriorityCohort = {
+          date: dateKey,
+          codes: availableRows
+            .map((row) => String(row?.stock_code || "").trim())
+            .filter(Boolean)
+            .slice(0, 2),
+        };
+      }
+      const rowsByCode = new Map(
+        availableRows.map((row) => [String(row?.stock_code || "").trim(), row])
+      );
+      const pinnedRows = mainPriorityCohort.codes
+        .map((code) => rowsByCode.get(code))
+        .filter(Boolean);
+      if (pinnedRows.length) return pinnedRows;
+      mainPriorityCohort = { date: dateKey, codes: [] };
+      return availableRows.slice(0, 2);
     }
 
     function maybeAutoCollectNewsObservationForPriorityRows(rows) {
@@ -26097,7 +26679,7 @@ def _render_web_view_html() -> str:
         const payload = await response.json();
         if (!response.ok || payload.ok === false) throw new Error(payload.error || `HTTP ${response.status}`);
         if (payload.news_observation_summary) renderNewsObservationSummary(payload.news_observation_summary);
-        await loadCandidateEvidence(selectedDate);
+        await loadCandidateEvidence(selectedDate, { force: true });
         if (currentDailyData) {
           currentDailyData = {
             ...currentDailyData,
@@ -26117,12 +26699,14 @@ def _render_web_view_html() -> str:
 
     function newsObservationSummaryGroups(items) {
       const rows = Array.isArray(items) ? items.filter(Boolean) : [];
-      const priority = rows.filter((item) => Number(item?.direct_count || 0) > 0);
-      const caution = rows.filter((item) => Number(item?.direct_count || 0) <= 0 && Number(item?.caution_count || 0) > 0);
-      const others = rows.filter((item) => !priority.includes(item) && !caution.includes(item));
+      const conflict = rows.filter((item) => Number(item?.positive_direct_count || 0) > 0 && Number(item?.primary_caution_count || 0) > 0);
+      const priority = rows.filter((item) => Number(item?.positive_direct_count || 0) > 0 && !conflict.includes(item));
+      const caution = rows.filter((item) => Number(item?.primary_caution_count || 0) > 0 && !conflict.includes(item));
+      const others = rows.filter((item) => !priority.includes(item) && !caution.includes(item) && !conflict.includes(item));
       const groups = [];
       if (priority.length) groups.push({ title: "우선 뉴스 확인", items: priority });
       if (caution.length) groups.push({ title: "주의 뉴스 확인", items: caution });
+      if (conflict.length) groups.push({ title: "근거 엇갈림", items: conflict });
       if (!groups.length && others.length) groups.push({ title: "뉴스 참고", items: others });
       return groups;
     }
@@ -26138,7 +26722,14 @@ def _render_web_view_html() -> str:
       const stock = [item.stock_name, item.stock_code].filter(Boolean).join(" ");
       const label = item.display_label || "뉴스 근거 있음";
       const krx = krxNewsReferenceLabel(item.krx_reference_status);
-      const counts = `직접 ${number(item.direct_count || 0)} · ${newsCautionCountText(item.direct_count, item.caution_count, label)} · 시장맥락 ${number(item.market_context_count || 0)} · ${krx}`;
+      const observedAt = newsObservationTimeLabel(item);
+      const counts = [
+        `직접 ${number(item.direct_count || 0)}`,
+        newsCautionCountText(item.direct_count, item.caution_count, label),
+        `시장맥락 ${number(item.market_context_count || 0)}`,
+        krx,
+        observedAt
+      ].filter(Boolean).join(" · ");
       const title = item.top_title || item.reason || "";
       const content = `
         <b>${esc(stock || "-")} · ${esc(label)}</b>
@@ -26296,13 +26887,41 @@ def _render_web_view_html() -> str:
     function applyIntradayMarketTopToPriorityRows(commentary) {
       const reference = commentary?.intraday_market_top_reference || {};
       const items = Array.isArray(reference.items) ? reference.items : [];
-      if (!tossPriorityRows.length || !items.length) return;
+      const priorityQuoteReference = commentary?.intraday_quote_reference || {};
+      const priorityQuoteItems = Array.isArray(priorityQuoteReference.items) ? priorityQuoteReference.items : [];
+      if (!tossPriorityRows.length) return;
       const itemByCode = new Map(items.map((item) => [String(item?.stock_code || ""), item]));
+      const priorityQuoteByCode = new Map(
+        priorityQuoteItems.map((item) => [String(item?.stock_code || ""), item])
+      );
       const firstMarketStatus = items.find((item) => item?.market_status)?.market_status || reference.market_status || null;
       tossPriorityRows = tossPriorityRows.map((row) => {
         const code = String(row?.stock_code || "");
         const item = itemByCode.get(code);
         if (!item) {
+          const priorityQuote = priorityQuoteByCode.get(code);
+          if (priorityQuote) {
+            return {
+              ...row,
+              intraday_reference: {
+                available: true,
+                source_configured: true,
+                read_only: true,
+                live_fetch: priorityQuoteReference?.live_fetch === true,
+                scope: "priority_candidate_quote",
+                reference_time: priorityQuote.trade_time || null,
+                checked_at: priorityQuote.trade_time || null,
+                trade_time: priorityQuote.trade_time || null,
+                price: priorityQuote.current_price ?? null,
+                change_percent: priorityQuote.change_percent ?? null,
+                turnover: priorityQuote.trade_amount ?? null,
+                market_status: priorityQuote.market_status || null,
+                rank: null,
+                affects_ordering: false,
+                notice: "Naver 우선 후보 장중 참고",
+              },
+            };
+          }
           return {
             ...row,
             intraday_reference: topTwoIntradayReferenceForRow(row, reference, firstMarketStatus),
@@ -26330,6 +26949,13 @@ def _render_web_view_html() -> str:
         };
       });
       document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(tossPriorityRows);
+      tossPriorityRows.forEach((row) => {
+        const code = String(row?.stock_code || "");
+        const label = candidateIntradayReferenceLabel(row?.intraday_reference);
+        document.querySelectorAll("[data-intraday-reference]").forEach((node) => {
+          if (node.dataset.intradayReference === code) node.textContent = label;
+        });
+      });
     }
 
     function topTwoIntradayReferenceForRow(row, reference, marketStatus = null) {
@@ -26813,6 +27439,7 @@ def _render_web_view_html() -> str:
       const volumeItems = data.recent_volume_days?.items || [];
       const investorTabs = data.investor_flow_tabs || {};
       const targetTrail = data.target_price_trail || {};
+      const targetProgress = data.target_price_progress || {};
       const relatedContext = data.related_context || {};
       const newsObservationDetail = data.news_observation_detail || {};
       const volumeReference = data.recent_volume_days?.exact_date_available === false
@@ -26825,7 +27452,7 @@ def _render_web_view_html() -> str:
         ? `<div class="detail-item"><b>기간별 수급량 <span class="muted">최근 31일 저장값 · 구분: 주</span></b>${flowReference}${renderInvestorFlowPeriodSummary(investorTabs.retail_foreign_institution)}${renderInvestorFlowBars(investorTabs.retail_foreign_institution)}</div>`
         : `<div class="detail-item"><span class="detail-meta">${esc(investorTabs.notice || data.investor_flow?.notice || "수급 데이터가 없습니다.")}</span></div>`;
       const targetTrailBlock = targetTrail.available
-        ? `<div class="detail-item"><b>목표가 흐름 <span class="muted">저장 리포트 기준</span></b>${renderTargetPriceTrailRows(targetTrail.items)}</div>`
+        ? `<div class="detail-item"><b>목표가 흐름 <span class="muted">저장 리포트 기준</span></b>${renderTargetPriceTrailRows(targetTrail.items)}${targetProgressDetailLabel(targetProgress)}</div>`
         : `<div class="detail-item"><span class="detail-meta">${esc(targetTrail.notice || "저장된 목표가 흐름이 없습니다.")}</span></div>`;
       const relatedContextBlock = relatedContext.available
         ? `<div class="detail-item"><b>관련 업종/ETF 참고 <span class="muted">저장 분류 · 수동 ETF 매핑</span></b>${renderRelatedContext(relatedContext.categories)}</div>`
@@ -26850,12 +27477,48 @@ def _render_web_view_html() -> str:
       </div>`;
       document.getElementById("stock-context").innerHTML = `
         <div class="detail-item"><b>${esc(data.stock_name || "-")} ${esc(data.stock_code || "")} | ${market}</b></div>
+        ${renderStockCandidateJourney(data)}
         ${newsObservationBlock}
         ${targetTrailBlock}
         ${relatedContextBlock}
         ${periodFlow}
         ${dailyReference}
       `;
+    }
+
+    function targetProgressDetailLabel(progress) {
+      if (!progress?.validation_available) return "";
+      const minimum = progress.hit_min_horizon_days;
+      const maximum = progress.hit_max_horizon_days;
+      const parts = [
+        minimum === null || minimum === undefined ? "하단 목표 도달 확인 없음" : `하단 목표 도달 ${number(minimum)}거래일`,
+        maximum === null || maximum === undefined ? "상단 목표 도달 확인 없음" : `상단 목표 도달 ${number(maximum)}거래일`
+      ];
+      return `<div class="target-progress-detail"><b>저장 구간 도달 참고</b><span>${esc(parts.join(" · "))}</span></div>`;
+    }
+
+    function renderStockCandidateJourney(data) {
+      const candidate = (currentCandidateEvidenceData?.rows || []).find((item) => item?.stock_code === data?.stock_code);
+      if (!candidate) return "";
+      const layers = candidateEvidenceLayers(candidate);
+      const why = candidateCompactLabel(candidateWhyDisplayItems(layers.primary), 3) || "저장 근거 확인";
+      const quote = tossPriorityQuoteByCode.get(String(data.stock_code || "")) || "Toss 현재가 확인 전";
+      const valueProfile = candidate.value_profile || {};
+      const value = valueProfile.value_label
+        ? `${valueProfile.value_label}${valueProfile.value_reason ? ` · ${valueProfile.value_reason}` : ""}`
+        : "저장 근거 확인";
+      return `<div class="detail-item stock-observation-journey">
+        <b>현재 관찰 맥락</b>
+        <span>관찰 상태: ${esc(candidate.observation_priority || "확인 후보")} · ${esc(value)}</span>
+        <span>관찰 사유: ${esc(why)}</span>
+        <span>뉴스 근거: ${esc(candidateNewsCompactLine(candidate.news_observation_badge))}</span>
+        <span>장중 참고: ${esc(candidateIntradayReferenceLabel(candidate.intraday_reference))}</span>
+        <span>${esc(quote)} · ${esc(candidateTossBaselineCompactLine(candidate.toss_baseline_reference))}</span>
+        <div class="journey-actions">
+          <button class="journey-link" type="button" data-journey-view="market">시장 기준 보기</button>
+          <button class="journey-link" type="button" data-journey-view="rotation">관련 업종/ETF 보기</button>
+        </div>
+      </div>`;
     }
 
     function renderTargetPriceTrailRows(items) {
@@ -27073,8 +27736,10 @@ def _render_web_view_html() -> str:
         updateTossPriorityRefreshButton();
         return;
       }
-      document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(rows);
-      tossPriorityRows = rows.slice(0, 2);
+      const priorityRows = selectStablePriorityRows(rows, evidence?.business_date || selectedDate);
+      document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(priorityRows);
+      tossPriorityRows = priorityRows.slice(0, 2);
+      tossPriorityQuoteByCode = new Map();
       tossPriorityDate = evidence?.business_date || selectedDate;
       updateTossPriorityRefreshButton();
       maybeAutoCollectNewsObservationForPriorityRows(tossPriorityRows);
@@ -27084,8 +27749,18 @@ def _render_web_view_html() -> str:
         const targetMetrics = candidateTargetMetrics(report, item.target_price_progress);
         const market = candidateMarketInline(item.market_reference);
         const newsBadge = renderCandidateNewsBadge(item.news_observation_badge);
+        const valueProfile = item.value_profile || {};
+        const decisionLine = index < 2 && valueProfile.value_label
+          ? `<div class="candidate-priority-line"><b>판단 상태</b><span>${esc(valueProfile.value_label)}${valueProfile.value_reason ? ` · ${esc(valueProfile.value_reason)}` : ""}</span></div>`
+          : "";
         const intradayLine = index < 2
-          ? `<div class="candidate-intraday-line"><b>장중 참고</b><span>${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span></div>`
+          ? `<div class="candidate-intraday-line"><b>장중 참고</b><span data-intraday-reference="${esc(item.stock_code || "")}">${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span></div>`
+          : "";
+        const tossCurrentLine = index < 2
+          ? `<div class="candidate-priority-line"><b>Toss 현재가</b><span class="priority-toss-quote muted" data-toss-quote-context="watch" data-toss-quote="${esc(item.stock_code || "")}">확인 중</span></div>`
+          : "";
+        const tossBaselineLine = index < 2
+          ? `<div class="candidate-priority-line"><b>Toss 20:00</b><span>${esc(candidateTossBaselineCompactLine(item.toss_baseline_reference))}</span></div>`
           : "";
         const turnover = item.market_reference?.turnover
           ? compactTurnover(item.market_reference.turnover)
@@ -27110,7 +27785,10 @@ def _render_web_view_html() -> str:
         return `<article class="candidate-card" data-stock-code="${esc(item.stock_code || "")}">
           <h3><span class="candidate-title-stock"><span class="candidate-stock-name">${esc(item.stock_name || "-")}</span><span class="candidate-stock-code">${esc(item.stock_code || "")}</span></span><span class="candidate-title-separator" aria-hidden="true"></span>${market} <span class="status-pill">${esc(item.observation_priority || "확인 후보")}</span></h3>
           ${newsBadge}
+          ${decisionLine}
           ${intradayLine}
+          ${tossCurrentLine}
+          ${tossBaselineLine}
           <div class="candidate-quality-grid">
             <div class="quality-line"><b>왜 눈에 띄는지</b>${whyLine}</div>
             <div class="quality-line"><b>보조 근거</b>${supportLine}</div>
@@ -27121,6 +27799,7 @@ def _render_web_view_html() -> str:
             <span><b>목표가/지표</b>${targetMetrics}</span>
             <span><b>수급/순위</b>${candidateFlowMetrics(rank, turnover, flowLine)}</span>
           </div>
+          <button class="candidate-detail-action" type="button" data-stock-code="${esc(item.stock_code || "")}">종목 상세에서 근거 이어보기</button>
         </article>`;
       }).join("");
     }
@@ -27136,12 +27815,13 @@ def _render_web_view_html() -> str:
           : "근거 보강 필요";
         const newsLine = candidateNewsCompactLine(item.news_observation_badge);
         const tossBaselineLine = candidateTossBaselineCompactLine(item.toss_baseline_reference);
+        const tossQuote = tossPriorityQuoteByCode.get(String(item?.stock_code || ""));
         const valueProfile = item.value_profile || {};
         const valueLine = valueProfile.value_label
           ? `판단 상태: ${valueProfile.value_label}${valueProfile.value_reason ? ` · ${valueProfile.value_reason}` : ""}`
           : "판단 상태: 저장 근거 확인";
         return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
-          <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote="${esc(item.stock_code || "")}">Toss 현재가 확인 중</span></b>
+          <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote-context="main" data-toss-quote="${esc(item.stock_code || "")}">${esc(tossQuote || "Toss 현재가 확인 중")}</span></b>
           <span class="muted">관찰 사유: ${esc(why)}</span>
           <span>${esc(valueLine)}</span>
           <span>장중 참고: ${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span>
@@ -27157,19 +27837,26 @@ def _render_web_view_html() -> str:
       button.disabled = tossPriorityLoading || !validDate(tossPriorityDate) || !tossPriorityRows.length;
     }
 
+    function tossQuoteNodeLabel(node, label) {
+      if (node.dataset.tossQuoteContext !== "watch") return label;
+      return String(label || "").replace(/^Toss 현재가\\s*/, "") || "확인 중";
+    }
+
     function setTossQuoteNodes(label, className = "muted") {
       document.querySelectorAll("[data-toss-quote]").forEach((node) => {
-        node.textContent = label;
+        node.textContent = tossQuoteNodeLabel(node, label);
         node.className = `priority-toss-quote ${className}`.trim();
       });
     }
 
     function setTossQuoteNode(stockCode, label, className = "") {
-      const node = Array.from(document.querySelectorAll("[data-toss-quote]"))
-        .find((candidate) => candidate.dataset.tossQuote === String(stockCode || ""));
-      if (!node) return;
-      node.textContent = label;
-      node.className = `priority-toss-quote ${className}`.trim();
+      tossPriorityQuoteByCode.set(String(stockCode || ""), label);
+      document.querySelectorAll("[data-toss-quote]").forEach((node) => {
+        if (node.dataset.tossQuote !== String(stockCode || "")) return;
+        node.textContent = tossQuoteNodeLabel(node, label);
+        node.className = `priority-toss-quote ${className}`.trim();
+      });
+      if (currentStockDetailData?.stock_code === stockCode) renderStockContext(currentStockDetailData);
     }
 
     function updateTossSourceFreshness(data) {
@@ -27222,8 +27909,9 @@ def _render_web_view_html() -> str:
             setTossQuoteNode(code, "Toss 현재가 없음", "muted");
             return;
           }
+          const checkedAt = tossQuoteTimeLabel(quote, data);
           const label = quote.lastPrice !== null && quote.lastPrice !== undefined
-            ? `Toss 현재가 ${price(quote.lastPrice)}`
+            ? `Toss 현재가 ${price(quote.lastPrice)}${checkedAt ? ` · ${checkedAt}` : ""}`
             : "Toss 현재가 확인";
           setTossQuoteNode(code, label, data.cache === "stale" ? "stale" : "");
         });
@@ -27239,6 +27927,14 @@ def _render_web_view_html() -> str:
       }
     }
 
+    function tossQuoteTimeLabel(quote, payload) {
+      const raw = quote?.timestamp || payload?.fetched_at;
+      if (!raw) return "";
+      const value = String(raw).replace("T", " ");
+      const hhmm = value.slice(11, 16);
+      return hhmm ? `조회 ${hhmm}` : "";
+    }
+
     function candidateTossBaselineCompactLine(reference) {
       if (!reference || reference.available !== true) return "Toss 20:00 기준: 저장 전";
       const baselineTime = reference.baseline_time || "20:00";
@@ -27248,15 +27944,28 @@ def _render_web_view_html() -> str:
       return `Toss ${baselineTime} 기준: ${priceText}`;
     }
 
+    function newsObservationTimeLabel(badge) {
+      const raw = badge?.observed_at;
+      if (!raw) return "";
+      const value = String(raw).replace("T", " ");
+      const hhmm = value.slice(11, 16);
+      return hhmm ? `수집 ${hhmm}` : "";
+    }
+
     function candidateNewsCompactLine(badge) {
       if (!badge || badge.available !== true) return "뉴스 근거: 수집 전";
       const direct = Number(badge.direct_count || 0);
+      const positiveDirect = Number(badge.positive_direct_count || 0);
+      const primaryCaution = Number(badge.primary_caution_count || 0);
       const caution = Number(badge.caution_count || 0);
       const marketContext = Number(badge.market_context_count || 0);
       const parts = [];
       if (direct > 0) {
-        parts.push(`직접 뉴스 ${number(direct)}건`);
-        if (caution > 0) parts.push(`보조 확인 ${number(caution)}건`);
+        if (positiveDirect > 0) parts.push(`직접 긍정 ${number(positiveDirect)}건`);
+        if (primaryCaution > 0) parts.push(`직접 주의 ${number(primaryCaution)}건`);
+        if (positiveDirect <= 0 && primaryCaution <= 0) parts.push(`직접 뉴스 ${number(direct)}건`);
+        const supportCaution = Math.max(caution - primaryCaution, 0);
+        if (supportCaution > 0) parts.push(`보조 확인 ${number(supportCaution)}건`);
         if (marketContext > 0) parts.push(`시장맥락 ${number(marketContext)}건`);
       } else if (caution > 0) {
         parts.push(`주의 뉴스 ${number(caution)}건`);
@@ -27266,6 +27975,8 @@ def _render_web_view_html() -> str:
       } else {
         parts.push(candidateNewsPrimaryLabel(badge));
       }
+      const observedAt = newsObservationTimeLabel(badge);
+      if (observedAt) parts.push(observedAt);
       return `뉴스 근거: ${parts.join(" · ")}`;
     }
 
@@ -27298,6 +28009,8 @@ def _render_web_view_html() -> str:
         `시장맥락 ${number(badge.market_context_count || 0)}`,
         krxNewsReferenceLabel(badge.krx_reference_status)
       ];
+      const observedAt = newsObservationTimeLabel(badge);
+      if (observedAt) chips.push(observedAt);
       const title = badge.top_title || badge.reason || "";
       return `<div class="candidate-news-badge">${chips.map((item) => `<span class="quality-chip">${esc(item)}</span>`).join("")}${connectionReason ? `<span><b>연결</b> ${esc(connectionReason)}</span>` : ""}${title ? `<span><b>근거</b> ${esc(title)}</span>` : ""}</div>`;
     }
@@ -27915,6 +28628,16 @@ def _render_web_view_html() -> str:
       loadCategoryTrend(categoryType, publicCategoryId, displayName).catch((error) => {
         document.getElementById("category-trend-rows").innerHTML = `<tr><td colspan="3" class="muted">오류: ${esc(error)}</td></tr>`;
       });
+    });
+    document.addEventListener("click", (event) => {
+      const journeyTarget = event.target.closest("[data-journey-view]");
+      if (journeyTarget) {
+        const viewName = journeyTarget.dataset.journeyView;
+        if (!['market', 'rotation'].includes(viewName)) return;
+        setViewTab(viewName);
+        window.setTimeout(() => focusDetailCard(viewName === 'market' ? 'market-reference-card' : 'rotation-details'), 0);
+        return;
+      }
     });
     document.addEventListener("click", (event) => {
       const target = event.target.closest("[data-stock-code]");
@@ -28614,12 +29337,32 @@ def _overlay_web_view_daily_intraday_market_top(
     current = datetime.now(ZoneInfo(config.timezone))
     payload = dict(base_snapshot)
     summaries = _web_view_daily_summaries_from_snapshot(payload, business_date=business_date, generated_at=current)
+    priority_snapshot = build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=2,
+    )
+    summaries_by_code = {str(summary.stock_code or "").strip(): summary for summary in summaries}
+    priority_summaries = [
+        summaries_by_code[stock_code]
+        for stock_code in (
+            str(row.get("stock_code") or "").strip()
+            for row in priority_snapshot.get("rows", [])
+            if isinstance(row, dict)
+        )
+        if stock_code in summaries_by_code
+    ][:2]
     market_commentary = _build_market_commentary_practice_snapshot(
         config,
         repository,
         business_date,
         summaries=summaries,
         market_briefing=payload.get("market_briefing") if isinstance(payload.get("market_briefing"), dict) else None,
+        include_intraday_quotes=bool(priority_summaries),
+        intraday_quote_limit=len(priority_summaries),
+        intraday_quote_delay_seconds=0,
+        intraday_quote_summaries=priority_summaries,
         include_intraday_market_top=True,
         intraday_market_top_limit=limit,
         intraday_market_top_page_size=page_size,
@@ -28715,12 +29458,24 @@ def build_web_view_daily_snapshot(
     watch_candidates = _build_web_view_watch_candidates(summaries)
     recent_krx_snapshot_dates = repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=3)
     recent_flow_dates = repository.list_recent_investor_flow_dates(on_or_before=business_date, limit=1)
+    priority_candidate_snapshot = build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=3,
+    )
+    priority_stock_codes = [
+        str(row.get("stock_code") or "").strip()
+        for row in priority_candidate_snapshot.get("rows", [])
+        if isinstance(row, dict) and str(row.get("stock_code") or "").strip()
+    ]
     market_briefing = _build_web_view_market_briefing_context(
         repository,
         business_date,
         summaries=summaries,
         recent_krx_snapshot_dates=recent_krx_snapshot_dates[:1],
         recent_flow_dates=recent_flow_dates,
+        priority_stock_codes=priority_stock_codes,
     )
     observation_summary = _build_web_view_observation_summary(
         repository,
@@ -28744,7 +29499,11 @@ def build_web_view_daily_snapshot(
         current_date_for_intraday_market_top=current.date(),
         checked_at=current,
     )
-    news_observation_summary = _build_web_view_news_observation_summary(repository, business_date)
+    news_observation_summary = _build_web_view_news_observation_summary(
+        repository,
+        business_date,
+        stock_codes=priority_stock_codes,
+    )
     market_briefing["news_observation_summary"] = news_observation_summary
     report_count = sum(summary.mention_count for summary in summaries)
     krx_context = _build_web_view_krx_context(repository, business_date)
@@ -28754,12 +29513,19 @@ def build_web_view_daily_snapshot(
         recent_snapshot_dates=recent_krx_snapshot_dates,
     )
     krx_investor_flow = _build_web_view_krx_investor_flow_context(repository, business_date)
+    investor_flow_item = _build_stock_flow_source_freshness_item(
+        repository,
+        business_date,
+        summaries=summaries,
+        priority_stock_codes=priority_stock_codes,
+    )
     source_freshness_summary = _build_web_view_source_freshness_summary(
         business_date=business_date,
         report_count=report_count,
         recent_krx_snapshot_dates=recent_krx_snapshot_dates,
         recent_flow_dates=recent_flow_dates,
         toss_openapi_ready=_web_view_toss_openapi_ready(config),
+        investor_flow_item=investor_flow_item,
     )
     return {
         "now": current.isoformat(),
@@ -28840,6 +29606,7 @@ def _build_web_view_source_freshness_summary(
     recent_krx_snapshot_dates: list[date],
     recent_flow_dates: list[date],
     toss_openapi_ready: bool = False,
+    investor_flow_item: dict[str, object] | None = None,
 ) -> dict:
     krx_reference_date = recent_krx_snapshot_dates[0] if recent_krx_snapshot_dates else None
     flow_reference_date = recent_flow_dates[0] if recent_flow_dates else None
@@ -28883,7 +29650,8 @@ def _build_web_view_source_freshness_summary(
                 data_scope="stored_krx_etf_daily_snapshot",
                 notice="Stored ETF daily turnover/NAV reference only; constituents are not loaded.",
             ),
-            _web_view_source_freshness_item(
+            investor_flow_item
+            or _web_view_source_freshness_item(
                 key="investor_flow",
                 label="Investor flow",
                 source="krx_data_market",
@@ -28964,6 +29732,7 @@ def _build_web_view_market_briefing_context(
     summaries: list[DailyStockSummary],
     recent_krx_snapshot_dates: list[date] | None = None,
     recent_flow_dates: list[date] | None = None,
+    priority_stock_codes: tuple[str, ...] | list[str] | None = None,
 ) -> dict:
     snapshot_dates = (
         recent_krx_snapshot_dates
@@ -29019,6 +29788,7 @@ def _build_web_view_market_briefing_context(
         reference_date=flow_reference_date,
         market_rows=flow_market_rows,
         summaries=summaries,
+        priority_stock_codes=priority_stock_codes,
     )
     check_point_lines = _web_view_market_briefing_check_point_lines_from_cached(
         business_date,
@@ -29319,6 +30089,7 @@ def _web_view_flow_reference_lines_from_rows(
     reference_date: date | None,
     market_rows: list[MarketInvestorFlowDaily],
     summaries: list[DailyStockSummary],
+    priority_stock_codes: tuple[str, ...] | list[str] | None = None,
 ) -> list[str]:
     if reference_date is None or not market_rows:
         return _build_stock_flow_briefing_reference_lines(
@@ -29326,6 +30097,7 @@ def _web_view_flow_reference_lines_from_rows(
             business_date,
             summaries=summaries,
             limit=3,
+            priority_stock_codes=priority_stock_codes,
         )
     by_investor = {row.investor_type: row for row in market_rows}
     pieces: list[str] = []
@@ -29340,6 +30112,7 @@ def _web_view_flow_reference_lines_from_rows(
             business_date,
             summaries=summaries,
             limit=3,
+            priority_stock_codes=priority_stock_codes,
         )
     suffix = "" if reference_date == business_date else " / 리포트일 전 최신"
     return [
@@ -29551,25 +30324,41 @@ def _build_web_view_news_observation_summary(
     business_date: date,
     *,
     limit: int = 3,
+    stock_codes: list[str] | tuple[str, ...] | None = None,
 ) -> dict:
-    runs = repository.list_news_intelligence_runs(target_date=business_date, limit=20)
-    representative_runs: list[NewsIntelligenceRun] = []
-    seen_keys: set[str] = set()
+    requested_codes = [str(stock_code).strip() for stock_code in stock_codes or () if str(stock_code).strip()]
+    requested_code_set = set(requested_codes)
+    runs = repository.list_news_intelligence_runs(target_date=business_date, limit=100)
+    runs_by_key: dict[str, list[NewsIntelligenceRun]] = {}
     for run in runs:
-        key = run.stock_code or run.stock_name
-        if key in seen_keys:
+        if requested_code_set and run.stock_code not in requested_code_set:
             continue
-        seen_keys.add(key)
-        representative_runs.append(run)
-        if len(representative_runs) >= max(limit, 1):
-            break
+        key = run.stock_code or run.stock_name
+        if not key:
+            continue
+        runs_by_key.setdefault(key, []).append(run)
 
+    keys = requested_codes if requested_codes else list(runs_by_key)
+    representative_runs: list[NewsIntelligenceRun] = []
     evidence_rows: list[ReportLinkedNewsEvidenceRecord] = []
     evidence_rows_by_key: dict[str, list[ReportLinkedNewsEvidenceRecord]] = {}
-    for run in representative_runs:
-        rows = repository.list_report_linked_news_evidence(run_id=run.run_id, limit=20)
+    for key in keys[: max(limit, 1)]:
+        grouped_runs = runs_by_key.get(key, [])
+        if not grouped_runs:
+            continue
+        representative_run = max(grouped_runs, key=lambda run: (run.created_at, run.run_id))
+        representative_runs.append(representative_run)
+        rows = _web_view_unique_news_evidence_rows(
+            [
+                row
+                for run in grouped_runs
+                for row in repository.list_report_linked_news_evidence(run_id=run.run_id, limit=100)
+            ]
+        )
         evidence_rows.extend(rows)
-        evidence_rows_by_key[run.stock_code or run.stock_name] = rows
+        evidence_rows_by_key[key] = rows
+
+    evidence_rows = _web_view_unique_news_evidence_rows(evidence_rows)
 
     if not representative_runs:
         return {
@@ -29587,6 +30376,7 @@ def _build_web_view_news_observation_summary(
             "caution_count": 0,
             "market_context_count": 0,
             "krx_reference_status": "missing",
+            "observed_at": None,
             "top_titles": [],
             "items": [],
             "empty_state": "뉴스 근거 수집 전",
@@ -29601,7 +30391,19 @@ def _build_web_view_news_observation_summary(
     primary_caution_count = _web_view_news_observation_primary_caution_count(evidence_rows)
     market_context_count = sum(1 for row in evidence_rows if row.relevance == "market_context")
     krx_reference_status = _web_view_news_observation_krx_status(evidence_rows, business_date)
-    candidate_overlap_names = _web_view_news_candidate_overlap_names(evidence_rows, limit=3)
+    evidence_direction, evidence_direction_reason = _web_view_news_evidence_direction(
+        direct_count=direct_count,
+        positive_direct_count=positive_direct_count,
+        primary_caution_count=primary_caution_count,
+    )
+    candidate_overlap_names = (
+        _web_view_unique_texts(
+            [row.stock_name for row in evidence_rows if row.stock_code in requested_code_set],
+            limit=3,
+        )
+        if requested_code_set
+        else _web_view_news_candidate_overlap_names(evidence_rows, limit=3)
+    )
     top_titles = _web_view_unique_texts([row.title for row in evidence_rows], limit=3)
     items = [
         _web_view_news_observation_summary_item(
@@ -29618,7 +30420,7 @@ def _build_web_view_news_observation_summary(
         connection_reason = "수집은 실행됐고, 선택 날짜의 후보와 직접 연결된 뉴스는 없었습니다."
         connection_note = "뉴스 수집 결과 매칭 0건입니다."
     else:
-        display_label, reason = _web_view_news_observation_label(
+        display_label, reason = _web_view_news_observation_connection(
             direct_count=direct_count,
             caution_count=caution_count,
             positive_direct_count=positive_direct_count,
@@ -29626,14 +30428,7 @@ def _build_web_view_news_observation_summary(
             market_context_count=market_context_count,
             krx_reference_status=krx_reference_status,
         )
-        connection_label, connection_reason = _web_view_news_observation_connection(
-            direct_count=direct_count,
-            caution_count=caution_count,
-            positive_direct_count=positive_direct_count,
-            primary_caution_count=primary_caution_count,
-            market_context_count=market_context_count,
-            krx_reference_status=krx_reference_status,
-        )
+        connection_label, connection_reason = display_label, reason
         connection_note = (
             "우선 확인 후보와 겹친 뉴스 근거: " + ", ".join(candidate_overlap_names)
             if candidate_overlap_names
@@ -29651,9 +30446,16 @@ def _build_web_view_news_observation_summary(
         "candidate_overlap_count": len(candidate_overlap_names),
         "candidate_overlap_names": candidate_overlap_names,
         "direct_count": direct_count,
+        "positive_direct_count": positive_direct_count,
+        "primary_caution_count": primary_caution_count,
         "caution_count": caution_count,
         "market_context_count": market_context_count,
         "krx_reference_status": krx_reference_status,
+        "observed_at": max(
+            [row.created_at for row in evidence_rows] + [run.created_at for run in representative_runs]
+        ).isoformat(),
+        "evidence_direction": evidence_direction,
+        "evidence_direction_reason": evidence_direction_reason,
         "top_titles": top_titles,
         "items": items,
         "missing_context": [],
@@ -29679,6 +30481,7 @@ def _web_view_news_observation_summary_item(
             "caution_count": 0,
             "market_context_count": 0,
             "krx_reference_status": "missing",
+            "observed_at": run.created_at.isoformat(),
             "top_title": None,
             "connection_label": "매칭 뉴스 없음",
             "connection_reason": "수집은 실행됐고, 선택 날짜의 후보와 직접 연결된 뉴스는 없었습니다.",
@@ -29691,9 +30494,14 @@ def _web_view_news_observation_summary_item(
         "display_label": badge["display_label"],
         "reason": badge["reason"],
         "direct_count": badge["direct_count"],
+        "positive_direct_count": badge["positive_direct_count"],
+        "primary_caution_count": badge["primary_caution_count"],
         "caution_count": badge["caution_count"],
         "market_context_count": badge["market_context_count"],
         "krx_reference_status": badge["krx_reference_status"],
+        "observed_at": max([run.created_at, *(row.created_at for row in rows)]).isoformat(),
+        "evidence_direction": badge["evidence_direction"],
+        "evidence_direction_reason": badge["evidence_direction_reason"],
         "top_title": badge["top_title"],
         "connection_label": badge["connection_label"],
         "connection_reason": badge["connection_reason"],
@@ -29728,6 +30536,32 @@ def _web_view_news_observation_primary_caution_count(rows: list[ReportLinkedNews
     return sum(1 for row in rows if _web_view_news_observation_is_primary_caution(row))
 
 
+def _web_view_news_evidence_direction(
+    *,
+    direct_count: int,
+    positive_direct_count: int,
+    primary_caution_count: int,
+) -> tuple[str, str]:
+    if positive_direct_count > 0 and primary_caution_count > 0:
+        return (
+            "직접 근거 상충",
+            f"직접 긍정 뉴스 {positive_direct_count}건과 직접 주의 뉴스 {primary_caution_count}건이 함께 있습니다.",
+        )
+    if positive_direct_count > 0:
+        return (
+            "상승 근거 우세",
+            f"직접 긍정 뉴스 {positive_direct_count}건이 직접 주의 뉴스보다 우세합니다.",
+        )
+    if primary_caution_count > 0:
+        return (
+            "하방 위험 우세",
+            f"직접 주의 뉴스 {primary_caution_count}건이 있어 리포트 근거를 다시 확인합니다.",
+        )
+    if direct_count > 0:
+        return "직접 근거 중립", f"직접 연결 뉴스 {direct_count}건은 있으나 방향 근거가 분명하지 않습니다."
+    return "직접 근거 부족", "후보와 직접 연결된 방향 근거가 아직 부족합니다."
+
+
 def _web_view_news_observation_krx_status(
     rows: list[ReportLinkedNewsEvidenceRecord],
     business_date: date,
@@ -29758,28 +30592,6 @@ def _web_view_news_candidate_overlap_names(
         if len(names) >= max(limit, 0):
             break
     return names
-
-
-def _web_view_news_observation_label(
-    *,
-    direct_count: int,
-    caution_count: int,
-    positive_direct_count: int,
-    primary_caution_count: int,
-    market_context_count: int,
-    krx_reference_status: str,
-) -> tuple[str, str]:
-    if primary_caution_count > 0 and positive_direct_count <= 0:
-        return "주의 뉴스 확인", "주의 문구가 있어 리포트 근거와 함께 확인합니다."
-    if direct_count > 0:
-        return "뉴스로 후보 강화", "직접 뉴스가 있어 후보 확인 근거를 보강합니다."
-    if caution_count > 0:
-        return "주의 뉴스 확인", "주의 문구가 있어 리포트 근거와 함께 확인합니다."
-    if krx_reference_status == "stale":
-        return "KRX 기준일 확인 필요", "KRX 기준일이 선택 날짜와 달라 시장 반응 확인이 필요합니다."
-    if market_context_count > 0:
-        return "시장 맥락 참고", "시장/업종 맥락 중심이라 종목 직접 근거로 과신하지 않습니다."
-    return "뉴스 근거 부족", "저장된 뉴스가 있지만 직접 판단 근거는 부족합니다."
 
 
 def _web_view_news_observation_connection(
@@ -30906,7 +31718,10 @@ def _web_view_candidate_news_badges_by_code(
         )
     return {
         stock_code: (
-            _web_view_candidate_news_badge(rows, business_date=business_date)
+            _web_view_candidate_news_badge(
+                rows,
+                business_date=business_date,
+            )
             if rows
             else _web_view_collected_empty_candidate_news_badge()
             if collected_without_evidence_by_code.get(stock_code)
@@ -30931,6 +31746,7 @@ def _web_view_empty_candidate_news_badge() -> dict[str, object]:
         "caution_count": 0,
         "market_context_count": 0,
         "krx_reference_status": "missing",
+        "observed_at": None,
         "top_title": None,
     }
 
@@ -30946,6 +31762,7 @@ def _web_view_collected_empty_candidate_news_badge() -> dict[str, object]:
         "caution_count": 0,
         "market_context_count": 0,
         "krx_reference_status": "missing",
+        "observed_at": None,
         "top_title": None,
     }
 
@@ -30955,6 +31772,7 @@ def _web_view_candidate_news_badge(
     *,
     business_date: date,
 ) -> dict[str, object]:
+    rows = _web_view_unique_news_evidence_rows(rows)
     if not rows:
         return _web_view_empty_candidate_news_badge()
     direct_count = sum(1 for row in rows if row.relevance == "direct")
@@ -30963,6 +31781,11 @@ def _web_view_candidate_news_badge(
     primary_caution_count = _web_view_news_observation_primary_caution_count(rows)
     market_context_count = sum(1 for row in rows if row.relevance == "market_context")
     krx_reference_status = _web_view_news_observation_krx_status(rows, business_date)
+    evidence_direction, evidence_direction_reason = _web_view_news_evidence_direction(
+        direct_count=direct_count,
+        positive_direct_count=positive_direct_count,
+        primary_caution_count=primary_caution_count,
+    )
     connection_label, connection_reason = _web_view_news_observation_connection(
         direct_count=direct_count,
         caution_count=caution_count,
@@ -30980,24 +31803,20 @@ def _web_view_candidate_news_badge(
         ),
     )
     top_title = next((title for title in _web_view_unique_texts([row.title for row in ordered_rows], limit=1)), None)
-    if primary_caution_count and positive_direct_count <= 0:
-        display_label = "주의 뉴스"
-    elif direct_count:
-        display_label = "직접 뉴스"
-    elif caution_count:
-        display_label = "주의 뉴스"
-    elif market_context_count:
-        display_label = "시장맥락 위주"
-    else:
-        display_label = "뉴스 근거 있음"
+    display_label = connection_label
     return {
         "available": True,
         "display_label": display_label,
         "reason": top_title or "저장 뉴스 observation이 같은 후보와 연결됩니다.",
         "direct_count": direct_count,
+        "positive_direct_count": positive_direct_count,
+        "primary_caution_count": primary_caution_count,
         "caution_count": caution_count,
         "market_context_count": market_context_count,
         "krx_reference_status": krx_reference_status,
+        "observed_at": max(row.created_at for row in rows).isoformat(),
+        "evidence_direction": evidence_direction,
+        "evidence_direction_reason": evidence_direction_reason,
         "top_title": top_title,
         "connection_label": connection_label,
         "connection_reason": connection_reason,
@@ -31027,7 +31846,19 @@ def _web_view_news_observation_rows_for_stock(
             if row.stock_code == stock_code
             or (normalized_stock_name and _web_view_normalize_news_identity(row.stock_name) == normalized_stock_name)
         )
-    return rows
+    return _web_view_unique_news_evidence_rows(rows)
+
+
+def _web_view_unique_news_evidence_rows(
+    rows: list[ReportLinkedNewsEvidenceRecord],
+) -> list[ReportLinkedNewsEvidenceRecord]:
+    latest_by_key: dict[str, ReportLinkedNewsEvidenceRecord] = {}
+    for row in rows:
+        key = row.evidence_key or row.url or f"{row.stock_code}:{row.title}:{row.published_at.isoformat()}"
+        previous = latest_by_key.get(key)
+        if previous is None or (row.created_at, row.run_id) > (previous.created_at, previous.run_id):
+            latest_by_key[key] = row
+    return list(latest_by_key.values())
 
 
 def _web_view_stock_news_observation_detail(
@@ -31802,6 +32633,8 @@ def _web_view_candidate_value_profile(
     business_date: date,
 ) -> dict[str, object]:
     direct_count = int(news_badge.get("direct_count") or 0)
+    positive_direct_count = int(news_badge.get("positive_direct_count") or 0)
+    primary_caution_count = int(news_badge.get("primary_caution_count") or 0)
     caution_count = int(news_badge.get("caution_count") or 0)
     market_context_count = int(news_badge.get("market_context_count") or 0)
     news_available = news_badge.get("available") is True
@@ -31816,22 +32649,11 @@ def _web_view_candidate_value_profile(
     target_only = bool(why_notable) and all(item.startswith("목표가") for item in why_notable)
     base_signal = int(candidate_profile.get("sort_signal") or 0)
     value_signal = base_signal
-    if has_actionable_news:
-        value_signal += 4
-    elif news_collected_no_match:
-        value_signal -= 2
-    else:
-        value_signal -= 1
-    if has_market_reference:
-        value_signal += 1
-    else:
-        value_signal -= 1
-    if has_stock_flow:
-        value_signal += 1
-    else:
-        value_signal -= 1
-    if has_toss_baseline:
-        value_signal += 1
+    evidence_direction, evidence_direction_reason = _web_view_news_evidence_direction(
+        direct_count=direct_count,
+        positive_direct_count=positive_direct_count,
+        primary_caution_count=primary_caution_count,
+    )
     same_day = business_date == current.date()
     current_time = current.time()
     if same_day and datetime_time(9, 0) <= current_time <= datetime_time(15, 30):
@@ -31843,22 +32665,34 @@ def _web_view_candidate_value_profile(
     else:
         time_mode = "stored_history"
 
-    if has_actionable_news:
-        caution_dominant = news_label.startswith("주의")
-        observation_priority = "주의 확인" if caution_dominant else "우선 확인"
-        value_label = "뉴스 근거 확인"
-        if caution_dominant:
-            value_reason = f"직접 주의 뉴스 {caution_count}건이 있어 리포트 근거와 함께 확인합니다."
-        elif direct_count > 0:
+    if positive_direct_count > 0 and primary_caution_count == 0:
+        observation_priority = "우선 확인"
+        value_label = evidence_direction
+        value_reason = evidence_direction_reason
+        if direct_count > 0:
             support_parts = []
             if caution_count > 0:
                 support_parts.append(f"보조 확인 {caution_count}건")
             if market_context_count > 0:
                 support_parts.append(f"시장맥락 {market_context_count}건")
             support_note = " · " + " · ".join(support_parts) if support_parts else ""
-            value_reason = f"직접 뉴스 {direct_count}건이 후보 근거를 보강합니다.{support_note}"
-        else:
-            value_reason = f"시장맥락 뉴스 {market_context_count}건은 직접 후보 판단과 분리해 확인합니다."
+            value_reason = f"{value_reason}{support_note}"
+    elif positive_direct_count > 0 and primary_caution_count > 0:
+        observation_priority = "근거 엇갈림"
+        value_label = evidence_direction
+        value_reason = evidence_direction_reason
+    elif primary_caution_count > 0:
+        observation_priority = "주의 확인"
+        value_label = evidence_direction
+        value_reason = evidence_direction_reason
+    elif direct_count > 0:
+        observation_priority = str(candidate_profile.get("observation_priority") or "확인 후보")
+        value_label = evidence_direction
+        value_reason = evidence_direction_reason
+    elif market_context_count > 0:
+        observation_priority = str(candidate_profile.get("observation_priority") or "확인 후보")
+        value_label = "시장 맥락 참고"
+        value_reason = "시장맥락 뉴스는 직접 후보 판단과 분리해 확인합니다."
     elif target_only and news_collected_no_match and (not has_market_reference or not has_stock_flow):
         observation_priority = "정보 보강"
         value_label = "정보 보강"
@@ -31889,6 +32723,8 @@ def _web_view_candidate_value_profile(
         "observation_priority": observation_priority,
         "value_label": value_label,
         "value_reason": value_reason,
+        "evidence_direction": evidence_direction,
+        "evidence_direction_reason": evidence_direction_reason,
         "time_mode": time_mode,
         "news_confirmed": has_actionable_news,
         "news_collected": news_available,
@@ -32951,6 +33787,21 @@ def build_web_view_stock_detail_snapshot(
         if stock_metadata
         else None
     )
+    selected_summary = next(
+        (item for item in repository.list_daily_summaries(business_date) if item.stock_code == stock_code),
+        None,
+    )
+    target_price_progress = (
+        _web_view_target_price_progress(repository, selected_summary, market_reference)
+        if selected_summary is not None
+        else {
+            "available": False,
+            "gap_available": False,
+            "progress_available": False,
+            **_web_view_empty_target_validation("missing_selected_date_summary"),
+            "notice": "선택 날짜의 저장 리포트 요약이 없어 목표가 도달 참고를 계산하지 않습니다.",
+        }
+    )
     return {
         "now": current.isoformat(),
         "timezone": config.timezone,
@@ -32962,6 +33813,7 @@ def build_web_view_stock_detail_snapshot(
         "has_selected_date_report": bool(reports),
         "report_empty_state": "선택 날짜에 등록된 리포트가 없습니다." if not reports else None,
         "market_reference": _web_view_stock_market_reference(market_reference),
+        "target_price_progress": target_price_progress,
         "target_price_trail": _build_web_view_target_price_trail(repository, business_date, stock_code),
         "related_context": _build_web_view_stock_related_context(
             config,

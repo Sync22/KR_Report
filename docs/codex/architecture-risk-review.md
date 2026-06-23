@@ -28,6 +28,12 @@ Working-tree note:
 - The workspace was already dirty during this review, including changes to docs, scheduler scripts, `src/stock_monitor/cli.py`, `src/stock_monitor/db/repository.py`, `src/stock_monitor/db/schema.py`, `src/stock_monitor/fetch/naver_stock_quote.py`, new `src/stock_monitor/web_perf.py`, and related tests.
 - Treat this document as a snapshot of the current local state, not a clean release baseline.
 
+## Reconciliation (2026-06-21)
+
+- CodeGraph now resolves `build_web_view_daily_snapshot`, stock-detail builders, and the `cli.py` web-view path in this workspace. Treat the older coverage-gap note as historical; recheck index freshness after large `cli.py` changes.
+- The central product risk is not a missing tab. It is a broken evidence handoff between `메인`, `관찰`, `종목`, `시장`, and `순환매`. Browser smoke now verifies a candidate action, retained detail context, and market/rotation navigation across desktop and mobile viewports.
+- `cli.py` remains concentrated and is still the main ownership/performance risk. This pass adds no new server family or control surface; it reuses the existing public DTOs and client-side tab transitions.
+
 ## Architecture Summary
 
 | Area | Current shape |

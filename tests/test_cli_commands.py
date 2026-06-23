@@ -1,4 +1,4 @@
-﻿import json
+import json
 import sqlite3
 from argparse import Namespace
 from datetime import date, datetime, timedelta
@@ -77,6 +77,7 @@ from stock_monitor.models import (
     ReportLinkedNewsEvidenceRecord,
     StockInvestorFlowDaily,
     StockMarketDailySnapshot,
+    TossPriorityQuoteBaseline,
     StockMetadata,
     WorkerState,
     EtfDailySnapshot,
@@ -143,6 +144,12 @@ class _KrxBaselineFridayLateDateTime(datetime):
     @classmethod
     def now(cls, tz=None):
         return cls(2026, 5, 29, 22, 0, 0, tzinfo=tz)
+
+
+class _TossBaselineLateDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return cls(2026, 5, 29, 20, 16, 0, tzinfo=tz)
 
 
 class _KrxMentionedFlowAllowedDateTime(datetime):
@@ -910,6 +917,7 @@ def test_toss_priority_baseline_collect_parser_accepts_live_save_gate() -> None:
             "--live",
             "--confirm-token-reissue",
             "--confirm-save",
+            "--scheduled",
             "--json",
         ]
     )
@@ -920,7 +928,90 @@ def test_toss_priority_baseline_collect_parser_accepts_live_save_gate() -> None:
     assert args.live is True
     assert args.confirm_token_reissue is True
     assert args.confirm_save is True
+    assert args.scheduled is True
     assert args.json is True
+
+
+def test_toss_priority_baseline_collect_scheduled_late_run_skips_before_provider_access(tmp_path, monkeypatch, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    monkeypatch.setattr(cli_module, "datetime", _TossBaselineLateDateTime)
+    monkeypatch.setattr(
+        cli_module.TossOpenApiLabConfig,
+        "from_env",
+        classmethod(lambda cls, *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("provider config must not be read"))),
+    )
+
+    exit_code = cli_module._run_toss_priority_baseline_collect(
+        config,
+        repository,
+        business_date=date(2026, 5, 29),
+        baseline_time="20:00",
+        live=True,
+        confirm_token_reissue=True,
+        confirm_save=True,
+        scheduled=True,
+        as_json=False,
+    )
+
+    assert exit_code == 0
+    assert "late_run" in capsys.readouterr().out
+
+
+def test_toss_priority_baseline_collect_skips_existing_top_two_before_provider_access(tmp_path, monkeypatch, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 19)
+    repository.save_toss_priority_quote_baselines(
+        [
+            TossPriorityQuoteBaseline(
+                business_date=business_date,
+                stock_code=stock_code,
+                stock_name=stock_name,
+                baseline_time="20:00",
+                last_price=100_000,
+                currency="KRW",
+                source="toss_openapi",
+                fetched_at=datetime(2026, 6, 19, 20, 0, 0),
+            )
+            for stock_code, stock_name in (("005930", "삼성전자"), ("000660", "SK하이닉스"))
+        ]
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "build_web_view_candidate_evidence_snapshot",
+        lambda *_args, **_kwargs: {
+            "rows": [
+                {"stock_code": "005930", "stock_name": "삼성전자"},
+                {"stock_code": "000660", "stock_name": "SK하이닉스"},
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        cli_module.TossOpenApiLabConfig,
+        "from_env",
+        classmethod(lambda cls, *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("provider config must not be read"))),
+    )
+
+    exit_code = cli_module._run_toss_priority_baseline_collect(
+        config,
+        repository,
+        business_date=business_date,
+        baseline_time="20:00",
+        live=True,
+        confirm_token_reissue=True,
+        confirm_save=True,
+        scheduled=False,
+        as_json=True,
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["reason"] == "all_priority_baselines_exist"
+    assert payload["live_fetch"] is False
+    assert payload["writes_db"] is False
 
 
 def test_toss_openapi_readonly_probe_defaults_to_no_network_plan(monkeypatch, capsys) -> None:
@@ -5210,16 +5301,11 @@ def test_market_briefing_parser_accepts_slot_and_json_preview() -> None:
     assert args.json is True
 
 
-def test_scheduled_market_briefing_parser_defaults_to_guarded_dry_run_off() -> None:
+def test_scheduled_market_briefing_legacy_command_is_not_exposed() -> None:
     parser = cli_module.build_parser()
 
-    args = parser.parse_args(["scheduled-market-briefing", "--dry-run", "--limit", "4"])
-
-    assert args.command == "scheduled-market-briefing"
-    assert args.dry_run is True
-    assert args.allow_repeat is False
-    assert args.allow_late is False
-    assert args.limit == 4
+    with pytest.raises(SystemExit):
+        parser.parse_args(["scheduled-market-briefing"])
 
 
 def test_scheduled_market_briefing_slot_parser_requires_slot() -> None:
@@ -5270,71 +5356,6 @@ def test_market_briefing_readiness_parser_defaults_to_read_only_json() -> None:
     assert market_day_observation_args.command == "market-day-observation"
     assert market_day_observation_args.date == date(2026, 5, 18)
     assert market_day_observation_args.json is True
-
-
-def test_scheduled_market_briefing_requires_phone_review_acceptance(tmp_path, capsys, monkeypatch) -> None:
-    config = RuntimeConfig.from_env(root_dir=tmp_path)
-    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
-    repository.initialize()
-    monkeypatch.setattr(cli_module, "datetime", _MarketBriefingAllowedDateTime)
-    monkeypatch.setattr(
-        cli_module,
-        "send_telegram_message",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("send should be guarded")),
-    )
-
-    exit_code = cli_module._run_scheduled_market_briefing(
-        config,
-        repository,
-        dry_run=False,
-        allow_repeat=False,
-        allow_late=False,
-        limit=5,
-    )
-
-    output = capsys.readouterr().out
-    assert exit_code == 0
-    assert "market_briefing_phone_review_accepted is false" in output
-    assert repository.list_recent_deliveries(limit=10) == []
-
-
-def test_scheduled_market_briefing_requires_recorded_manual_review_sends(tmp_path, capsys, monkeypatch) -> None:
-    config = RuntimeConfig.from_env(root_dir=tmp_path)
-    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
-    repository.initialize()
-    repository.set_app_setting(
-        AppSetting(
-            setting_key=cli_module.MARKET_BRIEFING_PHONE_REVIEW_SETTING,
-            setting_value="true",
-            value_type="bool",
-            updated_at=datetime(2026, 5, 12, 15, 0, 0),
-            updated_by="operator-cli",
-            detail="legacy_phone_acceptance",
-            restart_required=False,
-        ),
-        audit_actor="operator-cli",
-        audit_detail="legacy_phone_acceptance",
-    )
-    monkeypatch.setattr(cli_module, "datetime", _MarketBriefingAllowedDateTime)
-    monkeypatch.setattr(
-        cli_module,
-        "send_telegram_message",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("send should be guarded")),
-    )
-
-    exit_code = cli_module._run_scheduled_market_briefing(
-        config,
-        repository,
-        dry_run=False,
-        allow_repeat=False,
-        allow_late=False,
-        limit=5,
-    )
-
-    output = capsys.readouterr().out
-    assert exit_code == 0
-    assert "requires 3 recorded manual Telegram review sends" in output
-    assert repository.list_recent_deliveries(limit=10) == []
 
 
 def test_scheduled_market_briefing_slot_sends_with_slot_delivery_channel(tmp_path, capsys, monkeypatch) -> None:
@@ -5394,24 +5415,148 @@ def test_scheduled_market_briefing_slot_sends_with_slot_delivery_channel(tmp_pat
     assert "source=scheduled:lunch" in (slot_deliveries[0].detail or "")
 
 
-def test_scheduled_market_briefing_waits_until_after_flow_backfill_window(tmp_path, capsys, monkeypatch) -> None:
+def test_scheduled_market_briefing_slot_collects_current_candidate_news_before_building_message(
+    tmp_path,
+    capsys,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_CHAT_ID", "test-chat")
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
     repository.initialize()
-    monkeypatch.setattr(cli_module, "datetime", _MarketBriefingFlowBackfillWindowDateTime)
+    repository.set_app_setting(
+        AppSetting(
+            setting_key=cli_module.MARKET_BRIEFING_PHONE_REVIEW_SETTING,
+            setting_value="true",
+            value_type="bool",
+            updated_at=datetime(2026, 5, 12, 11, 0, 0),
+            updated_by="operator-cli",
+            detail="phone_acceptance",
+            restart_required=False,
+        ),
+        audit_actor="operator-cli",
+        audit_detail="phone_acceptance",
+    )
+    for index, business_date in enumerate((date(2026, 5, 8), date(2026, 5, 11), date(2026, 5, 12)), start=1):
+        repository.record_delivery(
+            DeliveryLog(
+                business_date=business_date,
+                channel=cli_module.MARKET_BRIEFING_DELIVERY_CHANNEL,
+                status="sent",
+                delivered_at=datetime(2026, 5, 12, 11, index, 0),
+                message_id=str(index),
+                detail="source=manual; market briefing",
+            )
+        )
 
-    exit_code = cli_module._run_scheduled_market_briefing(
+    calls: list[str] = []
+    message_kwargs: dict[str, object] = {}
+    monkeypatch.setattr(cli_module, "datetime", _MarketBriefingLunchSlotDateTime)
+    monkeypatch.setattr(
+        cli_module,
+        "_collect_scheduled_market_briefing_news_observations",
+        lambda *_args, **_kwargs: calls.append("collect")
+        or {"ok": True, "saved_observation_count": 2, "target_stock_codes": ["005930", "000660"]},
+    )
+
+    def fake_message(*_args, **kwargs) -> str:
+        calls.append("message")
+        message_kwargs.update(kwargs)
+        return "lunch briefing"
+
+    monkeypatch.setattr(cli_module, "_build_market_briefing_message", fake_message)
+    monkeypatch.setattr(cli_module, "send_telegram_message", lambda *_args, **_kwargs: "42")
+
+    exit_code = cli_module._run_scheduled_market_briefing_slot(
         config,
         repository,
-        dry_run=True,
+        slot="lunch",
+        dry_run=False,
         allow_repeat=False,
         allow_late=False,
         limit=5,
     )
 
-    output = capsys.readouterr().out
     assert exit_code == 0
-    assert "16:00 is before the configured market briefing window 16:10~16:45" in output
+    assert calls == ["collect", "message"]
+    assert message_kwargs["candidate_stock_codes"] == ("005930", "000660")
+    assert "Market briefing lunch sent with message_id=42" in capsys.readouterr().out
+
+
+def test_scheduled_market_briefing_slot_repeat_uses_a_distinct_delivery_channel(
+    tmp_path,
+    capsys,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_CHAT_ID", "test-chat")
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    repository.set_app_setting(
+        AppSetting(
+            setting_key=cli_module.MARKET_BRIEFING_PHONE_REVIEW_SETTING,
+            setting_value="true",
+            value_type="bool",
+            updated_at=datetime(2026, 5, 12, 11, 0, 0),
+            updated_by="operator-cli",
+            detail="phone_acceptance",
+            restart_required=False,
+        ),
+        audit_actor="operator-cli",
+        audit_detail="phone_acceptance",
+    )
+    for index, business_date in enumerate((date(2026, 5, 8), date(2026, 5, 11), date(2026, 5, 12)), start=1):
+        repository.record_delivery(
+            DeliveryLog(
+                business_date=business_date,
+                channel=cli_module.MARKET_BRIEFING_DELIVERY_CHANNEL,
+                status="sent",
+                delivered_at=datetime(2026, 5, 12, 11, index, 0),
+                message_id=str(index),
+                detail="source=manual; market briefing",
+            )
+        )
+    delivery_channel = cli_module._market_briefing_slot_delivery_channel("lunch")
+    repository.record_delivery(
+        DeliveryLog(
+            business_date=date(2026, 5, 12),
+            channel=delivery_channel,
+            status="sent",
+            delivered_at=datetime(2026, 5, 12, 12, 0, 0),
+            message_id="existing",
+            detail="source=scheduled:lunch; market briefing",
+        )
+    )
+    monkeypatch.setattr(cli_module, "datetime", _MarketBriefingLunchSlotDateTime)
+    monkeypatch.setattr(
+        cli_module,
+        "_collect_scheduled_market_briefing_news_observations",
+        lambda *_args, **_kwargs: {"ok": True, "target_stock_codes": []},
+    )
+    monkeypatch.setattr(cli_module, "_build_market_briefing_message", lambda *_args, **_kwargs: "repeat lunch briefing")
+    monkeypatch.setattr(cli_module, "send_telegram_message", lambda *_args, **_kwargs: "repeat-42")
+
+    exit_code = cli_module._run_scheduled_market_briefing_slot(
+        config,
+        repository,
+        slot="lunch",
+        dry_run=False,
+        allow_repeat=True,
+        allow_late=False,
+        limit=5,
+    )
+
+    repeat_deliveries = [
+        item
+        for item in repository.list_recent_deliveries(limit=10)
+        if item.channel.startswith(f"{delivery_channel}:repeat:")
+    ]
+    assert exit_code == 0
+    assert len(repeat_deliveries) == 1
+    assert repeat_deliveries[0].message_id == "repeat-42"
+    assert "Market briefing lunch sent with message_id=repeat-42" in capsys.readouterr().out
 
 
 def test_market_briefing_preview_includes_turnover_reference(tmp_path, capsys) -> None:
@@ -5488,6 +5633,150 @@ def test_market_briefing_preview_includes_turnover_reference(tmp_path, capsys) -
     assert "Toss OpenAPI: disabled (호출 없음)" in output
     assert "추천" not in output
     assert "점수" not in output
+
+
+def test_market_briefing_uses_toss_top_two_quotes_when_provider_is_available(tmp_path) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 14)
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name=stock_name,
+                stock_code=stock_code,
+                title=f"{stock_name} 점검",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 5, 14, 9, index, 0),
+                collected_at=datetime(2026, 5, 14, 9, index, 30),
+                target_price_value=100_000 + index,
+                source_id=f"market-briefing-toss-{stock_code}",
+                identity_key=f"market-briefing-toss-{stock_code}",
+            )
+            for index, (stock_code, stock_name) in enumerate(
+                (("005930", "삼성전자"), ("000660", "SK하이닉스"))
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    class FakeTossProvider:
+        def __init__(self) -> None:
+            self.calls: list[tuple[date, tuple[str, ...]]] = []
+
+        def get_quotes(self, *, priority_date: date, symbols: tuple[str, ...]) -> dict[str, object]:
+            self.calls.append((priority_date, symbols))
+            return {
+                "configured": True,
+                "live_fetch": True,
+                "priority_date": priority_date.isoformat(),
+                "fetched_at": "2026-05-14T09:15:00+09:00",
+                "quotes": [
+                    {"symbol": "005930", "lastPrice": 100_000, "currency": "KRW"},
+                    {"symbol": "000660", "lastPrice": 200_000, "currency": "KRW"},
+                ],
+                "cache": "miss",
+            }
+
+    provider = FakeTossProvider()
+    message = cli_module._build_market_briefing_message(
+        config,
+        repository,
+        business_date=business_date,
+        limit=5,
+        toss_quote_provider=provider,
+    )
+
+    assert provider.calls
+    assert provider.calls[0][0] == business_date
+    assert set(provider.calls[0][1]) == {"005930", "000660"}
+    assert "Toss OpenAPI: current (우선확인 현재가)" in message
+    assert "Toss 우선확인 현재가" in message
+    assert "삼성전자 100,000원 · 조회 09:15" in message
+    assert "SK하이닉스 200,000원 · 조회 09:15" in message
+
+
+def test_scheduled_market_briefing_message_groups_live_context_by_priority_candidate(tmp_path) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 14)
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="삼성전자 AI 반도체 보고서",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 5, 14, 9, 0, 0),
+                collected_at=datetime(2026, 5, 14, 9, 1, 0),
+                target_price_value=100_000,
+                source_id="market-briefing-live-context-005930",
+                identity_key="market-briefing-live-context-005930",
+            ),
+            Report(
+                business_date=business_date,
+                stock_name="SK하이닉스",
+                stock_code="000660",
+                title="SK하이닉스 HBM 보고서",
+                broker_name="KB증권",
+                published_at=datetime(2026, 5, 14, 9, 2, 0),
+                collected_at=datetime(2026, 5, 14, 9, 3, 0),
+                target_price_value=200_000,
+                source_id="market-briefing-live-context-000660",
+                identity_key="market-briefing-live-context-000660",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    class FakeTossProvider:
+        def get_quotes(self, *, priority_date: date, symbols: tuple[str, ...]) -> dict[str, object]:
+            return {
+                "configured": True,
+                "live_fetch": True,
+                "priority_date": priority_date.isoformat(),
+                "fetched_at": "2026-05-14T12:01:00+09:00",
+                "quotes": [{"symbol": symbol, "lastPrice": 100_000, "currency": "KRW"} for symbol in symbols],
+                "cache": "miss",
+            }
+
+    def fake_quote(stock_code: str, **_kwargs) -> StockQuoteSnapshot:
+        return StockQuoteSnapshot(
+            stock_code=stock_code,
+            stock_name="삼성전자" if stock_code == "005930" else "SK하이닉스",
+            sector_code="1",
+            sector_name="반도체",
+            current_price=100_500,
+            market_status="OPEN",
+            trade_time=datetime(2026, 5, 14, 12, 1, 0),
+            prev_close_price=100_000,
+            prev_change_price=500,
+            prev_change_rate=0.5,
+            trade_amount=80_000_000_000,
+            trade_volume=1_000_000,
+        )
+
+    message = cli_module._build_market_briefing_message(
+        config,
+        repository,
+        business_date=business_date,
+        limit=2,
+        toss_quote_provider=FakeTossProvider(),
+        include_live_candidate_quotes=True,
+        naver_quote_fetcher=fake_quote,
+    )
+
+    assert "우선 확인 후보" in message
+    assert "삼성전자" in message
+    assert "SK하이닉스" in message
+    assert "장중 참고: 100,500원 · +0.50% · 거래대금 800억 · 장중 · 확인 12:01" in message
+    assert "뉴스 근거:" in message
+    assert "Toss 현재가: 100,000원 · 조회 12:01" in message
+    assert "sentiment_score" not in message
+    assert "operator_recommendation" not in message
 
 
 def test_market_briefing_json_preview_includes_slot_and_public_news_observation(tmp_path, capsys) -> None:
@@ -5868,10 +6157,13 @@ def test_market_briefing_readiness_reports_preview_and_manual_review_gate(tmp_pa
     assert payload["phone_review_gate"]["scheduled_live_send_enforced"] is True
     assert payload["phone_review_gate"]["ready"] is False
     assert payload["schedule_candidate_ready"] is False
-    assert payload["schedule_candidate_window"]["earliest_time"] == "16:10"
-    assert payload["schedule_candidate_window"]["latest_time"] == "16:45"
+    assert payload["schedule_candidate_window"]["slots"] == [
+        {"slot": "mood", "scheduled_time": "09:15", "latest_time": "09:45"},
+        {"slot": "lunch", "scheduled_time": "12:00", "latest_time": "12:30"},
+        {"slot": "preclose", "scheduled_time": "15:15", "latest_time": "15:45"},
+    ]
     assert payload["schedule_candidate_window"]["flow_backfill_time"] == "16:00"
-    assert "flow backfill" in payload["schedule_candidate_window"]["flow_backfill_conflict_guard"]
+    assert "preclose slot" in payload["schedule_candidate_window"]["flow_backfill_conflict_guard"]
     assert payload["schedule_block_reasons"] == ["manual Telegram review sends 0/3"]
     assert payload["manual_review_next_commands"] == [
         "python -m stock_monitor market-briefing --date 2026-05-14 --limit 5 --send"
@@ -6123,7 +6415,11 @@ def test_next_phase_readiness_summarizes_read_only_blockers(tmp_path, capsys) ->
     assert payload["market_briefing"]["phone_review_gate"]["scheduled_live_send_enforced"] is True
     assert payload["market_briefing"]["phone_review_gate"]["ready"] is False
     assert payload["market_briefing"]["schedule_candidate_ready"] is False
-    assert payload["market_briefing"]["schedule_candidate_window"]["earliest_time"] == "16:10"
+    assert payload["market_briefing"]["schedule_candidate_window"]["slots"] == [
+        {"slot": "mood", "scheduled_time": "09:15", "latest_time": "09:45"},
+        {"slot": "lunch", "scheduled_time": "12:00", "latest_time": "12:30"},
+        {"slot": "preclose", "scheduled_time": "15:15", "latest_time": "15:45"},
+    ]
     assert payload["market_briefing"]["schedule_candidate_window"]["flow_backfill_time"] == "16:00"
     assert payload["market_briefing"]["manual_review_next_commands"] == [
         "python -m stock_monitor market-briefing --date 2026-05-14 --limit 5 --send"

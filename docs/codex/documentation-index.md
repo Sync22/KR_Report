@@ -6,7 +6,11 @@ This is the canonical document map for `02.Stock_Moniter`.
 
 Use this file first when deciding which project document is authoritative. Older detailed notes are kept for traceability, but new work should update the canonical documents below before adding another planning file.
 
-## Today Scope
+## Current Scope
+
+As of `2026-06-21`, the operating web-view has progressed beyond the initial five-tab separation. The active product task is to make its already-stored evidence useful as one continuous path: `메인 우선 후보 -> 관찰 근거 -> 종목 상세 -> 시장/순환매 맥락`. Canonical updates must distinguish an unavailable source row from an unimplemented UI path. Do not add another planning-only document when the relevant contract belongs in `current-work.md`, `next-phase.md`, `surface-contract.md`, or `data-quality-checklist.md`.
+
+## Historical Scope
 
 Current work is the main-PC execution pass for the next-phase closeout, while excluding US market expansion, public trading recommendations, broad ingest, and automatic scheduling of the new market-briefing lane. This public-surface exclusion is not a permanent denial of the longer-term direction: if stable real-time data is later proven, operator-only decision-support or execution-lab work must be documented separately before any trading-decision or order path. Historical mini-PC provider/phone-review notes remain useful trace evidence, but the active main-PC readiness gates are separate. The `2026-05-29` read-only readiness refresh reports `completion_ready=false`: market-briefing manual review sends are `0/3`, phone review is not accepted, KRX Open API daily snapshots are missing for 6 business dates starting with `2026-05-28`, real `2026-05-29` scheduled-run evidence is missing, external `web-view` provider smoke is not recorded on this PC, and the current-user `web-view` Startup shortcut is not configured. The current public surface boundary remains `admin-gui` private/operator-only and `web-view` public-safe/user-facing; normal data reads are GET, while the approved access-gated `POST /api/news-observations/collect` action may create saved news observation rows for selected-date top candidates. Public numeric scores, investment grades, trading calls, broker execution, and order routing remain out of scope.
 

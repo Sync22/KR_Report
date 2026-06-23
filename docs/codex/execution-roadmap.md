@@ -8,19 +8,7 @@ It combines the current implementation state, operator memos, admin GUI review, 
 
 ## Current Product Shape
 
-The current product direction is no longer "add every available data layer to the page." The priority is a compact daily-use briefing flow:
-
-| Principle | Roadmap Impact |
-| --- | --- |
-| Rough usable result first | Ship readable Telegram/web summaries with clear caveats before adding more intermediate validation views. |
-| Visible result over hidden maturity | If a feature is already meant to help judgment, make the smallest safe result visible in `web-view` before adding more hidden quality gates. Low coverage should be labeled, not hidden. |
-| Memo intent over implementation inventory | Mark an item complete only when the operator's intended user-facing outcome is met; backend scaffolding alone is partial. |
-| Compressed user page | Move raw tables, operational reasoning, and debug evidence out of the shared page unless they directly explain the selected daily summary. |
-| Observation curation allowed | `오늘의 관찰 후보`, `우선 확인`, `관찰 우선순위`, `관심도 높은 흐름`, `왜 눈에 띄는지`, `눈에 띄는`, `확인 후보`, `시장 분위기`, and `수급 참고` are allowed; public numeric scores, investment grades, and trading-call wording remain blocked. |
-| Real-time strengthens observation, not trading | A future approved intraday source may change `우선 확인` ordering and main-card emphasis. `read-only` blocks DB writes, Telegram/scheduler automation, broker secrets, and order routing; it does not mean observation priority must ignore the source. |
-| Long-term decision lane is separate | The current public surface blocks trading-decision wording, but the long-term path may include operator-only decision support and execution-lab after stable real-time data, permissions, failure handling, and order-safety gates are proven. |
-| Daily iteration | Use each market day's collected data to decide what is mature enough to refine. Do not wait for a perfect model before showing useful reference output. |
-| Closing-market summary | Add a future `16:00`-around `오늘의 시장 분위기` briefing track, separate from the next-morning previous-day report briefing. |
+The canonical web-view completion path is [Web-View Completion Direction](next-phase.md#web-view-completion-direction), and the canonical evidence interpretation rules are [Evidence Direction Rule](data-quality-checklist.md#evidence-direction-rule). This roadmap tracks delivery state without duplicating either contract.
 
 | Area | Status | Notes |
 | --- | --- | --- |

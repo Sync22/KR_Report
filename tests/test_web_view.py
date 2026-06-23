@@ -1,10 +1,10 @@
 import gzip
 import json
-import inspect
 import threading
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import date, datetime, time as datetime_time
 from http import HTTPStatus
 
@@ -166,128 +166,6 @@ def test_web_view_host_guard_can_be_explicitly_overridden() -> None:
     cli_module._validate_web_view_host("0.0.0.0", allow_non_loopback=True)
 
 
-def test_web_view_main_layout_first_pass_static_markup() -> None:
-    html = cli_module._render_web_view_html()
-
-    assert '<section class="card span-12 date-picker-card" aria-label="날짜 선택">' in html
-    assert "<h2>날짜 선택</h2>" not in html
-    assert html.index('id="daily-briefing-headline"') < html.index('id="briefing-check-points"')
-    assert html.index('id="briefing-check-points"') < html.index('id="briefing-one-line-comments"')
-    assert html.index('id="briefing-one-line-comments"') < html.index('id="briefing-mood-card"')
-    assert html.index('id="briefing-mood-card"') < html.index('class="briefing-reference-card"')
-    daily_briefing_body = html.split('class="card span-12 daily-briefing"', 1)[1].split(
-        'id="main-priority-card"', 1
-    )[0]
-    assert "확인 종목" not in daily_briefing_body
-    assert 'id="briefing-watch-chips"' not in html
-    assert "국장 시장 분위기" in html
-    assert 'id="selection-status"' not in html
-    assert "현재 선택" not in html
-    assert "<h2>업종 요약</h2>" not in html
-    assert "<h2>테마 요약</h2>" not in html
-    assert "업종/테마 상세" in html
-    assert "renderObservationBlock" in html
-    assert "renderObservationMoodItem" in html
-    assert "const breadthLabel = breadthItems.length ? `<span class=\"observation-item-line muted\">시장 폭 상위 흐름</span>` : \"\";" in html
-    assert html.index("${observationLine}") < html.index("${breadthLabel}")
-    assert "item.observation_line" in html
-    assert "renderObservationReportItem" in html
-    assert "renderObservationFlowItem" in html
-    assert "renderObservationPriceItem" in html
-    assert "observation-info-wrap" in html
-    assert "observation-help-card" in html
-    assert "renderSectorBreadthBars" in html
-    assert "sector-breadth-bar" in html
-    assert "renderTopTwoReviewCandidates" in html
-    assert 'id="news-observation-summary"' in html
-    assert 'id="source-freshness-summary"' in html
-    assert "renderSourceFreshnessSummary" in html
-    assert "source_freshness_summary" in html
-    assert "source-freshness-item" in html
-    assert "renderNewsObservationSummary" in html
-    assert "renderNewsObservationSummaryItem" in html
-    assert "function newsObservationMetaChips" in html
-    assert "news-observation-summary-connection" in html
-    assert "news-observation-summary-items" in html
-    assert "news-observation-summary-item" in html
-    assert "news-observation-summary-link" in html
-    assert 'data-stock-code="${esc(item.stock_code)}"' in html
-    assert "우선 확인 후보와 함께 읽는 뉴스 근거" in html
-    assert "candidate_overlap_names" in html
-    assert "관찰 후보 겹침" in html
-    assert "뉴스 근거" in html
-    assert "`직접 ${number(direct)} · 주의" not in html
-    assert "top-two-candidates" in html
-    assert "우선 확인 2개" in html
-    top_two_renderer = html[
-        html.index("function renderTopTwoReviewCandidates") : html.index("function updateTossPriorityRefreshButton")
-    ]
-    assert "핵심 저장 정보 있음" not in top_two_renderer
-    assert "candidateCompactLabel(gapItems, 1)" not in top_two_renderer
-    assert "${missingLine}" not in top_two_renderer
-    intraday_line = "candidateIntradayReferenceLabel(item.intraday_reference))}</span>"
-    news_line = "<span>${esc(newsLine)}</span>"
-    toss_baseline_line = "<span>${esc(tossBaselineLine)}</span>"
-    assert intraday_line in top_two_renderer
-    assert news_line in top_two_renderer
-    assert toss_baseline_line in top_two_renderer
-    assert top_two_renderer.index(intraday_line) < top_two_renderer.index(news_line)
-    assert top_two_renderer.index(news_line) < top_two_renderer.index(toss_baseline_line)
-    assert "순환매 참고 종목" in html
-    assert "순환매 참고 ETF" in html
-    assert "renderTargetPriceTrailRows" in html
-    assert "renderDailyReferenceRows" in html
-    assert "data-flow-expand" in html
-    assert "dailyFlowExpanded" in html
-    assert "sameMonthRows" in html
-    assert 'id="intraday-market-top-check"' in html
-    assert 'id="intraday-market-top-status"' in html
-    assert 'id="intraday-market-top-overlap"' in html
-    assert 'id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden' in html
-    assert ".intraday-overlap-panel[hidden] { display: none; }" in html
-    assert "Naver 장중 참고" in html
-    assert "loadIntradayMarketTopForSelectedDate" in html
-    assert "intradayMarketTopCooldownMs" in html
-    assert "Naver 장중 참고는 30초 간격으로 확인할 수 있습니다." in html
-    assert "renderIntradayMarketTopOverlap" in html
-    assert "intraday-overlap-chip" in html
-    assert "호출 ${number(calls)}회" in html
-
-
-def test_web_view_v2_preview_static_markup_reuses_public_read_only_apis() -> None:
-    html = cli_module._render_web_view_v2_html()
-
-    assert 'id="surface-v2-app"' in html
-    assert 'data-v2-section="flow"' in html
-    assert 'data-v2-section="candidates"' in html
-    assert 'data-v2-section="evidence"' in html
-    assert 'data-v2-section="stock-detail"' in html
-    assert "기존 화면으로" in html
-    assert "/api/archive?limit=80" in html
-    assert "/api/daily/${encodeURIComponent(date)}" in html
-    assert "/api/candidate-evidence?date=${encodeURIComponent(date)}&limit=8" in html
-    assert "/api/etf-trend?date=${encodeURIComponent(date)}&limit=4" in html
-    assert "/api/daily/${encodeURIComponent(state.selectedDate)}/stocks/" in html
-    assert "뉴스 근거 수집 전" in html
-    assert "직접 뉴스" in html
-    assert "주의 뉴스" in html
-    assert "시장맥락 위주" in html
-    assert "/api/status" not in html
-    assert "/api/scheduler" not in html
-    assert "/api/settings" not in html
-    assert "admin_audit" not in html
-    for forbidden in (
-        "sentiment_score",
-        "stock_impact",
-        "operator_recommendation",
-        "recommendation_support",
-        "investment grade",
-        "trading call",
-        "order-routing",
-    ):
-        assert forbidden not in html
-
-
 def test_web_view_daily_snapshot_exposes_news_observation_empty_state(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
@@ -318,6 +196,7 @@ def test_web_view_daily_snapshot_exposes_news_observation_empty_state(tmp_path, 
         "caution_count": 0,
         "market_context_count": 0,
         "krx_reference_status": "missing",
+        "observed_at": None,
         "top_titles": [],
         "items": [],
         "empty_state": "뉴스 근거 수집 전",
@@ -360,16 +239,21 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
     summary = snapshot["news_observation_summary"]
     assert summary["available"] is True
     assert summary["display_label"] == "뉴스로 후보 강화"
-    assert summary["reason"] == "직접 뉴스가 있어 후보 확인 근거를 보강합니다."
+    assert summary["reason"] == "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다."
     assert summary["connection_label"] == "뉴스로 후보 강화"
     assert summary["connection_reason"] == "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다."
     assert summary["connection_note"] == "우선 확인 후보와 겹친 뉴스 근거: 삼성전자"
     assert summary["candidate_overlap_count"] == 1
     assert summary["candidate_overlap_names"] == ["삼성전자"]
     assert summary["direct_count"] == 1
+    assert summary["positive_direct_count"] == 1
+    assert summary["primary_caution_count"] == 0
     assert summary["caution_count"] == 1
     assert summary["market_context_count"] == 1
     assert summary["krx_reference_status"] == "exact"
+    assert summary["observed_at"] == "2026-06-02T10:00:00"
+    assert summary["evidence_direction"] == "상승 근거 우세"
+    assert summary["evidence_direction_reason"] == "직접 긍정 뉴스 1건이 직접 주의 뉴스보다 우세합니다."
     assert summary["top_titles"] == [
         "삼성전자, AI 반도체 공급 계약 체결",
         "삼성전자, 변동성 확대 주의",
@@ -379,12 +263,17 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
             "available": True,
             "stock_name": "삼성전자",
             "stock_code": "005930",
-            "display_label": "직접 뉴스",
+                "display_label": "뉴스로 후보 강화",
             "reason": "삼성전자, AI 반도체 공급 계약 체결",
             "direct_count": 1,
+            "positive_direct_count": 1,
+            "primary_caution_count": 0,
             "caution_count": 1,
             "market_context_count": 1,
             "krx_reference_status": "exact",
+            "observed_at": "2026-06-02T10:00:00",
+            "evidence_direction": "상승 근거 우세",
+            "evidence_direction_reason": "직접 긍정 뉴스 1건이 직접 주의 뉴스보다 우세합니다.",
             "top_title": "삼성전자, AI 반도체 공급 계약 체결",
             "connection_label": "뉴스로 후보 강화",
             "connection_reason": "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다.",
@@ -608,12 +497,13 @@ def test_web_view_candidate_evidence_projects_public_safe_news_badge(tmp_path, m
 
     badge = snapshot["rows"][0]["news_observation_badge"]
     assert badge["available"] is True
-    assert badge["display_label"] == "직접 뉴스"
+    assert badge["display_label"] == "뉴스로 후보 강화"
     assert badge["reason"] == direct_evidence.title
     assert badge["direct_count"] == 1
     assert badge["caution_count"] == 1
     assert badge["market_context_count"] == 1
     assert badge["krx_reference_status"] == "stale"
+    assert badge["observed_at"] == "2026-06-02T10:00:00"
     assert badge["connection_label"] == "뉴스로 후보 강화"
     assert badge["connection_reason"] == "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다."
     assert badge["top_title"] == direct_evidence.title
@@ -758,6 +648,7 @@ def test_web_view_candidate_evidence_projects_empty_news_badge(tmp_path, monkeyp
         "caution_count": 0,
         "market_context_count": 0,
         "krx_reference_status": "missing",
+        "observed_at": None,
         "top_title": None,
     }
     _assert_public_safe_payload(snapshot)
@@ -884,26 +775,6 @@ def test_web_view_stock_detail_projects_empty_news_observation_detail(tmp_path, 
     assert detail["top_titles"] == []
     assert detail["missing_context"] == ["stored_news_observation"]
     _assert_public_safe_payload(snapshot)
-
-
-def test_web_view_static_html_renders_stock_news_observation_detail() -> None:
-    html = cli_module._render_web_view_html()
-
-    assert "news_observation_detail" in html
-    assert "renderStockNewsObservationDetail" in html
-    assert "stock-news-observation-detail" in html
-    assert "stock-news-title-list" in html
-    assert "connection_label" in html
-    assert "connection_reason" in html
-    assert ".stock-news-observation-detail { display: grid; gap: 6px; border-color: #e7d8bf; background: #fff; }" in html
-    assert 'const validStockCode = (value) => /^\\d{6}$/.test(value || "");' in html
-    assert "const requestedStockCode = () => new URLSearchParams(window.location.search).get(\"stock\");" in html
-    assert 'const initialStockCode = validStockCode(requestedInitialStockCode) ? requestedInitialStockCode : "";' in html
-    assert "await loadDaily(selectedDate, { initialStockCode: urlStockCode });" in html
-    assert "url.searchParams.set(\"stock\", stockCode);" in html
-    assert "sentiment_score" not in html
-    assert "stock_impact" not in html
-    assert "operator_recommendation" not in html
 
 
 def test_web_view_forbidden_public_keys_include_news_operator_fields() -> None:
@@ -3550,6 +3421,273 @@ def test_web_view_candidate_evidence_uses_stored_toss_2000_baseline(tmp_path, mo
     _assert_public_safe_payload(snapshot)
 
 
+def test_web_view_news_observation_keeps_unique_direct_evidence_after_later_empty_collection(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 2)
+    report = Report(
+        business_date=business_date,
+        stock_name="삼성전자",
+        stock_code="005930",
+        title="삼성전자 보고서",
+        broker_name="테스트증권",
+        published_at=datetime(2026, 6, 2, 9, 0, 0),
+        collected_at=datetime(2026, 6, 2, 9, 1, 0),
+        source_id="news-dedupe-report",
+        identity_key="news-dedupe-report",
+    )
+    repository.insert_reports([report])
+    repository.rebuild_daily_summaries(business_date)
+
+    first_run = _web_view_news_run(run_id="news-direct-first")
+    repeated_run = replace(
+        _web_view_news_run(run_id="news-direct-repeat"),
+        created_at=datetime(2026, 6, 2, 10, 5, 0),
+    )
+    later_empty_run = replace(
+        _web_view_news_run(run_id="news-later-empty"),
+        matched_count=0,
+        created_at=datetime(2026, 6, 2, 15, 15, 0),
+    )
+    evidence = _web_view_news_evidence(run_id=first_run.run_id, evidence_key="same-direct-news")
+    repository.save_news_intelligence_observation(first_run, [evidence])
+    repository.save_news_intelligence_observation(
+        repeated_run,
+        [replace(evidence, run_id=repeated_run.run_id, created_at=repeated_run.created_at)],
+    )
+    repository.save_news_intelligence_observation(later_empty_run, [])
+
+    daily = cli_module.build_web_view_daily_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        now=datetime(2026, 6, 2, 15, 20, 0),
+    )
+    candidates = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=2,
+    )
+
+    summary = daily["news_observation_summary"]
+    assert summary["direct_count"] == 1
+    assert summary["candidate_overlap_names"] == ["삼성전자"]
+    assert summary["items"][0]["display_label"] == "뉴스로 후보 강화"
+    assert summary["items"][0]["direct_count"] == 1
+    assert candidates["rows"][0]["news_observation_badge"]["direct_count"] == 1
+    assert candidates["rows"][0]["news_observation_badge"]["display_label"] == "뉴스로 후보 강화"
+
+
+def test_web_view_intraday_overlay_populates_priority_quote_when_market_top_has_no_overlap(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 20)
+    now = datetime(2026, 5, 20, 12, 1, 0)
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name="웹뷰후보",
+                stock_code="000001",
+                title="웹뷰후보 보고서",
+                broker_name="테스트증권",
+                published_at=now,
+                collected_at=now,
+                source_id="priority-quote-report",
+                identity_key="priority-quote-report",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    monkeypatch.setattr(cli_module, "fetch_market_top_stocks", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        cli_module,
+        "fetch_stock_quote_snapshot",
+        lambda *_args, **_kwargs: cli_module.StockQuoteSnapshot(
+            stock_code="000001",
+            stock_name="웹뷰후보",
+            sector_code=None,
+            sector_name=None,
+            current_price=10_500,
+            market_status="OPEN",
+            trade_time=now,
+            prev_close_price=10_000,
+            prev_change_price=500,
+            prev_change_rate=5.0,
+            trade_amount=90_000_000_000,
+            trade_volume=1_200_000,
+        ),
+    )
+    base_snapshot = cli_module.build_web_view_daily_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        now=now,
+    )
+
+    snapshot = cli_module._overlay_web_view_daily_intraday_market_top(
+        config,
+        repository,
+        base_snapshot,
+        business_date=business_date,
+        limit=20,
+        page_size=20,
+    )
+
+    commentary = snapshot["market_commentary"]
+    assert commentary["intraday_market_top_reference"]["items"] == []
+    assert commentary["intraday_quote_reference"]["live_fetch"] is True
+    assert commentary["intraday_quote_reference"]["items"] == [
+        {
+            "stock_name": "웹뷰후보",
+            "stock_code": "000001",
+            "mention_count": 1,
+            "current_price": 10_500,
+            "prev_close_price": 10_000,
+            "change_price": 500,
+            "change_percent": 5.0,
+            "trade_amount": 90_000_000_000,
+            "trade_volume": 1_200_000,
+            "market_status": "OPEN",
+            "trade_time": "2026-05-20T12:01:00",
+            "sector_name": None,
+            "resolution_source": "summary_stock_code",
+        }
+    ]
+
+
+def test_stock_flow_reference_keeps_each_priority_candidate_reference_date_visible(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 2)
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name=stock_name,
+                stock_code=stock_code,
+                title=f"{stock_name} 보고서",
+                broker_name="테스트증권",
+                published_at=datetime(2026, 6, 2, 9, index, 0),
+                collected_at=datetime(2026, 6, 2, 9, index, 30),
+                source_id=f"flow-date-{stock_code}",
+                identity_key=f"flow-date-{stock_code}",
+            )
+            for index, (stock_code, stock_name) in enumerate((("000001", "후보A"), ("000002", "후보B")))
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.upsert_stock_investor_flow_daily(
+        [
+            StockInvestorFlowDaily(
+                business_date=flow_date,
+                stock_code=stock_code,
+                stock_name=stock_name,
+                investor_type=investor_type,
+                net_buy_amount=amount,
+                fetched_at=datetime(2026, 6, 2, 15, 0, 0),
+            )
+            for flow_date, stock_code, stock_name, investor_type, amount in (
+                (date(2026, 6, 2), "000001", "후보A", "외국인", 100_000_000),
+                (date(2026, 6, 2), "000001", "후보A", "기관합계", 50_000_000),
+                (date(2026, 6, 1), "000002", "후보B", "외국인", -20_000_000),
+                (date(2026, 6, 1), "000002", "후보B", "기관합계", -10_000_000),
+            )
+        ]
+    )
+    summaries = repository.list_daily_summaries(business_date)
+
+    lines = cli_module._build_stock_flow_briefing_reference_lines(
+        repository,
+        business_date,
+        summaries=summaries,
+        limit=2,
+        priority_stock_codes=("000001", "000002"),
+    )
+    freshness = cli_module._build_stock_flow_source_freshness_item(
+        repository,
+        business_date,
+        summaries=summaries,
+        priority_stock_codes=("000001", "000002"),
+    )
+
+    assert lines[0] == "수급 참고 · 종목별 [12009] 저장값 / 기준일 혼합"
+    assert lines[1].startswith("- [26.06.02] 후보A")
+    assert lines[2].startswith("- [26.06.01] 후보B")
+    assert freshness is not None
+    assert freshness["status"] == "partial"
+    assert freshness["reference_dates"] == ["2026-06-02", "2026-06-01"]
+
+
+def test_web_view_stock_detail_includes_stored_target_hit_window(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 2)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="Alpha",
+                stock_code="000001",
+                title="Alpha target update",
+                broker_name="Broker",
+                published_at=datetime(2026, 6, 2, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 2, 9, 5, 0),
+                target_price_value=130_000,
+                source_id="target-window-report",
+                identity_key="target-window-report",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=date(2026, 6, day),
+                stock_code="000001",
+                stock_name="Alpha",
+                market="KOSPI",
+                close_price=close_price,
+                change_percent=0.0,
+                turnover=100_000_000,
+                fetched_at=datetime(2026, 6, day, 18, 0, 0),
+            )
+            for day, close_price in ((2, 100_000), (3, 120_000), (4, 130_000))
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_stock_detail_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        stock_code="000001",
+        now=datetime(2026, 6, 4, 18, 0, 0),
+    )
+
+    progress = snapshot["target_price_progress"]
+    assert progress["validation_available"] is True
+    assert progress["hit_min_horizon_days"] == 2
+    assert progress["hit_max_horizon_days"] == 2
+    _assert_public_safe_payload(snapshot)
+
+
 def test_web_view_etf_trend_snapshot_exposes_rotation_evidence_scope(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
@@ -4809,7 +4947,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "<b>KRX</b>" not in html
     assert "renderTopTwoReviewCandidates(rows) + rows.map" not in html
     assert 'document.getElementById("candidate-evidence-rows").innerHTML = rows.map' in html
-    assert 'document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(rows);' in html
+    assert 'document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(priorityRows);' in html
     assert "오늘의 우선순위" in html
     assert '<p class="brief" id="candidate-evidence-notice"></p>' in html
     assert 'document.getElementById("candidate-evidence-notice").textContent = "";' in html
@@ -5424,82 +5562,7 @@ def test_web_view_server_handles_short_concurrent_json_gets(tmp_path, monkeypatc
     assert statuses == [200] * 12
 
 
-def test_web_view_browser_smoke_checks_tablet_and_large_mobile_viewports() -> None:
-    source = inspect.getsource(cli_module._collect_web_view_browser_render_smoke_issues)
-
-    assert '"desktop", "width": 1366, "height": 900' in source
-    assert '"tablet", "width": 768, "height": 1024' in source
-    assert '"large_mobile", "width": 430, "height": 932' in source
-    assert '"mobile", "width": 390, "height": 844' in source
-    assert "#intraday-market-top-check" in source
-    assert "#intraday-market-top-overlap" in source
-    assert "intraday_overlap_panel" in source
-    assert "intraday_overlap_initial_visible" in source
-    assert "intraday_overlap_visible_before_check" in source
-    assert "#observation-summary-card" in source
-    assert "observation_summary_main_visible" in source
-    assert "watch_observation_summary_visible" in source
-    assert "observation_summary_visible_on_main" in source
-    assert "watch_observation_summary_missing" in source
-    assert "stock_search_flow" in source
-    assert "q=Beta" in source
-    assert "has_selected_date_report" in source
-    assert "report_empty_state" in source
-    assert 'for text in ("오늘 읽을 요약", "오늘의 우선순위")' in source
-    assert '"국장 관찰 요약")' not in source
-    assert ".is_visible()" in source
-
-
-def test_web_view_intraday_market_top_button_js_has_safe_click_flow() -> None:
-    html = cli_module._render_web_view_html()
-
-    assert "currentStatus.can_overlap_intraday_market_top === false" in html
-    assert "applyIntradayMarketTopToPriorityRows(data?.market_commentary)" in html
-    assert "function applyIntradayMarketTopToPriorityRows(commentary)" in html
-    assert "function topTwoIntradayReferenceForRow(row, reference, marketStatus = null)" in html
-    assert "function intradayReferenceTimeLabel(reference)" in html
-    assert "tossPriorityRows = tossPriorityRows.map((row) =>" in html
-    assert "renderTopTwoReviewCandidates(tossPriorityRows)" in html
-    assert "장중 참고 데이터를 가져오지 못했습니다. 저장된 요약을 계속 표시합니다." in html
-    assert "Naver 장중 참고 오류" in html
-    assert "장중 거래대금 상위와 리포트 언급이 겹친 종목이 없습니다." in html
-    assert "intradayMarketTopFreshnessLabel(item)" in html
-    assert "marketStatusLabel(item?.market_status)" in html
-    assert "거래시각" in html
-    assert "item?.checked_at" in html
-    assert "확인" in html
-    assert "node.hidden = true;" in html
-    assert "node.hidden = false;" in html
-    assert "overlapNode.hidden = false;" in html
-    assert "intradayMarketTopLastLoadedAt = Date.now();" in html
-    assert "setViewTab(\"main\");" in html
-    assert "setViewTab(\"watch\");" not in html
-    assert "scrollIntoView({ block: \"nearest\" })" in html
-
-
-def test_web_view_news_observation_summary_splits_priority_and_caution_sections() -> None:
-    html = cli_module._render_web_view_html()
-
-    assert "function newsObservationSummaryGroups(items)" in html
-    assert "function renderNewsObservationSummaryGroup(title, items)" in html
-    assert "우선 뉴스 확인" in html
-    assert "주의 뉴스 확인" in html
-    assert "news-observation-summary-groups" in html
-    assert "뉴스 기준일 이전값" in html
-    assert "KRX stale" not in html
-
-
 def test_web_view_news_observation_collect_button_and_api_contract(tmp_path, monkeypatch) -> None:
-    html = cli_module._render_web_view_html()
-    assert 'id="news-observation-collect"' in html
-    assert "collectNewsObservationForSelectedDate" in html
-    assert "/api/news-observations/collect" in html
-    assert "maybeAutoCollectNewsObservation(summary)" in html
-    assert "function maybeAutoCollectNewsObservationForPriorityRows(rows)" in html
-    assert "function newsObservationCollectKey()" in html
-    assert "newsObservationCollectAttemptedKey" in html
-    assert "maybeAutoCollectNewsObservationForPriorityRows(tossPriorityRows)" in html
-
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     config.ensure_runtime_dirs()
@@ -5648,11 +5711,39 @@ def test_web_view_candidate_value_profile_downgrades_target_only_no_match() -> N
     assert profile["value_label"] == "정보 보강"
     assert profile["time_mode"] == "intraday"
     assert "목표가 변화 단독" in profile["value_reason"]
-    assert int(profile["sort_value_signal"]) < 3
+    assert int(profile["sort_value_signal"]) == 3
     assert "score" not in json.dumps(profile, ensure_ascii=False).lower()
 
 
-def test_web_view_candidate_value_profile_promotes_direct_news_context() -> None:
+def test_web_view_candidate_value_profile_keeps_no_match_from_reordering_supported_candidate() -> None:
+    profile = cli_module._web_view_candidate_value_profile(
+        candidate_profile={
+            "observation_priority": "확인 후보",
+            "why_notable": ["리포트 집중"],
+            "missing_information": [],
+            "sort_signal": 3,
+            "sort_density": 1,
+        },
+        news_badge={
+            "available": True,
+            "display_label": "매칭 뉴스 없음",
+            "direct_count": 0,
+            "caution_count": 0,
+            "market_context_count": 0,
+        },
+        toss_baseline_reference={"available": False},
+        market_reference=object(),
+        stock_flow_rows=[object()],
+        rank_reference=None,
+        current=datetime(2026, 6, 23, 10, 0, 0),
+        business_date=date(2026, 6, 23),
+    )
+
+    assert profile["value_label"] == "뉴스 매칭 없음"
+    assert int(profile["sort_value_signal"]) == 3
+
+
+def test_web_view_candidate_value_profile_keeps_base_sort_signal_for_direct_news() -> None:
     profile = cli_module._web_view_candidate_value_profile(
         candidate_profile={
             "observation_priority": "확인 후보",
@@ -5666,6 +5757,8 @@ def test_web_view_candidate_value_profile_promotes_direct_news_context() -> None
             "display_label": "직접 뉴스",
             "connection_label": "뉴스로 후보 강화",
             "direct_count": 1,
+            "positive_direct_count": 1,
+            "primary_caution_count": 0,
             "caution_count": 0,
             "market_context_count": 0,
         },
@@ -5678,9 +5771,9 @@ def test_web_view_candidate_value_profile_promotes_direct_news_context() -> None
     )
 
     assert profile["observation_priority"] == "우선 확인"
-    assert profile["value_label"] == "뉴스 근거 확인"
-    assert profile["value_reason"] == "직접 뉴스 1건이 후보 근거를 보강합니다."
-    assert int(profile["sort_value_signal"]) > 1
+    assert profile["value_label"] == "상승 근거 우세"
+    assert profile["value_reason"] == "직접 긍정 뉴스 1건이 직접 주의 뉴스보다 우세합니다."
+    assert int(profile["sort_value_signal"]) == 1
 
 
 def test_web_view_candidate_value_profile_keeps_direct_news_ahead_of_support_caution() -> None:
@@ -5697,6 +5790,8 @@ def test_web_view_candidate_value_profile_keeps_direct_news_ahead_of_support_cau
             "display_label": "직접 뉴스",
             "connection_label": "뉴스로 후보 강화",
             "direct_count": 2,
+            "positive_direct_count": 2,
+            "primary_caution_count": 0,
             "caution_count": 1,
             "market_context_count": 1,
         },
@@ -5709,8 +5804,110 @@ def test_web_view_candidate_value_profile_keeps_direct_news_ahead_of_support_cau
     )
 
     assert profile["observation_priority"] == "우선 확인"
-    assert profile["value_label"] == "뉴스 근거 확인"
-    assert profile["value_reason"] == "직접 뉴스 2건이 후보 근거를 보강합니다. · 보조 확인 1건 · 시장맥락 1건"
+    assert profile["value_label"] == "상승 근거 우세"
+    assert profile["value_reason"] == "직접 긍정 뉴스 2건이 직접 주의 뉴스보다 우세합니다. · 보조 확인 1건 · 시장맥락 1건"
+
+
+def test_web_view_candidate_value_profile_exposes_direct_evidence_direction_without_trading_call() -> None:
+    profile = cli_module._web_view_candidate_value_profile(
+        candidate_profile={
+            "observation_priority": "확인 후보",
+            "why_notable": ["목표가 상향"],
+            "missing_information": [],
+            "sort_signal": 1,
+            "sort_density": 1,
+        },
+        news_badge={
+            "available": True,
+            "display_label": "직접 뉴스",
+            "connection_label": "뉴스로 후보 강화",
+            "direct_count": 2,
+            "positive_direct_count": 2,
+            "primary_caution_count": 0,
+            "caution_count": 1,
+            "market_context_count": 1,
+        },
+        toss_baseline_reference={"available": False},
+        market_reference=object(),
+        stock_flow_rows=[object()],
+        rank_reference=None,
+        current=datetime(2026, 6, 19, 10, 0, 0),
+        business_date=date(2026, 6, 19),
+    )
+
+    assert profile["evidence_direction"] == "상승 근거 우세"
+    assert profile["evidence_direction_reason"] == "직접 긍정 뉴스 2건이 직접 주의 뉴스보다 우세합니다."
+    assert int(profile["sort_value_signal"]) == 1
+    rendered = json.dumps(profile, ensure_ascii=False)
+    assert "매수" not in rendered
+    assert "매도" not in rendered
+
+
+def test_web_view_candidate_value_profile_marks_conflicting_direct_evidence_without_promotion() -> None:
+    profile = cli_module._web_view_candidate_value_profile(
+        candidate_profile={
+            "observation_priority": "확인 후보",
+            "why_notable": ["리포트 집중"],
+            "missing_information": [],
+            "sort_signal": 3,
+            "sort_density": 1,
+        },
+        news_badge={
+            "available": True,
+            "display_label": "직접 뉴스",
+            "connection_label": "뉴스 근거 확인",
+            "direct_count": 2,
+            "positive_direct_count": 1,
+            "primary_caution_count": 1,
+            "caution_count": 1,
+            "market_context_count": 0,
+        },
+        toss_baseline_reference={"available": False},
+        market_reference=object(),
+        stock_flow_rows=[],
+        rank_reference=None,
+        current=datetime(2026, 6, 19, 10, 0, 0),
+        business_date=date(2026, 6, 19),
+    )
+
+    assert profile["evidence_direction"] == "직접 근거 상충"
+    assert profile["observation_priority"] == "근거 엇갈림"
+    assert profile["value_label"] == "직접 근거 상충"
+    assert "직접 긍정 뉴스 1건" in profile["value_reason"]
+    assert "직접 주의 뉴스 1건" in profile["value_reason"]
+    assert int(profile["sort_value_signal"]) == 3
+
+
+def test_web_view_candidate_value_profile_demotes_direct_caution_evidence() -> None:
+    profile = cli_module._web_view_candidate_value_profile(
+        candidate_profile={
+            "observation_priority": "확인 후보",
+            "why_notable": ["리포트 집중"],
+            "missing_information": [],
+            "sort_signal": 3,
+            "sort_density": 1,
+        },
+        news_badge={
+            "available": True,
+            "display_label": "주의 뉴스",
+            "connection_label": "주의 뉴스 확인",
+            "direct_count": 1,
+            "positive_direct_count": 0,
+            "primary_caution_count": 1,
+            "caution_count": 1,
+            "market_context_count": 0,
+        },
+        toss_baseline_reference={"available": False},
+        market_reference=object(),
+        stock_flow_rows=[object()],
+        rank_reference=None,
+        current=datetime(2026, 6, 19, 10, 0, 0),
+        business_date=date(2026, 6, 19),
+    )
+
+    assert profile["evidence_direction"] == "하방 위험 우세"
+    assert profile["observation_priority"] == "주의 확인"
+    assert int(profile["sort_value_signal"]) == 3
 
 
 def test_web_view_access_code_gate_protects_content_until_login(tmp_path, monkeypatch) -> None:
