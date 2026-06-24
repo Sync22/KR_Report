@@ -21216,8 +21216,7 @@ def _collect_web_view_browser_render_smoke_issues(
                     preview_page.wait_for_selector("#v2-candidate-list", timeout=timeout_ms)
                     preview_page.wait_for_function(
                         """
-                        () => !String(document.querySelector('#v2-candidate-list')?.textContent || '')
-                          .includes('후보를 불러오는 중입니다.')
+                        () => document.querySelector('#v2-candidate-list')?.dataset.loaded === 'true'
                         """,
                         timeout=timeout_ms,
                     )
@@ -22463,12 +22462,22 @@ def _make_web_view_handler(
         market_top_page_size: int,
     ) -> dict:
         if not include_intraday_market_top:
-            return build_web_view_daily_snapshot(config, repository, business_date=business_date)
+            return build_web_view_daily_snapshot(
+                config,
+                repository,
+                business_date=business_date,
+                include_observation_summary=False,
+            )
 
         base_cache_key = f"daily:{business_date.isoformat()}"
         base_payload = read_cached_json_payload(base_cache_key)
         if base_payload is None:
-            base_payload = build_web_view_daily_snapshot(config, repository, business_date=business_date)
+            base_payload = build_web_view_daily_snapshot(
+                config,
+                repository,
+                business_date=business_date,
+                include_observation_summary=False,
+            )
             store_cached_json_payload(base_cache_key, base_payload)
         return _overlay_web_view_daily_intraday_market_top(
             config,
@@ -22604,6 +22613,29 @@ def _make_web_view_handler(
                         repository,
                         business_date=business_date,
                         limit=evidence_limit,
+                    ),
+                )
+                return
+            if path == "/api/observation-summary":
+                query_params = url_parse.parse_qs(query)
+                raw_date = query_params.get("date", [None])[0]
+                try:
+                    if not raw_date:
+                        raise ValueError
+                    business_date = date.fromisoformat(raw_date)
+                except ValueError:
+                    _write_http_response(self, HTTPStatus.BAD_REQUEST, "invalid date", content_type="text/plain; charset=utf-8")
+                    return
+                write_cached_json_response(
+                    self,
+                    f"observation-summary:{business_date.isoformat()}",
+                    lambda: _build_web_view_observation_summary(
+                        repository,
+                        business_date,
+                        summaries=repository.list_daily_summaries(business_date),
+                        sectors=repository.list_category_rollups_by_display_name_for_business_date(business_date, "sector"),
+                        themes=repository.list_category_rollups_by_display_name_for_business_date(business_date, "theme"),
+                        holiday_overrides=config.holiday_overrides,
                     ),
                 )
                 return
@@ -25081,6 +25113,7 @@ def _render_web_view_v2_html() -> str:
       state.selectedStockCode = "";
       setUrl(date, validStockCode(initialStockCode) ? initialStockCode : "");
       $("v2-candidate-list").innerHTML = '<span class="v2-muted">후보를 불러오는 중입니다.</span>';
+      delete $("v2-candidate-list").dataset.loaded;
       $("v2-stock-detail").innerHTML = '<span class="v2-muted">볼 종목 카드를 누르면 상세를 불러옵니다.</span>';
       try {
         const [daily, evidence, etfTrend] = await Promise.all([
@@ -25090,6 +25123,7 @@ def _render_web_view_v2_html() -> str:
         ]);
         renderFlow(daily);
         renderCandidates(evidence);
+        $("v2-candidate-list").dataset.loaded = "true";
         renderEvidenceGrid(daily, evidence, etfTrend);
         document.querySelectorAll("[data-date]").forEach((button) => {
           button.classList.toggle("active", button.getAttribute("data-date") === date);
@@ -25405,6 +25439,11 @@ def _render_web_view_html() -> str:
     .candidate-quality-grid .quality-line { display: block; margin-top: 0; min-width: 0; }
     .candidate-quality-grid .quality-line b { display: block; border-bottom: 1px solid rgba(222,216,204,.8); padding-bottom: 5px; margin-bottom: 6px; color: var(--ink); }
     .candidate-quality-grid .quality-chip { margin: 0 6px 5px 0; vertical-align: top; }
+    #candidate-evidence-card .candidate-priority-line,
+    #candidate-evidence-card .candidate-intraday-line,
+    #candidate-evidence-card .candidate-quality-grid .quality-line:not(:first-child),
+    #candidate-evidence-card .candidate-evidence-grid > span:last-child { display: none; }
+    #candidate-evidence-card .candidate-quality-grid { display: block; margin-bottom: 8px; }
     .candidate-news-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; border: 1px solid #e7d8bf; border-radius: 10px; padding: 7px 8px; background: #fff; color: var(--muted); font-size: 12px; line-height: 1.4; }
     .candidate-news-badge b { color: var(--ink); }
     .candidate-metric-list, .target-trail-list { display: grid; gap: 5px; margin-top: 5px; }
@@ -25969,8 +26008,12 @@ def _render_web_view_html() -> str:
     let rotationLoadedDate = null;
     let rotationLoadingDate = null;
     let candidateEvidenceLoadedDate = null;
+    let candidateEvidenceLoadedLimit = 0;
+    let observationSummaryLoadedDate = null;
+    let watchDataLoading = false;
     let backtestObservationLoadedDate = null;
     let etfTrendLoadedDate = null;
+    let etfTrendAvailable = false;
     let flowTrendLoadedDate = null;
     let dailyLoadSequence = 0;
     let stockSearchQuery = "";
@@ -26269,24 +26312,50 @@ def _render_web_view_html() -> str:
     }
 
     async function loadCandidateEvidence(date, options = {}) {
-      if (!options.force && candidateEvidenceLoadedDate === date && currentCandidateEvidenceData) return;
+      const requestedLimit = Math.max(1, Number(options.limit || 8));
+      if (options.initialData) {
+        currentCandidateEvidenceData = options.initialData;
+        candidateEvidenceLoadedDate = date;
+        candidateEvidenceLoadedLimit = Array.isArray(options.initialData.rows) ? options.initialData.rows.length : 0;
+        renderCandidateEvidence(options.initialData);
+        return;
+      }
+      if (!options.force && candidateEvidenceLoadedDate === date && currentCandidateEvidenceData && candidateEvidenceLoadedLimit >= requestedLimit) return;
       document.getElementById("candidate-evidence-date").textContent = `(${date})`;
       document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">관찰 후보를 불러오는 중입니다.</span>';
-      const data = await fetch(`/api/candidate-evidence?date=${encodeURIComponent(date)}&limit=20`, { cache: "no-store" }).then((response) => response.json());
+      const data = await fetch(`/api/candidate-evidence?date=${encodeURIComponent(date)}&limit=${requestedLimit}`, { cache: "no-store" }).then((response) => response.json());
       currentCandidateEvidenceData = data;
       candidateEvidenceLoadedDate = date;
+      candidateEvidenceLoadedLimit = Array.isArray(data.rows) ? data.rows.length : 0;
       renderCandidateEvidence(data);
+    }
+
+    async function loadObservationSummary(date) {
+      if (observationSummaryLoadedDate === date) return;
+      const data = await fetch(`/api/observation-summary?date=${encodeURIComponent(date)}`, { cache: "no-store" }).then((response) => response.json());
+      observationSummaryLoadedDate = date;
+      renderObservationSummary(data);
     }
 
     async function loadTabDataForActiveView(date) {
       if (!date) return;
       if (activeViewTab === "main") {
-        await loadCandidateEvidence(date);
+        await loadCandidateEvidence(date, { initialData: currentDailyData?.priority_candidate_evidence });
       } else if (activeViewTab === "watch") {
-        await loadCandidateEvidence(date);
-        if (backtestObservationLoadedDate !== date) {
-          await loadBacktestObservation(date);
-          backtestObservationLoadedDate = date;
+        watchDataLoading = true;
+        try {
+          await Promise.all([
+            loadCandidateEvidence(date, { limit: 8 }),
+            loadObservationSummary(date),
+            backtestObservationLoadedDate === date
+              ? Promise.resolve()
+              : loadBacktestObservation(date).then(() => { backtestObservationLoadedDate = date; }),
+          ]);
+        } finally {
+          watchDataLoading = false;
+          document.querySelectorAll("#candidate-evidence-rows .candidate-detail-action").forEach((button) => {
+            button.disabled = false;
+          });
         }
       } else if (activeViewTab === "market") {
         if (flowTrendLoadedDate !== date) {
@@ -26297,9 +26366,11 @@ def _render_web_view_html() -> str:
         return;
       } else if (activeViewTab === "rotation") {
         if (etfTrendLoadedDate !== date) {
-          await loadEtfTrend(date);
+          const etfTrend = await loadEtfTrend(date);
           etfTrendLoadedDate = date;
+          etfTrendAvailable = Boolean(etfTrend?.available);
         }
+        if (!etfTrendAvailable) return;
         await loadRotationOverlayOnce(date);
       }
     }
@@ -26341,8 +26412,12 @@ def _render_web_view_html() -> str:
       currentCandidateEvidenceData = null;
       currentBacktestObservationData = null;
       candidateEvidenceLoadedDate = null;
+      candidateEvidenceLoadedLimit = 0;
+      observationSummaryLoadedDate = null;
+      watchDataLoading = false;
       backtestObservationLoadedDate = null;
       etfTrendLoadedDate = null;
+      etfTrendAvailable = false;
       flowTrendLoadedDate = null;
       dailyStockVisibleLimit = DAILY_STOCK_DEFAULT_LIMIT;
       backtestObservationVisibleLimit = BACKTEST_OBSERVATION_DEFAULT_LIMIT;
@@ -26352,7 +26427,13 @@ def _render_web_view_html() -> str:
       renderDailyStocks(data);
       renderDailyBriefing(data);
       renderSourceFreshnessSummary(data.source_freshness_summary);
-      renderObservationSummary(data.observation_summary);
+      if (data.observation_summary) {
+        renderObservationSummary(data.observation_summary);
+      } else {
+        document.getElementById("observation-summary-date").textContent = `(${date})`;
+        document.getElementById("observation-summary-notice").textContent = "관찰 탭에서 저장 근거 요약을 불러옵니다.";
+        document.getElementById("observation-summary-rows").innerHTML = '<span class="muted">관찰 탭을 열면 리포트 집중과 저장 수급을 불러옵니다.</span>';
+      }
       renderNewsObservationSummary(data.news_observation_summary);
       document.getElementById("main-priority-date").textContent = `(${date})`;
       document.getElementById("main-priority-rows").innerHTML = '<span class="muted">오늘 우선순위를 불러오는 중입니다.</span>';
@@ -27809,7 +27890,7 @@ def _render_web_view_html() -> str:
       updateTossPriorityRefreshButton();
       maybeAutoCollectNewsObservationForPriorityRows(tossPriorityRows);
       loadTossPriorityQuotes(tossPriorityDate);
-      document.getElementById("candidate-evidence-rows").innerHTML = rows.map((item, index) => {
+      document.getElementById("candidate-evidence-rows").innerHTML = rows.slice(0, 8).map((item, index) => {
         const report = item.report_summary || {};
         const targetMetrics = candidateTargetMetrics(report, item.target_price_progress);
         const market = candidateMarketInline(item.market_reference);
@@ -27864,7 +27945,7 @@ def _render_web_view_html() -> str:
             <span><b>목표가/지표</b>${targetMetrics}</span>
             <span><b>수급/순위</b>${candidateFlowMetrics(rank, turnover, flowLine)}</span>
           </div>
-          <button class="candidate-detail-action" type="button" data-stock-code="${esc(item.stock_code || "")}">종목 상세에서 근거 이어보기</button>
+          <button class="candidate-detail-action" type="button" data-stock-code="${esc(item.stock_code || "")}"${watchDataLoading ? " disabled" : ""}>종목 상세에서 근거 이어보기</button>
         </article>`;
       }).join("");
     }
@@ -28122,6 +28203,18 @@ def _render_web_view_html() -> str:
       </div>`;
     }
 
+    function targetReachLabel(progress) {
+      if (!progress?.validation_available) return "";
+      const parts = [];
+      if (progress.hit_min_horizon_days !== null && progress.hit_min_horizon_days !== undefined) {
+        parts.push(`하단 D+${number(progress.hit_min_horizon_days)}`);
+      }
+      if (progress.hit_max_horizon_days !== null && progress.hit_max_horizon_days !== undefined) {
+        parts.push(`상단 D+${number(progress.hit_max_horizon_days)}`);
+      }
+      return parts.length ? parts.join(" · ") : "저장 기간 내 도달 없음";
+    }
+
     function candidateTargetMetrics(report, progress) {
       const pieces = [
         ["목표가", moneyRange(report.target_price_min, report.target_price_max)]
@@ -28140,6 +28233,8 @@ def _render_web_view_html() -> str:
             ? ["진행", metricRange(progress.progress_to_min_percent, progress.progress_to_max_percent)]
             : ["진행", "-"]
         );
+        const reach = targetReachLabel(progress);
+        if (reach) pieces.push(["도달", reach]);
       }
       return `<span class="candidate-info-grid candidate-target-grid">${pieces.map(([label, value]) => `<span><b>${esc(label)}</b><em>${esc(value)}</em></span>`).join("")}</span>`;
     }
@@ -28488,6 +28583,7 @@ def _render_web_view_html() -> str:
         document.getElementById("market-kospi-rows").innerHTML = emptyRow;
         document.getElementById("market-kosdaq-rows").innerHTML = emptyRow;
         document.getElementById("market-index-rows").innerHTML = emptyRow;
+        document.getElementById("etf-trend-panel").open = true;
         return;
       }
       document.getElementById("market-kospi-rows").innerHTML = context.top_kospi_by_turnover.length ? context.top_kospi_by_turnover.map((item) => row([
@@ -28566,6 +28662,7 @@ def _render_web_view_html() -> str:
     async function loadEtfTrend(date) {
       const data = await fetch(`/api/etf-trend?date=${encodeURIComponent(date)}&limit=5`, { cache: "no-store" }).then((response) => response.json());
       renderEtfTrend(data);
+      return data;
     }
 
     function compactEtfTrend(items) {
@@ -28590,6 +28687,7 @@ def _render_web_view_html() -> str:
       if (!flow || !flow.available || !flow.items.length) {
         const emptyRows = '<tr><td colspan="2" class="muted">최근 ETF 흐름 데이터가 없습니다.</td></tr>';
         document.getElementById("etf-tab-rows").innerHTML = emptyRows;
+        document.getElementById("rotation-details").open = false;
         return;
       }
       const rows = flow.items.map((item) => row([
@@ -29499,6 +29597,7 @@ def build_web_view_daily_snapshot(
     intraday_market_top_limit: int = 100,
     intraday_market_top_page_size: int = 20,
     intraday_market_top_delay_seconds: float = 0.5,
+    include_observation_summary: bool = True,
 ) -> dict:
     current = now or datetime.now(ZoneInfo(config.timezone))
     summaries = repository.list_daily_summaries(business_date)
@@ -29542,13 +29641,17 @@ def build_web_view_daily_snapshot(
         recent_flow_dates=recent_flow_dates,
         priority_stock_codes=priority_stock_codes,
     )
-    observation_summary = _build_web_view_observation_summary(
-        repository,
-        business_date,
-        summaries=summaries,
-        sectors=sectors,
-        themes=themes,
-        holiday_overrides=config.holiday_overrides,
+    observation_summary = (
+        _build_web_view_observation_summary(
+            repository,
+            business_date,
+            summaries=summaries,
+            sectors=sectors,
+            themes=themes,
+            holiday_overrides=config.holiday_overrides,
+        )
+        if include_observation_summary
+        else None
     )
     market_commentary = _build_market_commentary_practice_snapshot(
         config,
@@ -29607,6 +29710,8 @@ def build_web_view_daily_snapshot(
         "market_briefing": market_briefing,
         "market_commentary": market_commentary,
         "observation_summary": observation_summary,
+        "observation_summary_deferred": not include_observation_summary,
+        "priority_candidate_evidence": priority_candidate_snapshot,
         "news_observation_summary": news_observation_summary,
         "source_freshness_summary": source_freshness_summary,
         "krx_context": krx_context,
@@ -31615,46 +31720,11 @@ def _web_view_target_validation(
     }
 
 
-def _web_view_first_target_report_date(
-    repository: StockMonitorRepository,
-    *,
-    stock_code: str,
-    business_date: date,
-) -> date | None:
-    with repository.connect() as connection:
-        row = connection.execute(
-            """
-            SELECT MIN(business_date) AS business_date
-            FROM reports
-            WHERE stock_code = ?
-              AND business_date <= ?
-              AND target_price_value IS NOT NULL
-            """,
-            (stock_code, business_date.isoformat()),
-        ).fetchone()
-    raw = row["business_date"] if row else None
-    return date.fromisoformat(raw) if raw else None
-
-
 def _web_view_target_price_progress(
     repository: StockMonitorRepository,
     summary: DailyStockSummary,
     market_reference: StockMarketDailySnapshot | None,
 ) -> dict:
-    baseline_date = (
-        _web_view_first_target_report_date(
-            repository,
-            stock_code=summary.stock_code,
-            business_date=summary.business_date,
-        )
-        if summary.stock_code
-        else None
-    )
-    baseline_references = (
-        repository.list_stock_market_daily_for_codes(baseline_date, [summary.stock_code])
-        if baseline_date and summary.stock_code
-        else []
-    )
     market_series = (
         repository.list_stock_market_daily_for_code_on_or_after(
             summary.business_date,
@@ -31667,8 +31737,8 @@ def _web_view_target_price_progress(
     return _web_view_target_price_progress_from_rows(
         summary,
         market_reference,
-        baseline_date=baseline_date,
-        baseline_market=baseline_references[0] if baseline_references else None,
+        baseline_date=summary.business_date if summary.stock_code else None,
+        baseline_market=market_reference,
         market_series=market_series,
     )
 
@@ -32044,7 +32114,11 @@ def _load_candidate_report_context(
                 "five_business_day_broker_count": 0,
                 "window_business_dates": [item.isoformat() for item in recent_dates],
             }
-            first_target_date_by_code[summary.stock_code] = None
+            first_target_date_by_code[summary.stock_code] = (
+                business_date
+                if summary.target_price_min is not None or summary.target_price_max is not None
+                else None
+            )
     if not stock_codes:
         return {
             "report_intensity_by_code": intensity_by_code,
@@ -32067,17 +32141,6 @@ def _load_candidate_report_context(
             GROUP BY stock_code
             """,
             (*stock_codes, *(item.isoformat() for item in recent_dates)),
-        ).fetchall()
-        first_rows = connection.execute(
-            f"""
-            SELECT stock_code, MIN(business_date) AS business_date
-            FROM reports
-            WHERE stock_code IN ({stock_placeholders})
-              AND business_date <= ?
-              AND target_price_value IS NOT NULL
-            GROUP BY stock_code
-            """,
-            (*stock_codes, business_date.isoformat()),
         ).fetchall()
         previous_rows = connection.execute(
             f"""
@@ -32118,9 +32181,6 @@ def _load_candidate_report_context(
             "five_business_day_broker_count": int(row["broker_count"] or 0),
             "window_business_dates": [item.isoformat() for item in recent_dates],
         }
-    for row in first_rows:
-        raw_date = row["business_date"]
-        first_target_date_by_code[str(row["stock_code"])] = date.fromisoformat(raw_date) if raw_date else None
     for row in previous_rows:
         previous_target_by_code[str(row["stock_code"])] = {
             "previous_date": str(row["business_date"]),

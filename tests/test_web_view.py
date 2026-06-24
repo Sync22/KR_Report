@@ -3688,6 +3688,73 @@ def test_web_view_stock_detail_includes_stored_target_hit_window(tmp_path, monke
     _assert_public_safe_payload(snapshot)
 
 
+def test_web_view_target_hit_window_uses_selected_report_date(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    first_date = date(2026, 6, 2)
+    selected_date = date(2026, 6, 4)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="Alpha",
+                stock_code="000001",
+                title="Alpha first target",
+                broker_name="Broker",
+                published_at=datetime(2026, 6, 2, 9, 0, 0),
+                business_date=first_date,
+                collected_at=datetime(2026, 6, 2, 9, 5, 0),
+                target_price_value=130_000,
+                source_id="target-first-report",
+                identity_key="target-first-report",
+            ),
+            Report(
+                stock_name="Alpha",
+                stock_code="000001",
+                title="Alpha revised target",
+                broker_name="Broker",
+                published_at=datetime(2026, 6, 4, 9, 0, 0),
+                business_date=selected_date,
+                collected_at=datetime(2026, 6, 4, 9, 5, 0),
+                target_price_value=150_000,
+                source_id="target-selected-report",
+                identity_key="target-selected-report",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(first_date)
+    repository.rebuild_daily_summaries(selected_date)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=date(2026, 6, day),
+                stock_code="000001",
+                stock_name="Alpha",
+                market="KOSPI",
+                close_price=close_price,
+                change_percent=0.0,
+                turnover=100_000_000,
+                fetched_at=datetime(2026, 6, day, 18, 0, 0),
+            )
+            for day, close_price in ((2, 100_000), (4, 130_000), (5, 150_000))
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_stock_detail_snapshot(
+        config,
+        repository,
+        business_date=selected_date,
+        stock_code="000001",
+        now=datetime(2026, 6, 5, 18, 0, 0),
+    )
+
+    progress = snapshot["target_price_progress"]
+    assert progress["baseline_date"] == "2026-06-04"
+    assert progress["hit_min_horizon_days"] == 1
+
+
 def test_web_view_etf_trend_snapshot_exposes_rotation_evidence_scope(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
@@ -4688,6 +4755,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
             payload = json.loads(response.read().decode("utf-8"))
         with urllib.request.urlopen(base_url + "/api/daily/2026-05-08", timeout=5) as response:
             daily_payload = json.loads(response.read().decode("utf-8"))
+        with urllib.request.urlopen(base_url + "/api/observation-summary?date=2026-05-08", timeout=5) as response:
+            observation_summary_payload = json.loads(response.read().decode("utf-8"))
         with urllib.request.urlopen(base_url + "/api/candidate-evidence?date=2026-05-08", timeout=5) as response:
             candidate_evidence_payload = json.loads(response.read().decode("utf-8"))
         with urllib.request.urlopen(base_url + "/api/observation/backtest?date=2026-05-08", timeout=5) as response:
@@ -4850,9 +4919,9 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert html.index('id="candidate-evidence-rows"') < html.index('id="backtest-observation-card"')
     assert html.index('id="candidate-evidence-card"') < html.index('id="stock-rows"')
     assert "renderCandidateEvidence(data.candidate_evidence)" not in html
-    assert "loadCandidateEvidence(date)" in html
+    assert "loadCandidateEvidence(date, { initialData: currentDailyData?.priority_candidate_evidence })" in html
     assert 'document.getElementById("main-priority-rows").innerHTML = message;' in html
-    assert 'if (activeViewTab === "main") {\n        await loadCandidateEvidence(date);' in html
+    assert 'if (activeViewTab === "main") {\n        await loadCandidateEvidence(date, { initialData: currentDailyData?.priority_candidate_evidence });' in html
     load_daily_body = html.split("async function loadDaily(date, options = {})", 1)[1].split(
         "function renderDailyBriefing", 1
     )[0]
@@ -4946,7 +5015,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "증권사 ${number(report.broker_count)}곳" not in html
     assert "<b>KRX</b>" not in html
     assert "renderTopTwoReviewCandidates(rows) + rows.map" not in html
-    assert 'document.getElementById("candidate-evidence-rows").innerHTML = rows.map' in html
+    assert 'document.getElementById("candidate-evidence-rows").innerHTML = rows.slice(0, 8).map' in html
     assert 'document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(priorityRows);' in html
     assert "오늘의 우선순위" in html
     assert '<p class="brief" id="candidate-evidence-notice"></p>' in html
@@ -5219,6 +5288,11 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert daily_payload["surface"] == "web-view"
     assert daily_payload["public_contract"]["read_only"] is True
     assert daily_payload["public_contract"]["control_exposed"] is False
+    assert "observation_summary" not in daily_payload
+    assert daily_payload["observation_summary_deferred"] is True
+    assert observation_summary_payload["source"] == "stored_report_krx_observation_summary"
+    assert observation_summary_payload["read_only"] is True
+    assert observation_summary_payload["live_fetch"] is False
     assert daily_payload["market_briefing"]["source"] == "stored_report_krx_market_briefing"
     assert daily_payload["market_briefing"]["scoring"] is False
     assert "market_reference_lines" in daily_payload["market_briefing"]
