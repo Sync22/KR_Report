@@ -3220,7 +3220,7 @@ def test_web_view_daily_krx_context_is_exact_date_and_does_not_fallback_to_lates
     _assert_public_safe_payload(exact_context_snapshot)
 
 
-def test_web_view_source_freshness_marks_toss_ready_from_dedicated_env(tmp_path, monkeypatch) -> None:
+def test_web_view_source_freshness_marks_toss_configured_without_live_quote(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     (tmp_path / ".env.toss-openapi").write_text(
         "\n".join(
@@ -3258,9 +3258,9 @@ def test_web_view_source_freshness_marks_toss_ready_from_dedicated_env(tmp_path,
     source_freshness_items = {
         item["key"]: item for item in snapshot["source_freshness_summary"]["items"]
     }
-    assert source_freshness_items["toss_openapi"]["status"] == "ready"
-    assert source_freshness_items["toss_openapi"]["available"] is True
-    assert source_freshness_items["toss_openapi"]["live_fetch"] is True
+    assert source_freshness_items["toss_openapi"]["status"] == "configured"
+    assert source_freshness_items["toss_openapi"]["available"] is False
+    assert source_freshness_items["toss_openapi"]["live_fetch"] is False
     assert source_freshness_items["toss_openapi"]["affects_ordering"] is False
 
 
@@ -5635,6 +5635,7 @@ def test_web_view_news_observation_collect_uses_candidate_priority_top_two(tmp_p
     repository.initialize()
     business_date = date(2026, 6, 19)
     captured_args = []
+    summary_codes = []
 
     def fake_candidate_snapshot(config_arg, repository_arg, *, business_date, limit):
         assert config_arg is config
@@ -5667,8 +5668,13 @@ def test_web_view_news_observation_collect_uses_candidate_priority_top_two(tmp_p
         )
         return 0
 
+    def fake_summary(_repository, _business_date, *, stock_codes=None):
+        summary_codes.append(tuple(stock_codes or ()))
+        return {"available": True, "items": []}
+
     monkeypatch.setattr(cli_module, "build_web_view_candidate_evidence_snapshot", fake_candidate_snapshot)
     monkeypatch.setattr(cli_module, "_run_news_intelligence_briefing_collect", fake_run)
+    monkeypatch.setattr(cli_module, "_build_web_view_news_observation_summary", fake_summary)
 
     status, payload = cli_module._collect_web_view_news_observations(
         config,
@@ -5681,6 +5687,58 @@ def test_web_view_news_observation_collect_uses_candidate_priority_top_two(tmp_p
     assert payload["ok"] is True
     assert payload["saved_observation_count"] == 2
     assert [args.stock_code for args in captured_args] == [["229640", "138930"]]
+    assert summary_codes == [("229640", "138930")]
+
+
+def test_web_view_daily_snapshot_scopes_news_summary_to_top_two_candidates(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 19)
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name=name,
+                stock_code=code,
+                title=f"{name} report",
+                broker_name="Test",
+                published_at=datetime(2026, 6, 19, 9, index, 0),
+                collected_at=datetime(2026, 6, 19, 9, index, 30),
+                source_id=f"daily-top-two-{code}",
+                identity_key=f"daily-top-two-{code}",
+            )
+            for index, (code, name) in enumerate(
+                (("000001", "Alpha"), ("000002", "Beta"), ("000003", "Gamma"))
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    candidate_limits = []
+    summary_codes = []
+
+    def fake_candidate_snapshot(_config, _repository, *, business_date, limit):
+        candidate_limits.append(limit)
+        return {
+            "rows": [
+                {"stock_code": "000001", "stock_name": "Alpha"},
+                {"stock_code": "000002", "stock_name": "Beta"},
+                {"stock_code": "000003", "stock_name": "Gamma"},
+            ]
+        }
+
+    def fake_summary(_repository, _business_date, *, stock_codes=None):
+        summary_codes.append(tuple(stock_codes or ()))
+        return {"available": False, "items": []}
+
+    monkeypatch.setattr(cli_module, "build_web_view_candidate_evidence_snapshot", fake_candidate_snapshot)
+    monkeypatch.setattr(cli_module, "_build_web_view_news_observation_summary", fake_summary)
+
+    cli_module.build_web_view_daily_snapshot(config, repository, business_date=business_date)
+
+    assert candidate_limits == [2]
+    assert summary_codes == [("000001", "000002")]
 
 
 def test_web_view_candidate_value_profile_downgrades_target_only_no_match() -> None:
@@ -6024,3 +6082,17 @@ def test_web_view_access_code_gate_marks_cookie_secure_behind_https_proxy(tmp_pa
 
     assert redirect_exc_info.value.code == 303
     assert "; Secure" in set_cookie
+
+
+def test_web_view_news_connection_does_not_present_stale_krx_as_news_evidence() -> None:
+    label, reason = cli_module._web_view_news_observation_connection(
+        direct_count=0,
+        caution_count=0,
+        positive_direct_count=0,
+        primary_caution_count=0,
+        market_context_count=0,
+        krx_reference_status="stale",
+    )
+
+    assert label == "뉴스 근거 부족"
+    assert "KRX" not in reason

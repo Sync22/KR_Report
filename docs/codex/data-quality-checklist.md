@@ -122,11 +122,14 @@ Before implementing a data or display change, verify:
 - Indirect or market-context rows may add context but must not overturn direct-evidence direction by themselves.
 - The same article is counted once per candidate/date by its stored evidence key. A later completed collection with no new match must keep already stored same-date direct evidence visible and expose its later collection time separately.
 - Web-view and Telegram candidate summaries must use the same selected candidate codes and the same deduplicated evidence set. A date-wide run list must not replace a candidate-linked summary with unrelated or older empty runs.
+- The top-two cohort is selected once for a response. Main-card news, a completed web-view collection response, and the matching market-briefing candidate lines must keep that same code order; a third candidate belongs in the broader `관찰` surface, not the top-two summary.
 - `종목별 [12009]` flow freshness must be calculated from the same stock-level rows shown in the detail lines. If selected candidates have different dates, show each row date and label the source as partial rather than presenting the newest row as the date of every item.
 - `Naver 거래대금 상위` overlap and a bounded top-two Naver quote are separate intraday references. A non-overlap result does not erase the candidate's price, change, turnover, market status, or checked/trade time.
 - KRX exact/stale/missing is freshness metadata, not price direction.
+- KRX freshness must not replace a news label. When a completed collection has no direct or contextual match, say `매칭 뉴스 없음`; render KRX exact/stale/missing separately as source metadata.
 - Intraday turnover/price confirms a time-bounded market reaction only when the candidate overlaps the fetched row and the display includes market status plus trade or checked time.
 - A Toss 20:00 value is an end-of-day stored baseline. It is not a substitute for intraday confirmation or direct news evidence.
+- Toss `configured`, current quote fetched, and 20:00 baseline stored are different states. Show `configured` only for credentials/live opt-in readiness, `current` only after that request returns a quote with its checked time, and the stored baseline only with its storage time.
 - A target-price reach day is a retrospective result inside the stored post-report KRX window. Show its observed window and missing state; never present it as a promised outcome, probability, or future trading instruction.
 - If the layers conflict or lack direct evidence, display `추가 확인` or `직접 근거 부족`; do not manufacture a stronger conclusion.
 

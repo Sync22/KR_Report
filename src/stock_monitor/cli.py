@@ -18707,7 +18707,10 @@ def _build_market_briefing_message(
         summaries=summaries,
         priority_stock_codes=tuple(str(row.get("stock_code") or "").strip() for row in candidate_rows),
     )
-    toss_quote_lines = _build_market_briefing_toss_priority_quote_lines(effective_toss_context)
+    toss_quote_lines = _build_market_briefing_toss_priority_quote_lines(
+        effective_toss_context,
+        candidate_rows=candidate_rows,
+    )
     message = format_market_close_briefing_message(
         business_date,
         report_count=report_count,
@@ -18808,12 +18811,14 @@ def _build_market_briefing_priority_candidate_lines(
         value_profile = row.get("value_profile") if isinstance(row.get("value_profile"), dict) else {}
         report_summary = row.get("report_summary") if isinstance(row.get("report_summary"), dict) else {}
         reason = str(value_profile.get("value_reason") or "").strip()
+        decision_label = str(value_profile.get("value_label") or "저장 근거 확인").strip()
         if not reason:
             reasons = [str(item) for item in row.get("why_notable") or [] if str(item).strip()]
             reason = " · ".join(reasons[:2]) or "저장 리포트 근거를 확인합니다."
         report_count = int(report_summary.get("report_count") or 0)
         lines.append(f"{index}. {stock_name} {stock_code} · {priority}")
         lines.append(f"- 관찰 사유: {reason} / 리포트 {report_count}건")
+        lines.append(f"- 판단 상태: {decision_label}")
 
         if include_live_candidate_quotes and stock_code:
             try:
@@ -18838,6 +18843,17 @@ def _build_market_briefing_priority_candidate_lines(
             if checked_at:
                 line += f" · 조회 {checked_at}"
             lines.append(line)
+
+        toss_baseline = row.get("toss_baseline_reference")
+        if isinstance(toss_baseline, dict) and toss_baseline.get("available") is True:
+            baseline_price = _safe_optional_int(toss_baseline.get("last_price"))
+            if baseline_price is not None:
+                baseline_time = str(toss_baseline.get("baseline_time") or "20:00")
+                stored_at = _market_briefing_toss_checked_time(toss_baseline.get("reference_time"))
+                line = f"- Toss {baseline_time} 기준: {baseline_price:,}원"
+                if stored_at:
+                    line += f" · 저장 {stored_at}"
+                lines.append(line)
     return lines
 
 
@@ -18894,34 +18910,61 @@ def _market_briefing_toss_source_freshness_item(payload: dict[str, object], *, b
     }
 
 
-def _build_market_briefing_toss_priority_quote_lines(toss_context: dict[str, object]) -> list[str]:
+def _build_market_briefing_toss_priority_quote_lines(
+    toss_context: dict[str, object],
+    *,
+    candidate_rows: list[dict[str, object]],
+) -> list[str]:
     payload = toss_context.get("payload") if isinstance(toss_context.get("payload"), dict) else {}
     if payload.get("live_fetch") is not True:
         if payload.get("configured") is True and payload.get("reason") == "upstream_unavailable":
-            return ["Toss 우선확인 현재가", "- 공급자 응답 없음"]
-        return []
-    names_by_symbol = toss_context.get("names_by_symbol")
-    if not isinstance(names_by_symbol, dict):
-        names_by_symbol = {}
-    quote_rows = payload.get("quotes") if isinstance(payload.get("quotes"), list) else []
-    fetched_at = payload.get("fetched_at")
-    lines: list[str] = []
-    for quote in quote_rows:
-        if not isinstance(quote, dict):
+            lines = ["Toss 우선확인 현재가", "- 공급자 응답 없음"]
+        else:
+            lines = []
+    else:
+        names_by_symbol = toss_context.get("names_by_symbol")
+        if not isinstance(names_by_symbol, dict):
+            names_by_symbol = {}
+        quote_rows = payload.get("quotes") if isinstance(payload.get("quotes"), list) else []
+        fetched_at = payload.get("fetched_at")
+        quote_lines: list[str] = []
+        for quote in quote_rows:
+            if not isinstance(quote, dict):
+                continue
+            symbol = str(quote.get("symbol") or "").strip()
+            if not symbol:
+                continue
+            last_price = _safe_optional_int(quote.get("lastPrice"))
+            if last_price is None:
+                continue
+            stock_name = str(names_by_symbol.get(symbol) or symbol)
+            checked_at = _market_briefing_toss_checked_time(quote.get("timestamp") or fetched_at)
+            line = f"- {stock_name} {last_price:,}원"
+            if checked_at:
+                line += f" · 조회 {checked_at}"
+            quote_lines.append(line)
+        lines = ["Toss 우선확인 현재가", *quote_lines] if quote_lines else ["Toss 우선확인 현재가", "- 조회 결과 없음"]
+
+    baseline_lines: list[str] = []
+    for row in candidate_rows:
+        baseline = row.get("toss_baseline_reference")
+        if not isinstance(baseline, dict) or baseline.get("available") is not True:
             continue
-        symbol = str(quote.get("symbol") or "").strip()
-        if not symbol:
-            continue
-        last_price = _safe_optional_int(quote.get("lastPrice"))
+        last_price = _safe_optional_int(baseline.get("last_price"))
         if last_price is None:
             continue
-        stock_name = str(names_by_symbol.get(symbol) or symbol)
-        checked_at = _market_briefing_toss_checked_time(quote.get("timestamp") or fetched_at)
-        line = f"- {stock_name} {last_price:,}원"
-        if checked_at:
-            line += f" · 조회 {checked_at}"
-        lines.append(line)
-    return ["Toss 우선확인 현재가", *lines] if lines else ["Toss 우선확인 현재가", "- 조회 결과 없음"]
+        stock_name = str(row.get("stock_name") or row.get("stock_code") or "-")
+        baseline_time = str(baseline.get("baseline_time") or "20:00")
+        stored_at = _market_briefing_toss_checked_time(baseline.get("reference_time"))
+        line = f"- {stock_name} Toss {baseline_time} 기준: {last_price:,}원"
+        if stored_at:
+            line += f" · 저장 {stored_at}"
+        baseline_lines.append(line)
+    if baseline_lines:
+        if not lines:
+            lines.append("Toss 우선확인 기준")
+        lines.extend(baseline_lines)
+    return lines
 
 
 def _market_briefing_toss_checked_time(value: object) -> str | None:
@@ -19022,6 +19065,8 @@ def _market_briefing_source_freshness_status_text(status: str) -> str:
         return "lab-hold"
     if status == "ready":
         return "ready"
+    if status == "configured":
+        return "configured"
     if status == "current":
         return "current"
     if status == "disabled":
@@ -22992,7 +23037,11 @@ def _collect_web_view_news_observations(
     except json.JSONDecodeError:
         raw_payload = {"error": "news collect did not return JSON"}
     ok = exit_code == 0 and int(raw_payload.get("saved_observation_count") or 0) > 0
-    summary = _build_web_view_news_observation_summary(repository, business_date)
+    summary = _build_web_view_news_observation_summary(
+        repository,
+        business_date,
+        stock_codes=stock_codes,
+    )
     payload = {
         "surface": "web-view-news-observation-collect",
         "ok": ok,
@@ -25248,7 +25297,7 @@ def _render_web_view_html() -> str:
     .source-freshness-status { display: inline-flex; width: fit-content; border-radius: 999px; padding: 2px 7px; background: #e2eee1; color: #245746; font-size: 11px; font-weight: 900; }
     .source-freshness-status.stale { background: #fff0cf; color: #7a5400; }
     .source-freshness-status.ready, .source-freshness-status.current { background: #e2eee1; color: #245746; }
-    .source-freshness-status.missing, .source-freshness-status.disabled, .source-freshness-status.lab-hold { background: #eef1f2; color: #5d676d; }
+    .source-freshness-status.missing, .source-freshness-status.disabled, .source-freshness-status.configured, .source-freshness-status.lab-hold { background: #eef1f2; color: #5d676d; }
     .intraday-overlap-panel { display: grid; gap: 8px; margin: 10px 0 12px; border: 1px solid #d8e8f5; border-radius: 8px; padding: 10px 12px; background: #f6fbff; }
     .intraday-overlap-panel[hidden] { display: none; }
     .intraday-overlap-meta { color: #1769aa; font-size: 11px; font-weight: 900; }
@@ -26447,6 +26496,7 @@ def _render_web_view_html() -> str:
       if (status === "stale") return "최근 저장";
       if (status === "partial") return "일부 최신";
       if (status === "ready") return "준비됨";
+      if (status === "configured") return "연결 준비";
       if (status === "current") return "현재가";
       if (status === "disabled") return "비활성";
       if (status === "lab_hold") return "lab 보류";
@@ -26457,6 +26507,7 @@ def _render_web_view_html() -> str:
       if (status === "stale") return "stale";
       if (status === "partial") return "stale";
       if (status === "ready") return "ready";
+      if (status === "configured") return "configured";
       if (status === "current") return "current";
       if (status === "disabled") return "disabled";
       if (status === "lab_hold") return "lab-hold";
@@ -26774,7 +26825,9 @@ def _render_web_view_html() -> str:
       if (!node) return;
       const status = commentary?.same_day_report_status || {};
       const reference = commentary?.intraday_market_top_reference || {};
+      const priorityQuoteReference = commentary?.intraday_quote_reference || {};
       const items = Array.isArray(reference.items) ? reference.items : [];
+      const topTwoRows = Array.isArray(tossPriorityRows) ? tossPriorityRows.slice(0, 2) : [];
       const meta = intradayMarketTopReferenceMeta(reference);
       if (!items.length) {
         if (!reference.live_fetch) {
@@ -26786,13 +26839,13 @@ def _render_web_view_html() -> str:
         const reason = reference.empty_reason || status.reason || "장중 거래대금 상위와 리포트 언급이 겹친 종목이 없습니다.";
         node.innerHTML = `
           <div class="intraday-overlap-meta">${esc(meta)}</div>
+          ${renderIntradayTopTwoStatus(topTwoRows, reference, items, priorityQuoteReference)}
           <span class="muted">${esc(reason)}</span>
         `;
         return;
       }
       node.hidden = false;
-      const topTwoRows = Array.isArray(tossPriorityRows) ? tossPriorityRows.slice(0, 2) : [];
-      const topTwoStatus = renderIntradayTopTwoStatus(topTwoRows, reference, items);
+      const topTwoStatus = renderIntradayTopTwoStatus(topTwoRows, reference, items, priorityQuoteReference);
       node.innerHTML = `
         <div class="intraday-overlap-meta">${esc(meta)}</div>
         ${topTwoStatus}
@@ -26814,9 +26867,13 @@ def _render_web_view_html() -> str:
       `;
     }
 
-    function renderIntradayTopTwoStatus(rows, reference, items) {
+    function renderIntradayTopTwoStatus(rows, reference, items, priorityQuoteReference = {}) {
       if (!rows.length) return "";
       const itemByCode = new Map((Array.isArray(items) ? items : []).map((item) => [String(item?.stock_code || ""), item]));
+      const quoteByCode = new Map(
+        (Array.isArray(priorityQuoteReference?.items) ? priorityQuoteReference.items : [])
+          .map((item) => [String(item?.stock_code || ""), item])
+      );
       return `<div class="intraday-top-two-status">${rows.map((row) => {
         const code = String(row?.stock_code || "");
         const item = itemByCode.get(code);
@@ -26827,9 +26884,33 @@ def _render_web_view_html() -> str:
           const freshness = intradayMarketTopFreshnessLabel(item);
           return `<div class="intraday-top-two-status-item"><b>${esc(name)} 포함</b><span>${esc(rank)} · ${esc(amount)}${freshness ? ` · ${esc(freshness)}` : ""}</span></div>`;
         }
+        const quote = quoteByCode.get(code);
+        if (quote) {
+          return `<div class="intraday-top-two-status-item"><b>${esc(name)} 미포함</b><span>${esc(candidateIntradayReferenceLabel(priorityQuoteIntradayReference(quote, priorityQuoteReference)))}</span></div>`;
+        }
         const checked = intradayCheckedAtLabel(reference?.checked_at);
         return `<div class="intraday-top-two-status-item"><b>${esc(name)} 미포함</b><span>Naver 거래대금 상위 ${reference?.live_fetch ? "확인됨" : "확인 전"}${checked ? ` · ${esc(checked)}` : ""}</span></div>`;
       }).join("")}</div>`;
+    }
+
+    function priorityQuoteIntradayReference(quote, reference) {
+      return {
+        available: true,
+        source_configured: true,
+        read_only: true,
+        live_fetch: reference?.live_fetch === true,
+        scope: "priority_candidate_quote",
+        reference_time: quote?.trade_time || null,
+        checked_at: quote?.trade_time || null,
+        trade_time: quote?.trade_time || null,
+        price: quote?.current_price ?? null,
+        change_percent: quote?.change_percent ?? null,
+        turnover: quote?.trade_amount ?? null,
+        market_status: quote?.market_status || null,
+        rank: null,
+        affects_ordering: false,
+        notice: "Naver 우선 후보 장중 참고",
+      };
     }
 
     async function loadIntradayMarketTopForSelectedDate() {
@@ -26903,23 +26984,7 @@ def _render_web_view_html() -> str:
           if (priorityQuote) {
             return {
               ...row,
-              intraday_reference: {
-                available: true,
-                source_configured: true,
-                read_only: true,
-                live_fetch: priorityQuoteReference?.live_fetch === true,
-                scope: "priority_candidate_quote",
-                reference_time: priorityQuote.trade_time || null,
-                checked_at: priorityQuote.trade_time || null,
-                trade_time: priorityQuote.trade_time || null,
-                price: priorityQuote.current_price ?? null,
-                change_percent: priorityQuote.change_percent ?? null,
-                turnover: priorityQuote.trade_amount ?? null,
-                market_status: priorityQuote.market_status || null,
-                rank: null,
-                affects_ordering: false,
-                notice: "Naver 우선 후보 장중 참고",
-              },
+              intraday_reference: priorityQuoteIntradayReference(priorityQuote, priorityQuoteReference),
             };
           }
           return {
@@ -29462,11 +29527,11 @@ def build_web_view_daily_snapshot(
         config,
         repository,
         business_date=business_date,
-        limit=3,
+        limit=2,
     )
     priority_stock_codes = [
         str(row.get("stock_code") or "").strip()
-        for row in priority_candidate_snapshot.get("rows", [])
+        for row in list(priority_candidate_snapshot.get("rows", []))[:2]
         if isinstance(row, dict) and str(row.get("stock_code") or "").strip()
     ]
     market_briefing = _build_web_view_market_briefing_context(
@@ -29665,15 +29730,16 @@ def _build_web_view_source_freshness_summary(
                 "key": "toss_openapi",
                 "label": "Toss OpenAPI",
                 "source": "toss_openapi",
-                "status": "ready" if toss_openapi_ready else "disabled",
-                "reference_date": business_date.isoformat() if toss_openapi_ready else None,
+                "status": "configured" if toss_openapi_ready else "disabled",
+                "reference_date": None,
                 "exact_date_available": False,
-                "available": toss_openapi_ready,
-                "data_scope": "web_view_priority_top_2_prices" if toss_openapi_ready else "not_configured",
-                "live_fetch": toss_openapi_ready,
+                "available": False,
+                "configured": toss_openapi_ready,
+                "data_scope": "web_view_priority_top_2_prices_on_demand" if toss_openapi_ready else "not_configured",
+                "live_fetch": False,
                 "affects_ordering": False,
                 "notice": (
-                    "Read-only Toss current prices are available for server-derived web-view priority candidates."
+                    "Toss OpenAPI is configured; current prices are fetched only on an explicit top-two request."
                     if toss_openapi_ready
                     else "Toss OpenAPI web-view current prices require .env.toss-openapi credentials and live opt-in."
                 ),
@@ -30609,8 +30675,6 @@ def _web_view_news_observation_connection(
         return "뉴스로 후보 강화", "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다."
     if caution_count > 0:
         return "주의 뉴스 확인", "주의/혼합 성격의 뉴스가 있어 리포트 근거와 함께 확인합니다."
-    if krx_reference_status == "stale":
-        return "KRX 기준일 확인 필요", "KRX 기준일이 선택 날짜와 달라 뉴스 연결 전 시장 반응 기준일을 먼저 확인해야 합니다."
     if market_context_count > 0:
         return "시장 맥락 참고", "업종/시장 맥락 뉴스라 종목 직접 근거로 과신하지 않습니다."
     return "뉴스 근거 부족", "저장 뉴스가 있지만 후보와 직접 연결할 근거는 부족합니다."

@@ -3844,7 +3844,6 @@ def test_news_intelligence_briefing_collect_saves_empty_observation_for_no_match
         ]
     )
     repository.rebuild_daily_summaries(business_date)
-
     def fake_transport(spec) -> str:
         if spec.response_format != "focus_json":
             return ""
@@ -5660,6 +5659,20 @@ def test_market_briefing_uses_toss_top_two_quotes_when_provider_is_available(tmp
         ]
     )
     repository.rebuild_daily_summaries(business_date)
+    repository.save_toss_priority_quote_baselines(
+        [
+            TossPriorityQuoteBaseline(
+                business_date=business_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                baseline_time="20:00",
+                last_price=99_000,
+                currency="KRW",
+                source="toss_openapi",
+                fetched_at=datetime(2026, 5, 14, 20, 0, 4),
+            )
+        ]
+    )
 
     class FakeTossProvider:
         def __init__(self) -> None:
@@ -5695,6 +5708,7 @@ def test_market_briefing_uses_toss_top_two_quotes_when_provider_is_available(tmp
     assert "Toss 우선확인 현재가" in message
     assert "삼성전자 100,000원 · 조회 09:15" in message
     assert "SK하이닉스 200,000원 · 조회 09:15" in message
+    assert "삼성전자 Toss 20:00 기준: 99,000원 · 저장 20:00" in message
 
 
 def test_scheduled_market_briefing_message_groups_live_context_by_priority_candidate(tmp_path) -> None:
@@ -5772,9 +5786,11 @@ def test_scheduled_market_briefing_message_groups_live_context_by_priority_candi
     assert "우선 확인 후보" in message
     assert "삼성전자" in message
     assert "SK하이닉스" in message
+    assert "판단 상태:" in message
     assert "장중 참고: 100,500원 · +0.50% · 거래대금 800억 · 장중 · 확인 12:01" in message
     assert "뉴스 근거:" in message
     assert "Toss 현재가: 100,000원 · 조회 12:01" in message
+    assert message.index("관찰 사유:") < message.index("판단 상태:") < message.index("장중 참고:")
     assert "sentiment_score" not in message
     assert "operator_recommendation" not in message
 
