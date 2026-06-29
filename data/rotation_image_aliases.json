@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "status": "draft_review_needed",
+  "source_image": "example/Cycle.jpg",
+  "mapping_basis": "manual_alias_draft_from_existing_coordinate_labels",
+  "notes": [
+    "This file is a draft alias layer between Cycle image wording and current category display names.",
+    "It does not drive scoring, recommendation, ETF picks, or automatic buy/sell judgment.",
+    "Keep sector aliases first; theme aliases are supporting evidence only until taxonomy coverage is stronger."
+  ],
+  "aliases": [
+    {
+      "rotation_label": "반도체",
+      "category_type": "sector",
+      "category_display_name": "반도체와반도체장비",
+      "coordinate_display_name": "반도체와반도체장비",
+      "status": "active",
+      "note": "Existing coordinate label maps directly to current sector display name."
+    },
+    {
+      "rotation_label": "IT서비스",
+      "category_type": "sector",
+      "category_display_name": "IT서비스",
+      "coordinate_display_name": "IT서비스",
+      "status": "active",
+      "note": "Existing coordinate label maps directly to current sector display name."
+    },
+    {
+      "rotation_label": "우주항공",
+      "category_type": "sector",
+      "category_display_name": "우주항공과국방",
+      "coordinate_display_name": "우주항공과국방",
+      "status": "active",
+      "note": "Short image/user label maps to current sector display name."
+    },
+    {
+      "rotation_label": "조선",
+      "category_type": "sector",
+      "category_display_name": "조선",
+      "coordinate_display_name": "조선",
+      "status": "active",
+      "note": "Existing coordinate label maps directly to current sector display name."
+    },
+    {
+      "rotation_label": "제약",
+      "category_type": "sector",
+      "category_display_name": "제약",
+      "coordinate_display_name": "제약",
+      "status": "active",
+      "note": "Existing coordinate label maps directly to current sector display name."
+    },
+    {
+      "rotation_label": "헬스케어",
+      "category_type": "sector",
+      "category_display_name": "건강관리장비와용품",
+      "coordinate_display_name": "건강관리장비와용품",
+      "status": "active",
+      "note": "User-facing label maps to current healthcare equipment/supplies sector display name."
+    },
+    {
+      "rotation_label": "화장품",
+      "category_type": "sector",
+      "category_display_name": "화장품",
+      "coordinate_display_name": "화장품",
+      "status": "active",
+      "note": "Existing coordinate label maps directly to current sector display name."
+    },
+    {
+      "rotation_label": "게임",
+      "category_type": "sector",
+      "category_display_name": "게임엔터테인먼트",
+      "coordinate_display_name": "게임엔터테인먼트",
+      "status": "active",
+      "note": "Short image/user label maps to current sector display name."
+    },
+    {
+      "rotation_label": "통신",
+      "category_type": "sector",
+      "category_display_name": "무선통신서비스",
+      "coordinate_display_name": "무선통신서비스",
+      "status": "active",
+      "note": "Short image/user label maps to current wireless telecom sector display name."
+    }
+  ]
+}

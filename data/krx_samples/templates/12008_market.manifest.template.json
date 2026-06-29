@@ -1,0 +1,15 @@
+{
+  "sample_file": "12008_market_YYYYMMDD.local.json",
+  "view": "market",
+  "business_date": "YYYY-MM-DD",
+  "query": "period",
+  "market": "STK",
+  "investor": "all",
+  "value": "amount",
+  "side": "net-buy",
+  "volume_unit": "주",
+  "amount_unit": "원",
+  "expected_min_rows": 1,
+  "expected_min_normalized_rows": 1,
+  "expected_investors": ["외국인", "기관합계", "개인"]
+}

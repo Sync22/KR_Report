@@ -1,0 +1,16 @@
+{
+  "sample_file": "12009_STOCKCODE_YYYYMMDD.local.json",
+  "view": "stock",
+  "business_date": "YYYY-MM-DD",
+  "stock_code": "STOCKCODE",
+  "query": "period",
+  "market": "ALL",
+  "investor": "all",
+  "value": "volume",
+  "side": "net-buy",
+  "volume_unit": "주",
+  "amount_unit": "원",
+  "expected_min_rows": 1,
+  "expected_min_normalized_rows": 1,
+  "expected_investors": ["외국인", "기관합계", "개인"]
+}

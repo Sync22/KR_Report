@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "status": "operator_managed_draft",
+  "notes": [
+    "This file maps rotation image/sector labels to ETF candidates for read-only evidence preview.",
+    "It does not imply recommendation, scoring, ranking, or buy/sell judgment.",
+    "Only exact-date stored KRX ETF snapshots are displayed by the web-view."
+  ],
+  "mappings": [
+    {
+      "rotation_label": "반도체",
+      "category_type": "sector",
+      "category_display_name": "반도체와반도체장비",
+      "etf_codes": ["396500", "091160"],
+      "status": "active",
+      "note": "Stored KRX ETF rows confirm TIGER 반도체TOP10 and KODEX 반도체 as semiconductor-linked ETFs."
+    },
+    {
+      "rotation_label": "IT서비스",
+      "category_type": "sector",
+      "category_display_name": "IT서비스",
+      "etf_codes": ["139260", "266370"],
+      "status": "active",
+      "note": "Stored KRX ETF rows confirm TIGER 200 IT and KODEX IT as broad IT-linked ETFs."
+    }
+  ]
+}
