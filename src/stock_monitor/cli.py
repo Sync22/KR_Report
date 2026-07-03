@@ -25453,7 +25453,11 @@ def _render_web_view_html() -> str:
     .candidate-metric-value.muted { color: var(--muted); }
     .target-trail-line { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 8px; align-items: start; border-top: 1px solid var(--line); padding-top: 7px; }
     .target-trail-line:first-child { border-top: 0; padding-top: 0; }
+    .target-trail-date { color: var(--muted); font-size: 11px; font-weight: 800; }
     .target-trail-main { color: var(--ink); font-size: 12px; overflow-wrap: anywhere; }
+    .target-trail-main-row { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: baseline; min-width: 0; }
+    .target-direction-label { white-space: nowrap; flex-shrink: 0; }
+    .target-price-text { min-width: 0; word-break: keep-all; overflow-wrap: anywhere; }
     .target-trail-meta { margin-top: 2px; color: var(--muted); font-size: 11px; }
     .status-pill { display: inline-flex; border-radius: 999px; padding: 3px 9px; background: var(--accent-soft); color: var(--accent); font-size: 12px; white-space: nowrap; }
     .clickable-row { cursor: pointer; }
@@ -25561,6 +25565,8 @@ def _render_web_view_html() -> str:
       main { width: min(100vw - 20px, 1120px); padding-top: 20px; }
       .card { border-radius: 18px; padding: 14px; }
       .hero { align-items: stretch; }
+      .stock-context-panel { max-height: none; overflow: visible; padding-right: 0; }
+      .target-trail-line { grid-template-columns: 62px minmax(0, 1fr); }
       table.mobile-card-table { display: table; overflow: visible; white-space: normal; }
       table.mobile-card-table thead { display: none; }
       table.mobile-card-table tbody, table.mobile-card-table tr, table.mobile-card-table td { display: block; width: 100%; }
@@ -27585,6 +27591,7 @@ def _render_web_view_html() -> str:
       const volumeItems = data.recent_volume_days?.items || [];
       const investorTabs = data.investor_flow_tabs || {};
       const targetTrail = data.target_price_trail || {};
+      const targetJourney = data.target_journey || {};
       const targetProgress = data.target_price_progress || {};
       const relatedContext = data.related_context || {};
       const newsObservationDetail = data.news_observation_detail || {};
@@ -27597,9 +27604,12 @@ def _render_web_view_html() -> str:
       const periodFlow = investorTabs.available
         ? `<div class="detail-item"><b>기간별 수급량 <span class="muted">최근 31일 저장값 · 구분: 주</span></b>${flowReference}${renderInvestorFlowPeriodSummary(investorTabs.retail_foreign_institution)}${renderInvestorFlowBars(investorTabs.retail_foreign_institution)}</div>`
         : `<div class="detail-item"><span class="detail-meta">${esc(investorTabs.notice || data.investor_flow?.notice || "수급 데이터가 없습니다.")}</span></div>`;
+      const targetJourneyBlock = targetJourney.available
+        ? `<div class="detail-item target-journey-section"><b>목표가 검증 <span class="muted">저장 리포트 목표가별 도달 기록</span></b>${renderTargetJourney(targetJourney.items)}</div>`
+        : "";
       const targetTrailBlock = targetTrail.available
-        ? `<div class="detail-item"><b>목표가 흐름 <span class="muted">저장 리포트 기준</span></b>${renderTargetPriceTrailRows(targetTrail.items)}${targetProgressDetailLabel(targetProgress)}</div>`
-        : `<div class="detail-item"><span class="detail-meta">${esc(targetTrail.notice || "저장된 목표가 흐름이 없습니다.")}</span></div>`;
+        ? `<div class="detail-item target-trail-section"><b>목표가 흐름 <span class="muted">저장 리포트 기준</span></b>${renderTargetPriceTrailRows(targetTrail.items)}${targetAttainmentLine(targetTrail)}${targetProgressDetailLabel(targetProgress)}</div>`
+        : `<div class="detail-item target-trail-section"><span class="detail-meta">${esc(targetTrail.notice || "저장된 목표가 흐름이 없습니다.")}</span></div>`;
       const relatedContextBlock = relatedContext.available
         ? `<div class="detail-item"><b>관련 업종/ETF 참고 <span class="muted">저장 분류 · 수동 ETF 매핑</span></b>${renderRelatedContext(relatedContext.categories)}</div>`
         : `<div class="detail-item"><span class="detail-meta">${esc(relatedContext.notice || "관련 업종/ETF 참고가 없습니다.")}</span></div>`;
@@ -27624,12 +27634,46 @@ def _render_web_view_html() -> str:
       document.getElementById("stock-context").innerHTML = `
         <div class="detail-item"><b>${esc(data.stock_name || "-")} ${esc(data.stock_code || "")} | ${market}</b></div>
         ${renderStockCandidateJourney(data)}
-        ${newsObservationBlock}
+        ${targetJourneyBlock}
         ${targetTrailBlock}
+        ${newsObservationBlock}
         ${relatedContextBlock}
         ${periodFlow}
         ${dailyReference}
       `;
+    }
+
+    function renderTargetJourney(items) {
+      const picked = (items || []).slice(0, 6);
+      if (!picked.length) return '<span class="detail-meta">저장 리포트 목표가별 도달 기록이 없습니다.</span>';
+      return `<div class="target-trail-list">${picked.map((item) => {
+        const status = targetJourneyStatusLine(item);
+        const revision = item.revision_direction_label
+          ? `<span class="target-trail-meta">목표가 조정: ${esc(item.revision_direction_label)}</span>`
+          : "";
+        return `
+        <div class="target-trail-line">
+          <span class="target-trail-main"><b>${esc(item.report_date || "-")}</b><span>${esc(item.broker_name || "-")} ${esc(item.target_price_display || price(item.target_price_value))}</span></span>
+          <span class="target-trail-meta">${esc(status)}</span>
+          ${revision}
+        </div>
+      `;
+      }).join("")}</div>`;
+    }
+
+    function targetJourneyStatusLine(item) {
+      if (!item) return "데이터 없음";
+      if (item.status === "hit") {
+        const days = item.hit_trading_days === 0 ? "당일" : `${number(item.hit_trading_days)}영업일`;
+        return `달성 · ${days}`;
+      }
+      if (item.status === "in_progress") {
+        const parts = ["진행 중"];
+        if (item.current_attainment_percent !== null && item.current_attainment_percent !== undefined) parts.push(`현재 ${percent(item.current_attainment_percent)}`);
+        if (item.max_attainment_percent !== null && item.max_attainment_percent !== undefined) parts.push(`최대 ${percent(item.max_attainment_percent)}`);
+        return parts.join(" · ");
+      }
+      return "가격 검증 대기";
     }
 
     function targetProgressDetailLabel(progress) {
@@ -27671,15 +27715,17 @@ def _render_web_view_html() -> str:
       const picked = (items || []).slice(0, 6);
       if (!picked.length) return '<span class="detail-meta">저장된 목표가 흐름이 없습니다.</span>';
       return `<div class="target-trail-list">${picked.map((item) => {
-        const parts = [];
-        if (item.report_count !== null && item.report_count !== undefined) parts.push(`리포트 ${number(item.report_count)}건`);
-        if (item.broker_count !== null && item.broker_count !== undefined) parts.push(`증권사 ${number(item.broker_count)}곳`);
-        const revision = item.revision_display || item.direction_label || "";
-        if (revision) parts.push(`변화 참고 ${revision}`);
+        const direction = item.direction_label || "최근";
+        const broker = item.broker_name
+          ? `<span class="target-trail-meta">${esc(item.broker_name)}</span>`
+          : "";
         return `
         <div class="target-trail-line">
-          <span class="target-trail-main"><b>${esc(item.business_date || "-")}</b><span>${esc(item.target_price_display || item.display || "-")}</span></span>
-          <span class="target-trail-meta">${esc(parts.join(" | ") || "저장 리포트 기준")}</span>
+          <span class="target-trail-date">${esc(item.business_date || "-")}</span>
+          <span class="target-trail-main">
+            <span class="target-trail-main-row"><span class="target-direction-label">${esc(direction)}</span><span class="target-price-text">${esc(item.target_price_display || item.display || "-")}</span></span>
+            ${broker}
+          </span>
         </div>
       `;
       }).join("")}</div>`;
@@ -27687,6 +27733,11 @@ def _render_web_view_html() -> str:
 
     function renderTargetPriceTrail(items) {
       return renderTargetPriceTrailRows(items);
+    }
+
+    function targetAttainmentLine(trail) {
+      if (!trail || trail.attainment_percent === null || trail.attainment_percent === undefined) return "";
+      return `<div class="target-progress-detail"><b>현재가 기준</b><span>현재 ${price(trail.current_price)} · 목표가 ${price(trail.current_target_price)} · 달성률 ${percent(trail.attainment_percent)}</span></div>`;
     }
 
     function renderRelatedContext(categories) {
@@ -27966,15 +28017,33 @@ def _render_web_view_html() -> str:
         const valueLine = valueProfile.value_label
           ? `판단 상태: ${valueProfile.value_label}${valueProfile.value_reason ? ` · ${valueProfile.value_reason}` : ""}`
           : "판단 상태: 저장 근거 확인";
+        const targetRevisionLine = targetRevisionTrailLine(item);
         return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote-context="main" data-toss-quote="${esc(item.stock_code || "")}">${esc(tossQuote || "Toss 현재가 확인 중")}</span></b>
           <span class="muted">관찰 사유: ${esc(why)}</span>
+          <span class="target-revision-line">${esc(targetRevisionLine)}</span>
           <span>${esc(valueLine)}</span>
           <span>장중 참고: ${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span>
           <span>${esc(newsLine)}</span>
           <span>${esc(tossBaselineLine)}</span>
         </button>`;
       }).join("")}</section>`;
+    }
+
+    function targetRevisionTrailLine(item) {
+      const revision = item?.target_price_revision || {};
+      if (!revision.available) return "최근 조정 없음";
+      const currentMin = revision.current_min;
+      const currentMax = revision.current_max;
+      const previousMin = revision.previous_min;
+      const previousMax = revision.previous_max;
+      const current = currentMin === currentMax ? currentMin : currentMax;
+      const previous = previousMin === previousMax ? previousMin : previousMax;
+      if (!current) return "최근 조정 없음";
+      if (revision.direction === "up" && previous) return `목표가 ↑ ${price(previous)} → ${price(current)}`;
+      if (revision.direction === "down" && previous) return `목표가 ↓ ${price(previous)} → ${price(current)}`;
+      if (revision.direction === "flat") return `목표가 유지 ${price(current)}`;
+      return "최근 조정 없음";
     }
 
     function updateTossPriorityRefreshButton() {
@@ -31811,6 +31880,114 @@ def _web_view_target_price_progress_from_rows(
     }
 
 
+def _build_web_view_target_journey(
+    repository: StockMonitorRepository,
+    business_date: date,
+    stock_code: str,
+    *,
+    limit: int = 6,
+    market_limit: int = 120,
+) -> dict[str, object]:
+    with repository.connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                business_date,
+                broker_name,
+                published_at,
+                target_price_value
+            FROM reports
+            WHERE stock_code = ?
+              AND business_date <= ?
+              AND target_price_value IS NOT NULL
+            ORDER BY business_date DESC, published_at DESC, broker_name ASC
+            LIMIT 200
+            """,
+            (stock_code, business_date.isoformat()),
+        ).fetchall()
+    report_rows = [
+        {
+            "business_date": date.fromisoformat(row["business_date"]),
+            "broker_name": row["broker_name"],
+            "published_at": row["published_at"],
+            "target_price_value": int(row["target_price_value"]),
+        }
+        for row in rows
+    ]
+    items: list[dict[str, object]] = []
+    for index, report_row in enumerate(report_rows[: max(limit, 0)]):
+        report_date = report_row["business_date"]
+        target_price = int(report_row["target_price_value"])
+        previous_target = int(report_rows[index + 1]["target_price_value"]) if index + 1 < len(report_rows) else None
+        _direction, direction_label = _web_view_target_revision_direction(target_price, previous_target)
+        market_series = repository.list_stock_market_daily_for_code_on_or_after(
+            report_date,
+            stock_code,
+            limit=market_limit,
+        )
+        hit_index: int | None = None
+        hit_date: date | None = None
+        observed_prices: list[int] = []
+        latest_close: int | None = None
+        for market_index, market_row in enumerate(market_series):
+            if market_row.close_price is not None:
+                latest_close = market_row.close_price
+            observed_price = market_row.high_price if market_row.high_price is not None else market_row.close_price
+            if observed_price is None:
+                continue
+            observed_prices.append(observed_price)
+            if hit_index is None and observed_price >= target_price:
+                hit_index = market_index
+                hit_date = market_row.business_date
+        if not observed_prices:
+            status = "no_market_data"
+        elif hit_index is not None:
+            status = "hit"
+        else:
+            status = "in_progress"
+        current_attainment_percent = (
+            round((latest_close / target_price) * 100, 1)
+            if latest_close is not None and target_price
+            else None
+        )
+        max_attainment_percent = (
+            round((max(observed_prices) / target_price) * 100, 1)
+            if observed_prices and target_price
+            else None
+        )
+        items.append(
+            {
+                "report_date": report_date.isoformat(),
+                "broker_name": report_row["broker_name"],
+                "published_at": report_row["published_at"],
+                "target_price_value": target_price,
+                "target_price_display": _web_view_target_price_range_display(target_price, target_price),
+                "revision_direction_label": direction_label,
+                "status": status,
+                "hit_date": hit_date.isoformat() if hit_date else None,
+                "hit_trading_days": hit_index,
+                "current_attainment_percent": current_attainment_percent,
+                "max_attainment_percent": max_attainment_percent,
+            }
+        )
+    return {
+        "available": bool(items),
+        "source": "stored_reports_and_stock_market_daily",
+        "live_fetch": False,
+        "scoring": False,
+        "recommendation": False,
+        "business_date": business_date.isoformat(),
+        "stock_code": stock_code,
+        "price_basis": "high_price_then_close_price",
+        "items": items,
+        "notice": (
+            "저장 리포트 목표가별 도달 기록입니다. 달성 여부는 판단 문구가 아니라 저장 가격 흐름 기준 기록입니다."
+            if items
+            else "저장된 목표가 리포트가 없어 목표가 Journey를 계산하지 않습니다."
+        ),
+    }
+
+
 def _web_view_candidate_news_badges_by_code(
     repository: StockMonitorRepository,
     *,
@@ -33426,6 +33603,7 @@ def _build_web_view_target_price_trail(
     stock_code: str,
     *,
     limit: int = 6,
+    current_price: int | None = None,
 ) -> dict:
     with repository.connect() as connection:
         rows = connection.execute(
@@ -33434,6 +33612,7 @@ def _build_web_view_target_price_trail(
                 business_date,
                 stock_name,
                 broker_name,
+                published_at,
                 target_price_value
             FROM reports
             WHERE stock_code = ?
@@ -33444,6 +33623,47 @@ def _build_web_view_target_price_trail(
             """,
             (stock_code, business_date.isoformat()),
         ).fetchall()
+    report_rows = [
+        {
+            "business_date": date.fromisoformat(row["business_date"]),
+            "stock_name": row["stock_name"],
+            "broker_name": row["broker_name"],
+            "published_at": row["published_at"],
+            "target_price_value": int(row["target_price_value"]),
+        }
+        for row in rows
+    ]
+    limited_report_rows = report_rows[: max(limit, 0)]
+    report_items: list[dict[str, object]] = []
+    for index, row in enumerate(limited_report_rows):
+        current_target = int(row["target_price_value"])
+        previous_target = int(report_rows[index + 1]["target_price_value"]) if index + 1 < len(report_rows) else None
+        direction, direction_label = _web_view_target_revision_direction(current_target, previous_target)
+        report_items.append(
+            {
+                "business_date": row["business_date"].isoformat(),
+                "broker_name": row["broker_name"],
+                "published_at": row["published_at"],
+                "target_price_value": current_target,
+                "target_price_display": _web_view_target_price_range_display(current_target, current_target),
+                "previous_target_price_value": previous_target,
+                "direction": direction,
+                "direction_label": direction_label,
+                "display": (
+                    f"{row['business_date'].strftime('%y.%m.%d')} · {row['broker_name']} · "
+                    f"{current_target:,}원 · {direction_label or '최근 조정 없음'}"
+                ),
+            }
+        )
+    latest_target = int(report_rows[0]["target_price_value"]) if report_rows else None
+    previous_target = int(report_rows[1]["target_price_value"]) if len(report_rows) > 1 else None
+    direction, direction_label = _web_view_target_revision_direction(latest_target, previous_target)
+    attainment_percent = (
+        round((current_price / latest_target) * 100, 1)
+        if current_price is not None and latest_target not in (None, 0)
+        else None
+    )
+
     grouped: dict[date, dict[str, object]] = {}
     for row in rows:
         row_date = date.fromisoformat(row["business_date"])
@@ -33459,7 +33679,7 @@ def _build_web_view_target_price_trail(
         group["brokers"].add(row["broker_name"])
         group["targets"].append(int(row["target_price_value"]))
     groups = list(grouped.values())[: max(limit, 0)]
-    items: list[dict[str, object]] = []
+    daily_groups: list[dict[str, object]] = []
     for index, group in enumerate(groups):
         targets = list(group["targets"])
         brokers = {str(item) for item in group["brokers"] if item}
@@ -33479,7 +33699,7 @@ def _build_web_view_target_price_trail(
         )
         if revision_label:
             display = f"{display} · {revision_label}"
-        items.append(
+        daily_groups.append(
             {
                 "business_date": group["business_date"].isoformat(),
                 "target_price_min": target_min,
@@ -33494,20 +33714,57 @@ def _build_web_view_target_price_trail(
             }
         )
     return {
-        "available": bool(items),
+        "available": bool(report_items),
         "source": "stored_reports",
         "live_fetch": False,
         "scoring": False,
         "recommendation": False,
         "business_date": business_date.isoformat(),
         "stock_code": stock_code,
-        "items": items,
+        "summary": _web_view_target_revision_summary_line(latest_target, previous_target, direction),
+        "direction": direction,
+        "direction_label": direction_label,
+        "latest_report_date": report_rows[0]["business_date"].isoformat() if report_rows else None,
+        "current_price": current_price,
+        "current_target_price": latest_target,
+        "attainment_percent": attainment_percent,
+        "items": report_items,
+        "daily_groups": daily_groups,
         "notice": (
             "저장된 리포트 목표가 흐름입니다. 목표가 변화는 참고값이며 판단 문구를 포함하지 않습니다."
-            if items
+            if report_items
             else "저장된 목표가 리포트가 없습니다."
         ),
     }
+
+
+def _web_view_target_revision_direction(
+    current_target: int | None,
+    previous_target: int | None,
+) -> tuple[str | None, str | None]:
+    if current_target is None or previous_target is None:
+        return None, None
+    if current_target > previous_target:
+        return "up", "상향"
+    if current_target < previous_target:
+        return "down", "하향"
+    return "flat", "유지"
+
+
+def _web_view_target_revision_summary_line(
+    current_target: int | None,
+    previous_target: int | None,
+    direction: str | None,
+) -> str:
+    if current_target is None:
+        return "최근 조정 없음"
+    if previous_target is None or direction is None:
+        return "최근 조정 없음"
+    if direction == "up":
+        return f"목표가 ↑ {previous_target:,} → {current_target:,}"
+    if direction == "down":
+        return f"목표가 ↓ {previous_target:,} → {current_target:,}"
+    return f"목표가 유지 {current_target:,}"
 
 
 def _web_view_target_revision_label(current_average: float | None, previous_average: float | None) -> str | None:
@@ -33938,7 +34195,17 @@ def build_web_view_stock_detail_snapshot(
         "report_empty_state": "선택 날짜에 등록된 리포트가 없습니다." if not reports else None,
         "market_reference": _web_view_stock_market_reference(market_reference),
         "target_price_progress": target_price_progress,
-        "target_price_trail": _build_web_view_target_price_trail(repository, business_date, stock_code),
+        "target_price_trail": _build_web_view_target_price_trail(
+            repository,
+            business_date,
+            stock_code,
+            current_price=market_reference.close_price if market_reference else None,
+        ),
+        "target_journey": _build_web_view_target_journey(
+            repository,
+            business_date,
+            stock_code,
+        ),
         "related_context": _build_web_view_stock_related_context(
             config,
             repository,

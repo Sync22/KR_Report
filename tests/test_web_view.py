@@ -3755,6 +3755,290 @@ def test_web_view_target_hit_window_uses_selected_report_date(tmp_path, monkeypa
     assert progress["hit_min_horizon_days"] == 1
 
 
+def test_web_view_stock_detail_target_revision_trail_exposes_report_timeline(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    selected_date = date(2026, 6, 26)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="Alpha",
+                stock_code="000001",
+                title="Alpha target 1",
+                broker_name="AA Securities",
+                published_at=datetime(2026, 6, 12, 9, 0, 0),
+                business_date=date(2026, 6, 12),
+                collected_at=datetime(2026, 6, 12, 9, 5, 0),
+                target_price_value=85_000,
+                source_id="target-trail-1",
+                identity_key="target-trail-1",
+            ),
+            Report(
+                stock_name="Alpha",
+                stock_code="000001",
+                title="Alpha target 2",
+                broker_name="BB Securities",
+                published_at=datetime(2026, 6, 19, 9, 0, 0),
+                business_date=date(2026, 6, 19),
+                collected_at=datetime(2026, 6, 19, 9, 5, 0),
+                target_price_value=90_000,
+                source_id="target-trail-2",
+                identity_key="target-trail-2",
+            ),
+            Report(
+                stock_name="Alpha",
+                stock_code="000001",
+                title="Alpha target 3",
+                broker_name="CC Securities",
+                published_at=datetime(2026, 6, 26, 9, 0, 0),
+                business_date=selected_date,
+                collected_at=datetime(2026, 6, 26, 9, 5, 0),
+                target_price_value=95_000,
+                source_id="target-trail-3",
+                identity_key="target-trail-3",
+            ),
+        ]
+    )
+    for report_date in (date(2026, 6, 12), date(2026, 6, 19), selected_date):
+        repository.rebuild_daily_summaries(report_date)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=selected_date,
+                stock_code="000001",
+                stock_name="Alpha",
+                market="KOSPI",
+                close_price=88_300,
+                change_percent=0.0,
+                turnover=100_000_000,
+                fetched_at=datetime(2026, 6, 26, 18, 0, 0),
+            )
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_stock_detail_snapshot(
+        config,
+        repository,
+        business_date=selected_date,
+        stock_code="000001",
+        now=datetime(2026, 6, 26, 18, 0, 0),
+    )
+
+    trail = snapshot["target_price_trail"]
+    assert trail["summary"]
+    assert trail["latest_report_date"] == "2026-06-26"
+    assert trail["direction_label"] == "상향"
+    assert trail["attainment_percent"] == pytest.approx(92.9)
+    assert trail["items"][0]["broker_name"] == "CC Securities"
+    assert trail["items"][0]["direction_label"] == "상향"
+    assert trail["items"][1]["direction_label"] == "상향"
+    _assert_public_safe_payload(snapshot)
+
+
+def test_web_view_stock_detail_target_journey_tracks_report_target_events(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    selected_date = date(2026, 6, 3)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="Alpha",
+                stock_code="000001",
+                title="Alpha high hit target",
+                broker_name="AA Securities",
+                published_at=datetime(2026, 6, 1, 9, 0, 0),
+                business_date=date(2026, 6, 1),
+                collected_at=datetime(2026, 6, 1, 9, 5, 0),
+                target_price_value=100_000,
+                source_id="target-journey-high-hit",
+                identity_key="target-journey-high-hit",
+            ),
+            Report(
+                stock_name="Alpha",
+                stock_code="000001",
+                title="Alpha close fallback target",
+                broker_name="BB Securities",
+                published_at=datetime(2026, 6, 2, 9, 0, 0),
+                business_date=date(2026, 6, 2),
+                collected_at=datetime(2026, 6, 2, 9, 5, 0),
+                target_price_value=130_000,
+                source_id="target-journey-close-hit",
+                identity_key="target-journey-close-hit",
+            ),
+            Report(
+                stock_name="Alpha",
+                stock_code="000001",
+                title="Alpha pending target",
+                broker_name="CC Securities",
+                published_at=datetime(2026, 6, 3, 9, 0, 0),
+                business_date=selected_date,
+                collected_at=datetime(2026, 6, 3, 9, 5, 0),
+                target_price_value=200_000,
+                source_id="target-journey-progress",
+                identity_key="target-journey-progress",
+            ),
+            Report(
+                stock_name="Beta",
+                stock_code="000002",
+                title="Beta missing market target",
+                broker_name="DD Securities",
+                published_at=datetime(2026, 6, 3, 9, 0, 0),
+                business_date=selected_date,
+                collected_at=datetime(2026, 6, 3, 9, 5, 0),
+                target_price_value=50_000,
+                source_id="target-journey-no-market",
+                identity_key="target-journey-no-market",
+            ),
+        ]
+    )
+    for report_date in (date(2026, 6, 1), date(2026, 6, 2), selected_date):
+        repository.rebuild_daily_summaries(report_date)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=date(2026, 6, 1),
+                stock_code="000001",
+                stock_name="Alpha",
+                market="KOSPI",
+                close_price=90_000,
+                high_price=95_000,
+                change_percent=0.0,
+                turnover=100_000_000,
+                fetched_at=datetime(2026, 6, 1, 18, 0, 0),
+            ),
+            StockMarketDailySnapshot(
+                business_date=date(2026, 6, 2),
+                stock_code="000001",
+                stock_name="Alpha",
+                market="KOSPI",
+                close_price=99_000,
+                high_price=110_000,
+                change_percent=0.0,
+                turnover=100_000_000,
+                fetched_at=datetime(2026, 6, 2, 18, 0, 0),
+            ),
+            StockMarketDailySnapshot(
+                business_date=date(2026, 6, 3),
+                stock_code="000001",
+                stock_name="Alpha",
+                market="KOSPI",
+                close_price=125_000,
+                high_price=None,
+                change_percent=0.0,
+                turnover=100_000_000,
+                fetched_at=datetime(2026, 6, 3, 18, 0, 0),
+            ),
+            StockMarketDailySnapshot(
+                business_date=date(2026, 6, 4),
+                stock_code="000001",
+                stock_name="Alpha",
+                market="KOSPI",
+                close_price=130_000,
+                high_price=None,
+                change_percent=0.0,
+                turnover=100_000_000,
+                fetched_at=datetime(2026, 6, 4, 18, 0, 0),
+            ),
+            StockMarketDailySnapshot(
+                business_date=date(2026, 6, 5),
+                stock_code="000001",
+                stock_name="Alpha",
+                market="KOSPI",
+                close_price=130_000,
+                high_price=160_000,
+                change_percent=0.0,
+                turnover=100_000_000,
+                fetched_at=datetime(2026, 6, 5, 18, 0, 0),
+            ),
+        ]
+    )
+
+    alpha_snapshot = cli_module.build_web_view_stock_detail_snapshot(
+        config,
+        repository,
+        business_date=selected_date,
+        stock_code="000001",
+        now=datetime(2026, 6, 5, 18, 0, 0),
+    )
+    beta_snapshot = cli_module.build_web_view_stock_detail_snapshot(
+        config,
+        repository,
+        business_date=selected_date,
+        stock_code="000002",
+        now=datetime(2026, 6, 5, 18, 0, 0),
+    )
+
+    journey = alpha_snapshot["target_journey"]
+    assert journey["available"] is True
+    assert journey["source"] == "stored_reports_and_stock_market_daily"
+    assert journey["price_basis"] == "high_price_then_close_price"
+    assert [item["status"] for item in journey["items"]] == ["in_progress", "hit", "hit"]
+
+    in_progress = journey["items"][0]
+    assert in_progress["report_date"] == "2026-06-03"
+    assert in_progress["broker_name"] == "CC Securities"
+    assert in_progress["revision_direction_label"]
+    assert in_progress["current_attainment_percent"] == pytest.approx(65.0)
+    assert in_progress["max_attainment_percent"] == pytest.approx(80.0)
+
+    close_fallback_hit = journey["items"][1]
+    assert close_fallback_hit["hit_date"] == "2026-06-04"
+    assert close_fallback_hit["hit_trading_days"] == 2
+    assert close_fallback_hit["current_attainment_percent"] == pytest.approx(100.0)
+    assert close_fallback_hit["max_attainment_percent"] == pytest.approx(123.1)
+
+    high_hit = journey["items"][2]
+    assert high_hit["hit_date"] == "2026-06-02"
+    assert high_hit["hit_trading_days"] == 1
+
+    missing_journey = beta_snapshot["target_journey"]
+    assert missing_journey["available"] is True
+    assert missing_journey["items"][0]["status"] == "no_market_data"
+    assert missing_journey["items"][0]["hit_date"] is None
+    assert missing_journey["items"][0]["hit_trading_days"] is None
+    assert missing_journey["items"][0]["current_attainment_percent"] is None
+    assert missing_journey["items"][0]["max_attainment_percent"] is None
+    _assert_public_safe_payload(alpha_snapshot)
+    _assert_public_safe_payload(beta_snapshot)
+
+
+def test_web_view_html_renders_target_revision_line_in_top_two_cards() -> None:
+    html = cli_module._render_web_view_html()
+    top_two_body = html.split("function renderTopTwoReviewCandidates(rows)", 1)[1].split(
+        "function updateTossPriorityRefreshButton()", 1
+    )[0]
+
+    assert "targetRevisionTrailLine(item)" in top_two_body
+    assert "target-revision-line" in top_two_body
+
+
+def test_web_view_html_renders_target_journey_in_stock_detail_only() -> None:
+    html = cli_module._render_web_view_html()
+    stock_context_body = html.split("function renderStockContext(data)", 1)[1].split(
+        "function targetProgressDetailLabel(progress)", 1
+    )[0]
+    top_two_body = html.split("function renderTopTwoReviewCandidates(rows)", 1)[1].split(
+        "function updateTossPriorityRefreshButton()", 1
+    )[0]
+
+    assert "data.target_journey" in stock_context_body
+    assert "renderTargetJourney" in stock_context_body
+    assert "목표가 검증" in stock_context_body
+    assert "목표가 Journey" not in stock_context_body
+    assert "가격 검증 대기" in stock_context_body
+    assert "시장 데이터 없음" not in stock_context_body
+    assert stock_context_body.index("${targetJourneyBlock}") < stock_context_body.index("${targetTrailBlock}")
+    assert ".target-direction-label { white-space: nowrap; flex-shrink: 0; }" in html
+    assert ".stock-context-panel { max-height: none; overflow: visible; padding-right: 0; }" in html
+    assert "target_journey" not in top_two_body
+
+
 def test_web_view_etf_trend_snapshot_exposes_rotation_evidence_scope(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
