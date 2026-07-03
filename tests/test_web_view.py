@@ -6048,6 +6048,49 @@ def test_web_view_news_observation_collect_uses_candidate_priority_top_two(tmp_p
     assert summary_codes == [("229640", "138930")]
 
 
+def test_web_view_news_observation_collect_deduplicates_candidate_stock_codes(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 24)
+    captured_stock_codes = []
+    summary_codes = []
+
+    def fake_candidate_snapshot(_config, _repository, *, business_date, limit):
+        assert business_date == date(2026, 6, 24)
+        assert limit == 2
+        return {"rows": [
+            {"stock_name": "DL E&C", "stock_code": "375500"},
+            {"stock_name": "DL E&C", "stock_code": "375500"},
+        ]}
+
+    def fake_run(args):
+        captured_stock_codes.append(list(args.stock_code))
+        print(json.dumps({"saved_observation_count": 1, "saved_evidence_count": 0, "warnings": []}))
+        return 0
+
+    def fake_summary(_repository, _business_date, *, stock_codes=None):
+        summary_codes.append(tuple(stock_codes or ()))
+        return {"available": True, "items": []}
+
+    monkeypatch.setattr(cli_module, "build_web_view_candidate_evidence_snapshot", fake_candidate_snapshot)
+    monkeypatch.setattr(cli_module, "_run_news_intelligence_briefing_collect", fake_run)
+    monkeypatch.setattr(cli_module, "_build_web_view_news_observation_summary", fake_summary)
+
+    status, payload = cli_module._collect_web_view_news_observations(
+        config,
+        repository,
+        business_date=business_date,
+        limit=2,
+    )
+
+    assert status == HTTPStatus.OK
+    assert payload["target_stock_codes"] == ["375500"]
+    assert captured_stock_codes == [["375500"]]
+    assert summary_codes == [("375500",)]
+
 def test_web_view_daily_snapshot_scopes_news_summary_to_top_two_candidates(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)

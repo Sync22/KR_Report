@@ -3816,6 +3816,93 @@ def test_news_intelligence_briefing_collect_saves_observations_for_actual_surfac
     assert daily_snapshot["market_briefing"]["news_observation_summary"]["direct_count"] == 2
 
 
+def test_news_intelligence_briefing_target_summaries_preserves_explicit_order_and_dedupes_codes() -> None:
+    business_date = date(2026, 6, 29)
+    summaries = [
+        DailyStockSummary(
+            business_date=business_date,
+            stock_name="?먯궛",
+            stock_code="000150",
+            mention_count=9,
+            broker_display="Test",
+            target_price_min=None,
+            target_price_max=None,
+            dominant_opinion="unknown",
+            generated_at=datetime(2026, 6, 29, 12, 0, 0),
+        ),
+        DailyStockSummary(
+            business_date=business_date,
+            stock_name="?쇱꽦?꾩옄",
+            stock_code="005930",
+            mention_count=1,
+            broker_display="Test",
+            target_price_min=None,
+            target_price_max=None,
+            dominant_opinion="unknown",
+            generated_at=datetime(2026, 6, 29, 12, 0, 0),
+        ),
+    ]
+
+    class RepositoryStub:
+        timezone = "Asia/Seoul"
+
+        def list_daily_summaries(self, target_date):
+            assert target_date == business_date
+            return summaries
+
+        def list_reports_for_business_date(self, _target_date):
+            raise AssertionError("stored daily summaries should be used")
+
+    targets = cli_module._news_intelligence_briefing_target_summaries(
+        RepositoryStub(),
+        target_date=business_date,
+        limit=2,
+        stock_codes=("005930", "000150", "000150"),
+    )
+
+    assert [(target.stock_code, target.stock_name) for target in targets] == [
+        ("005930", "?쇱꽦?꾩옄"),
+        ("000150", "?먯궛"),
+    ]
+
+
+def test_news_intelligence_top_candidate_targets_deduplicate_candidate_snapshot_codes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    warnings = []
+
+    def fake_candidate_snapshot(_config, _repository, *, business_date, limit, include_internal):
+        assert business_date == date(2026, 6, 24)
+        assert limit == 10
+        assert include_internal is True
+        return {
+            "rows": [
+                {"stock_name": "DL E&C", "stock_code": "375500"},
+                {"stock_name": "DL E&C", "stock_code": "375500"},
+                {"stock_name": "LG Innotek", "stock_code": "011070"},
+            ]
+        }
+
+    monkeypatch.setattr(cli_module, "build_web_view_candidate_evidence_snapshot", fake_candidate_snapshot)
+
+    targets = cli_module._news_intelligence_top_candidate_targets(
+        config,
+        repository,
+        business_date=date(2026, 6, 24),
+        candidate_limit=10,
+        top_n=3,
+        warnings=warnings,
+    )
+
+    assert targets == [
+        {"rank": 1, "stock_code": "375500", "stock_name": "DL E&C"},
+        {"rank": 3, "stock_code": "011070", "stock_name": "LG Innotek"},
+    ]
+    assert warnings == []
+
 def test_news_intelligence_briefing_collect_saves_empty_observation_for_no_match(
     tmp_path,
     capsys,

@@ -3338,6 +3338,49 @@ def _run_news_intelligence_briefing_collect(
     return 0 if (not args.save_observation or saved_observation_count > 0) else 1
 
 
+def _unique_nonblank_stock_codes(stock_codes: Sequence[str]) -> list[str]:
+    unique_codes: list[str] = []
+    seen_codes: set[str] = set()
+    for code in stock_codes:
+        normalized_code = code.strip() if code else ""
+        if not normalized_code or normalized_code in seen_codes:
+            continue
+        unique_codes.append(normalized_code)
+        seen_codes.add(normalized_code)
+    return unique_codes
+
+
+def _news_intelligence_top_candidate_targets(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    business_date: date,
+    candidate_limit: int,
+    top_n: int,
+    warnings: list[str],
+) -> list[dict[str, object]]:
+    snapshot = build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=candidate_limit,
+        include_internal=True,
+    )
+    targets: list[dict[str, object]] = []
+    seen_stock_codes: set[str] = set()
+    for rank, row in enumerate(list(snapshot.get("rows") or [])[:top_n], start=1):
+        stock_code = str(row.get("stock_code") or "").strip()
+        stock_name = str(row.get("stock_name") or "").strip()
+        if not stock_code:
+            warnings.append(f"rank {rank} skipped: missing stock_code")
+            continue
+        if stock_code in seen_stock_codes:
+            continue
+        seen_stock_codes.add(stock_code)
+        targets.append({"rank": rank, "stock_code": stock_code, "stock_name": stock_name})
+    return targets
+
+
 def _news_intelligence_briefing_target_summaries(
     repository: StockMonitorRepository,
     *,
@@ -3351,9 +3394,18 @@ def _news_intelligence_briefing_target_summaries(
             repository.list_reports_for_business_date(target_date),
             timezone=repository.timezone,
         )
-    requested_codes = {code.strip() for code in stock_codes if code and code.strip()}
+    requested_codes = _unique_nonblank_stock_codes(stock_codes)
     if requested_codes:
-        summaries = [summary for summary in summaries if summary.stock_code in requested_codes]
+        summary_by_code = {
+            summary.stock_code: summary
+            for summary in summaries
+            if summary.stock_code
+        }
+        return [
+            summary_by_code[code]
+            for code in requested_codes
+            if code in summary_by_code
+        ][: max(0, limit)]
     sorted_summaries = sorted(
         summaries,
         key=lambda summary: (-summary.mention_count, summary.stock_name, summary.stock_code or ""),
@@ -23045,11 +23097,12 @@ def _collect_web_view_news_observations(
         business_date=business_date,
         limit=limit,
     )
-    stock_codes = [
-        str(row.get("stock_code") or "").strip()
-        for row in list(candidate_snapshot.get("rows") or [])[:limit]
-        if str(row.get("stock_code") or "").strip()
-    ]
+    stock_codes = _unique_nonblank_stock_codes(
+        [
+            str(row.get("stock_code") or "")
+            for row in list(candidate_snapshot.get("rows") or [])[:limit]
+        ]
+    )
     args = argparse.Namespace(
         date=business_date,
         limit=limit,
