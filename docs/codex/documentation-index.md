@@ -46,6 +46,8 @@ These files remain useful as detailed history or implementation notes, but they 
 | `contracts/*` | `surface-contract.md`, `data-quality-checklist.md`, `data-source-policy.md`, and the relevant canonical runbook |
 | `contracts/news-intelligence-contract.md` | `stock_research_monitor_mvp.md`, `surface-contract.md`, and `next-phase.md` for the operator-only news intelligence, explicit observation save/readback boundary, and future public-safe stored `web-view` projection. |
 | `plans/*` | `current-work.md`, `next-phase.md`, and `execution-roadmap.md` |
+| `plans/manual-x-recap-telegram-preview-plan.md` | Manual logged-in browser X recap preview boundary; keep production adoption decisions in `current-work.md`, `next-phase.md`, and `surface-contract.md`. |
+| `plans/x-browser-recap-lab-validation-plan.md` | No-login X browser recap probe validation boundary; keep browser probe output disconnected from production DB, Telegram, scheduler, `admin-gui`, and `web-view`. |
 | `plans/observation-candidate-recommendation-goal-prompt.md` | Goal prompt for the next `오늘의 관찰 후보` implementation pass; keep the product boundary in `current-work.md`, `next-phase.md`, and `surface-contract.md`. |
 | `history/mini-pc-restore-change-log-2026-05-16.md` | `mini-pc-migration-handoff.md`, `current-work.md`, and `krx-market-data-runbook.md` for ongoing policy; keep this file as the source-sync record for the mini PC restore session. |
 | `history/web-view-stored-evidence-hardening-2026-05-27.md` | Handoff note for the dev-branch stored-evidence `web-view` hardening pass; use `current-work.md`, `next-phase.md`, `surface-contract.md`, and `contracts/candidate-evidence-contract.md` for ongoing policy. |

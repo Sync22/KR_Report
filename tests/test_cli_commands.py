@@ -3450,6 +3450,146 @@ def test_x_browser_recap_probe_parser_accepts_no_login_filters() -> None:
     assert args.format == "json"
 
 
+def test_manual_x_recap_preview_parser_accepts_manual_slot_input(tmp_path) -> None:
+    input_path = tmp_path / "manual-x-posts.json"
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "manual-x-recap-preview",
+            "--input",
+            str(input_path),
+            "--date",
+            "2026-06-08",
+            "--slot",
+            "preopen",
+            "--window-minutes",
+            "30",
+            "--format",
+            "json",
+        ]
+    )
+
+    assert args.command == "manual-x-recap-preview"
+    assert args.input == input_path
+    assert args.date == date(2026, 6, 8)
+    assert args.slot == "preopen"
+    assert args.window_minutes == 30
+    assert args.format == "json"
+
+
+def test_manual_x_recap_preview_formats_slot_and_filters_non_market_rows() -> None:
+    payload = cli_module._build_manual_x_recap_preview_payload(
+        {
+            "posts": [
+                {
+                    "handle": "admi_alts",
+                    "published_at": "2026-06-07T20:10:00+09:00",
+                    "url": "https://x.com/admi_alts/status/1",
+                    "summary": "야간선물 급락 가능성을 열어두되 동반 투매보다 시나리오 대응을 강조.",
+                    "stance": "caution",
+                    "market_related": True,
+                },
+                {
+                    "handle": "admi_alts",
+                    "published_at": "2026-06-07T20:20:00+09:00",
+                    "url": "https://x.com/admi_alts/status/2",
+                    "summary": "답글은 제외되어야 함.",
+                    "stance": "neutral",
+                    "market_related": True,
+                    "is_reply": True,
+                },
+                {
+                    "handle": "blazingbees",
+                    "published_at": "2026-06-08T07:50:00+09:00",
+                    "url": "https://x.com/blazingbees/status/3",
+                    "summary": "반도체 이벤트를 장 시작 전 확인 포인트로 정리.",
+                    "stance": "positive",
+                    "market_related": True,
+                },
+                {
+                    "handle": "blazingbees",
+                    "published_at": "2026-06-08T09:05:00+09:00",
+                    "url": "https://x.com/blazingbees/status/4",
+                    "summary": "장 중반 글이라 장 시작 전 슬롯에는 빠져야 함.",
+                    "stance": "positive",
+                    "market_related": True,
+                },
+                {
+                    "handle": "blazingbees",
+                    "published_at": "2026-06-07T22:10:00+09:00",
+                    "url": "https://x.com/blazingbees/status/5",
+                    "summary": "운동 이야기는 시장 요약에서 제외.",
+                    "stance": "neutral",
+                    "market_related": False,
+                },
+            ],
+            "questions": [
+                "반도체 이벤트가 실제 시초가 방어로 이어지는지 확인",
+            ],
+        },
+        target_date=date(2026, 6, 8),
+        slot="preopen",
+        window_minutes=30,
+    )
+
+    assert payload["surface"] == "manual-x-recap-preview"
+    assert payload["slot"] == "preopen"
+    assert payload["time_range"] == "2026-06-07 20:00~2026-06-08 08:00 KST"
+    assert payload["post_count"] == 2
+    assert payload["excluded_count"] == 3
+    assert payload["handles"] == ["admi_alts", "blazingbees"]
+    assert payload["windows"][0]["label"] == "20:00-20:30"
+    assert payload["windows"][1]["label"] == "07:30-08:00"
+    assert "답글은 제외" not in payload["message"]
+    assert "운동 이야기는" not in payload["message"]
+    assert "장 중반 글" not in payload["message"]
+    assert "X 관찰 복기 · 장 시작 전 · 26.06.08" in payload["message"]
+    assert "반도체 이벤트가 실제 시초가 방어로 이어지는지 확인" in payload["message"]
+    assert payload["message_issue_count"] == 0
+
+
+def test_manual_x_recap_preview_runner_accepts_utf8_bom_json(tmp_path, capsys) -> None:
+    input_path = tmp_path / "manual-x-posts.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "posts": [
+                    {
+                        "handle": "admi_alts",
+                        "published_at": "2026-06-07T20:10:00+09:00",
+                        "summary": "야간선물 급락 가능성을 열어두되 시나리오 대응을 강조.",
+                        "stance": "caution",
+                        "market_related": True,
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8-sig",
+    )
+    args = cli_module.build_parser().parse_args(
+        [
+            "manual-x-recap-preview",
+            "--input",
+            str(input_path),
+            "--date",
+            "2026-06-08",
+            "--slot",
+            "preopen",
+            "--format",
+            "text",
+        ]
+    )
+
+    exit_code = cli_module._run_manual_x_recap_preview(args)
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "X 관찰 복기 · 장 시작 전 · 26.06.08" in captured.out
+    assert "invalid JSON" not in captured.err
+
+
 def test_x_browser_recap_profile_url_preserves_lang_query() -> None:
     profile_url, handle = cli_module._resolve_x_browser_recap_target(
         profile_url="https://x.com/admi_alts?lang=ko",

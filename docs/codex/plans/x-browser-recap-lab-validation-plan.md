@@ -12,6 +12,8 @@ This plan does not implement a production X monitor. It keeps browser-based X ac
 
 The long-term production source candidate is the official X API, not browser scraping. Browser probe results must not be wired into production DB writes, Telegram automation, scheduler tasks, `admin-gui`, or public `web-view`.
 
+Related manual logged-in browser review is tracked separately in `docs/codex/plans/manual-x-recap-telegram-preview-plan.md`. That mode is operator-triggered recap preparation only, not part of this no-login probe validation.
+
 ## Current Baseline
 
 The repository already has a lab command:

@@ -429,6 +429,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Optional explicit directory for a diagnostic screenshot when the page blocks or renders empty.",
     )
+    manual_x_recap_parser = subparsers.add_parser(
+        "manual-x-recap-preview",
+        help="Format manually reviewed X posts into an operator-only Telegram-style recap preview.",
+    )
+    manual_x_recap_parser.add_argument("--input", type=Path, required=True)
+    manual_x_recap_parser.add_argument("--date", type=date.fromisoformat, required=True)
+    manual_x_recap_parser.add_argument("--slot", choices=("preopen", "midday", "close"), required=True)
+    manual_x_recap_parser.add_argument("--window-minutes", type=int, choices=(30, 60), default=30)
+    manual_x_recap_parser.add_argument("--format", choices=("text", "json"), default="text")
 
     poll_parser = subparsers.add_parser("manual-poll", help="Fetch reports and save unseen rows into SQLite.")
     poll_parser.add_argument("--limit", type=int, default=50)
@@ -1743,6 +1752,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_news_intelligence_daily_brief(args)
     if args.command == "x-browser-recap-probe":
         return _run_x_browser_recap_probe(args)
+    if args.command == "manual-x-recap-preview":
+        return _run_manual_x_recap_preview(args)
 
     config = RuntimeConfig.from_env(headless=not getattr(args, "headed", False))
     config.ensure_runtime_dirs()
@@ -3348,6 +3359,247 @@ def _format_x_browser_recap_text(payload: dict[str, object]) -> str:
         if post.get("url"):
             lines.append(f"   {post.get('url')}")
     return "\n".join(lines) + "\n"
+
+
+MANUAL_X_RECAP_SLOT_LABELS = {
+    "preopen": "장 시작 전",
+    "midday": "장 중반",
+    "close": "장 마감",
+}
+MANUAL_X_RECAP_BLOCKED_MESSAGE_TERMS = (
+    "매수 추천",
+    "매도 추천",
+    "매수 기회",
+    "전략 제안",
+    "진입가",
+    "청산가",
+    "익절가",
+    "목표 수익률",
+    "확신도",
+    "투자등급",
+    "점수",
+)
+
+
+def _manual_x_recap_slot_range(target_date: date, slot: str, timezone: str = "Asia/Seoul") -> tuple[datetime, datetime]:
+    tz = ZoneInfo(timezone)
+    if slot == "preopen":
+        return (
+            datetime.combine(target_date - timedelta(days=1), datetime_time(hour=20), tzinfo=tz),
+            datetime.combine(target_date, datetime_time(hour=8), tzinfo=tz),
+        )
+    if slot == "midday":
+        return (
+            datetime.combine(target_date, datetime_time(hour=8), tzinfo=tz),
+            datetime.combine(target_date, datetime_time(hour=12), tzinfo=tz),
+        )
+    if slot == "close":
+        return (
+            datetime.combine(target_date, datetime_time(hour=12), tzinfo=tz),
+            datetime.combine(target_date, datetime_time(hour=16), tzinfo=tz),
+        )
+    raise ValueError(f"unsupported manual X recap slot: {slot}")
+
+
+def _parse_manual_x_recap_datetime(value: object, timezone: str = "Asia/Seoul") -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo(timezone))
+    return parsed.astimezone(ZoneInfo(timezone))
+
+
+def _iter_manual_x_recap_input_posts(payload: dict[str, object]) -> list[dict[str, object]]:
+    posts: list[dict[str, object]] = []
+    raw_posts = payload.get("posts")
+    if isinstance(raw_posts, list):
+        posts.extend(item for item in raw_posts if isinstance(item, dict))
+    raw_accounts = payload.get("accounts")
+    if isinstance(raw_accounts, list):
+        for account in raw_accounts:
+            if not isinstance(account, dict):
+                continue
+            handle = str(account.get("handle") or "").lstrip("@")
+            account_posts = account.get("posts")
+            if not isinstance(account_posts, list):
+                continue
+            for item in account_posts:
+                if not isinstance(item, dict):
+                    continue
+                merged = dict(item)
+                merged.setdefault("handle", handle)
+                posts.append(merged)
+    return posts
+
+
+def _manual_x_recap_post_summary(row: dict[str, object]) -> str:
+    for key in ("summary", "text"):
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            return _compact_x_post_text(value)[:220]
+    return "요약 없음"
+
+
+def _manual_x_recap_message_issues(message: str) -> list[str]:
+    return [term for term in MANUAL_X_RECAP_BLOCKED_MESSAGE_TERMS if term in message]
+
+
+def _build_manual_x_recap_preview_payload(
+    raw_payload: dict[str, object],
+    *,
+    target_date: date,
+    slot: str,
+    window_minutes: int = 30,
+    timezone: str = "Asia/Seoul",
+) -> dict[str, object]:
+    start_at, end_at = _manual_x_recap_slot_range(target_date, slot, timezone=timezone)
+    questions = [str(item).strip() for item in raw_payload.get("questions", []) if str(item).strip()] if isinstance(raw_payload.get("questions"), list) else []
+    included: list[dict[str, object]] = []
+    excluded_count = 0
+    for row in _iter_manual_x_recap_input_posts(raw_payload):
+        published_at = _parse_manual_x_recap_datetime(row.get("published_at"), timezone=timezone)
+        if published_at is None or published_at < start_at or published_at >= end_at:
+            excluded_count += 1
+            continue
+        if row.get("is_reply") or row.get("is_repost"):
+            excluded_count += 1
+            continue
+        if row.get("market_related") is False:
+            excluded_count += 1
+            continue
+        handle = str(row.get("handle") or "").strip().lstrip("@")
+        if not handle:
+            excluded_count += 1
+            continue
+        included.append(
+            {
+                "handle": handle,
+                "published_at": published_at,
+                "url": str(row.get("url") or "").strip() or None,
+                "stance": str(row.get("stance") or "neutral").strip() or "neutral",
+                "summary": _manual_x_recap_post_summary(row),
+            }
+        )
+    included.sort(key=lambda item: (item["published_at"], item["handle"]))
+
+    grouped: dict[datetime, list[dict[str, object]]] = {}
+    for item in included:
+        published_at = item["published_at"]
+        assert isinstance(published_at, datetime)
+        minutes_from_start = int((published_at - start_at).total_seconds() // 60)
+        bucket_start = start_at + timedelta(minutes=(minutes_from_start // window_minutes) * window_minutes)
+        grouped.setdefault(bucket_start, []).append(item)
+
+    windows: list[dict[str, object]] = []
+    for bucket_start in sorted(grouped):
+        bucket_end = bucket_start + timedelta(minutes=window_minutes)
+        rows = grouped[bucket_start]
+        windows.append(
+            {
+                "label": f"{bucket_start:%H:%M}-{bucket_end:%H:%M}",
+                "posts": [
+                    {
+                        "handle": row["handle"],
+                        "published_at": row["published_at"].isoformat(),
+                        "url": row["url"],
+                        "stance": row["stance"],
+                        "summary": row["summary"],
+                    }
+                    for row in rows
+                ],
+            }
+        )
+
+    handles = sorted({str(item["handle"]) for item in included})
+    slot_label = MANUAL_X_RECAP_SLOT_LABELS[slot]
+    lines = [
+        f"X 관찰 복기 · {slot_label} · {target_date:%y.%m.%d}",
+        f"범위: {start_at:%m.%d %H:%M}~{end_at:%m.%d %H:%M} KST",
+        "방식: manual browser analyst / no automation",
+        "",
+        "계정별 관점",
+    ]
+    if handles:
+        for handle in handles:
+            handle_rows = [item for item in included if item["handle"] == handle]
+            stance_counts = Counter(str(item["stance"]) for item in handle_rows)
+            stance_text = "/".join(stance for stance, _count in stance_counts.most_common()) or "neutral"
+            lines.append(f"@{handle}")
+            lines.append(f"- 라벨: {stance_text}")
+            for item in handle_rows[:3]:
+                lines.append(f"- {item['summary']}")
+    else:
+        lines.append("- 표시할 시장/종목 관련 글 없음")
+    lines.append("")
+    lines.append("시간대별")
+    if windows:
+        for window in windows:
+            lines.append(str(window["label"]))
+            for post in window["posts"]:
+                lines.append(f"- @{post['handle']} [{post['stance']}] {post['summary']}")
+    else:
+        lines.append("- 해당 범위에 표시할 글 없음")
+    if questions:
+        lines.append("")
+        lines.append("다음 확인 질문")
+        for question in questions[:5]:
+            lines.append(f"- {question}")
+
+    message = "\n".join(lines).strip() + "\n"
+    issues = _manual_x_recap_message_issues(message)
+    return {
+        "surface": "manual-x-recap-preview",
+        "target_date": target_date.isoformat(),
+        "slot": slot,
+        "slot_label": slot_label,
+        "timezone": timezone,
+        "time_range": f"{start_at:%Y-%m-%d %H:%M}~{end_at:%Y-%m-%d %H:%M} KST",
+        "window_minutes": window_minutes,
+        "handles": handles,
+        "post_count": len(included),
+        "excluded_count": excluded_count,
+        "windows": windows,
+        "message": message,
+        "message_issues": issues,
+        "message_issue_count": len(issues),
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "connects_web_view": False,
+        "read_only": True,
+    }
+
+
+def _run_manual_x_recap_preview(args: argparse.Namespace) -> int:
+    try:
+        raw_payload = json.loads(args.input.read_text(encoding="utf-8-sig"))
+    except OSError as exc:
+        print(f"manual-x-recap-preview error: cannot read input: {exc}", file=sys.stderr)
+        return 2
+    except json.JSONDecodeError as exc:
+        print(f"manual-x-recap-preview error: invalid JSON: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(raw_payload, dict):
+        print("manual-x-recap-preview error: input JSON must be an object", file=sys.stderr)
+        return 2
+    payload = _build_manual_x_recap_preview_payload(
+        raw_payload,
+        target_date=args.date,
+        slot=args.slot,
+        window_minutes=args.window_minutes,
+    )
+    if args.format == "json":
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(payload["message"], end="")
+    return 1 if payload["message_issue_count"] else 0
 
 
 def _news_intelligence_observations_base_payload(
