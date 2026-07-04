@@ -40,7 +40,7 @@ Use official Toss Securities documents first:
 | <https://openapi.tossinvest.com/openapi-docs/latest/api-reference/README.md> | Markdown API reference index. |
 | <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json> | Canonical OpenAPI document for exact endpoints and schemas. |
 
-Observed official-doc facts as of `2026-06-12`:
+Observed official-doc facts as of `2026-07-04`:
 
 - Base server is `https://openapi.tossinvest.com`.
 - Authentication uses OAuth 2.0 Client Credentials Grant.

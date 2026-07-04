@@ -26,7 +26,7 @@ invalidates the client's previously issued token.
 
 ## Official Basis
 
-Verified on `2026-06-12` against:
+Verified on `2026-07-04` against:
 
 - <https://developers.tossinvest.com/docs>
 - <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json>
@@ -35,7 +35,8 @@ Current official spec snapshot:
 
 | Item | Value |
 | --- | --- |
-| OpenAPI version | `1.1.1` |
+| OpenAPI document version | `3.1.0` |
+| Official spec version | `1.1.5` |
 | Paths | `20` |
 | Operations | `21` |
 | Schemas | `53` |
