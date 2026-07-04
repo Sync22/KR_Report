@@ -36,7 +36,6 @@ dist/
 # Runtime data and generated local artifacts
 data/**
 !data/
-!data/operator_memos.md
 !data/naver_fixtures/
 !data/naver_fixtures/*.json
 !data/rotation_overlay_coordinates.json
@@ -80,6 +79,7 @@ handoff/mini_pc_changes/mini-pc-restore-change-log-*.md
 /*web-view*.png
 /*WebView*.png
 /*evidence*.png
+/iv-reconstruction*.png
 
 # Superseded local copies after docs/codex role reorganization.
 # Canonical homes are under docs/codex/plans, docs/codex/contracts, or docs/codex/details/krx.
