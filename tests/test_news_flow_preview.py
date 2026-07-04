@@ -51,7 +51,10 @@ def test_build_news_flow_preview_summarizes_market_flow_without_candidate_langua
     assert preview["article_count"] == 4
     assert preview["repeated_stocks"][0]["name"] == "Samsung Electronics"
     assert preview["repeated_stocks"][0]["article_count"] == 2
-    assert any(theme["label"] == "Semiconductor/AI" for theme in preview["sector_themes"])
+    themes_by_label = {theme["label"]: theme for theme in preview["sector_themes"]}
+    assert themes_by_label["Semiconductor/AI"]["article_count"] == 2
+    assert "Battery shares watch policy uncertainty" not in themes_by_label["Semiconductor/AI"]["article_titles"]
+    assert themes_by_label["Battery/EV"]["article_count"] == 1
     assert any(issue["label"] == "Supply/contract" for issue in preview["key_issues"])
     assert any(signal["label"] == "Volatility/overheating" for signal in preview["caution_signals"])
 
@@ -146,6 +149,60 @@ def test_news_flow_preview_ignores_low_signal_notice_articles_for_topics() -> No
     assert preview.sector_themes == []
     assert preview.key_issues == []
     assert preview.caution_signals == []
+
+
+def test_news_flow_preview_ignores_korean_low_signal_notice_articles_for_flow_topics() -> None:
+    content = json.dumps(
+        {
+            "sources": [
+                {
+                    "source_url": "https://example.test/notice-heavy-flow",
+                    "source": "공지성 기사",
+                    "articles": [
+                        {
+                            "title": "[경제계 인사] 한국은행",
+                            "date": "2026-06-06T00:45:00+09:00",
+                            "url": "https://news.example/notice-1",
+                            "source": "공지성 기사",
+                            "summary": "한국은행 금융통화위원회 인사와 금리 정책 자문 이력이 언급됐다.",
+                        },
+                        {
+                            "title": "[바로잡습니다] 재정 적자 관련 기사에서 외",
+                            "date": "2026-06-06T00:54:00+09:00",
+                            "url": "https://news.example/notice-2",
+                            "source": "공지성 기사",
+                            "summary": "재정 적자와 반도체 그래픽 출처를 바로잡습니다.",
+                        },
+                        {
+                            "title": "[부고] 주요 기업 임원 모친상",
+                            "date": "2026-06-06T01:05:00+09:00",
+                            "url": "https://news.example/notice-3",
+                            "source": "공지성 기사",
+                            "summary": "2차전지와 자동차 업계 인사가 빈소를 찾았다.",
+                        },
+                        {
+                            "title": "[알림] 경제 뉴스레터 개편",
+                            "date": "2026-06-06T01:10:00+09:00",
+                            "url": "https://news.example/notice-4",
+                            "source": "공지성 기사",
+                            "summary": "플랫폼과 바이오 섹션 편집 안내입니다.",
+                        },
+                    ],
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    preview = build_news_flow_preview(
+        parse_news_flow_json(content, source_urls=("https://example.test/notice-heavy-flow",))
+    )
+
+    assert preview.article_count == 4
+    assert preview.sector_themes == []
+    assert preview.key_issues == []
+    assert preview.caution_signals == []
+    assert preview.market_mood == "Sparse or uncategorized news flow"
 
 
 def test_news_flow_preview_detects_korean_theme_and_caution_terms() -> None:

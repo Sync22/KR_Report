@@ -1,4 +1,9 @@
 import io
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date
+from types import SimpleNamespace
 from urllib import error
 
 import pytest
@@ -16,6 +21,7 @@ from stock_monitor.fetch.toss_openapi import (
     resolve_toss_readonly_endpoint,
     run_toss_readonly_probe,
 )
+from stock_monitor.toss_openapi_web_view import TossPriorityQuoteProvider
 
 
 class FakeResponse:
@@ -495,6 +501,125 @@ def test_toss_live_probe_rejects_nonofficial_base_url_and_redacts_output() -> No
     assert "token-value" not in str(payload)
     assert "client-value" not in str(payload)
     assert "secret-value" not in str(payload)
+
+
+def test_toss_priority_quote_provider_concurrent_401s_reuse_the_single_reissued_token() -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    tokens = iter(("token-1", "token-2"))
+    token_calls: list[str] = []
+    fetch_calls: list[tuple[str, str]] = []
+    initial_fetches = threading.Barrier(2)
+
+    def issue_token(**_kwargs):
+        token = next(tokens)
+        token_calls.append(token)
+        return SimpleNamespace(access_token=token)
+
+    def fetch_quotes(**kwargs):
+        token = kwargs["access_token"]
+        symbols = kwargs["params"]["symbols"]
+        fetch_calls.append((token, symbols))
+        if token == "token-1":
+            initial_fetches.wait(timeout=2)
+            exc = RuntimeError("unauthorized")
+            exc.status_code = 401
+            raise exc
+        return SimpleNamespace(result=[], rate_limit={})
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        endpoint=resolve_toss_readonly_endpoint("prices"),
+        issue_token=issue_token,
+        fetch_quotes=fetch_quotes,
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(provider.get_quotes, priority_date=date(2026, 5, 15), symbols=(symbol,))
+            for symbol in ("005930", "000660")
+        ]
+        payloads = [future.result(timeout=5) for future in futures]
+
+    assert token_calls == ["token-1", "token-2"]
+    assert fetch_calls.count(("token-2", "005930")) == 1
+    assert fetch_calls.count(("token-2", "000660")) == 1
+    assert all(payload["cache"] == "miss" for payload in payloads)
+
+
+def test_toss_priority_quote_provider_waiter_does_not_receive_expired_stale_cache() -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    clock = {"now": 0.0}
+    fetch_started = threading.Event()
+    release_fetch = threading.Event()
+    calls = {"count": 0}
+
+    def fetch_quotes(**_kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return SimpleNamespace(result=[], rate_limit={})
+        fetch_started.set()
+        assert release_fetch.wait(timeout=2)
+        raise RuntimeError("upstream unavailable")
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        endpoint=resolve_toss_readonly_endpoint("prices"),
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch_quotes,
+        clock=lambda: clock["now"],
+    )
+    provider.get_quotes(priority_date=date(2026, 5, 15), symbols=("005930",))
+    clock["now"] = 400.0
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        owner = executor.submit(provider.get_quotes, priority_date=date(2026, 5, 15), symbols=("005930",))
+        assert fetch_started.wait(timeout=2)
+        waiter = executor.submit(provider.get_quotes, priority_date=date(2026, 5, 15), symbols=("005930",))
+        release_fetch.set()
+        with pytest.raises(RuntimeError):
+            owner.result(timeout=5)
+        with pytest.raises(RuntimeError):
+            waiter.result(timeout=5)
+
+
+def test_toss_priority_quote_provider_waiter_allows_bounded_token_recovery_duration() -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=0.05,
+    )
+    fetch_started = threading.Event()
+
+    def fetch_quotes(**_kwargs):
+        fetch_started.set()
+        time.sleep(0.15)
+        return SimpleNamespace(result=[], rate_limit={})
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        endpoint=resolve_toss_readonly_endpoint("prices"),
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch_quotes,
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        owner = executor.submit(provider.get_quotes, priority_date=date(2026, 5, 15), symbols=("005930",))
+        assert fetch_started.wait(timeout=2)
+        waiter = executor.submit(provider.get_quotes, priority_date=date(2026, 5, 15), symbols=("005930",))
+        payloads = [owner.result(timeout=5), waiter.result(timeout=5)]
+
+    assert {payload["cache"] for payload in payloads} == {"miss", "shared"}
 
 
 def test_toss_live_probe_requires_direct_call_gates_before_network() -> None:
