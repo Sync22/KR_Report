@@ -507,6 +507,25 @@ def test_web_view_candidate_evidence_projects_public_safe_news_badge(tmp_path, m
     assert badge["connection_label"] == "뉴스로 후보 강화"
     assert badge["connection_reason"] == "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다."
     assert badge["top_title"] == direct_evidence.title
+    assert badge["digest_label"] == "AI 반도체 공급 계약 체결"
+    assert badge["news_digest"] == [
+        {
+            "date": "2026-06-02",
+            "stock_name": "삼성전자",
+            "label": "AI 반도체 공급 계약 체결",
+            "evidence_label": "직접 근거",
+            "relevance": "direct",
+            "source_lane": "mainnews",
+        },
+        {
+            "date": "2026-06-02",
+            "stock_name": "삼성전자",
+            "label": "?쇱꽦?꾩옄, 蹂?숈꽦 ?뺣? 二쇱쓽",
+            "evidence_label": "시장 맥락",
+            "relevance": "market_context",
+            "source_lane": "mainnews",
+        },
+    ]
     payload = json.dumps(snapshot, ensure_ascii=False)
     assert "sentiment_score" not in payload
     assert "stock_impact" not in payload
@@ -650,6 +669,8 @@ def test_web_view_candidate_evidence_projects_empty_news_badge(tmp_path, monkeyp
         "krx_reference_status": "missing",
         "observed_at": None,
         "top_title": None,
+        "digest_label": None,
+        "news_digest": [],
     }
     _assert_public_safe_payload(snapshot)
 
@@ -722,6 +743,25 @@ def test_web_view_stock_detail_projects_public_safe_news_observation_detail(tmp_
     assert detail["top_titles"] == [
         "Samsung expands AI semiconductor supply",
         "Semiconductor volatility caution",
+    ]
+    assert detail["digest_label"] == "Samsung expands AI semiconductor supply"
+    assert detail["news_digest"] == [
+        {
+            "date": "2026-06-02",
+            "stock_name": "삼성전자",
+            "label": "Samsung expands AI semiconductor supply",
+            "evidence_label": "직접 근거",
+            "relevance": "direct",
+            "source_lane": "mainnews",
+        },
+        {
+            "date": "2026-06-02",
+            "stock_name": "삼성전자",
+            "label": "Semiconductor volatility caution",
+            "evidence_label": "시장 맥락",
+            "relevance": "market_context",
+            "source_lane": "mainnews",
+        },
     ]
     payload = json.dumps(snapshot, ensure_ascii=False)
     assert "sentiment_score" not in payload
@@ -3421,6 +3461,101 @@ def test_web_view_candidate_evidence_uses_stored_toss_2000_baseline(tmp_path, mo
     _assert_public_safe_payload(snapshot)
 
 
+def test_web_view_candidate_evidence_exposes_value_context_from_stored_references(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 7, 2)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="Alpha",
+                stock_code="005930",
+                title="Alpha report",
+                broker_name="NH",
+                published_at=datetime(2026, 7, 2, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 7, 2, 9, 5, 0),
+                source_id="value-context-report",
+                identity_key="value-context-report",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="005930",
+                stock_name="Alpha",
+                market="KOSPI",
+                close_price=72_000,
+                change_percent=1.2,
+                volume=1_000_000,
+                turnover=500_000_000_000,
+                fetched_at=datetime(2026, 7, 2, 20, 0, 0),
+            )
+        ]
+    )
+    repository.upsert_stock_investor_flow_daily(
+        [
+            StockInvestorFlowDaily(
+                business_date=business_date,
+                stock_code="005930",
+                stock_name="Alpha",
+                market="STK",
+                investor_type="외국인",
+                net_buy_volume=100,
+                net_buy_amount=200,
+                volume_unit="주",
+                amount_unit="원",
+                fetched_at=datetime(2026, 7, 2, 20, 1, 0),
+            )
+        ]
+    )
+    repository.save_toss_priority_quote_baselines(
+        [
+            TossPriorityQuoteBaseline(
+                business_date=business_date,
+                stock_code="005930",
+                stock_name="Alpha",
+                baseline_time="20:00",
+                last_price=72_500,
+                currency="KRW",
+                source="toss_openapi",
+                fetched_at=datetime(2026, 7, 2, 20, 0, 4),
+            )
+        ]
+    )
+    run = _web_view_news_run(
+        run_id="value-context-news",
+        target_date=business_date,
+        stock_name="Alpha",
+        stock_code="005930",
+    )
+    repository.save_news_intelligence_observation(run, [])
+
+    snapshot = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=2,
+    )
+
+    context = snapshot["rows"][0]["value_context"]
+    assert context["report_reference_date"] == "2026-07-02"
+    assert context["krx_reference_date"] == "2026-07-02"
+    assert context["turnover_reference_date"] == "2026-07-02"
+    assert context["current_price_reference_time"] == "2026-07-02T20:00:04"
+    assert context["current_price_basis"] == "20:00 stored"
+    assert context["investor_flow_reference_date"] == "2026-07-02"
+    assert context["news_collection_status"] == "stored_no_match"
+    assert context["missing_labels"] == []
+    _assert_public_safe_payload(snapshot)
+
+
 def test_web_view_news_observation_keeps_unique_direct_evidence_after_later_empty_collection(
     tmp_path, monkeypatch
 ) -> None:
@@ -4039,6 +4174,21 @@ def test_web_view_html_renders_target_journey_in_stock_detail_only() -> None:
     assert "target_journey" not in top_two_body
 
 
+def test_web_view_html_renders_value_context_in_top_two_and_stock_detail() -> None:
+    html = cli_module._render_web_view_html()
+    stock_context_body = html.split("function renderStockContext(data)", 1)[1].split(
+        "function renderStockValueContext(context)", 1
+    )[0]
+    top_two_body = html.split("function renderTopTwoReviewCandidates(rows)", 1)[1].split(
+        "function updateTossPriorityRefreshButton()", 1
+    )[0]
+
+    assert "candidateValueContextLine(item.value_context)" in top_two_body
+    assert "top-two-value-context" in top_two_body
+    assert "renderStockValueContext(data.value_context)" in stock_context_body
+    assert "value-context-grid" in html
+
+
 def test_web_view_etf_trend_snapshot_exposes_rotation_evidence_scope(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
@@ -4307,6 +4457,16 @@ def test_web_view_stock_detail_snapshot_exposes_reports_without_admin_state(tmp_
     assert snapshot["read_only"] is True
     assert snapshot["stock_name"] == "삼성전자"
     assert snapshot["market_reference"]["close_price"] == 100_000
+    assert snapshot["value_context"] == {
+        "report_reference_date": "2026-05-08",
+        "krx_reference_date": "2026-05-08",
+        "current_price_reference_time": "2026-05-08",
+        "current_price_basis": "KRX close",
+        "turnover_reference_date": "2026-05-08",
+        "investor_flow_reference_date": "2026-05-08",
+        "news_collection_status": "next_check_needed",
+        "missing_labels": [],
+    }
     assert snapshot["investor_flow"]["available"] is True
     assert snapshot["investor_flow"]["data_scope"] == "stored_krx_data_market_sample"
     assert snapshot["investor_flow"]["live_fetch"] is False
@@ -5235,9 +5395,11 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "candidateMarketInline(item.market_reference)" in html
     assert "candidateIntradayReferenceLabel(item.intraday_reference)" in html
     assert "renderCandidateNewsBadge(item.news_observation_badge)" in html
-    assert "candidateNewsCompactLine(item.news_observation_badge)" in html
+    assert "function candidateNewsCompactLine(badge)" in html
+    assert "function candidateNewsDigestLine(badge)" in html
     assert "item.value_profile || {}" in html
-    assert "판단 상태:" in html
+    assert "근거 상태:" in html
+    assert "판단 상태:" not in html
     assert "topTwoIntradayReferenceForRow(row, reference, firstMarketStatus)" in html
     assert "Naver 상위 미포함" in html
     assert "뉴스 기준일 이전값" in html
@@ -5251,9 +5413,14 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
         "function updateTossPriorityRefreshButton", 1
     )[0]
     assert top_two_body.index("관찰 사유:") < top_two_body.index("esc(valueLine)")
-    assert top_two_body.index("esc(valueLine)") < top_two_body.index("candidateIntradayReferenceLabel")
-    assert top_two_body.index("candidateIntradayReferenceLabel") < top_two_body.index("esc(newsLine)")
-    assert top_two_body.index("esc(newsLine)") < top_two_body.index("esc(tossBaselineLine)")
+    assert "top-two-news-line" in top_two_body
+    assert "candidateNewsDigestLine(item.news_observation_badge)" in top_two_body
+    assert top_two_body.index("esc(valueLine)") < top_two_body.index("근거 기준:")
+    assert top_two_body.index("근거 기준:") < top_two_body.index("candidateIntradayReferenceLabel")
+    assert "candidateCompactLabel(valueProfile.reference_notes, 4)" in top_two_body
+    assert "valueProfile.value_reason" not in top_two_body
+    assert "esc(newsLine)" not in top_two_body
+    assert "esc(tossBaselineLine)" not in top_two_body
     assert "candidate-news-badge" in html
     assert ".candidate-news-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; border: 1px solid #e7d8bf;" in html
     assert "candidate-intraday-line" in html
@@ -6061,14 +6228,29 @@ def test_web_view_news_observation_collect_deduplicates_candidate_stock_codes(tm
     def fake_candidate_snapshot(_config, _repository, *, business_date, limit):
         assert business_date == date(2026, 6, 24)
         assert limit == 2
-        return {"rows": [
-            {"stock_name": "DL E&C", "stock_code": "375500"},
-            {"stock_name": "DL E&C", "stock_code": "375500"},
-        ]}
+        return {
+            "rows": [
+                {"stock_name": "DL이앤씨", "stock_code": "375500"},
+                {"stock_name": "DL이앤씨", "stock_code": "375500"},
+            ]
+        }
 
     def fake_run(args):
         captured_stock_codes.append(list(args.stock_code))
-        print(json.dumps({"saved_observation_count": 1, "saved_evidence_count": 0, "warnings": []}))
+        print(
+            json.dumps(
+                {
+                    "saved_observation_count": 1,
+                    "saved_evidence_count": 0,
+                    "target_stock_count": 1,
+                    "live_fetch": True,
+                    "writes_db": True,
+                    "items": [],
+                    "warnings": [],
+                },
+                ensure_ascii=False,
+            )
+        )
         return 0
 
     def fake_summary(_repository, _business_date, *, stock_codes=None):
@@ -6090,6 +6272,7 @@ def test_web_view_news_observation_collect_deduplicates_candidate_stock_codes(tm
     assert payload["target_stock_codes"] == ["375500"]
     assert captured_stock_codes == [["375500"]]
     assert summary_codes == [("375500",)]
+
 
 def test_web_view_daily_snapshot_scopes_news_summary_to_top_two_candidates(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
@@ -6200,6 +6383,43 @@ def test_web_view_candidate_value_profile_keeps_no_match_from_reordering_support
 
     assert profile["value_label"] == "뉴스 매칭 없음"
     assert int(profile["sort_value_signal"]) == 3
+
+
+def test_web_view_candidate_value_profile_reference_notes_are_public_facing() -> None:
+    profile = cli_module._web_view_candidate_value_profile(
+        candidate_profile={
+            "observation_priority": "확인 후보",
+            "why_notable": ["리포트 집중"],
+            "missing_information": ["선택일 KRX 저장값 없음", "종목 수급 저장값 없음"],
+            "sort_signal": 3,
+            "sort_density": 1,
+        },
+        news_badge={
+            "available": True,
+            "display_label": "뉴스로 후보 강화",
+            "direct_count": 1,
+            "positive_direct_count": 0,
+            "primary_caution_count": 0,
+            "caution_count": 0,
+            "market_context_count": 0,
+        },
+        toss_baseline_reference={"available": True},
+        market_reference=None,
+        stock_flow_rows=[],
+        rank_reference=None,
+        current=datetime(2026, 6, 23, 20, 5, 0),
+        business_date=date(2026, 6, 23),
+    )
+
+    assert profile["reference_notes"] == [
+        "뉴스: 후보 직접 근거 있음",
+        "KRX: 선택일 저장값 없음",
+        "수급: 저장값 없음",
+        "20:00 저장 현재가 기준",
+    ]
+    rendered = json.dumps(profile, ensure_ascii=False).lower()
+    assert "missing" not in rendered
+    assert "score" not in rendered
 
 
 def test_web_view_candidate_value_profile_keeps_base_sort_signal_for_direct_news() -> None:

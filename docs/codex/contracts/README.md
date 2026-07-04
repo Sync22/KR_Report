@@ -14,6 +14,7 @@ Files here explain specific lower-level contracts and should not override the ca
 Current contract files:
 
 - [candidate-evidence-contract.md]({PROJECT_ROOT}/docs/codex/contracts/candidate-evidence-contract.md) - public-safe candidate evidence DTO and future intraday placeholder boundary.
+- [decision-journal-v0-contract.md]({PROJECT_ROOT}/docs/codex/contracts/decision-journal-v0-contract.md) - read-only Decision Journal v0 dry-run JSON contract and field semantics.
 - [news-intelligence-contract.md]({PROJECT_ROOT}/docs/codex/contracts/news-intelligence-contract.md) - operator-only news intelligence and public-safe stored projection boundary.
 - [toss-openapi-official-api-inventory.md]({PROJECT_ROOT}/docs/codex/contracts/toss-openapi-official-api-inventory.md) - local memory of the official Toss endpoint, schema, auth, rate-limit, and model surface.
 - [toss-openapi-postkey-readonly-lab-runbook.md]({PROJECT_ROOT}/docs/codex/contracts/toss-openapi-postkey-readonly-lab-runbook.md) - local key input fields, no-network plan, and bounded first live market-reference probe sequence.

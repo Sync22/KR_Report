@@ -294,5 +294,5 @@ Future Toss Securities Open API or another approved intraday source can make thi
 - `docs/codex/data-source-policy.md`
 - `docs/codex/data-quality-checklist.md`
 - `docs/codex/krx-market-data-runbook.md`
-- `docs/codex/backtest-observation-plan.md`
-- `docs/codex/scoring-draft-plan.md`
+- `docs/codex/plans/backtest-observation-plan.md`
+- `docs/codex/plans/scoring-draft-plan.md` (archived/hold research note only)

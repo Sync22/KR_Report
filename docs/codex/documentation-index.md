@@ -10,6 +10,18 @@ Use this file first when deciding which project document is authoritative. Older
 
 As of `2026-06-21`, the operating web-view has progressed beyond the initial five-tab separation. The active product task is to make its already-stored evidence useful as one continuous path: `메인 우선 후보 -> 관찰 근거 -> 종목 상세 -> 시장/순환매 맥락`. Canonical updates must distinguish an unavailable source row from an unimplemented UI path. Do not add another planning-only document when the relevant contract belongs in `current-work.md`, `next-phase.md`, `surface-contract.md`, or `data-quality-checklist.md`.
 
+## Current Command Surface
+
+Use only three command groups in new docs:
+
+| Group | Commands |
+| --- | --- |
+| Daily/minimal operation | `db-verify`, `candidate-evidence-readiness`, `web-view-value-qa`, `web-view-browser-smoke`, `krx-baseline-analysis`, `market-day-observation` |
+| Problem-specific operation | `market-briefing-readiness`, `external-web-view-smoke`, `db-restore-smoke`, `krx-flow-login-check`, `krx-flow-capture-checklist`, `audit-log` |
+| Historical/deprecated compatibility | `next-phase-readiness`, `ops-readiness`, `docs-hygiene-audit`, `data-source-lane-audit`, `admin-boundary-audit`, `observation-feature-audit`, `observation-summary-audit`, `periodic-data-needs-audit`, `external-web-view-sharing-plan`, `web-view-startup-fallback-check`, `rotation-mapping-audit`, hidden scoring commands |
+
+Historical/deprecated commands remain callable when old scripts or notes need them, but they are hidden from top-level CLI help and should not be introduced as active workflow in new docs.
+
 ## Historical Scope
 
 Current work is the main-PC execution pass for the next-phase closeout, while excluding US market expansion, public trading recommendations, broad ingest, and automatic scheduling of the new market-briefing lane. This public-surface exclusion is not a permanent denial of the longer-term direction: if stable real-time data is later proven, operator-only decision-support or execution-lab work must be documented separately before any trading-decision or order path. Historical mini-PC provider/phone-review notes remain useful trace evidence, but the active main-PC readiness gates are separate. The `2026-05-29` read-only readiness refresh reports `completion_ready=false`: market-briefing manual review sends are `0/3`, phone review is not accepted, KRX Open API daily snapshots are missing for 6 business dates starting with `2026-05-28`, real `2026-05-29` scheduled-run evidence is missing, external `web-view` provider smoke is not recorded on this PC, and the current-user `web-view` Startup shortcut is not configured. The current public surface boundary remains `admin-gui` private/operator-only and `web-view` public-safe/user-facing; normal data reads are GET, while the approved access-gated `POST /api/news-observations/collect` action may create saved news observation rows for selected-date top candidates. Public numeric scores, investment grades, trading calls, broker execution, and order routing remain out of scope.
@@ -30,6 +42,8 @@ Implementation-heavy follow-up work should use this map to avoid adding duplicat
 | Data quality | [data-quality-checklist.md](data-quality-checklist.md) | Raw, parsed, aggregate, and display value rules. |
 | Source ownership | [data-source-policy.md](data-source-policy.md) | Naver/KRX/taxonomy ownership and naming. |
 | KRX and flow | [krx-market-data-runbook.md](krx-market-data-runbook.md) | KRX Open API, Data Marketplace, ETF, flow, stages, and guards in one place. |
+| Decision Journal operation | [operations/decision-journal-flow.md](operations/decision-journal-flow.md) | Frozen v0 daily operating flow from Daily Report through Journal, Outcome, Human Review, and Action. |
+| Decision Journal migration gate | [operations/migration-gate.md](operations/migration-gate.md) | Conditions that must pass before any `decision_journal_*` DB migration. |
 | KRX 18-month baseline | [krx-18m-backfill-analysis.md](krx-18m-backfill-analysis.md) | 18-month OpenAPI backfill progress, source-lane comparison, skill/agent comparison, and repeatable baseline analysis commands. |
 | Data rebaseline | [data-rebaseline-plan.md](data-rebaseline-plan.md) | How to extend market-reference data before migration. |
 | Architecture risk review | [architecture-risk-review.md](architecture-risk-review.md) | Current architecture snapshot, risk candidates, source/surface boundaries, performance candidates, and agent ownership for broad reviews. |
@@ -49,11 +63,13 @@ These files remain useful as detailed history or implementation notes, but they 
 | --- | --- |
 | `details/krx/*` | `krx-market-data-runbook.md` |
 | `contracts/*` | `surface-contract.md`, `data-quality-checklist.md`, `data-source-policy.md`, and the relevant canonical runbook |
+| `contracts/decision-journal-v0-contract.md` | Decision Journal v0 dry-run JSON contract, field semantics, persistence classification, and migration preconditions. |
 | `contracts/news-intelligence-contract.md` | `stock_research_monitor_mvp.md`, `surface-contract.md`, and `next-phase.md` for the operator-only news intelligence, explicit observation save/readback boundary, and future public-safe stored `web-view` projection. |
 | `contracts/toss-openapi-official-api-inventory.md` | `contracts/toss-openapi-readonly-lab-contract.md` for local memory of the official Toss endpoint/schema/auth/rate-limit/model surface before runtime use. |
 | `contracts/toss-openapi-postkey-readonly-lab-runbook.md` | `contracts/toss-openapi-readonly-lab-contract.md`, `surface-contract.md`, and `data-source-policy.md` for local credential input, no-network planning, and the bounded manual post-key market-reference probe. |
 | `contracts/toss-openapi-readonly-lab-contract.md` | `surface-contract.md`, `data-source-policy.md`, `current-work.md`, and `next-phase.md` for future Toss Securities OpenAPI read-only lab work, pre-key restrictions, secret/account/order boundaries, and public-surface exclusions. |
 | `plans/*` | `current-work.md`, `next-phase.md`, and `execution-roadmap.md` |
+| `plans/scoring-draft-plan.md` | Archived/hold research note only. Current product work belongs in `current-work.md`, `data-quality-checklist.md`, and evidence/backtest coverage notes; do not use this file to justify public scores or active product scope. |
 | `plans/observation-candidate-recommendation-goal-prompt.md` | Goal prompt for the next `오늘의 관찰 후보` implementation pass; keep the product boundary in `current-work.md`, `next-phase.md`, and `surface-contract.md`. |
 | `history/mini-pc-restore-change-log-2026-05-16.md` | `mini-pc-migration-handoff.md`, `current-work.md`, and `krx-market-data-runbook.md` for ongoing policy; keep this file as the source-sync record for the mini PC restore session. |
 | `history/web-view-stored-evidence-hardening-2026-05-27.md` | Handoff note for the dev-branch stored-evidence `web-view` hardening pass; use `current-work.md`, `next-phase.md`, `surface-contract.md`, and `contracts/candidate-evidence-contract.md` for ongoing policy. |
@@ -67,6 +83,7 @@ These files remain useful as detailed history or implementation notes, but they 
 | --- | --- |
 | `docs/codex/details/krx/` | Detailed KRX/Data Marketplace source notes, capture runbooks, and schema-stage references. |
 | `docs/codex/contracts/` | Specific DTO/display/data-shape contracts that support canonical policy docs. |
+| `docs/codex/operations/` | Operator-facing procedures and migration gates. Research claims do not belong here unless they are frozen into a daily operating rule. |
 | `docs/codex/plans/` | Detailed feature or analysis plans that remain useful but are not current-status anchors. |
 | `docs/codex/history/` | Historical restore/change logs kept for traceability. |
 | `docs/codex/weekly-sync/` | Weekly main-PC/mini-PC sync guide and prompt only. |

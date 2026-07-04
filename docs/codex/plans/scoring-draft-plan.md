@@ -1,5 +1,12 @@
 ﻿# Scoring Draft Plan
 
+> Archived / hold as of 2026-06-30: this lane is not active product scope.
+> Keep this file only as historical research evidence. Hidden scoring CLI
+> commands are excluded from top-level CLI help and must not drive public
+> `web-view`, Telegram, daily briefing, ordering copy, roadmap progress, or
+> investment decisions. Current product work should improve stored evidence,
+> missing-data labels, and backtest/evidence snapshots without adding scores.
+
 ## Purpose
 
 This document is a draft for a later scoring experiment.

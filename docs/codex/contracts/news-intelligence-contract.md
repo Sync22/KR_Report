@@ -55,24 +55,62 @@ Scrapling is the preferred active source-probe tool for rendered Naver source in
 
 - `python -m stock_monitor news-intelligence-preview --stock-name NAME [--stock-code CODE] [--alias ALIAS] [--date YYYY-MM-DD]`
 - `python -m stock_monitor news-intelligence-briefing-collect --date YYYY-MM-DD [--limit N] [--stock-code CODE ...] [--save-observation --confirm-save]`
+- `python -m stock_monitor news-intelligence-collect-top-candidates --date latest --candidate-limit 10 --top-n 5 --dry-run --json`
+- `python -m stock_monitor news-intelligence-collect-top-candidates --date latest --candidate-limit 10 --top-n 5 --confirm-collect --json`
 
-These commands are manual and operator-only. They emit JSON/text to stdout, use temporary files for Scrapling output, delete those files after reading, and must not write live fetch results into the repository, SQLite, logs, scheduler state, Telegram, or public `web-view` by default. `news-intelligence-briefing-collect` selects target stocks from stored daily summaries, or an in-memory rebuild from stored reports when summaries are absent. It may save rows only when both `--save-observation` and `--confirm-save` are present. The web-view may call this same batch collector only through the access-gated `POST /api/news-observations/collect` operator action, which is limited to selected-date top priority candidates and returns only the public-safe stored summary after saving. It also does not update `admin-gui` in v1; a future private `operator-review` surface is the review UI candidate, not an `admin-gui` expansion.
+These commands are manual and operator-only. They emit JSON/text to stdout, use temporary files for Scrapling output, delete those files after reading, and must not write live fetch results into the repository, SQLite, logs, scheduler state, Telegram, or public `web-view` by default. `news-intelligence-briefing-collect` selects target stocks from stored daily summaries, or an in-memory rebuild from stored reports when summaries are absent. It may save rows only when both `--save-observation` and `--confirm-save` are present. `news-intelligence-collect-top-candidates` selects Top N rows from the stored candidate evidence snapshot and reuses the same briefing collector; `--dry-run` is read-only and `--confirm-collect` is the explicit operator write guard. The web-view may call this same batch collector only through the access-gated `POST /api/news-observations/collect` operator action, which is limited to selected-date top priority candidates and returns only the public-safe stored summary after saving. It also does not update `admin-gui` in v1; a future private `operator-review` surface is the review UI candidate, not an `admin-gui` expansion.
+
+Scrapling executable resolution is explicit:
+
+- Prefer `--scrapling-exe "%USERPROFILE%\Codex\_tools\scrapling\.venv\Scripts\scrapling.exe"` on the operating PC when the command reports `missing Scrapling executable`.
+- Alternatively set `SCRAPLING_EXE` to the same executable path before running the command.
+- The command does not search broad tool folders by itself. Missing Scrapling is an operator environment issue, not a Daily workflow failure.
 
 Saved operator observations may be reviewed with:
 
 - `python -m stock_monitor news-intelligence-observations [--date YYYY-MM-DD] [--stock-code CODE] [--run-id RUN_ID]`
 - `python -m stock_monitor news-intelligence-daily-brief --date YYYY-MM-DD [--format text|json]`
+- `python -m stock_monitor news-evidence-coverage-audit --recent-business-days 10 --candidate-limit 10 --json`
+- `python -m stock_monitor news-evidence-run-scope-audit --recent-business-days 10 --candidate-limit 10 --json`
+- `python -m stock_monitor news-no-match-diagnosis --date latest --candidate-limit 10 --top-n 5 --json`
 
-These readback commands are operator-only and read-only. They compare saved runs and evidence rows, emit operator summaries, and must not fetch live news, write DB rows, start schedulers, send Telegram, or expose raw operator payloads in public `web-view`.
+These readback and audit commands are operator-only and read-only. They compare saved runs and evidence rows, emit operator summaries, and must not fetch live news, write DB rows, start schedulers, send Telegram, or expose raw operator payloads in public `web-view`.
+
+### Naver Search Lane Lab Status
+
+The Naver search lane is archived/hold as of `2026-07-03 KST`. It is not a production source lane and must not be connected to DB writes, matching logic, web-view output, scheduler automation, or News Evidence Digest projection.
+
+Lab result summary:
+
+- Strict-only QA over recent 3 business days / Top5 candidates selected 22 titles. Automatic labels were `usable_digest=21` and `report_rehash=1`, but human review judged only about 8-10 titles as clearly digest-safe.
+- `post-filter-v2` reduced selected titles to 18, removed one parser artifact, two false positives, and one duplicate topic, and separated weak labels as `report_rehash=1`, `esg_pr=4`, and `corporate_notice=2`.
+- Final `post-filter-v2` usable ratio was `11/18 = 61.1%`, which barely clears the numeric threshold but still fails the false-positive quality gate.
+- Remaining risk: political/policy/person indirect mentions can still look like stock evidence, and search results can mix report rehash, PR, and unrelated lifestyle/news fragments into a Digest candidate list.
+
+Hold decision:
+
+- Do not add a production search lane.
+- Do not implement `post-filter-v3`, political/person-name filters, or additional search-lane lab CLIs unless the lane is explicitly reopened.
+- Keep News Evidence Digest UI, existing 5-lane evidence, and the manual Top-candidate collect path as the active operating path.
+
+Reopen conditions:
+
+- A clear deterministic rule set can reduce manual false positives to near zero.
+- Existing 5-lane evidence coverage remains operationally insufficient over repeated operating days.
+- Real use shows News Evidence Digest is repeatedly empty and materially less useful without search-lane coverage.
 
 Operator workflow:
 
 1. Run `news-intelligence-preview` without `--save-observation` to inspect live collection coverage and operator-only judgment fields.
 2. When the operator explicitly wants to keep a single-stock result, rerun with `--save-observation`; this is an operator-only write path for news observations.
 3. For market-briefing target stocks, run `news-intelligence-briefing-collect --save-observation --confirm-save` to persist observations for multiple stored-summary stocks in one manual pass. The enabled scheduled market-briefing slot may perform the same save internally for its server-derived current top two after delivery/time guards have passed.
-4. Use `news-intelligence-observations --format text|json` to inspect saved run/evidence details by date, stock code, or run id.
-5. Use `news-intelligence-daily-brief --format text|json` to group saved runs by date and candidate-linkage label.
-6. Use `market-briefing` as a stored-data, public-safe visibility check after observations already exist. `web-view` may either show the stored projection or, when access-gated and operator-triggered, run `POST /api/news-observations/collect` to create the missing saved observation rows for the selected date/top candidates before re-rendering the same public-safe projection.
+4. For News Evidence Digest coverage validation, run `news-intelligence-collect-top-candidates --date latest --candidate-limit 10 --top-n 5 --dry-run --json` after the Daily candidate snapshot exists.
+5. If the target list is correct and Scrapling is available, run `news-intelligence-collect-top-candidates --date latest --candidate-limit 10 --top-n 5 --confirm-collect --scrapling-exe "%USERPROFILE%\Codex\_tools\scrapling\.venv\Scripts\scrapling.exe" --json`. A failed collect records only the error for the operator; it must not fail the Daily workflow.
+6. After confirm collect, rerun `news-evidence-coverage-audit --recent-business-days 10 --candidate-limit 10 --json` and `news-evidence-run-scope-audit --recent-business-days 10 --candidate-limit 10 --json` to compare coverage, run target overlap, and failure reasons.
+7. If same-date Top candidates have runs but still no digest, run `news-no-match-diagnosis --date latest --candidate-limit 10 --top-n 5 --json` to separate source coverage, date-window, alias, parser, and unknown gaps using stored rows only.
+8. Use `news-intelligence-observations --format text|json` to inspect saved run/evidence details by date, stock code, or run id.
+9. Use `news-intelligence-daily-brief --format text|json` to group saved runs by date and candidate-linkage label.
+10. Use `market-briefing` as a stored-data, public-safe visibility check after observations already exist. `web-view` may either show the stored projection or, when access-gated and operator-triggered, run `POST /api/news-observations/collect` to create the missing saved observation rows for the selected date/top candidates before re-rendering the same public-safe projection.
 
 The preview command is intentionally incomplete as a day-level collector:
 
@@ -226,6 +264,7 @@ Storage guardrails:
 
 - DB writes require the explicit operator save option `--save-observation`.
 - Batch market-briefing collection requires both `--save-observation` and `--confirm-save`; without both flags it is a preview/no-write command.
+- Top-candidate collection requires `--confirm-collect`; without it, `--dry-run` or the missing-confirm path must not write DB rows.
 - The default manual preview remains `writes_db=false`.
 - When live collection succeeds but no article matches the target stock, the batch collector may still save an empty observation run with `matched_count=0` and `saved_evidence_count=0`. This records that collection actually ran, so `web-view` can show `뉴스 수집 완료` / `매칭 뉴스 없음` instead of pretending the feature has not run.
 - Stored rows are operator-only observation/evaluation data and must not be copied raw into public `web-view`, Telegram, or scheduler surfaces. The current `market-briefing` and `web-view` projections are allowed only as thin summaries that hide internal sentiment scores, impact scores, raw warnings, and operator-only recommendation-support fields. The access-gated web-view collect action may save the rows needed for that projection; the bounded scheduled market-briefing slot may do the same for its current top two before composing its compact Telegram projection. Neither path may expose the raw collector payload. `admin-gui` remains operations/status/control only; fuller review rows belong in a future `operator-review` surface after a separate contract.

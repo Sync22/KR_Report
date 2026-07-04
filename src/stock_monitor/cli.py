@@ -5,6 +5,7 @@ import base64
 import io
 from contextlib import redirect_stdout
 from dataclasses import asdict, dataclass, replace
+from difflib import SequenceMatcher
 import getpass
 import hashlib
 import hmac
@@ -34,6 +35,8 @@ from urllib import parse as url_parse
 from urllib import request as url_request
 from zoneinfo import ZoneInfo
 
+import stock_monitor.web_view_server as web_view_server_module
+import stock_monitor.web_view_http as web_view_http_module
 from stock_monitor.business_day import is_business_day, is_within_time_window, next_business_day, previous_business_day
 from stock_monitor.analysis.backtest_observation import (
     build_backtest_observation_rows,
@@ -199,6 +202,9 @@ READ_ONLY_SCHEMA_CURRENT_COMMANDS = {
     "category-snapshot-plan",
     "category-snapshot-status",
     "data-source-lane-audit",
+    "decision-journal-dry-run",
+    "decision-journal-tie-analysis",
+    "decision-journal-target-revision-analysis",
     "db-verify",
     "external-web-view-sharing-plan",
     "external-web-view-smoke",
@@ -214,6 +220,11 @@ READ_ONLY_SCHEMA_CURRENT_COMMANDS = {
     "market-day-observation",
     "mini-pc-preflight",
     "news-flow-preview",
+    "news-evidence-coverage-audit",
+    "news-evidence-match-audit",
+    "news-evidence-run-scope-audit",
+    "news-no-match-diagnosis",
+    "news-search-lane-qa-report",
     "news-intelligence-daily-brief",
     "news-intelligence-observations",
     "next-phase-readiness",
@@ -448,7 +459,7 @@ def _parse_optional_latest_date(value: str) -> date | None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="stock-monitor")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command", required=True, metavar="command")
 
     inspect_parser = subparsers.add_parser("inspect-page", help="Open the Naver research page and print DOM hints.")
     inspect_parser.add_argument("--limit", type=int, default=10)
@@ -494,6 +505,42 @@ def build_parser() -> argparse.ArgumentParser:
     news_briefing_collect_parser.add_argument("--save-observation", action="store_true")
     news_briefing_collect_parser.add_argument("--confirm-save", action="store_true")
     news_briefing_collect_parser.add_argument("--format", choices=("json", "text"), default="json")
+    news_top_candidates_parser = subparsers.add_parser(
+        "news-intelligence-collect-top-candidates",
+        help="Collect saved news observations for selected-date top candidate stocks using the existing briefing collector.",
+    )
+    news_top_candidates_parser.add_argument("--date", type=_parse_optional_latest_date, default=None)
+    news_top_candidates_parser.add_argument("--candidate-limit", type=int, default=10)
+    news_top_candidates_parser.add_argument("--top-n", type=int, default=5)
+    news_top_candidates_parser.add_argument("--dry-run", action="store_true")
+    news_top_candidates_parser.add_argument("--confirm-collect", action="store_true")
+    news_top_candidates_parser.add_argument("--scrapling-exe", type=Path)
+    news_top_candidates_parser.add_argument("--json", action="store_true")
+    news_source_coverage_lab_parser = subparsers.add_parser(
+        "news-source-coverage-lab",
+        help="Lab-only read-only comparison of existing Naver 5-lane news coverage with Naver news search visibility.",
+    )
+    news_source_coverage_lab_parser.add_argument("--date", type=date.fromisoformat, required=True)
+    news_source_coverage_lab_parser.add_argument("--stock-name", action="append", required=True)
+    news_source_coverage_lab_parser.add_argument("--alias", action="append", default=[])
+    news_source_coverage_lab_parser.add_argument("--scrapling-exe", type=Path)
+    news_source_coverage_lab_parser.add_argument("--strict-title-match", action="store_true")
+    news_source_coverage_lab_parser.add_argument("--exclude-market-noise", action="store_true")
+    news_source_coverage_lab_parser.add_argument("--max-results", type=int, default=0)
+    news_source_coverage_lab_parser.add_argument("--json", action="store_true")
+    news_search_lane_qa_parser = subparsers.add_parser(
+        "news-search-lane-qa-report",
+        help="Lab-only read-only QA report for strict Naver search lane candidates.",
+    )
+    news_search_lane_qa_parser.add_argument("--recent-business-days", type=int, default=3)
+    news_search_lane_qa_parser.add_argument("--candidate-limit", type=int, default=10)
+    news_search_lane_qa_parser.add_argument("--top-n", type=int, default=5)
+    news_search_lane_qa_parser.add_argument("--scrapling-exe", type=Path)
+    news_search_lane_qa_parser.add_argument("--strict-title-match", action="store_true")
+    news_search_lane_qa_parser.add_argument("--exclude-market-noise", action="store_true")
+    news_search_lane_qa_parser.add_argument("--post-filter-v2", action="store_true")
+    news_search_lane_qa_parser.add_argument("--max-results", type=int, default=3)
+    news_search_lane_qa_parser.add_argument("--json", action="store_true")
     news_flow_parser = subparsers.add_parser(
         "news-flow-preview",
         help="Preview the article flow from operator-provided news source URLs using a fixture.",
@@ -709,6 +756,41 @@ def build_parser() -> argparse.ArgumentParser:
     candidate_readiness_parser.add_argument("--limit", "--stock-limit", dest="limit", type=int, default=6)
     candidate_readiness_parser.add_argument("--json", action="store_true")
 
+    news_evidence_coverage_parser = subparsers.add_parser(
+        "news-evidence-coverage-audit",
+        help="Read-only audit of stored News Evidence Digest coverage for candidate rows.",
+    )
+    news_evidence_coverage_parser.add_argument("--recent-business-days", type=int, default=10)
+    news_evidence_coverage_parser.add_argument("--candidate-limit", type=int, default=10)
+    news_evidence_coverage_parser.add_argument("--json", action="store_true")
+
+    news_evidence_match_parser = subparsers.add_parser(
+        "news-evidence-match-audit",
+        help="Read-only audit that splits News Evidence Digest stock matching gaps.",
+    )
+    news_evidence_match_parser.add_argument("--recent-business-days", type=int, default=10)
+    news_evidence_match_parser.add_argument("--candidate-limit", type=int, default=10)
+    news_evidence_match_parser.add_argument("--json", action="store_true")
+
+    news_evidence_run_scope_parser = subparsers.add_parser(
+        "news-evidence-run-scope-audit",
+        help="Read-only audit of candidate overlap with stored news intelligence run targets.",
+    )
+    news_evidence_run_scope_parser.add_argument("--recent-business-days", type=int, default=10)
+    news_evidence_run_scope_parser.add_argument("--candidate-limit", type=int, default=10)
+    news_evidence_run_scope_parser.add_argument("--json", action="store_true")
+
+    news_no_match_parser = subparsers.add_parser(
+        "news-no-match-diagnosis",
+        help="Read-only diagnosis for top-candidate news runs that saved no matching articles.",
+    )
+    news_no_match_parser.add_argument("--date", type=_parse_optional_latest_date, default=None)
+    news_no_match_parser.add_argument("--stock-code")
+    news_no_match_parser.add_argument("--stock-name")
+    news_no_match_parser.add_argument("--candidate-limit", type=int, default=10)
+    news_no_match_parser.add_argument("--top-n", type=int, default=5)
+    news_no_match_parser.add_argument("--json", action="store_true")
+
     observation_distribution_parser = subparsers.add_parser(
         "observation-reaction-distribution",
         help="Read-only distribution of stored post-report reaction windows.",
@@ -729,7 +811,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     observation_weight_parser = subparsers.add_parser(
         "observation-weight-draft",
-        help="Internal-only draft weights from read-only observation audits.",
+        help=argparse.SUPPRESS,
     )
     observation_weight_parser.add_argument("--from-date", type=date.fromisoformat, required=True)
     observation_weight_parser.add_argument("--to-date", type=date.fromisoformat, required=True)
@@ -739,7 +821,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     observation_hidden_parser = subparsers.add_parser(
         "observation-hidden-prototype",
-        help="Hidden internal stock-level prototype from draft weights; no public ranking or recommendation.",
+        help=argparse.SUPPRESS,
     )
     observation_hidden_parser.add_argument("--train-from-date", type=date.fromisoformat)
     observation_hidden_parser.add_argument("--train-to-date", type=date.fromisoformat)
@@ -753,7 +835,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     observation_holdout_parser = subparsers.add_parser(
         "observation-hidden-holdout",
-        help="Internal-only holdout validation for hidden prototype values; no public ranking or recommendation.",
+        help=argparse.SUPPRESS,
     )
     observation_holdout_parser.add_argument("--train-from-date", type=date.fromisoformat, required=True)
     observation_holdout_parser.add_argument("--train-to-date", type=date.fromisoformat, required=True)
@@ -767,7 +849,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     observation_holdout_sweep_parser = subparsers.add_parser(
         "observation-hidden-holdout-sweep",
-        help="Internal-only rolling holdout validation for hidden prototype values; no public ranking or recommendation.",
+        help=argparse.SUPPRESS,
     )
     observation_holdout_sweep_parser.add_argument("--train-from-date", type=date.fromisoformat, required=True)
     observation_holdout_sweep_parser.add_argument("--train-to-date", type=date.fromisoformat, required=True)
@@ -1630,6 +1712,31 @@ def build_parser() -> argparse.ArgumentParser:
     web_view_qa_parser.add_argument("--stock-limit", type=int, default=6)
     web_view_qa_parser.add_argument("--json", action="store_true")
 
+    decision_journal_parser = subparsers.add_parser(
+        "decision-journal-dry-run",
+        help="Build a read-only Decision Journal v0 candidate pool JSON from stored web-view evidence.",
+    )
+    decision_journal_parser.add_argument("--date", type=_parse_optional_latest_date, default=None)
+    decision_journal_parser.add_argument("--recent-business-days", type=int, default=None)
+    decision_journal_parser.add_argument("--candidate-limit", type=int, default=10)
+    decision_journal_parser.add_argument("--json", action="store_true")
+
+    decision_journal_tie_parser = subparsers.add_parser(
+        "decision-journal-tie-analysis",
+        help="Analyze read-only Decision Journal v0 rank 2-5 tie causes from stored data.",
+    )
+    decision_journal_tie_parser.add_argument("--recent-business-days", type=int, default=10)
+    decision_journal_tie_parser.add_argument("--candidate-limit", type=int, default=10)
+    decision_journal_tie_parser.add_argument("--json", action="store_true")
+
+    decision_journal_target_parser = subparsers.add_parser(
+        "decision-journal-target-revision-analysis",
+        help="Analyze read-only Decision Journal target-revision direction outcomes from stored data.",
+    )
+    decision_journal_target_parser.add_argument("--recent-business-days", type=int, default=60)
+    decision_journal_target_parser.add_argument("--candidate-limit", type=int, default=10)
+    decision_journal_target_parser.add_argument("--json", action="store_true")
+
     web_view_browser_smoke_parser = subparsers.add_parser(
         "web-view-browser-smoke",
         help="Run a local Playwright smoke check for web-view desktop/mobile rendering and GET-only boundaries.",
@@ -1939,6 +2046,30 @@ def build_parser() -> argparse.ArgumentParser:
     shutdown_parser.add_argument("--dry-run", action="store_true")
     shutdown_parser.add_argument("--delay-seconds", type=int, default=60)
 
+    hidden_help_commands = {
+        "observation-weight-draft",
+        "observation-hidden-prototype",
+        "observation-hidden-holdout",
+        "observation-hidden-holdout-sweep",
+        "observation-feature-audit",
+        "observation-summary-audit",
+        "periodic-data-needs-audit",
+        "next-phase-readiness",
+        "admin-boundary-audit",
+        "docs-hygiene-audit",
+        "data-source-lane-audit",
+        "external-web-view-sharing-plan",
+        "web-view-startup-fallback-check",
+        "rotation-mapping-audit",
+        "news-source-coverage-lab",
+        "news-search-lane-qa-report",
+        "ops-readiness",
+    }
+    # ponytail: argparse keeps subparser help rows private; direct command parsing remains unchanged.
+    subparsers._choices_actions = [
+        action for action in subparsers._choices_actions if action.dest not in hidden_help_commands
+    ]
+
     return parser
 
 
@@ -1950,6 +2081,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_news_intelligence_preview(args)
     if args.command == "news-intelligence-briefing-collect":
         return _run_news_intelligence_briefing_collect(args)
+    if args.command == "news-source-coverage-lab":
+        return _run_news_source_coverage_lab(args)
     if args.command == "news-flow-preview":
         return _run_news_flow_preview(args)
     if args.command == "news-flow-source-probe":
@@ -2187,6 +2320,67 @@ def main(argv: list[str] | None = None) -> int:
                 repository,
                 recent_business_days=args.recent_business_days,
                 limit=args.limit,
+                as_json=args.json,
+            )
+        if args.command == "news-evidence-coverage-audit":
+            return _run_news_evidence_coverage_audit(
+                config,
+                repository,
+                recent_business_days=args.recent_business_days,
+                candidate_limit=args.candidate_limit,
+                as_json=args.json,
+            )
+        if args.command == "news-evidence-match-audit":
+            return _run_news_evidence_match_audit(
+                config,
+                repository,
+                recent_business_days=args.recent_business_days,
+                candidate_limit=args.candidate_limit,
+                as_json=args.json,
+            )
+        if args.command == "news-evidence-run-scope-audit":
+            return _run_news_evidence_run_scope_audit(
+                config,
+                repository,
+                recent_business_days=args.recent_business_days,
+                candidate_limit=args.candidate_limit,
+                as_json=args.json,
+            )
+        if args.command == "news-no-match-diagnosis":
+            return _run_news_no_match_diagnosis(
+                config,
+                repository,
+                business_date=args.date,
+                stock_code=args.stock_code,
+                stock_name=args.stock_name,
+                candidate_limit=args.candidate_limit,
+                top_n=args.top_n,
+                as_json=args.json,
+            )
+        if args.command == "news-search-lane-qa-report":
+            return _run_news_search_lane_qa_report(
+                config,
+                repository,
+                recent_business_days=args.recent_business_days,
+                candidate_limit=args.candidate_limit,
+                top_n=args.top_n,
+                strict_title_match=args.strict_title_match,
+                exclude_market_noise=args.exclude_market_noise,
+                post_filter_v2=args.post_filter_v2,
+                max_results=args.max_results,
+                scrapling_exe=args.scrapling_exe,
+                as_json=args.json,
+            )
+        if args.command == "news-intelligence-collect-top-candidates":
+            return _run_news_intelligence_collect_top_candidates(
+                config,
+                repository,
+                business_date=args.date,
+                candidate_limit=args.candidate_limit,
+                top_n=args.top_n,
+                dry_run=args.dry_run,
+                confirm_collect=args.confirm_collect,
+                scrapling_exe=args.scrapling_exe,
                 as_json=args.json,
             )
         if args.command == "observation-reaction-distribution":
@@ -2674,6 +2868,31 @@ def main(argv: list[str] | None = None) -> int:
                 stock_limit=args.stock_limit,
                 as_json=args.json,
             )
+        if args.command == "decision-journal-dry-run":
+            return _run_decision_journal_dry_run(
+                config,
+                repository,
+                business_date=args.date,
+                recent_business_days=args.recent_business_days,
+                candidate_limit=args.candidate_limit,
+                as_json=args.json,
+            )
+        if args.command == "decision-journal-tie-analysis":
+            return _run_decision_journal_tie_analysis(
+                config,
+                repository,
+                recent_business_days=args.recent_business_days,
+                candidate_limit=args.candidate_limit,
+                as_json=args.json,
+            )
+        if args.command == "decision-journal-target-revision-analysis":
+            return _run_decision_journal_target_revision_analysis(
+                config,
+                repository,
+                recent_business_days=args.recent_business_days,
+                candidate_limit=args.candidate_limit,
+                as_json=args.json,
+            )
         if args.command == "web-view-browser-smoke":
             return _run_web_view_browser_smoke(
                 config,
@@ -2824,6 +3043,20 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _prepare_repository_for_command(repository: StockMonitorRepository, args: argparse.Namespace) -> None:
+    if str(getattr(args, "command", "")) == "decision-journal-dry-run" and not repository.db_path.exists():
+        return
+    if str(getattr(args, "command", "")) == "news-intelligence-collect-top-candidates" and bool(
+        getattr(args, "dry_run", False)
+    ):
+        if not repository.db_path.exists():
+            return
+        status = repository.get_schema_migration_status()
+        if status.current_version != status.target_version or status.pending_versions:
+            raise RuntimeError(
+                "Database schema is not current for this read-only command; "
+                "run `python -m stock_monitor db-migrate` first."
+            )
+        return
     if _preserves_existing_db_schema(args):
         if not repository.db_path.exists():
             repository.initialize()
@@ -3142,6 +3375,562 @@ def _format_news_flow_source_probe_text(
     return "\n".join(lines) + "\n"
 
 
+def _run_news_source_coverage_lab(
+    args: argparse.Namespace,
+    *,
+    transport: Callable[[object], str] | None = None,
+) -> int:
+    from stock_monitor.news.collectors import (
+        ScraplingNewsTransport,
+        StockNewsQuery,
+        _parse_naver_news_response,
+        build_naver_news_request_specs,
+        match_articles_to_stock_with_reasons,
+    )
+    from stock_monitor.news.preprocess import deduplicate_articles
+
+    target_date = args.date
+    aliases = tuple(str(alias).strip() for alias in getattr(args, "alias", []) if str(alias).strip())
+    stock_names = [str(name).strip() for name in getattr(args, "stock_name", []) if str(name).strip()]
+    strict_title_match = bool(getattr(args, "strict_title_match", False))
+    exclude_market_noise = bool(getattr(args, "exclude_market_noise", False))
+    max_results = max(int(getattr(args, "max_results", 0) or 0), 0)
+    payload: dict[str, object] = {
+        "surface": "news-source-coverage-lab",
+        "lab_surface": True,
+        "read_only": True,
+        "writes_db": False,
+        "live_fetch": True,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "connects_web_view": False,
+        "scoring": False,
+        "recommendation": False,
+        "checked_date": target_date.isoformat(),
+        "target_count": len(stock_names),
+        "filter_options": {
+            "strict_title_match": strict_title_match,
+            "exclude_market_noise": exclude_market_noise,
+            "max_results": max_results,
+        },
+        "targets": [],
+        "warnings": [],
+    }
+    if not stock_names:
+        payload["error"] = "at least one --stock-name is required"
+        _print_news_source_coverage_lab_payload(payload, as_json=bool(args.json))
+        return 1
+
+    effective_transport = transport
+    if effective_transport is None:
+        scrapling_exe = _resolve_scrapling_exe(args.scrapling_exe)
+        if scrapling_exe is None:
+            payload["error"] = "missing Scrapling executable"
+            payload["warnings"] = ["Scrapling executable is missing; set --scrapling-exe or SCRAPLING_EXE."]
+            _print_news_source_coverage_lab_payload(payload, as_json=bool(args.json))
+            return 1
+        effective_transport = ScraplingNewsTransport(scrapling_exe=scrapling_exe)
+
+    five_lane_specs = build_naver_news_request_specs(target_date)
+    five_lane_articles_by_source: dict[str, list[object]] = {}
+    source_diagnostics: list[dict[str, object]] = []
+    for spec in five_lane_specs:
+        fetched = False
+        fetch_error: str | None = None
+        raw_chars = 0
+        parsed_articles: list[object] = []
+        try:
+            response_text = effective_transport(spec)
+            fetched = True
+            raw_chars = len(response_text)
+            parsed_articles = _parse_naver_news_response(response_text, spec)
+        except Exception as exc:
+            fetch_error = str(exc) or exc.__class__.__name__
+        five_lane_articles_by_source[spec.source.value] = parsed_articles
+        source_diagnostics.append(
+            {
+                "source": spec.source.value,
+                "page_url": spec.page_url,
+                "response_format": spec.response_format,
+                "fetched": fetched,
+                "fetch_error": fetch_error,
+                "raw_chars": raw_chars,
+                "parsed_count": len(parsed_articles),
+            }
+        )
+    five_lane_articles = deduplicate_articles(
+        [article for articles in five_lane_articles_by_source.values() for article in articles]
+    )
+
+    target_payloads: list[dict[str, object]] = []
+    for stock_name in stock_names:
+        query = StockNewsQuery(stock_name=stock_name, aliases=aliases, target_date=target_date)
+        five_lane_matches = match_articles_to_stock_with_reasons(five_lane_articles, query)
+        source_match_counts = {
+            source: len(match_articles_to_stock_with_reasons(list(articles), query))
+            for source, articles in sorted(five_lane_articles_by_source.items())
+        }
+        search_url = _news_source_coverage_lab_search_url(target_date, stock_name)
+        search_fetch_error: str | None = None
+        search_raw_chars = 0
+        search_articles = []
+        raw_search_articles = []
+        raw_search_count = 0
+        try:
+            response_text = effective_transport(
+                argparse.Namespace(page_url=search_url, response_format="markdown")
+            )
+            search_raw_chars = len(response_text)
+            search_articles = _news_source_coverage_lab_parse_search_markdown(
+                response_text,
+                target_date=target_date,
+            )
+            raw_search_articles = list(search_articles)
+            raw_search_count = len(search_articles)
+        except Exception as exc:
+            search_fetch_error = str(exc) or exc.__class__.__name__
+        search_articles = deduplicate_articles(search_articles)
+        target_payloads.append(
+            _news_source_coverage_lab_target_payload(
+                stock_name=stock_name,
+                aliases=aliases,
+                checked_date=target_date,
+                existing_5_lane_matched=bool(five_lane_matches),
+                five_lane_parsed_count=len(five_lane_articles),
+                five_lane_matched_count=len(five_lane_matches),
+                five_lane_source_match_counts=source_match_counts,
+                search_url=search_url,
+                search_fetch_error=search_fetch_error,
+                search_raw_chars=search_raw_chars,
+                raw_search_count=raw_search_count,
+                raw_search_articles=raw_search_articles,
+                search_articles=search_articles,
+                strict_title_match=strict_title_match,
+                exclude_market_noise=exclude_market_noise,
+                max_results=max_results,
+            )
+        )
+
+    reason_counts = Counter(str(item["likely_reason"]) for item in target_payloads)
+    visible_count = sum(1 for item in target_payloads if int(item["external_visible_candidate_count"]) > 0)
+    direct_title_count = sum(
+        1
+        for item in target_payloads
+        if int(item["title_exact_match_count"]) + int(item["title_alias_match_count"]) > 0
+    )
+    high_noise_count = sum(1 for item in target_payloads if item.get("source_noise_level") == "high")
+    selected_target_count = sum(1 for item in target_payloads if int(item.get("selected_count", 0) or 0) > 0)
+    payload["targets"] = target_payloads
+    payload["summary"] = {
+        "external_visible_target_count": visible_count,
+        "direct_title_visible_target_count": direct_title_count,
+        "selected_target_count": selected_target_count,
+        "high_noise_target_count": high_noise_count,
+        "reason_distribution": _ordered_nonzero_count_map(
+            reason_counts,
+            (
+                "usable_search_lane_candidate",
+                "too_noisy",
+                "insufficient_direct_matches",
+                "true_no_news",
+                "source_coverage_gap",
+                "title_keyword_gap",
+                "theme_only_mention",
+                "noisy_source",
+                "unknown",
+            ),
+        ),
+        "source_expansion_review_candidate": selected_target_count >= 2
+        if (strict_title_match or exclude_market_noise or max_results > 0)
+        else visible_count >= 2 and direct_title_count >= 2 and high_noise_count == 0,
+    }
+    payload["five_lane_source_diagnostics"] = source_diagnostics
+    _print_news_source_coverage_lab_payload(payload, as_json=bool(args.json))
+    return 0
+
+
+def _print_news_source_coverage_lab_payload(payload: dict[str, object], *, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    print("News source coverage lab")
+    print("- lab_surface: true")
+    print("- read_only: true")
+    print("- writes_db: false")
+    print(f"- checked_date: {payload.get('checked_date')}")
+    print(f"- target_count: {payload.get('target_count')}")
+    if payload.get("error"):
+        print(f"- error: {payload.get('error')}")
+        return
+    for target in payload.get("targets", []):
+        if not isinstance(target, dict):
+            continue
+        print(
+            "- "
+            f"{target.get('stock_name')}: visible={target.get('external_visible_candidate_count')} "
+            f"title_exact={target.get('title_exact_match_count')} "
+            f"likely_reason={target.get('likely_reason')}"
+        )
+
+
+def _news_source_coverage_lab_search_url(target_date: date, stock_name: str) -> str:
+    day = target_date.strftime("%Y.%m.%d")
+    query = url_parse.quote_plus(stock_name)
+    return (
+        "https://search.naver.com/search.naver"
+        f"?where=news&query={query}&sm=tab_opt&sort=1&pd=3&ds={day}&de={day}"
+    )
+
+
+def _news_source_coverage_lab_parse_search_markdown(
+    content: str,
+    *,
+    target_date: date,
+) -> list[object]:
+    from stock_monitor.news.models import NewsArticle
+
+    articles: list[NewsArticle] = []
+    search_content = content
+    result_marker = "뉴스검색 결과"
+    if result_marker in search_content:
+        search_content = search_content.split(result_marker, 1)[1]
+    matches = list(
+        re.finditer(
+            r"\[(?:###\s*)?([^\]\n]+)\]\((https?://[^)\s]+)\)",
+            search_content,
+        )
+    )
+    for index, match in enumerate(matches):
+        title = html.unescape(match.group(1).strip())
+        url = match.group(2).strip()
+        if not _news_source_coverage_lab_is_search_article_link(title, url):
+            continue
+        block_end = matches[index + 1].start() if index + 1 < len(matches) else len(search_content)
+        block = search_content[match.end() : block_end]
+        summary_lines = [
+            html.unescape(line.strip())
+            for line in block.splitlines()
+            if line.strip() and not line.strip().startswith("!")
+        ]
+        articles.append(
+            NewsArticle(
+                title=title,
+                summary=" ".join(summary_lines),
+                source="naver_search",
+                published_at=datetime.combine(target_date, datetime_time(hour=12), tzinfo=ZoneInfo("Asia/Seoul")),
+                url=url,
+                source_lane="naver_search_news",
+            )
+        )
+    return articles
+
+
+def _news_source_coverage_lab_is_search_article_link(title: str, url: str) -> bool:
+    normalized_title = re.sub(r"\s+", " ", title).strip()
+    if not normalized_title:
+        return False
+    blocked_title_fragments = ("네이버뉴스", "뉴스", "이미지", "언론사 선정", "관련뉴스")
+    if normalized_title in blocked_title_fragments or any(fragment in normalized_title for fragment in ("의 이미지", "바로가기")):
+        return False
+    if normalized_title == "옵션 가이드":
+        return False
+    if len(normalized_title) <= 8 and not re.search(r"\s|[·…,.\"'“”‘’]", normalized_title):
+        return False
+    parsed = url_parse.urlparse(url)
+    host = parsed.netloc.casefold()
+    if not host:
+        return False
+    exact_blocked_hosts = {
+        "news.naver.com",
+        "www.naver.com",
+    }
+    suffix_blocked_hosts = (
+        "search.pstatic.net",
+        "ssl.pstatic.net",
+        "nid.naver.com",
+    )
+    if host in exact_blocked_hosts:
+        return False
+    if any(host == blocked or host.endswith(f".{blocked}") for blocked in suffix_blocked_hosts):
+        return False
+    return True
+
+
+def _news_source_coverage_lab_target_payload(
+    *,
+    stock_name: str,
+    aliases: Sequence[str],
+    checked_date: date,
+    existing_5_lane_matched: bool,
+    five_lane_parsed_count: int,
+    five_lane_matched_count: int,
+    five_lane_source_match_counts: dict[str, int],
+    search_url: str,
+    search_fetch_error: str | None,
+    search_raw_chars: int,
+    raw_search_count: int,
+    raw_search_articles: Sequence[object],
+    search_articles: Sequence[object],
+    strict_title_match: bool,
+    exclude_market_noise: bool,
+    max_results: int,
+) -> dict[str, object]:
+    raw_title_exact_count = sum(
+        1 for article in raw_search_articles if _news_source_coverage_title_has(article, stock_name)
+    )
+    title_exact = [
+        article for article in search_articles if _news_source_coverage_title_has(article, stock_name)
+    ]
+    title_alias = [
+        article
+        for article in search_articles
+        if not _news_source_coverage_title_has(article, stock_name)
+        and any(_news_source_coverage_title_has(article, alias) for alias in aliases)
+    ]
+    text_keyword = [
+        article
+        for article in search_articles
+        if article not in title_exact
+        and article not in title_alias
+        and _news_source_coverage_text_has(article, stock_name, aliases)
+    ]
+    theme_only = [
+        article
+        for article in search_articles
+        if article not in title_exact and article not in title_alias and article not in text_keyword
+    ]
+    filter_result = _news_source_coverage_apply_filters(
+        search_articles=search_articles,
+        stock_name=stock_name,
+        aliases=aliases,
+        strict_title_match=strict_title_match,
+        exclude_market_noise=exclude_market_noise,
+        max_results=max_results,
+    )
+    likely_reason = _news_source_coverage_filtered_likely_reason(
+        external_count=len(search_articles),
+        title_match_count=len(title_exact) + len(title_alias),
+        selected_count=len(filter_result["selected"]),
+        after_noise_filter_count=int(filter_result["after_noise_filter_count"]),
+        strict_title_match=strict_title_match,
+        exclude_market_noise=exclude_market_noise,
+        max_results=max_results,
+        search_fetch_error=search_fetch_error,
+        fallback_reason=_news_source_coverage_likely_reason(
+            external_count=len(search_articles),
+            title_match_count=len(title_exact) + len(title_alias),
+            text_keyword_count=len(text_keyword),
+            theme_only_count=len(theme_only),
+            search_fetch_error=search_fetch_error,
+        ),
+    )
+    noise_ratio = round((len(theme_only) / len(search_articles)) if search_articles else 0.0, 2)
+    source_noise_level = (
+        "high"
+        if (len(search_articles) >= 10 and noise_ratio > 0.5) or (len(search_articles) >= 5 and noise_ratio > 0.75)
+        else "medium"
+        if noise_ratio > 0.25
+        else "low"
+    )
+    ordered_examples = [*title_exact, *title_alias, *text_keyword, *theme_only]
+    selected_articles = filter_result["selected"]
+    excluded_rows = sorted(
+        filter_result["excluded"],
+        key=lambda row: {"market_noise": 0, "not_title_match": 1, "over_max_results": 2}.get(str(row["reason"]), 9),
+    )
+    return {
+        "stock_name": stock_name,
+        "checked_date": checked_date.isoformat(),
+        "existing_5_lane_matched": existing_5_lane_matched,
+        "existing_5_lane_parsed_count": five_lane_parsed_count,
+        "existing_5_lane_matched_count": five_lane_matched_count,
+        "existing_5_lane_source_match_counts": five_lane_source_match_counts,
+        "external_source": "naver_search_news",
+        "external_search_url": search_url,
+        "external_fetch_error": search_fetch_error,
+        "external_raw_chars": search_raw_chars,
+        "raw_count": raw_search_count,
+        "external_visible_candidate_count": len(search_articles),
+        "after_dedup_count": len(search_articles),
+        "title_exact_match_count": len(title_exact),
+        "exact_title_count": raw_title_exact_count,
+        "title_alias_match_count": len(title_alias),
+        "title_keyword_gap_count": len(text_keyword),
+        "theme_only_count": len(theme_only),
+        "after_noise_filter_count": filter_result["after_noise_filter_count"],
+        "selected_count": len(selected_articles),
+        "excluded_count": len(excluded_rows),
+        "excluded_reason_distribution": _ordered_nonzero_count_map(
+            Counter(str(row["reason"]) for row in excluded_rows),
+            ("not_title_match", "market_noise", "over_max_results"),
+        ),
+        "source_noise_ratio": noise_ratio,
+        "source_noise_level": source_noise_level,
+        "likely_reason": likely_reason,
+        "example_titles": _web_view_unique_texts([getattr(article, "title", "") for article in ordered_examples], limit=3),
+        "example_selected_titles": _web_view_unique_texts(
+            [getattr(article, "title", "") for article in selected_articles],
+            limit=3,
+        ),
+        "example_excluded_titles": [
+            {
+                "title": str(getattr(row["article"], "title", "") or ""),
+                "reason": row["reason"],
+            }
+            for row in excluded_rows[:5]
+        ],
+    }
+
+
+def _news_source_coverage_apply_filters(
+    *,
+    search_articles: Sequence[object],
+    stock_name: str,
+    aliases: Sequence[str],
+    strict_title_match: bool,
+    exclude_market_noise: bool,
+    max_results: int,
+) -> dict[str, object]:
+    eligible: list[object] = []
+    excluded: list[dict[str, object]] = []
+    for article in search_articles:
+        title_match = _news_source_coverage_title_has(article, stock_name) or any(
+            _news_source_coverage_title_has(article, alias) for alias in aliases
+        )
+        if strict_title_match and not title_match:
+            excluded.append({"article": article, "reason": "not_title_match"})
+            continue
+        eligible.append(article)
+
+    after_noise: list[object] = []
+    for article in eligible:
+        if exclude_market_noise and _news_source_coverage_is_market_noise_title(str(getattr(article, "title", "") or "")):
+            excluded.append({"article": article, "reason": "market_noise"})
+            continue
+        after_noise.append(article)
+
+    selected = list(after_noise)
+    if max_results > 0 and len(selected) > max_results:
+        overflow = selected[max_results:]
+        selected = selected[:max_results]
+        excluded.extend({"article": article, "reason": "over_max_results"} for article in overflow)
+
+    return {
+        "selected": selected,
+        "excluded": excluded,
+        "after_noise_filter_count": len(after_noise),
+    }
+
+
+def _news_source_coverage_is_market_noise_title(title: str) -> bool:
+    normalized = title.casefold()
+    compact = re.sub(r"\s+", " ", title).strip()
+    if len(compact) > 140:
+        return True
+    if compact.count("★") >= 2 or len(re.findall(r"[▲▼]", compact)) >= 2:
+        return True
+    noise_terms = (
+        "특징주",
+        "급등락",
+        "장중",
+        "코스피",
+        "코스닥",
+        "순위",
+        "마감",
+        "개장",
+        "증시",
+        "시황",
+        "실시간",
+        "상승 전환",
+        "동반 상승",
+        "오름세",
+        "상승세",
+        "강세",
+        "약세",
+        "주가",
+        "거래가",
+        "intraday",
+        "ranking",
+        "price ranking",
+        "market price table",
+    )
+    if any(term.casefold() in normalized for term in noise_terms):
+        return True
+    return bool(re.search(r"(?:^|\s)표(?:\s|$)", title))
+
+
+def _news_source_coverage_filtered_likely_reason(
+    *,
+    external_count: int,
+    title_match_count: int,
+    selected_count: int,
+    after_noise_filter_count: int,
+    strict_title_match: bool,
+    exclude_market_noise: bool,
+    max_results: int,
+    search_fetch_error: str | None,
+    fallback_reason: str,
+) -> str:
+    if search_fetch_error:
+        return "unknown"
+    if external_count <= 0:
+        return "true_no_news"
+    if not (strict_title_match or exclude_market_noise or max_results > 0):
+        return fallback_reason
+    if strict_title_match and title_match_count <= 0:
+        return "insufficient_direct_matches"
+    if selected_count > 0:
+        return "usable_search_lane_candidate"
+    if exclude_market_noise and after_noise_filter_count <= 0:
+        return "too_noisy"
+    return "unknown"
+
+
+def _news_source_coverage_title_has(article: object, keyword: str) -> bool:
+    normalized_keyword = _web_view_normalize_news_identity(keyword)
+    if not normalized_keyword:
+        return False
+    return normalized_keyword in _web_view_normalize_news_identity(getattr(article, "title", ""))
+
+
+def _news_source_coverage_text_has(
+    article: object,
+    stock_name: str,
+    aliases: Sequence[str],
+) -> bool:
+    text = f"{getattr(article, 'title', '')} {getattr(article, 'summary', '')}"
+    normalized_text = _web_view_normalize_news_identity(text)
+    keywords = [stock_name, *aliases]
+    return any(
+        _web_view_normalize_news_identity(keyword)
+        and _web_view_normalize_news_identity(keyword) in normalized_text
+        for keyword in keywords
+    )
+
+
+def _news_source_coverage_likely_reason(
+    *,
+    external_count: int,
+    title_match_count: int,
+    text_keyword_count: int,
+    theme_only_count: int,
+    search_fetch_error: str | None,
+) -> str:
+    if search_fetch_error:
+        return "unknown"
+    if external_count <= 0:
+        return "true_no_news"
+    if title_match_count > 0:
+        return "source_coverage_gap"
+    if external_count >= 20 and title_match_count <= 0:
+        return "noisy_source"
+    if text_keyword_count > 0:
+        return "title_keyword_gap"
+    if theme_only_count > 0:
+        return "theme_only_mention"
+    return "unknown"
+
+
 def _news_flow_preview_error_payload(
     *,
     source_urls: tuple[str, ...],
@@ -3338,6 +4127,722 @@ def _run_news_intelligence_briefing_collect(
     return 0 if (not args.save_observation or saved_observation_count > 0) else 1
 
 
+def _run_news_search_lane_qa_report(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    recent_business_days: int,
+    candidate_limit: int,
+    top_n: int,
+    strict_title_match: bool,
+    exclude_market_noise: bool,
+    post_filter_v2: bool = False,
+    max_results: int,
+    scrapling_exe: Path | None,
+    as_json: bool,
+    transport: Callable[[object], str] | None = None,
+) -> int:
+    from stock_monitor.news.collectors import ScraplingNewsTransport
+    from stock_monitor.news.preprocess import deduplicate_articles
+
+    warnings: list[str] = []
+    errors: list[str] = []
+    if candidate_limit > 10:
+        warnings.append("candidate_limit capped at 10")
+    if top_n > 10:
+        warnings.append("top_n capped at 10")
+    effective_recent_days = max(int(recent_business_days or 0), 1)
+    effective_candidate_limit = min(max(int(candidate_limit or 0), 1), 10)
+    effective_top_n = min(max(int(top_n or 0), 1), 10)
+    effective_max_results = max(int(max_results or 0), 0)
+    business_dates = _news_search_lane_recent_candidate_dates(repository, effective_recent_days)
+
+    effective_transport = transport
+    if effective_transport is None:
+        resolved_scrapling_exe = _resolve_scrapling_exe(scrapling_exe)
+        if resolved_scrapling_exe is None:
+            errors.append("missing Scrapling executable")
+            warnings.append("Scrapling executable is missing; set --scrapling-exe or SCRAPLING_EXE.")
+        else:
+            effective_transport = ScraplingNewsTransport(scrapling_exe=resolved_scrapling_exe)
+
+    date_reports: list[dict[str, object]] = []
+    selected_label_counts: Counter[str] = Counter()
+    excluded_reason_counts: Counter[str] = Counter()
+    selected_count_before_total = 0
+    selected_title_count = 0
+    candidate_count = 0
+    for business_date in business_dates:
+        target_warnings: list[str] = []
+        targets = _news_intelligence_top_candidate_targets(
+            config,
+            repository,
+            business_date=business_date,
+            candidate_limit=effective_candidate_limit,
+            top_n=effective_top_n,
+            warnings=target_warnings,
+        )
+        warnings.extend(f"{business_date.isoformat()}: {warning}" for warning in target_warnings)
+        target_reports: list[dict[str, object]] = []
+        for target in targets:
+            candidate_count += 1
+            stock_name = str(target.get("stock_name") or "").strip()
+            search_url = _news_source_coverage_lab_search_url(business_date, stock_name)
+            search_fetch_error: str | None = None
+            search_raw_chars = 0
+            raw_articles: list[object] = []
+            if effective_transport is not None:
+                try:
+                    response_text = effective_transport(
+                        argparse.Namespace(page_url=search_url, response_format="markdown")
+                    )
+                    search_raw_chars = len(response_text)
+                    raw_articles = _news_source_coverage_lab_parse_search_markdown(
+                        response_text,
+                        target_date=business_date,
+                    )
+                except Exception as exc:
+                    search_fetch_error = str(exc) or exc.__class__.__name__
+            deduped_articles = deduplicate_articles(raw_articles)
+            filter_result = _news_source_coverage_apply_filters(
+                search_articles=deduped_articles,
+                stock_name=stock_name,
+                aliases=(),
+                strict_title_match=strict_title_match,
+                exclude_market_noise=exclude_market_noise,
+                max_results=0 if post_filter_v2 else effective_max_results,
+            )
+            selected_articles_before = list(filter_result["selected"])
+            selected_count_before_total += len(selected_articles_before)
+            post_filter_excluded_rows: list[dict[str, object]] = []
+            if post_filter_v2:
+                post_filter_result = _news_search_lane_post_filter_v2(
+                    selected_articles_before,
+                    stock_name=stock_name,
+                    max_results=effective_max_results,
+                )
+                selected_articles = list(post_filter_result["selected"])
+                post_filter_excluded_rows = list(post_filter_result["excluded"])
+            else:
+                selected_articles = selected_articles_before
+            selected_rows = [
+                _news_search_lane_qa_selected_title(
+                    article,
+                    stock_name=stock_name,
+                    post_filter_v2=post_filter_v2,
+                )
+                for article in selected_articles
+            ]
+            selected_title_count += len(selected_rows)
+            selected_label_counts.update(str(row["qa_label"]) for row in selected_rows)
+            excluded_rows = sorted(
+                [*filter_result["excluded"], *post_filter_excluded_rows],
+                key=lambda row: {
+                    "parser_artifact": 0,
+                    "false_positive": 1,
+                    "market_noise": 2,
+                    "not_title_match": 3,
+                    "duplicate_topic": 4,
+                    "over_max_results": 5,
+                }.get(
+                    str(row["reason"]),
+                    9,
+                ),
+            )
+            excluded_reason_counts.update(str(row["reason"]) for row in excluded_rows)
+            target_reports.append(
+                {
+                    "business_date": business_date.isoformat(),
+                    "rank": target.get("rank"),
+                    "stock_code": target.get("stock_code"),
+                    "stock_name": stock_name,
+                    "external_source": "naver_search_news",
+                    "external_search_url": search_url,
+                    "external_fetch_error": search_fetch_error,
+                    "external_raw_chars": search_raw_chars,
+                    "raw_count": len(raw_articles),
+                    "after_dedup_count": len(deduped_articles),
+                    "after_noise_filter_count": filter_result["after_noise_filter_count"],
+                    "selected_count_before": len(selected_articles_before),
+                    "selected_count_after": len(selected_rows),
+                    "selected_count": len(selected_rows),
+                    "selected_titles": selected_rows,
+                    "excluded_count": len(excluded_rows),
+                    "excluded_reason_distribution": _ordered_nonzero_count_map(
+                        Counter(str(row["reason"]) for row in excluded_rows),
+                        (
+                            "parser_artifact",
+                            "false_positive",
+                            "not_title_match",
+                            "market_noise",
+                            "duplicate_topic",
+                            "over_max_results",
+                        ),
+                    ),
+                    "post_filter_excluded_reason_distribution": _ordered_nonzero_count_map(
+                        Counter(str(row["reason"]) for row in post_filter_excluded_rows),
+                        ("parser_artifact", "false_positive", "duplicate_topic", "over_max_results"),
+                    ),
+                    "example_excluded_titles": [
+                        {
+                            "title": str(getattr(row["article"], "title", "") or ""),
+                            "reason": row["reason"],
+                        }
+                        for row in excluded_rows[:3]
+                    ],
+                }
+            )
+        date_reports.append(
+            {
+            "business_date": business_date.isoformat(),
+            "candidate_count": len(targets),
+            "selected_count_before": sum(int(row["selected_count_before"]) for row in target_reports),
+            "selected_count_after": sum(int(row["selected_count_after"]) for row in target_reports),
+            "selected_title_count": sum(int(row["selected_count"]) for row in target_reports),
+            "targets": target_reports,
+        }
+        )
+
+    usable_count = int(selected_label_counts.get("usable_digest", 0))
+    usable_percent = round((usable_count / selected_title_count * 100), 1) if selected_title_count else 0.0
+    label_distribution = _ordered_nonzero_count_map(
+        selected_label_counts,
+        (
+            "usable_digest",
+            "report_rehash",
+            "esg_pr",
+            "weak_pr",
+            "corporate_notice",
+            "market_noise",
+            "price_table_noise",
+            "theme_only",
+            "duplicate",
+            "uncertain",
+        ),
+    )
+    payload: dict[str, object] = {
+        "surface": "news-search-lane-qa-report",
+        "lab_surface": True,
+        "read_only": True,
+        "writes_db": False,
+        "live_fetch": True,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "connects_web_view": False,
+        "scoring": False,
+        "recommendation": False,
+        "recent_business_days": effective_recent_days,
+        "candidate_limit": effective_candidate_limit,
+        "top_n": effective_top_n,
+        "inspected_date_count": len(business_dates),
+        "filter_options": {
+            "strict_title_match": strict_title_match,
+            "exclude_market_noise": exclude_market_noise,
+            "post_filter_v2": post_filter_v2,
+            "max_results": effective_max_results,
+        },
+        "summary": {
+            "candidate_count": candidate_count,
+            "selected_count_before": selected_count_before_total,
+            "selected_count_after": selected_title_count,
+            "selected_title_count": selected_title_count,
+            "usable_digest_count": usable_count,
+            "usable_digest_percent": usable_percent,
+            "report_rehash_count": int(selected_label_counts.get("report_rehash", 0)),
+            "parser_artifact_count": int(excluded_reason_counts.get("parser_artifact", 0)),
+            "false_positive_count": int(excluded_reason_counts.get("false_positive", 0)),
+            "weak_pr_count": int(
+                selected_label_counts.get("weak_pr", 0)
+                + selected_label_counts.get("esg_pr", 0)
+                + selected_label_counts.get("corporate_notice", 0)
+            ),
+            "duplicate_removed_count": int(excluded_reason_counts.get("duplicate_topic", 0)),
+            "excluded_reason_distribution": _ordered_nonzero_count_map(
+                excluded_reason_counts,
+                (
+                    "parser_artifact",
+                    "false_positive",
+                    "not_title_match",
+                    "market_noise",
+                    "duplicate_topic",
+                    "over_max_results",
+                ),
+            ),
+            "qa_label_distribution": label_distribution,
+            "production_search_lane_candidate": (
+                selected_title_count > 0
+                and usable_percent >= 60.0
+                and int(selected_label_counts.get("price_table_noise", 0)) == 0
+                and int(selected_label_counts.get("theme_only", 0)) == 0
+            ),
+        },
+        "date_reports": date_reports,
+        "warnings": warnings,
+        "errors": errors,
+    }
+    _print_news_search_lane_qa_report_payload(payload, as_json=as_json)
+    return 1 if errors else 0
+
+
+def _news_search_lane_recent_candidate_dates(
+    repository: StockMonitorRepository,
+    recent_business_days: int,
+) -> list[date]:
+    summary_dates = [
+        business_date for business_date, _ in repository.count_summaries_by_business_date(limit=recent_business_days)
+    ]
+    if summary_dates:
+        return summary_dates
+    return [business_date for business_date, _ in repository.count_reports_by_business_date(limit=recent_business_days)]
+
+
+def _news_search_lane_qa_selected_title(
+    article: object,
+    *,
+    stock_name: str,
+    post_filter_v2: bool = False,
+) -> dict[str, object]:
+    title = str(getattr(article, "title", "") or "").strip()
+    url = str(getattr(article, "url", "") or "").strip()
+    source = str(getattr(article, "source", "") or "").strip() or "naver_search"
+    label = (
+        _news_search_lane_qa_label_v2(title, stock_name=stock_name)
+        if post_filter_v2
+        else _news_search_lane_qa_label(title, stock_name=stock_name)
+    )
+    return {
+        "title": title,
+        "source": source,
+        "url": url,
+        "source_hint": url_parse.urlparse(url).netloc,
+        "qa_label": label,
+        "direct_stock_name_in_title": _news_source_coverage_title_has(article, stock_name),
+        "answers_why_today": label == "usable_digest",
+        "market_or_price_noise": label in {"market_noise", "price_table_noise"},
+        "report_rehash": label == "report_rehash",
+        "digest_safe": label == "usable_digest",
+    }
+
+
+def _news_search_lane_post_filter_v2(
+    articles: Sequence[object],
+    *,
+    stock_name: str,
+    max_results: int,
+) -> dict[str, object]:
+    selected: list[object] = []
+    excluded: list[dict[str, object]] = []
+    for article in articles:
+        title = str(getattr(article, "title", "") or "")
+        exclusion_reason = _news_search_lane_post_filter_v2_exclusion_reason(title, stock_name=stock_name)
+        if exclusion_reason:
+            excluded.append({"article": article, "reason": exclusion_reason})
+            continue
+        if any(
+            _news_search_lane_is_duplicate_topic(
+                title,
+                str(getattr(existing, "title", "") or ""),
+                stock_name=stock_name,
+            )
+            for existing in selected
+        ):
+            excluded.append({"article": article, "reason": "duplicate_topic"})
+            continue
+        selected.append(article)
+    if max_results > 0 and len(selected) > max_results:
+        overflow = selected[max_results:]
+        selected = selected[:max_results]
+        excluded.extend({"article": article, "reason": "over_max_results"} for article in overflow)
+    return {"selected": selected, "excluded": excluded}
+
+
+def _news_search_lane_post_filter_v2_exclusion_reason(title: str, *, stock_name: str) -> str | None:
+    if _news_search_lane_is_parser_artifact(title):
+        return "parser_artifact"
+    if _news_search_lane_qa_label(title, stock_name=stock_name) in {"market_noise", "price_table_noise", "theme_only"}:
+        return "market_noise"
+    if _news_search_lane_is_false_positive_title(title):
+        return "false_positive"
+    return None
+
+
+def _news_search_lane_is_parser_artifact(title: str) -> bool:
+    compact = re.sub(r"\s+", " ", html.unescape(title)).strip(" *-_|")
+    normalized = compact.casefold()
+    if not compact or len(compact) < 8:
+        return True
+    artifact_terms = (
+        "\u00a9 naver",
+        "naver corp",
+        "copyright",
+        "all rights reserved",
+    )
+    if any(term in normalized for term in artifact_terms):
+        return True
+    return bool(re.fullmatch(r"https?://\S+|www\.\S+", compact))
+
+
+def _news_search_lane_is_false_positive_title(title: str) -> bool:
+    normalized = title.casefold()
+    false_positive_terms = (
+        "celebrity",
+        "actor",
+        "actress",
+        "singer",
+        "success story",
+        "senior town",
+        "silver town",
+        "entertainment",
+        "politician",
+        "lawmaker",
+        "minister",
+        "election",
+        "job",
+        "hiring",
+        "recruit",
+        "installer",
+        "installation",
+        "repair",
+        "appliance",
+        "how to",
+        "advertisement",
+        "\uc5f0\uc608",
+        "\ubc30\uc6b0",
+        "\uac00\uc218",
+        "\uc131\uacf5\ub2f4",
+        "\uc2e4\ubc84\ud0c0\uc6b4",
+        "\uc815\uce58",
+        "\uc758\uc6d0",
+        "\uc7a5\uad00",
+        "\ucc44\uc6a9",
+        "\uc9c1\uc5c5",
+        "\uc124\uce58",
+        "\uc218\ub9ac",
+        "\uace0\uac1d",
+        "\uac00\uc804",
+        "\uc0ac\uc6a9\ubc95",
+        "\uad11\uace0",
+    )
+    if not any(term.casefold() in normalized for term in false_positive_terms):
+        return False
+    hard_business_terms = tuple(
+        term for term in _news_search_lane_business_event_terms() if term not in {"investment", "\ud22c\uc790"}
+    )
+    return not any(term.casefold() in normalized for term in hard_business_terms)
+
+
+def _news_search_lane_is_duplicate_topic(title: str, existing_title: str, *, stock_name: str) -> bool:
+    normalized = _news_search_lane_topic_text(title, stock_name=stock_name)
+    existing_normalized = _news_search_lane_topic_text(existing_title, stock_name=stock_name)
+    if not normalized or not existing_normalized:
+        return False
+    if normalized == existing_normalized:
+        return True
+    if SequenceMatcher(None, normalized, existing_normalized).ratio() >= 0.78:
+        return True
+    tokens = set(normalized.split())
+    existing_tokens = set(existing_normalized.split())
+    return len(tokens & existing_tokens) >= 3 and min(len(tokens), len(existing_tokens)) <= 5
+
+
+def _news_search_lane_topic_text(title: str, *, stock_name: str) -> str:
+    text = title.casefold().replace(stock_name.casefold(), " ")
+    text = re.sub(r"[^0-9a-zA-Z\uac00-\ud7a3]+", " ", text)
+    stopwords = {
+        "the",
+        "and",
+        "with",
+        "from",
+        "for",
+        "by",
+        "corp",
+        "inc",
+        "news",
+        "report",
+        "published",
+        "publication",
+        "\ubcf4\uace0\uc11c",
+        "\ubc1c\uac04",
+    }
+    return " ".join(token for token in text.split() if token not in stopwords and len(token) > 1)
+
+
+def _news_search_lane_qa_label_v2(title: str, *, stock_name: str) -> str:
+    base_label = _news_search_lane_qa_label(title, stock_name=stock_name)
+    if base_label in {"market_noise", "price_table_noise", "theme_only"}:
+        return base_label
+    normalized = title.casefold()
+    if _news_search_lane_has_weak_pr_terms(normalized):
+        if any(term in normalized for term in ("esg", "sustainability", "\uc9c0\uc18d\uac00\ub2a5")):
+            return "esg_pr"
+        if any(term in normalized for term in ("bonus", "\uc131\uacfc\uae09")):
+            return "corporate_notice"
+        return "weak_pr"
+    if any(term.casefold() in normalized for term in _news_search_lane_report_rehash_terms()):
+        if not any(term.casefold() in normalized for term in _news_search_lane_business_event_terms()):
+            return "report_rehash"
+    return "usable_digest"
+
+
+def _news_search_lane_qa_label(title: str, *, stock_name: str) -> str:
+    normalized = title.casefold()
+    if not _news_source_coverage_title_has(argparse.Namespace(title=title), stock_name):
+        return "theme_only"
+    price_table_terms = (
+        "price ranking",
+        "market price table",
+        "intraday",
+        "ranking",
+        "rank",
+        "table",
+        "특징주",
+        "장중",
+        "급등",
+        "급락",
+        "시세",
+        "순위",
+    )
+    if any(term.casefold() in normalized for term in price_table_terms):
+        return "price_table_noise"
+    if _news_source_coverage_is_market_noise_title(title):
+        return "market_noise"
+    report_rehash_terms = (
+        "target price",
+        "broker",
+        "투자의견",
+        "목표가",
+        "목표주가",
+        "리포트",
+        "증권사",
+    )
+    if any(term.casefold() in normalized for term in report_rehash_terms):
+        return "report_rehash"
+    return "usable_digest"
+
+
+def _news_search_lane_report_rehash_terms() -> tuple[str, ...]:
+    return (
+        "target price",
+        "broker",
+        "outlook",
+        "raised",
+        "lowered",
+        "report",
+        "\ubaa9\ud45c\uac00",
+        "\ud22c\uc790\uc758\uacac",
+        "\uc804\ub9dd",
+        "\uc99d\uad8c",
+        "\ub9ac\ud3ec\ud2b8",
+        "\uc0c1\ud5a5",
+        "\ud558\ud5a5",
+    )
+
+
+def _news_search_lane_business_event_terms() -> tuple[str, ...]:
+    return (
+        "contract",
+        "supply",
+        "order",
+        "sales",
+        "earnings",
+        "operating profit",
+        "investment",
+        "acquisition",
+        "merger",
+        "project",
+        "factory",
+        "production",
+        "launch",
+        "financing",
+        "\uc218\uc8fc",
+        "\uacc4\uc57d",
+        "\uacf5\uae09",
+        "\uc2e4\uc801",
+        "\ub9e4\ucd9c",
+        "\uc601\uc5c5\uc774\uc775",
+        "\ud22c\uc790",
+        "\uc778\uc218",
+        "\ud569\ubcd1",
+        "\ud504\ub85c\uc81d\ud2b8",
+        "\uacf5\uc7a5",
+        "\uc0dd\uc0b0",
+        "\ucd9c\uc2dc",
+        "\uc870\ub2ec",
+    )
+
+
+def _news_search_lane_has_weak_pr_terms(normalized_title: str) -> bool:
+    weak_terms = (
+        "esg",
+        "sustainability",
+        "sustainable",
+        "campaign",
+        "social contribution",
+        "bonus",
+        "\uc9c0\uc18d\uac00\ub2a5\uacbd\uc601\ubcf4\uace0\uc11c",
+        "\uc9c0\uc18d\uac00\ub2a5",
+        "\uc0ac\ud68c\uacf5\ud5cc",
+        "\ucea0\ud398\uc778",
+        "\uc131\uacfc\uae09",
+    )
+    return any(term.casefold() in normalized_title for term in weak_terms)
+
+
+def _print_news_search_lane_qa_report_payload(payload: dict[str, object], *, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    print("News search lane QA report")
+    print("- lab_surface: true")
+    print("- read_only: true")
+    print("- writes_db: false")
+    print(f"- inspected dates: {payload.get('inspected_date_count')}")
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    print(f"- selected titles: {summary.get('selected_title_count', 0)}")
+    print(f"- usable_digest_percent: {summary.get('usable_digest_percent', 0.0)}")
+    if payload.get("errors"):
+        print("- errors:")
+        for error in payload.get("errors") or []:
+            print(f"  - {error}")
+    for date_report in payload.get("date_reports") or []:
+        if not isinstance(date_report, dict):
+            continue
+        print(f"- {date_report.get('business_date')}: selected={date_report.get('selected_title_count')}")
+        for target in date_report.get("targets") or []:
+            if not isinstance(target, dict):
+                continue
+            selected_titles = target.get("selected_titles") or []
+            if not selected_titles:
+                continue
+            print(f"  - #{target.get('rank')} {target.get('stock_name')}")
+            for row in selected_titles:
+                if isinstance(row, dict):
+                    print(f"    - [{row.get('qa_label')}] {row.get('title')}")
+
+
+def _run_news_intelligence_collect_top_candidates(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    business_date: date | None,
+    candidate_limit: int,
+    top_n: int,
+    dry_run: bool,
+    confirm_collect: bool,
+    scrapling_exe: Path | None,
+    as_json: bool,
+) -> int:
+    resolved_date = _resolve_news_intelligence_top_candidate_date(repository, business_date)
+    warnings: list[str] = []
+    errors: list[str] = []
+    if candidate_limit > 10:
+        warnings.append("candidate_limit capped at 10")
+    if top_n > 10:
+        warnings.append("top_n capped at 10")
+    effective_candidate_limit = min(max(candidate_limit, 1), 10)
+    effective_top_n = min(max(top_n, 1), 10)
+    targets: list[dict[str, object]] = []
+    if not repository.db_path.exists():
+        errors.append("database does not exist")
+    elif resolved_date is None:
+        errors.append("no business date with stored candidate summaries")
+    else:
+        targets = _news_intelligence_top_candidate_targets(
+            config,
+            repository,
+            business_date=resolved_date,
+            candidate_limit=effective_candidate_limit,
+            top_n=effective_top_n,
+            warnings=warnings,
+        )
+    payload: dict[str, object] = {
+        "surface": "news-intelligence-collect-top-candidates",
+        "read_only": bool(dry_run),
+        "writes_db": False,
+        "live_fetch": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "scoring": False,
+        "recommendation": False,
+        "business_date": resolved_date.isoformat() if resolved_date else None,
+        "target_date": resolved_date.isoformat() if resolved_date else None,
+        "candidate_limit": effective_candidate_limit,
+        "top_n": effective_top_n,
+        "targets": targets,
+        "target_count": len(targets),
+        "dry_run": bool(dry_run),
+        "confirm_collect": bool(confirm_collect),
+        "warnings": warnings,
+        "errors": errors,
+    }
+    if errors:
+        _print_news_intelligence_collect_top_candidates_payload(payload, as_json=as_json)
+        return 1
+    if dry_run:
+        _print_news_intelligence_collect_top_candidates_payload(payload, as_json=as_json)
+        return 0
+    payload["read_only"] = False
+    if not confirm_collect:
+        payload["error"] = "--confirm-collect is required without --dry-run"
+        _print_news_intelligence_collect_top_candidates_payload(payload, as_json=as_json)
+        return 1
+    if not targets:
+        payload["error"] = "no top candidate targets with stock_code"
+        _print_news_intelligence_collect_top_candidates_payload(payload, as_json=as_json)
+        return 0
+
+    collect_args = argparse.Namespace(
+        date=resolved_date,
+        limit=len(targets),
+        stock_code=[str(target["stock_code"]) for target in targets if str(target.get("stock_code") or "")],
+        scrapling_exe=scrapling_exe,
+        db_path=config.db_path,
+        save_observation=True,
+        confirm_save=True,
+        format="json",
+    )
+    stdout = io.StringIO()
+    with redirect_stdout(stdout):
+        collect_exit_code = _run_news_intelligence_briefing_collect(collect_args)
+    raw_output = stdout.getvalue().strip()
+    try:
+        collect_payload = json.loads(raw_output) if raw_output else {}
+    except json.JSONDecodeError:
+        collect_payload = {"error": "news collect did not return JSON"}
+    payload.update(
+        {
+            "live_fetch": True,
+            "writes_db": bool(collect_payload.get("writes_db")),
+            "collect_exit_code": collect_exit_code,
+            "collected_count": int(collect_payload.get("saved_observation_count") or 0),
+            "evidence_count": int(collect_payload.get("saved_evidence_count") or 0),
+            "collector_surface": collect_payload.get("surface"),
+            "collector_items": list(collect_payload.get("items") or [])[:10],
+        }
+    )
+    if collect_payload.get("error"):
+        payload["errors"] = [*errors, str(collect_payload["error"])]
+    _print_news_intelligence_collect_top_candidates_payload(payload, as_json=as_json)
+    return 0
+
+
+def _resolve_news_intelligence_top_candidate_date(
+    repository: StockMonitorRepository,
+    business_date: date | None,
+) -> date | None:
+    if business_date is not None:
+        return business_date
+    if not repository.db_path.exists():
+        return None
+    summary_dates = repository.count_summaries_by_business_date(limit=1)
+    if summary_dates:
+        return summary_dates[0][0]
+    report_dates = repository.count_reports_by_business_date(limit=1)
+    if report_dates:
+        return report_dates[0][0]
+    return None
+
+
 def _unique_nonblank_stock_codes(stock_codes: Sequence[str]) -> list[str]:
     unique_codes: list[str] = []
     seen_codes: set[str] = set()
@@ -3377,8 +4882,32 @@ def _news_intelligence_top_candidate_targets(
         if stock_code in seen_stock_codes:
             continue
         seen_stock_codes.add(stock_code)
-        targets.append({"rank": rank, "stock_code": stock_code, "stock_name": stock_name})
+        targets.append(
+            {
+                "rank": rank,
+                "stock_code": stock_code,
+                "stock_name": stock_name,
+            }
+        )
     return targets
+
+
+def _print_news_intelligence_collect_top_candidates_payload(payload: dict[str, object], *, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    print("News intelligence collect top candidates")
+    print(f"- business_date: {payload.get('business_date')}")
+    print(f"- dry_run: {str(payload.get('dry_run')).lower()}")
+    print(f"- writes_db: {str(payload.get('writes_db')).lower()}")
+    print(f"- top_n: {payload.get('top_n')}")
+    print(f"- targets: {payload.get('target_count')}")
+    if payload.get("error"):
+        print(f"- error: {payload['error']}")
+    for target in payload.get("targets") or []:
+        if not isinstance(target, dict):
+            continue
+        print(f"  - #{target.get('rank')} {target.get('stock_code')} {target.get('stock_name')}")
 
 
 def _news_intelligence_briefing_target_summaries(
@@ -16028,6 +17557,1437 @@ def _run_candidate_evidence_readiness(
     return 0
 
 
+def _run_news_evidence_coverage_audit(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    recent_business_days: int,
+    candidate_limit: int,
+    as_json: bool,
+) -> int:
+    payload = _build_news_evidence_coverage_audit(
+        config,
+        repository,
+        recent_business_days=recent_business_days,
+        candidate_limit=candidate_limit,
+    )
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    print("News Evidence Digest coverage audit")
+    print("- read_only: true")
+    print("- writes_db: false")
+    print(f"- recent business days: {payload['recent_business_days']}")
+    print(f"- candidate limit: {payload['candidate_limit']}")
+    print(
+        f"- top2: {payload['top2']['with_digest_count']}/{payload['top2']['candidate_count']} "
+        f"({payload['top2']['coverage_percent']}%)"
+    )
+    print(
+        f"- top5: {payload['top5']['with_digest_count']}/{payload['top5']['candidate_count']} "
+        f"({payload['top5']['coverage_percent']}%)"
+    )
+    print(
+        f"- news runs: dates={payload['runs']['available_dates']} available, "
+        f"{payload['runs']['missing_dates']} missing, runs={payload['runs']['run_count']}"
+    )
+    print(
+        f"- linked evidence: dates={payload['linked_evidence']['date_count']}, "
+        f"rows={payload['linked_evidence']['row_count']}"
+    )
+    print(f"- relevance: {_format_count_map(payload['relevance_distribution'])}")
+    print(f"- source lanes: {_format_count_map(payload['source_lane_distribution'])}")
+    print(f"- failure reasons: {_format_count_map(payload['failure_reasons'])}")
+    print(f"- bottleneck: {payload['bottleneck']}")
+    return 0
+
+
+def _build_news_evidence_coverage_audit(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    recent_business_days: int,
+    candidate_limit: int,
+) -> dict[str, object]:
+    inspected_dates = [
+        business_date
+        for business_date, _summary_count in repository.count_summaries_by_business_date(
+            limit=max(recent_business_days, 0)
+        )
+    ]
+    row_limit = max(candidate_limit, 5, 0)
+    top2 = {"candidate_count": 0, "with_digest_count": 0}
+    top5 = {"candidate_count": 0, "with_digest_count": 0}
+    runs_available_dates = 0
+    linked_evidence_dates = 0
+    run_count = 0
+    completed_without_evidence_count = 0
+    linked_evidence_row_count = 0
+    relevance_counts: Counter[str] = Counter()
+    source_lane_counts: Counter[str] = Counter()
+    failure_reasons: Counter[str] = Counter()
+    date_rows: list[dict[str, object]] = []
+
+    for business_date in inspected_dates:
+        snapshot = build_web_view_candidate_evidence_snapshot(
+            config,
+            repository,
+            business_date=business_date,
+            limit=row_limit,
+            include_internal=True,
+        )
+        rows = list(snapshot.get("rows") or [])
+        runs = repository.list_news_intelligence_runs(target_date=business_date, limit=1000)
+        evidence_rows = _web_view_unique_news_evidence_rows(
+            repository.list_report_linked_news_evidence(target_date=business_date, limit=5000)
+        )
+        run_count += len(runs)
+        if runs:
+            runs_available_dates += 1
+        if evidence_rows:
+            linked_evidence_dates += 1
+        linked_evidence_row_count += len(evidence_rows)
+        evidence_count_by_run = Counter(row.run_id for row in evidence_rows)
+        completed_without_evidence_count += sum(1 for run in runs if evidence_count_by_run.get(run.run_id, 0) == 0)
+        for row in evidence_rows:
+            relevance_counts[_news_evidence_coverage_relevance_bucket(row.relevance)] += 1
+            source_lane_counts[(row.source_lane or "unknown").strip() or "unknown"] += 1
+            if not getattr(row, "published_at", None):
+                failure_reasons["missing_published_at"] += 1
+
+        top2_rows = rows[:2]
+        top5_rows = rows[:5]
+        top2["candidate_count"] += len(top2_rows)
+        top2["with_digest_count"] += sum(1 for row in top2_rows if _news_evidence_candidate_has_digest(row))
+        top5["candidate_count"] += len(top5_rows)
+        top5["with_digest_count"] += sum(1 for row in top5_rows if _news_evidence_candidate_has_digest(row))
+
+        candidate_rows: list[dict[str, object]] = []
+        for rank, row in enumerate(rows[: max(candidate_limit, 0)], start=1):
+            stock_code = str(row.get("stock_code") or "")
+            stock_name = str(row.get("stock_name") or "")
+            matching_runs = [
+                run for run in runs if _news_evidence_run_matches_candidate(run, stock_code=stock_code, stock_name=stock_name)
+            ]
+            matching_rows = _web_view_news_observation_rows_for_stock(
+                repository,
+                business_date=business_date,
+                stock_code=stock_code,
+                stock_name=stock_name,
+            )
+            candidate_reasons = _news_evidence_candidate_failure_reasons(
+                runs=runs,
+                matching_runs=matching_runs,
+                matching_rows=matching_rows,
+            )
+            failure_reasons.update(candidate_reasons)
+            badge = row.get("news_observation_badge") or {}
+            candidate_rows.append(
+                {
+                    "rank": rank,
+                    "stock_code": stock_code,
+                    "stock_name": stock_name,
+                    "with_digest": _news_evidence_candidate_has_digest(row),
+                    "digest_label": badge.get("digest_label"),
+                    "direct_count": badge.get("direct_count", 0),
+                    "market_context_count": badge.get("market_context_count", 0),
+                    "failure_reasons": candidate_reasons,
+                }
+            )
+
+        date_rows.append(
+            {
+                "business_date": business_date.isoformat(),
+                "candidate_count": len(rows[: max(candidate_limit, 0)]),
+                "top2_with_digest_count": sum(1 for row in top2_rows if _news_evidence_candidate_has_digest(row)),
+                "top5_with_digest_count": sum(1 for row in top5_rows if _news_evidence_candidate_has_digest(row)),
+                "news_run_count": len(runs),
+                "linked_evidence_count": len(evidence_rows),
+                "candidates": candidate_rows,
+            }
+        )
+
+    payload = {
+        "surface": "news-evidence-coverage-audit",
+        "read_only": True,
+        "writes_db": False,
+        "scoring": False,
+        "recommendation": False,
+        "recent_business_days": recent_business_days,
+        "candidate_limit": candidate_limit,
+        "dates": [business_date.isoformat() for business_date in inspected_dates],
+        "top2": {
+            **top2,
+            "coverage_percent": _news_evidence_coverage_percent(
+                candidate_count=top2["candidate_count"],
+                with_digest_count=top2["with_digest_count"],
+            ),
+        },
+        "top5": {
+            **top5,
+            "coverage_percent": _news_evidence_coverage_percent(
+                candidate_count=top5["candidate_count"],
+                with_digest_count=top5["with_digest_count"],
+            ),
+        },
+        "runs": {
+            "available_dates": runs_available_dates,
+            "missing_dates": len(inspected_dates) - runs_available_dates,
+            "run_count": run_count,
+            "completed_without_evidence_count": completed_without_evidence_count,
+        },
+        "linked_evidence": {
+            "date_count": linked_evidence_dates,
+            "row_count": linked_evidence_row_count,
+        },
+        "relevance_distribution": _ordered_nonzero_count_map(
+            relevance_counts,
+            ("direct", "market_context", "reference"),
+        ),
+        "source_lane_distribution": dict(sorted(source_lane_counts.items())),
+        "failure_reasons": _ordered_nonzero_count_map(
+            failure_reasons,
+            (
+                "no_news_run",
+                "no_linked_evidence",
+                "only_market_context",
+                "only_reference",
+                "missing_published_at",
+                "stock_match_missing",
+            ),
+        ),
+        "bottleneck": _news_evidence_coverage_bottleneck(failure_reasons),
+        "date_breakdown": date_rows,
+    }
+    return payload
+
+
+def _news_evidence_candidate_has_digest(row: dict[str, object]) -> bool:
+    badge = row.get("news_observation_badge") or {}
+    if not isinstance(badge, dict):
+        return False
+    return bool(badge.get("digest_label") or badge.get("news_digest"))
+
+
+def _news_evidence_coverage_percent(*, candidate_count: int, with_digest_count: int) -> float:
+    if candidate_count <= 0:
+        return 0.0
+    return round((with_digest_count / candidate_count) * 100, 1)
+
+
+def _news_evidence_coverage_relevance_bucket(value: str | None) -> str:
+    if value == "direct":
+        return "direct"
+    if value == "market_context":
+        return "market_context"
+    return "reference"
+
+
+def _news_evidence_run_matches_candidate(
+    run: object,
+    *,
+    stock_code: str,
+    stock_name: str,
+) -> bool:
+    normalized_stock_name = _web_view_normalize_news_identity(stock_name)
+    run_stock_code = str(getattr(run, "stock_code", "") or "")
+    if stock_code and run_stock_code == stock_code:
+        return True
+    if run_stock_code:
+        return False
+    return bool(normalized_stock_name and _web_view_normalize_news_identity(getattr(run, "stock_name", None)) == normalized_stock_name)
+
+
+def _news_evidence_candidate_failure_reasons(
+    *,
+    runs: Sequence[object],
+    matching_runs: Sequence[object],
+    matching_rows: Sequence[ReportLinkedNewsEvidenceRecord],
+) -> list[str]:
+    reasons: list[str] = []
+    if not runs:
+        return ["no_news_run"]
+    if not matching_runs:
+        reasons.append("stock_match_missing")
+    if matching_runs and not matching_rows:
+        reasons.append("no_linked_evidence")
+    if matching_rows and not any(row.relevance == "direct" for row in matching_rows):
+        if any(row.relevance == "market_context" for row in matching_rows):
+            reasons.append("only_market_context")
+        else:
+            reasons.append("only_reference")
+    if any(not getattr(row, "published_at", None) for row in matching_rows):
+        reasons.append("missing_published_at")
+    return reasons
+
+
+def _ordered_nonzero_count_map(counts: Counter[str], preferred_order: Sequence[str]) -> dict[str, int]:
+    payload: dict[str, int] = {}
+    for key in preferred_order:
+        value = int(counts.get(key, 0))
+        if value:
+            payload[key] = value
+    for key in sorted(set(counts) - set(preferred_order)):
+        value = int(counts.get(key, 0))
+        if value:
+            payload[key] = value
+    return payload
+
+
+def _news_evidence_coverage_bottleneck(failure_reasons: Counter[str]) -> str:
+    ordered = (
+        ("no_news_run", "latest_or_date_level_news_runs_missing"),
+        ("no_linked_evidence", "news_runs_exist_but_linked_evidence_missing"),
+        ("stock_match_missing", "candidate_stock_matching_gap"),
+        ("only_market_context", "direct_evidence_sparse"),
+        ("only_reference", "direct_evidence_sparse"),
+        ("missing_published_at", "published_at_gap"),
+    )
+    best_key = ""
+    best_value = 0
+    best_label = "insufficient_gap_signal"
+    for key, label in ordered:
+        value = int(failure_reasons.get(key, 0))
+        if value > best_value:
+            best_key = key
+            best_value = value
+            best_label = label
+    if not best_key:
+        return best_label
+    return best_label
+
+
+NEWS_EVIDENCE_MATCH_REASON_ORDER = (
+    "no_evidence_for_candidate_stock",
+    "evidence_stock_name_alias_mismatch",
+    "evidence_missing_stock_code",
+    "evidence_date_mismatch",
+    "evidence_only_market_or_reference",
+    "candidate_not_in_news_collection_scope",
+    "unknown",
+)
+
+
+def _run_news_evidence_match_audit(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    recent_business_days: int,
+    candidate_limit: int,
+    as_json: bool,
+) -> int:
+    payload = _build_news_evidence_match_audit(
+        config,
+        repository,
+        recent_business_days=recent_business_days,
+        candidate_limit=candidate_limit,
+    )
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    summary = payload["summary"]
+    print("News Evidence Digest match audit")
+    print("- read_only: true")
+    print("- writes_db: false")
+    print(f"- candidate count: {summary['candidate_count']}")
+    print(f"- missing digest: {summary['missing_digest_count']}")
+    print(f"- stock match missing: {summary['stock_match_missing_count']}")
+    print(f"- stock match reasons: {_format_count_map(summary['stock_match_missing_reasons'])}")
+    print(f"- missing digest reasons: {_format_count_map(summary['missing_digest_reasons'])}")
+    print(f"- collection gap: {payload['collection_gap']['count']}")
+    print(f"- matching gap: {payload['matching_gap']['count']}")
+    return 0
+
+
+def _build_news_evidence_match_audit(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    recent_business_days: int,
+    candidate_limit: int,
+) -> dict[str, object]:
+    inspected_dates = [
+        business_date
+        for business_date, _summary_count in repository.count_summaries_by_business_date(
+            limit=max(recent_business_days, 0)
+        )
+    ]
+    all_evidence_rows = _web_view_unique_news_evidence_rows(
+        repository.list_report_linked_news_evidence(limit=50000)
+    )
+    evidence_by_date: dict[date, list[ReportLinkedNewsEvidenceRecord]] = defaultdict(list)
+    for row in all_evidence_rows:
+        evidence_by_date[row.target_date].append(row)
+
+    candidate_count = 0
+    missing_digest_count = 0
+    stock_match_missing_count = 0
+    top2 = {"candidate_count": 0, "missing_digest_count": 0, "stock_match_missing_count": 0}
+    top5 = {"candidate_count": 0, "missing_digest_count": 0, "stock_match_missing_count": 0}
+    missing_digest_reasons: Counter[str] = Counter()
+    stock_match_missing_reasons: Counter[str] = Counter()
+    candidate_lists: list[dict[str, object]] = []
+    examples: list[dict[str, object]] = []
+    examples_by_reason: dict[str, list[dict[str, object]]] = {reason: [] for reason in NEWS_EVIDENCE_MATCH_REASON_ORDER}
+
+    for business_date in inspected_dates:
+        snapshot = build_web_view_candidate_evidence_snapshot(
+            config,
+            repository,
+            business_date=business_date,
+            limit=max(candidate_limit, 5, 0),
+            include_internal=True,
+        )
+        rows = list(snapshot.get("rows") or [])[: max(candidate_limit, 0)]
+        runs = repository.list_news_intelligence_runs(target_date=business_date, limit=1000)
+        same_date_evidence = evidence_by_date.get(business_date, [])
+        date_candidates: list[dict[str, object]] = []
+
+        for rank, row in enumerate(rows, start=1):
+            candidate_count += 1
+            if rank <= 2:
+                top2["candidate_count"] += 1
+            if rank <= 5:
+                top5["candidate_count"] += 1
+            stock_code = str(row.get("stock_code") or "")
+            stock_name = str(row.get("stock_name") or "")
+            with_digest = _news_evidence_candidate_has_digest(row)
+            matching_runs = [
+                run for run in runs if _news_evidence_run_matches_candidate(run, stock_code=stock_code, stock_name=stock_name)
+            ]
+            matching_rows = _web_view_news_observation_rows_for_stock(
+                repository,
+                business_date=business_date,
+                stock_code=stock_code,
+                stock_name=stock_name,
+            )
+            stock_match_missing = not matching_runs
+            classification = _news_evidence_match_classify_candidate(
+                business_date=business_date,
+                stock_code=stock_code,
+                stock_name=stock_name,
+                with_digest=with_digest,
+                matching_runs=matching_runs,
+                matching_rows=matching_rows,
+                same_date_evidence=same_date_evidence,
+                all_evidence_rows=all_evidence_rows,
+            )
+            reason = str(classification["reason"])
+            if not with_digest:
+                missing_digest_count += 1
+                missing_digest_reasons[reason] += 1
+                if rank <= 2:
+                    top2["missing_digest_count"] += 1
+                if rank <= 5:
+                    top5["missing_digest_count"] += 1
+            if stock_match_missing:
+                stock_match_missing_count += 1
+                stock_match_missing_reasons[reason] += 1
+                if rank <= 2:
+                    top2["stock_match_missing_count"] += 1
+                if rank <= 5:
+                    top5["stock_match_missing_count"] += 1
+
+            candidate_entry = {
+                "business_date": business_date.isoformat(),
+                "rank": rank,
+                "selected_top2": rank <= 2,
+                "selected_top5": rank <= 5,
+                "stock_code": stock_code,
+                "stock_name": stock_name,
+                "news_digest": with_digest,
+                "matching_run_count": len(matching_runs),
+                "matching_evidence_count": len(matching_rows),
+                "stock_match_missing": stock_match_missing,
+                "missing_reason": None if with_digest else reason,
+                "audit_reason": reason,
+                "nearby_evidence_names": classification["nearby_evidence_names"],
+                "nearby_evidence": classification["nearby_evidence"],
+            }
+            date_candidates.append(candidate_entry)
+            if not with_digest and len(examples) < 20:
+                examples.append(candidate_entry)
+            if not with_digest and len(examples_by_reason.get(reason, [])) < 10:
+                examples_by_reason.setdefault(reason, []).append(candidate_entry)
+
+        candidate_lists.append(
+            {
+                "business_date": business_date.isoformat(),
+                "candidate_count": len(rows),
+                "news_run_count": len(runs),
+                "evidence_count": len(same_date_evidence),
+                "candidates": date_candidates,
+            }
+        )
+
+    collection_reasons = {"candidate_not_in_news_collection_scope"}
+    matching_reasons = {
+        "evidence_stock_name_alias_mismatch",
+        "evidence_missing_stock_code",
+        "evidence_date_mismatch",
+    }
+    evidence_gap_reasons = {"no_evidence_for_candidate_stock", "evidence_only_market_or_reference", "unknown"}
+    stock_match_reason_map = _ordered_nonzero_count_map(
+        stock_match_missing_reasons,
+        NEWS_EVIDENCE_MATCH_REASON_ORDER,
+    )
+    missing_digest_reason_map = _ordered_nonzero_count_map(
+        missing_digest_reasons,
+        NEWS_EVIDENCE_MATCH_REASON_ORDER,
+    )
+    return {
+        "surface": "news-evidence-match-audit",
+        "read_only": True,
+        "writes_db": False,
+        "scoring": False,
+        "recommendation": False,
+        "recent_business_days": recent_business_days,
+        "candidate_limit": candidate_limit,
+        "dates": [business_date.isoformat() for business_date in inspected_dates],
+        "summary": {
+            "candidate_count": candidate_count,
+            "missing_digest_count": missing_digest_count,
+            "stock_match_missing_count": stock_match_missing_count,
+            "top2": top2,
+            "top5": top5,
+            "stock_match_missing_reasons": stock_match_reason_map,
+            "missing_digest_reasons": missing_digest_reason_map,
+        },
+        "collection_gap": {
+            "count": sum(stock_match_missing_reasons.get(reason, 0) for reason in collection_reasons),
+            "reasons": {
+                reason: int(stock_match_missing_reasons.get(reason, 0))
+                for reason in sorted(collection_reasons)
+                if stock_match_missing_reasons.get(reason, 0)
+            },
+        },
+        "matching_gap": {
+            "count": sum(stock_match_missing_reasons.get(reason, 0) for reason in matching_reasons),
+            "reasons": {
+                reason: int(stock_match_missing_reasons.get(reason, 0))
+                for reason in NEWS_EVIDENCE_MATCH_REASON_ORDER
+                if reason in matching_reasons and stock_match_missing_reasons.get(reason, 0)
+            },
+        },
+        "evidence_gap": {
+            "count": sum(missing_digest_reasons.get(reason, 0) for reason in evidence_gap_reasons),
+            "reasons": {
+                reason: int(missing_digest_reasons.get(reason, 0))
+                for reason in NEWS_EVIDENCE_MATCH_REASON_ORDER
+                if reason in evidence_gap_reasons and missing_digest_reasons.get(reason, 0)
+            },
+        },
+        "evidence_by_date": [
+            _news_evidence_match_evidence_date_summary(business_date, evidence_by_date.get(business_date, []))
+            for business_date in inspected_dates
+        ],
+        "candidate_lists": candidate_lists,
+        "examples": examples,
+        "alias_mismatch_examples": examples_by_reason.get("evidence_stock_name_alias_mismatch", []),
+        "stock_code_missing_examples": examples_by_reason.get("evidence_missing_stock_code", []),
+        "date_mismatch_examples": examples_by_reason.get("evidence_date_mismatch", []),
+    }
+
+
+def _news_evidence_match_classify_candidate(
+    *,
+    business_date: date,
+    stock_code: str,
+    stock_name: str,
+    with_digest: bool,
+    matching_runs: Sequence[object],
+    matching_rows: Sequence[ReportLinkedNewsEvidenceRecord],
+    same_date_evidence: Sequence[ReportLinkedNewsEvidenceRecord],
+    all_evidence_rows: Sequence[ReportLinkedNewsEvidenceRecord],
+) -> dict[str, object]:
+    if matching_rows and not any(row.relevance == "direct" for row in matching_rows):
+        return _news_evidence_match_classification("evidence_only_market_or_reference", matching_rows)
+    if with_digest:
+        return _news_evidence_match_classification("has_digest", matching_rows)
+    if matching_runs and not matching_rows:
+        return _news_evidence_match_classification("no_evidence_for_candidate_stock", [])
+
+    same_date_related = [
+        row for row in same_date_evidence if _news_evidence_match_row_related(row, stock_code=stock_code, stock_name=stock_name)
+    ]
+    missing_code_rows = [
+        row
+        for row in same_date_related
+        if not (row.stock_code or "").strip()
+        and _news_evidence_match_names_similar(stock_name, row.stock_name)
+    ]
+    if missing_code_rows:
+        return _news_evidence_match_classification("evidence_missing_stock_code", missing_code_rows)
+    alias_rows = [
+        row
+        for row in same_date_related
+        if (row.stock_code or "").strip() != stock_code
+        and _news_evidence_match_names_similar(stock_name, row.stock_name)
+    ]
+    if alias_rows:
+        return _news_evidence_match_classification("evidence_stock_name_alias_mismatch", alias_rows)
+
+    other_date_related = [
+        row
+        for row in all_evidence_rows
+        if row.target_date != business_date
+        and _news_evidence_match_row_related(row, stock_code=stock_code, stock_name=stock_name)
+    ]
+    if other_date_related:
+        return _news_evidence_match_classification("evidence_date_mismatch", other_date_related)
+    if not matching_runs:
+        return _news_evidence_match_classification("candidate_not_in_news_collection_scope", [])
+    return _news_evidence_match_classification("unknown", same_date_related)
+
+
+def _news_evidence_match_classification(
+    reason: str,
+    rows: Sequence[ReportLinkedNewsEvidenceRecord],
+) -> dict[str, object]:
+    nearby_rows = list(rows[:5])
+    return {
+        "reason": reason,
+        "nearby_evidence_names": _web_view_unique_texts([row.stock_name for row in nearby_rows], limit=5),
+        "nearby_evidence": [
+            {
+                "target_date": row.target_date.isoformat(),
+                "stock_code": row.stock_code,
+                "stock_name": row.stock_name,
+                "relevance": _news_evidence_coverage_relevance_bucket(row.relevance),
+                "source_lane": row.source_lane,
+                "title": row.title,
+            }
+            for row in nearby_rows
+        ],
+    }
+
+
+def _news_evidence_match_row_related(
+    row: ReportLinkedNewsEvidenceRecord,
+    *,
+    stock_code: str,
+    stock_name: str,
+) -> bool:
+    if stock_code and (row.stock_code or "").strip() == stock_code:
+        return True
+    return _news_evidence_match_names_similar(stock_name, row.stock_name)
+
+
+def _news_evidence_match_normalize_name(value: str | None) -> str:
+    return re.sub(r"[^0-9a-z가-힣]+", "", (value or "").casefold())
+
+
+def _news_evidence_match_names_similar(left: str | None, right: str | None) -> bool:
+    left_normalized = _news_evidence_match_normalize_name(left)
+    right_normalized = _news_evidence_match_normalize_name(right)
+    if not left_normalized or not right_normalized:
+        return False
+    if left_normalized == right_normalized:
+        return True
+    shorter, longer = sorted((left_normalized, right_normalized), key=len)
+    if len(shorter) >= 3 and shorter in longer:
+        return True
+    return SequenceMatcher(None, left_normalized, right_normalized).ratio() >= 0.82
+
+
+def _news_evidence_match_evidence_date_summary(
+    business_date: date,
+    rows: Sequence[ReportLinkedNewsEvidenceRecord],
+) -> dict[str, object]:
+    return {
+        "business_date": business_date.isoformat(),
+        "evidence_count": len(rows),
+        "stock_code_present_count": sum(1 for row in rows if (row.stock_code or "").strip()),
+        "stock_code_missing_count": sum(1 for row in rows if not (row.stock_code or "").strip()),
+        "stock_name_present_count": sum(1 for row in rows if (row.stock_name or "").strip()),
+        "relevance_distribution": _ordered_nonzero_count_map(
+            Counter(_news_evidence_coverage_relevance_bucket(row.relevance) for row in rows),
+            ("direct", "market_context", "reference"),
+        ),
+        "evidence_stock_names": _web_view_unique_texts([row.stock_name for row in rows], limit=30),
+    }
+
+
+def _run_news_evidence_run_scope_audit(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    recent_business_days: int,
+    candidate_limit: int,
+    as_json: bool,
+) -> int:
+    payload = _build_news_evidence_run_scope_audit(
+        config,
+        repository,
+        recent_business_days=recent_business_days,
+        candidate_limit=candidate_limit,
+    )
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    summary = payload["summary"]
+    print("News Evidence run scope audit")
+    print("- read_only: true")
+    print("- writes_db: false")
+    print(f"- candidates: {summary['candidate_count']}")
+    print(f"- run targets: {summary['run_target_count']}")
+    print(f"- overlap: {summary['candidate_run_overlap_count']}")
+    print(f"- missing candidates: {summary['missing_candidate_count']}")
+    print(f"- non-candidate run targets: {summary['non_candidate_run_target_count']}")
+    print(f"- date mismatch candidates: {summary['date_mismatch_candidate_count']}")
+    print(f"- candidate not in scope: {summary['candidate_not_in_scope_count']}")
+    return 0
+
+
+def _build_news_evidence_run_scope_audit(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    recent_business_days: int,
+    candidate_limit: int,
+) -> dict[str, object]:
+    inspected_dates = [
+        business_date
+        for business_date, _summary_count in repository.count_summaries_by_business_date(
+            limit=max(recent_business_days, 0)
+        )
+    ]
+    all_evidence_rows = _web_view_unique_news_evidence_rows(
+        repository.list_report_linked_news_evidence(limit=50000)
+    )
+    summary_counts: Counter[str] = Counter()
+    run_source_modes: Counter[str] = Counter()
+    date_breakdown: list[dict[str, object]] = []
+    candidate_not_in_scope_examples: list[dict[str, object]] = []
+    date_mismatch_examples: list[dict[str, object]] = []
+
+    for business_date in inspected_dates:
+        summaries = repository.list_daily_summaries(business_date)
+        reports = repository.list_reports_for_business_date(business_date)
+        snapshot = build_web_view_candidate_evidence_snapshot(
+            config,
+            repository,
+            business_date=business_date,
+            limit=max(candidate_limit, 5, 0),
+            include_internal=True,
+        )
+        candidate_rows = list(snapshot.get("rows") or [])[: max(candidate_limit, 0)]
+        runs = repository.list_news_intelligence_runs(target_date=business_date, limit=1000)
+        evidence_rows = _web_view_unique_news_evidence_rows(
+            repository.list_report_linked_news_evidence(target_date=business_date, limit=5000)
+        )
+        for run in runs:
+            run_source_modes[(run.source_mode or "unknown").strip() or "unknown"] += 1
+
+        candidate_entries: list[dict[str, object]] = []
+        missing_candidates: list[dict[str, object]] = []
+        overlap_stock_codes: list[str] = []
+        date_mismatch_candidates: list[dict[str, object]] = []
+        for rank, row in enumerate(candidate_rows, start=1):
+            stock_code = str(row.get("stock_code") or "")
+            stock_name = str(row.get("stock_name") or "")
+            matching_runs = [
+                run for run in runs if _news_evidence_run_matches_candidate(run, stock_code=stock_code, stock_name=stock_name)
+            ]
+            other_date_evidence = [
+                evidence
+                for evidence in all_evidence_rows
+                if evidence.target_date != business_date
+                and _news_evidence_match_row_related(evidence, stock_code=stock_code, stock_name=stock_name)
+            ]
+            with_digest = _news_evidence_candidate_has_digest(row)
+            entry = {
+                "business_date": business_date.isoformat(),
+                "rank": rank,
+                "selected_top2": rank <= 2,
+                "selected_top5": rank <= 5,
+                "stock_code": stock_code,
+                "stock_name": stock_name,
+                "news_digest": with_digest,
+                "matching_run_count": len(matching_runs),
+                "same_date_run_target": bool(matching_runs),
+                "other_date_evidence_count": len(other_date_evidence),
+                "other_evidence_dates": _web_view_unique_texts(
+                    [evidence.target_date.isoformat() for evidence in other_date_evidence],
+                    limit=10,
+                ),
+            }
+            candidate_entries.append(entry)
+            if matching_runs:
+                if stock_code:
+                    overlap_stock_codes.append(stock_code)
+                continue
+            missing_candidates.append(entry)
+            if len(candidate_not_in_scope_examples) < 20:
+                candidate_not_in_scope_examples.append(entry)
+            if other_date_evidence:
+                date_mismatch_candidates.append(entry)
+                if len(date_mismatch_examples) < 20:
+                    date_mismatch_examples.append(entry)
+
+        run_target_entries = [_news_evidence_run_scope_target_entry(run, evidence_rows) for run in runs]
+        candidate_stock_codes = [str(entry["stock_code"]) for entry in candidate_entries if str(entry["stock_code"])]
+        run_target_stock_codes = sorted(
+            {
+                str(entry["stock_code"])
+                for entry in run_target_entries
+                if str(entry.get("stock_code") or "")
+            }
+        )
+        candidate_code_set = set(candidate_stock_codes)
+        non_candidate_run_stock_codes = [
+            code
+            for code in run_target_stock_codes
+            if code not in candidate_code_set
+        ]
+        summary_counts["candidate_count"] += len(candidate_entries)
+        summary_counts["run_count"] += len(runs)
+        summary_counts["run_target_count"] += len(run_target_stock_codes)
+        summary_counts["candidate_run_overlap_count"] += len({code for code in overlap_stock_codes if code})
+        summary_counts["missing_candidate_count"] += len(missing_candidates)
+        summary_counts["non_candidate_run_target_count"] += len(non_candidate_run_stock_codes)
+        summary_counts["date_mismatch_candidate_count"] += len(date_mismatch_candidates)
+        summary_counts["candidate_not_in_scope_count"] += len(missing_candidates)
+
+        report_latest_collected_at = _news_evidence_scope_max_iso([report.collected_at for report in reports])
+        summary_latest_generated_at = _news_evidence_scope_max_iso([summary.generated_at for summary in summaries])
+        first_run_created_at = _news_evidence_scope_min_iso([run.created_at for run in runs])
+        last_run_created_at = _news_evidence_scope_max_iso([run.created_at for run in runs])
+        date_breakdown.append(
+            {
+                "business_date": business_date.isoformat(),
+                "candidate_business_date": business_date.isoformat(),
+                "candidate_generation_source": "build_web_view_candidate_evidence_snapshot",
+                "candidate_stock_codes": candidate_stock_codes,
+                "candidate_stocks": candidate_entries,
+                "run_target_stock_codes": run_target_stock_codes,
+                "run_targets": run_target_entries,
+                "overlap_count": len({code for code in overlap_stock_codes if code}),
+                "overlap_stock_codes": sorted({code for code in overlap_stock_codes if code}),
+                "missing_top_candidate_count": len(missing_candidates),
+                "missing_candidate_stock_codes": [str(entry["stock_code"]) for entry in missing_candidates if str(entry["stock_code"])],
+                "missing_candidates": missing_candidates,
+                "non_candidate_run_target_count": len(non_candidate_run_stock_codes),
+                "non_candidate_run_stock_codes": non_candidate_run_stock_codes,
+                "evidence_business_dates": [business_date.isoformat()] if evidence_rows else [],
+                "same_date_evidence_count": len(evidence_rows),
+                "date_mismatch_candidates": date_mismatch_candidates,
+                "run_scope_inference": _news_evidence_run_scope_inference(
+                    candidate_count=len(candidate_entries),
+                    run_target_count=len(run_target_entries),
+                    overlap_count=len({code for code in overlap_stock_codes if code}),
+                    missing_candidate_count=len(missing_candidates),
+                    non_candidate_run_target_count=len(non_candidate_run_stock_codes),
+                ),
+                "timing": {
+                    "latest_report_collected_at": report_latest_collected_at,
+                    "latest_candidate_summary_generated_at": summary_latest_generated_at,
+                    "first_run_created_at": first_run_created_at,
+                    "last_run_created_at": last_run_created_at,
+                    "first_run_vs_summary": _news_evidence_scope_temporal_order(
+                        summary_latest_generated_at,
+                        first_run_created_at,
+                    ),
+                },
+            }
+        )
+
+    return {
+        "surface": "news-evidence-run-scope-audit",
+        "read_only": True,
+        "writes_db": False,
+        "live_fetch": False,
+        "scoring": False,
+        "recommendation": False,
+        "recent_business_days": recent_business_days,
+        "candidate_limit": candidate_limit,
+        "dates": [business_date.isoformat() for business_date in inspected_dates],
+        "known_input_paths": _news_evidence_known_input_paths(),
+        "summary": {
+            "candidate_count": int(summary_counts["candidate_count"]),
+            "run_count": int(summary_counts["run_count"]),
+            "run_target_count": int(summary_counts["run_target_count"]),
+            "candidate_run_overlap_count": int(summary_counts["candidate_run_overlap_count"]),
+            "missing_candidate_count": int(summary_counts["missing_candidate_count"]),
+            "non_candidate_run_target_count": int(summary_counts["non_candidate_run_target_count"]),
+            "date_mismatch_candidate_count": int(summary_counts["date_mismatch_candidate_count"]),
+            "candidate_not_in_scope_count": int(summary_counts["candidate_not_in_scope_count"]),
+            "run_source_mode_distribution": dict(sorted(run_source_modes.items())),
+        },
+        "date_breakdown": date_breakdown,
+        "candidate_not_in_scope_examples": candidate_not_in_scope_examples,
+        "date_mismatch_examples": date_mismatch_examples,
+        "judgment": _news_evidence_run_scope_judgment(summary_counts),
+    }
+
+
+def _news_evidence_run_scope_target_entry(
+    run: object,
+    evidence_rows: Sequence[ReportLinkedNewsEvidenceRecord],
+) -> dict[str, object]:
+    run_id = str(getattr(run, "run_id", "") or "")
+    matching_evidence = [row for row in evidence_rows if row.run_id == run_id]
+    return {
+        "run_id": run_id,
+        "target_date": getattr(run, "target_date").isoformat(),
+        "stock_code": getattr(run, "stock_code", None),
+        "stock_name": getattr(run, "stock_name", ""),
+        "source_mode": getattr(run, "source_mode", ""),
+        "source_command_or_run_type": _news_evidence_run_scope_source_type(run),
+        "page_limit": getattr(run, "page_limit", None),
+        "live_fetch": bool(getattr(run, "live_fetch", False)),
+        "matched_count": int(getattr(run, "matched_count", 0) or 0),
+        "saved_evidence_count": len(matching_evidence),
+        "created_at": getattr(run, "created_at").isoformat(),
+    }
+
+
+def _news_evidence_run_scope_source_type(run: object) -> str:
+    source_mode = str(getattr(run, "source_mode", "") or "")
+    if source_mode == "naver_5_lane_preview":
+        return "stored_naver_5_lane_preview_or_briefing_collect"
+    return source_mode or "unknown_stored_news_intelligence_run"
+
+
+def _news_evidence_run_scope_inference(
+    *,
+    candidate_count: int,
+    run_target_count: int,
+    overlap_count: int,
+    missing_candidate_count: int,
+    non_candidate_run_target_count: int,
+) -> str:
+    if candidate_count <= 0:
+        return "no_candidates"
+    if run_target_count <= 0:
+        return "no_news_runs"
+    if overlap_count <= 0:
+        return "separate_news_run_universe"
+    if missing_candidate_count <= 0 and non_candidate_run_target_count <= 0:
+        return "candidate_universe_fully_collected"
+    if non_candidate_run_target_count <= 0:
+        return "candidate_universe_partial_limit_or_filter"
+    return "mixed_or_partial_candidate_universe"
+
+
+def _news_evidence_scope_max_iso(values: Sequence[datetime]) -> str | None:
+    iso_values = [value.isoformat() for value in values if value is not None]
+    return max(iso_values) if iso_values else None
+
+
+def _news_evidence_scope_min_iso(values: Sequence[datetime]) -> str | None:
+    iso_values = [value.isoformat() for value in values if value is not None]
+    return min(iso_values) if iso_values else None
+
+
+def _news_evidence_scope_temporal_order(
+    summary_generated_at: str | None,
+    first_run_created_at: str | None,
+) -> str:
+    if not summary_generated_at:
+        return "candidate_summary_time_missing"
+    if not first_run_created_at:
+        return "no_news_run"
+    if first_run_created_at >= summary_generated_at:
+        return "first_run_at_or_after_candidate_summary"
+    return "first_run_before_candidate_summary"
+
+
+def _news_evidence_known_input_paths() -> list[dict[str, object]]:
+    return [
+        {
+            "path": "news-intelligence-preview",
+            "input_universe": "explicit operator --stock-name/--stock-code",
+            "writes_db": "only with --save-observation",
+        },
+        {
+            "path": "news-intelligence-briefing-collect",
+            "input_universe": "stored daily summaries sorted by mention_count, optional --stock-code filter, bounded by --limit",
+            "writes_db": "only with --save-observation --confirm-save",
+        },
+        {
+            "path": "POST /api/news-observations/collect",
+            "input_universe": "build_web_view_candidate_evidence_snapshot selected-date top candidates, bounded to 1..5",
+            "writes_db": "access-gated operator action only",
+        },
+        {
+            "path": "scheduled-market-briefing-slot",
+            "input_universe": "same web-view candidate collector, bounded to top 2 after scheduler guards",
+            "writes_db": "only during non-dry-run scheduled briefing after guards pass",
+        },
+    ]
+
+
+def _news_evidence_run_scope_judgment(counts: Counter[str]) -> dict[str, object]:
+    missing = int(counts["missing_candidate_count"])
+    overlap = int(counts["candidate_run_overlap_count"])
+    non_candidate = int(counts["non_candidate_run_target_count"])
+    date_mismatch = int(counts["date_mismatch_candidate_count"])
+    if missing > overlap and non_candidate > 0:
+        primary = "news_run_uses_mixed_or_separate_universe"
+    elif missing > overlap:
+        primary = "top_candidate_news_collect_not_run_or_bounded"
+    elif date_mismatch > 0:
+        primary = "candidate_and_news_run_dates_misaligned"
+    else:
+        primary = "run_scope_overlap_sufficient"
+    return {
+        "primary_bottleneck": primary,
+        "implements_collection_change": False,
+        "matching_logic_changed": False,
+    }
+
+
+NEWS_NO_MATCH_REASON_ORDER = (
+    "true_no_news",
+    "source_coverage_gap",
+    "alias_gap",
+    "theme_only_mention",
+    "date_window_gap",
+    "parser_gap",
+    "unknown",
+)
+
+
+def _run_news_no_match_diagnosis(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    business_date: date | None,
+    stock_code: str | None,
+    stock_name: str | None,
+    candidate_limit: int,
+    top_n: int,
+    as_json: bool,
+) -> int:
+    payload = _build_news_no_match_diagnosis(
+        config,
+        repository,
+        business_date=business_date,
+        stock_code=stock_code,
+        stock_name=stock_name,
+        candidate_limit=candidate_limit,
+        top_n=top_n,
+    )
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    summary = payload["summary"]
+    print("News no-match diagnosis")
+    print("- read_only: true")
+    print("- writes_db: false")
+    print(f"- business_date: {payload['business_date']}")
+    print(f"- targets: {payload['target_count']}")
+    print(f"- no matching article: {summary['no_matching_article_count']}")
+    print(f"- reasons: {_format_count_map(summary['reason_distribution'])}")
+    return 0
+
+
+def _build_news_no_match_diagnosis(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    business_date: date | None,
+    stock_code: str | None,
+    stock_name: str | None,
+    candidate_limit: int,
+    top_n: int,
+) -> dict[str, object]:
+    warnings: list[str] = []
+    resolved_date = _resolve_news_intelligence_top_candidate_date(repository, business_date)
+    bounded_candidate_limit = max(0, min(int(candidate_limit), 10))
+    bounded_top_n = max(0, min(int(top_n), 10))
+    if candidate_limit > 10:
+        warnings.append("candidate_limit capped at 10")
+    if top_n > 10:
+        warnings.append("top_n capped at 10")
+    targets = _news_no_match_targets(
+        config,
+        repository,
+        business_date=resolved_date,
+        stock_code=stock_code,
+        stock_name=stock_name,
+        candidate_limit=bounded_candidate_limit,
+        top_n=bounded_top_n,
+        warnings=warnings,
+    )
+    all_evidence_rows = _web_view_unique_news_evidence_rows(
+        repository.list_report_linked_news_evidence(limit=50000)
+    )
+    same_date_evidence = [
+        row for row in all_evidence_rows if resolved_date is not None and row.target_date == resolved_date
+    ]
+    target_diagnostics = [
+        _news_no_match_target_diagnosis(
+            repository,
+            business_date=resolved_date,
+            target=target,
+            same_date_evidence=same_date_evidence,
+            all_evidence_rows=all_evidence_rows,
+        )
+        for target in targets
+    ]
+    reason_counts: Counter[str] = Counter(
+        str(item["likely_reason"])
+        for item in target_diagnostics
+        if item.get("likely_reason") in NEWS_NO_MATCH_REASON_ORDER
+    )
+    status_counts: Counter[str] = Counter(str(item["current_status"]) for item in target_diagnostics)
+    return {
+        "surface": "news-no-match-diagnosis",
+        "read_only": True,
+        "writes_db": False,
+        "live_fetch": False,
+        "scoring": False,
+        "recommendation": False,
+        "business_date": resolved_date.isoformat() if resolved_date is not None else None,
+        "candidate_limit": bounded_candidate_limit,
+        "top_n": bounded_top_n,
+        "target_count": len(target_diagnostics),
+        "summary": {
+            "status_distribution": dict(sorted(status_counts.items())),
+            "reason_distribution": _ordered_nonzero_count_map(reason_counts, NEWS_NO_MATCH_REASON_ORDER),
+            "no_matching_article_count": int(status_counts.get("no_matching_article", 0)),
+            "same_date_run_target_count": sum(1 for item in target_diagnostics if item["same_date_run_exists"]),
+            "with_digest_count": sum(1 for item in target_diagnostics if item["current_status"] == "has_digest"),
+        },
+        "targets": target_diagnostics,
+        "diagnostic_limitations": {
+            "unmatched_article_titles_available": False,
+            "reason": "Stored news_intelligence_runs keep aggregate parsed/deduped/matched counts and warnings, while report_linked_news_evidence stores matched evidence only.",
+        },
+        "warnings": warnings,
+    }
+
+
+def _news_no_match_targets(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    business_date: date | None,
+    stock_code: str | None,
+    stock_name: str | None,
+    candidate_limit: int,
+    top_n: int,
+    warnings: list[str],
+) -> list[dict[str, object]]:
+    if business_date is None:
+        warnings.append("no stored business_date found")
+        return []
+    snapshot = build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=max(candidate_limit, top_n, 0),
+        include_internal=True,
+    )
+    candidate_rows = list(snapshot.get("rows") or [])
+    if stock_code or stock_name:
+        resolved = _news_no_match_resolve_explicit_target(
+            repository,
+            business_date=business_date,
+            candidate_rows=candidate_rows,
+            stock_code=(stock_code or "").strip(),
+            stock_name=(stock_name or "").strip(),
+        )
+        return [resolved] if resolved is not None else []
+    targets: list[dict[str, object]] = []
+    for rank, row in enumerate(candidate_rows[:top_n], start=1):
+        targets.append(
+            {
+                "rank": rank,
+                "selected_top2": rank <= 2,
+                "selected_top5": rank <= 5,
+                "stock_code": str(row.get("stock_code") or "").strip(),
+                "stock_name": str(row.get("stock_name") or "").strip(),
+                "news_digest": _news_evidence_candidate_has_digest(row),
+            }
+        )
+    return targets
+
+
+def _news_no_match_resolve_explicit_target(
+    repository: StockMonitorRepository,
+    *,
+    business_date: date,
+    candidate_rows: Sequence[dict[str, object]],
+    stock_code: str,
+    stock_name: str,
+) -> dict[str, object] | None:
+    normalized_name = _web_view_normalize_news_identity(stock_name)
+    for rank, row in enumerate(candidate_rows, start=1):
+        row_code = str(row.get("stock_code") or "").strip()
+        row_name = str(row.get("stock_name") or "").strip()
+        if stock_code and row_code == stock_code:
+            return {
+                "rank": rank,
+                "selected_top2": rank <= 2,
+                "selected_top5": rank <= 5,
+                "stock_code": row_code,
+                "stock_name": stock_name or row_name,
+                "news_digest": _news_evidence_candidate_has_digest(row),
+            }
+        if normalized_name and _web_view_normalize_news_identity(row_name) == normalized_name:
+            return {
+                "rank": rank,
+                "selected_top2": rank <= 2,
+                "selected_top5": rank <= 5,
+                "stock_code": stock_code or row_code,
+                "stock_name": row_name,
+                "news_digest": _news_evidence_candidate_has_digest(row),
+            }
+    for summary in repository.list_daily_summaries(business_date):
+        if stock_code and summary.stock_code == stock_code:
+            return {
+                "rank": None,
+                "selected_top2": False,
+                "selected_top5": False,
+                "stock_code": stock_code,
+                "stock_name": stock_name or summary.stock_name,
+                "news_digest": False,
+            }
+        if normalized_name and _web_view_normalize_news_identity(summary.stock_name) == normalized_name:
+            return {
+                "rank": None,
+                "selected_top2": False,
+                "selected_top5": False,
+                "stock_code": stock_code or (summary.stock_code or ""),
+                "stock_name": summary.stock_name,
+                "news_digest": False,
+            }
+    if stock_code or stock_name:
+        return {
+            "rank": None,
+            "selected_top2": False,
+            "selected_top5": False,
+            "stock_code": stock_code,
+            "stock_name": stock_name,
+            "news_digest": False,
+        }
+    return None
+
+
+def _news_no_match_target_diagnosis(
+    repository: StockMonitorRepository,
+    *,
+    business_date: date | None,
+    target: dict[str, object],
+    same_date_evidence: Sequence[ReportLinkedNewsEvidenceRecord],
+    all_evidence_rows: Sequence[ReportLinkedNewsEvidenceRecord],
+) -> dict[str, object]:
+    stock_code = str(target.get("stock_code") or "").strip()
+    stock_name = str(target.get("stock_name") or "").strip()
+    runs = (
+        repository.list_news_intelligence_runs(target_date=business_date, limit=1000)
+        if business_date is not None
+        else []
+    )
+    matching_runs = [
+        run for run in runs if _news_evidence_run_matches_candidate(run, stock_code=stock_code, stock_name=stock_name)
+    ]
+    latest_run = matching_runs[0] if matching_runs else None
+    matching_rows = (
+        _web_view_news_observation_rows_for_stock(
+            repository,
+            business_date=business_date,
+            stock_code=stock_code,
+            stock_name=stock_name,
+        )
+        if business_date is not None
+        else []
+    )
+    other_date_evidence = [
+        row
+        for row in all_evidence_rows
+        if business_date is not None
+        and row.target_date != business_date
+        and _news_evidence_match_row_related(row, stock_code=stock_code, stock_name=stock_name)
+    ]
+    same_date_text_hits = [
+        row
+        for row in same_date_evidence
+        if not _news_evidence_match_row_related(row, stock_code=stock_code, stock_name=stock_name)
+        and _news_no_match_evidence_text_mentions_candidate(row, stock_code=stock_code, stock_name=stock_name)
+    ]
+    alias_hits = _news_no_match_alias_hits(latest_run, same_date_evidence)
+    current_status = _news_no_match_current_status(
+        same_date_run_exists=bool(matching_runs),
+        matching_rows=matching_rows,
+        news_digest=bool(target.get("news_digest")),
+    )
+    likely_reason = _news_no_match_likely_reason(
+        current_status=current_status,
+        latest_run=latest_run,
+        matching_rows=matching_rows,
+        other_date_evidence=other_date_evidence,
+        same_date_text_hits=same_date_text_hits,
+        alias_hits=alias_hits,
+    )
+    return {
+        "business_date": business_date.isoformat() if business_date is not None else None,
+        "rank": target.get("rank"),
+        "selected_top2": bool(target.get("selected_top2")),
+        "selected_top5": bool(target.get("selected_top5")),
+        "stock_code": stock_code,
+        "stock_name": stock_name,
+        "current_status": current_status,
+        "same_date_run_exists": bool(matching_runs),
+        "matching_run_count": len(matching_runs),
+        "latest_run_id": getattr(latest_run, "run_id", None),
+        "latest_run_created_at": getattr(latest_run, "created_at", None).isoformat() if latest_run is not None else None,
+        "parsed_article_count": int(getattr(latest_run, "parsed_count", 0) or 0),
+        "deduped_article_count": int(getattr(latest_run, "deduped_count", 0) or 0),
+        "matched_count": int(getattr(latest_run, "matched_count", 0) or 0),
+        "saved_evidence_count": len(matching_rows),
+        "candidate_alias_hits": alias_hits,
+        "nearby_theme_hits": _news_no_match_nearby_theme_hits(stock_name, same_date_evidence),
+        "same_date_text_hit_count": len(same_date_text_hits),
+        "same_date_text_hits": [
+            _news_no_match_evidence_example(row) for row in same_date_text_hits[:5]
+        ],
+        "other_date_evidence_count": len(other_date_evidence),
+        "other_date_evidence_dates": _web_view_unique_texts(
+            [row.target_date.isoformat() for row in other_date_evidence],
+            limit=10,
+        ),
+        "other_date_evidence": [
+            _news_no_match_evidence_example(row) for row in other_date_evidence[:5]
+        ],
+        "warnings": list(getattr(latest_run, "warnings", ()) or ()) if latest_run is not None else [],
+        "likely_reason": likely_reason,
+    }
+
+
+def _news_no_match_current_status(
+    *,
+    same_date_run_exists: bool,
+    matching_rows: Sequence[ReportLinkedNewsEvidenceRecord],
+    news_digest: bool,
+) -> str:
+    if news_digest or any(row.relevance == "direct" for row in matching_rows):
+        return "has_digest"
+    if matching_rows:
+        return "only_market_or_reference"
+    if same_date_run_exists:
+        return "no_matching_article"
+    return "no_same_date_run"
+
+
+def _news_no_match_likely_reason(
+    *,
+    current_status: str,
+    latest_run: object | None,
+    matching_rows: Sequence[ReportLinkedNewsEvidenceRecord],
+    other_date_evidence: Sequence[ReportLinkedNewsEvidenceRecord],
+    same_date_text_hits: Sequence[ReportLinkedNewsEvidenceRecord],
+    alias_hits: Sequence[str],
+) -> str | None:
+    if current_status == "has_digest":
+        return None
+    if matching_rows:
+        return "theme_only_mention"
+    if other_date_evidence:
+        return "date_window_gap"
+    if alias_hits:
+        return "alias_gap"
+    if same_date_text_hits:
+        return "parser_gap"
+    if latest_run is None:
+        return "unknown"
+    parsed_count = int(getattr(latest_run, "parsed_count", 0) or 0)
+    deduped_count = int(getattr(latest_run, "deduped_count", 0) or 0)
+    matched_count = int(getattr(latest_run, "matched_count", 0) or 0)
+    if matched_count <= 0 and (parsed_count > 0 or deduped_count > 0):
+        return "source_coverage_gap"
+    if matched_count <= 0:
+        return "true_no_news"
+    return "unknown"
+
+
+def _news_no_match_evidence_text_mentions_candidate(
+    row: ReportLinkedNewsEvidenceRecord,
+    *,
+    stock_code: str,
+    stock_name: str,
+) -> bool:
+    haystack = _news_no_match_evidence_text(row)
+    if stock_code and stock_code in haystack:
+        return True
+    normalized_haystack = _web_view_normalize_news_identity(haystack)
+    normalized_name = _web_view_normalize_news_identity(stock_name)
+    return bool(normalized_name and normalized_name in normalized_haystack)
+
+
+def _news_no_match_alias_hits(
+    run: object | None,
+    evidence_rows: Sequence[ReportLinkedNewsEvidenceRecord],
+) -> list[str]:
+    if run is None:
+        return []
+    aliases = [str(alias).strip() for alias in getattr(run, "aliases", ()) or () if str(alias).strip()]
+    if not aliases:
+        return []
+    text = "\n".join(_news_no_match_evidence_text(row) for row in evidence_rows)
+    normalized_text = _web_view_normalize_news_identity(text)
+    hits = [
+        alias
+        for alias in aliases
+        if _web_view_normalize_news_identity(alias) and _web_view_normalize_news_identity(alias) in normalized_text
+    ]
+    return _web_view_unique_texts(hits, limit=10)
+
+
+def _news_no_match_nearby_theme_hits(
+    stock_name: str,
+    evidence_rows: Sequence[ReportLinkedNewsEvidenceRecord],
+) -> list[str]:
+    keywords = [
+        token
+        for token in re.split(r"[^0-9A-Za-z]+", stock_name)
+        if len(token) >= 3
+    ]
+    if not keywords:
+        return []
+    hits: list[str] = []
+    for row in evidence_rows:
+        text = _news_no_match_evidence_text(row).casefold()
+        if any(keyword.casefold() in text for keyword in keywords):
+            hits.append(row.title)
+    return _web_view_unique_texts(hits, limit=5)
+
+
+def _news_no_match_evidence_text(row: ReportLinkedNewsEvidenceRecord) -> str:
+    return "\n".join(
+        str(value or "")
+        for value in (
+            row.stock_code,
+            row.stock_name,
+            row.title,
+            row.summary,
+            row.source,
+            row.matched_alias,
+            row.match_reason,
+            row.relevance_reason,
+        )
+    )
+
+
+def _news_no_match_evidence_example(row: ReportLinkedNewsEvidenceRecord) -> dict[str, object]:
+    return {
+        "target_date": row.target_date.isoformat(),
+        "stock_code": row.stock_code,
+        "stock_name": row.stock_name,
+        "relevance": _news_evidence_coverage_relevance_bucket(row.relevance),
+        "source_lane": row.source_lane,
+        "title": row.title,
+        "published_at": row.published_at.isoformat() if row.published_at is not None else None,
+    }
+
+
 def _build_candidate_evidence_readiness_date(
     config: RuntimeConfig,
     repository: StockMonitorRepository,
@@ -20106,204 +23066,31 @@ def _build_web_view_value_qa_payload(
     dates: tuple[date, ...],
     stock_limit: int,
 ) -> dict[str, object]:
-    issues: list[dict] = []
-    warnings: list[dict] = []
-    _collect_web_view_static_html_copy_issues(_render_web_view_html(), issues=issues)
-    archive = build_web_view_archive_snapshot(config, repository, limit=max(1, stock_limit))
-    _collect_web_view_value_qa_issues(archive, path="archive", issues=issues, warnings=warnings)
-    market = build_web_view_market_snapshot(config, repository)
-    _collect_web_view_value_qa_issues(market, path="market", issues=issues, warnings=warnings)
-    latest_krx_snapshot_date = repository.latest_krx_snapshot_date()
-    _collect_rotation_alias_mapping_qa_issues(
-        config,
-        issues=issues,
-    )
-    _collect_rotation_etf_mapping_qa_issues(
-        config,
-        repository,
-        latest_krx_snapshot_date=latest_krx_snapshot_date,
-        issues=issues,
-        warnings=warnings,
-    )
-    for business_date in dates:
-        krx_snapshot_not_yet_available = latest_krx_snapshot_date is not None and business_date > latest_krx_snapshot_date
-        if krx_snapshot_not_yet_available:
-            warnings.append(
-                {
-                    "code": "krx_snapshot_not_yet_available",
-                    "path": f"daily[{business_date.isoformat()}].market_reference",
-                    "message": (
-                        f"selected date is newer than latest stored KRX snapshot "
-                        f"{latest_krx_snapshot_date.isoformat()}; KRX OpenAPI daily rows are officially "
-                        "published on the next Korean business day at 08:00 KST"
-                    ),
-                }
-            )
-        daily = build_web_view_daily_snapshot(config, repository, business_date=business_date)
-        _collect_web_view_value_qa_issues(daily, path=f"daily[{business_date.isoformat()}]", issues=issues, warnings=warnings)
-        candidate_evidence = build_web_view_candidate_evidence_snapshot(
-            config,
-            repository,
-            business_date=business_date,
-            limit=max(1, stock_limit),
-        )
-        _collect_web_view_value_qa_issues(
-            candidate_evidence,
-            path=f"candidate_evidence[{business_date.isoformat()}]",
-            issues=issues,
-            warnings=warnings,
-        )
-        backtest_observation = build_web_view_backtest_observation_snapshot(
-            config,
-            repository,
-            business_date=business_date,
-            limit=max(1, stock_limit),
-        )
-        _collect_web_view_value_qa_issues(
-            backtest_observation,
-            path=f"backtest_observation[{business_date.isoformat()}]",
-            issues=issues,
-            warnings=warnings,
-        )
-        intraday = build_web_view_intraday_snapshot(config, repository, business_date=business_date)
-        _collect_web_view_value_qa_issues(
-            intraday,
-            path=f"intraday[{business_date.isoformat()}]",
-            issues=issues,
-            warnings=warnings,
-        )
-        for category in _web_view_value_qa_category_targets(daily, limit=max(1, stock_limit)):
-            category_type = category["category_type"]
-            display_name = category["display_name"]
-            category_detail = build_web_view_category_detail_snapshot(
-                config,
-                repository,
-                business_date=business_date,
-                category_type=category_type,
-                category_name=category.get("category_name") or display_name,
-                category_display_name=display_name,
-            )
-            _collect_web_view_value_qa_issues(
-                category_detail,
-                path=f"category[{business_date.isoformat()}:{category_type}:{display_name}]",
-                issues=issues,
-                warnings=warnings,
-            )
-            category_trend = build_web_view_category_trend_snapshot(
-                config,
-                repository,
-                category_type=category_type,
-                category_name=category.get("category_name") or display_name,
-                category_display_name=display_name,
-                limit=max(1, stock_limit),
-            )
-            _collect_web_view_value_qa_issues(
-                category_trend,
-                path=f"category_trend[{category_type}:{display_name}]",
-                issues=issues,
-                warnings=warnings,
-            )
-        flow_trend = build_web_view_flow_trend_snapshot(config, repository, business_date=business_date, limit=max(1, stock_limit))
-        _collect_web_view_value_qa_issues(
-            flow_trend,
-            path=f"flow_trend[{business_date.isoformat()}]",
-            issues=issues,
-            warnings=warnings,
-        )
-        etf_trend = build_web_view_etf_trend_snapshot(config, repository, business_date=business_date, limit=max(1, stock_limit))
-        _collect_web_view_value_qa_issues(
-            etf_trend,
-            path=f"etf_trend[{business_date.isoformat()}]",
-            issues=issues,
-            warnings=warnings,
-        )
-        rotation_overlay = build_web_view_rotation_overlay_snapshot(config, repository, business_date=business_date)
-        _collect_web_view_value_qa_issues(
-            rotation_overlay,
-            path=f"rotation_overlay[{business_date.isoformat()}]",
-            issues=issues,
-            warnings=warnings,
-        )
-        stocks = daily.get("stocks", [])
-        if daily.get("report_count", 0) and not stocks:
-            warnings.append(
-                {
-                    "code": "missing_stock_rows",
-                    "path": f"daily[{business_date.isoformat()}].stocks",
-                    "message": "report_count exists but stock summary rows are empty",
-                }
-            )
-        for stock in stocks[: max(0, stock_limit)]:
-            stock_code = stock.get("stock_code")
-            if not stock_code:
-                warnings.append(
-                    {
-                        "code": "missing_stock_code",
-                        "path": f"daily[{business_date.isoformat()}].stocks",
-                        "message": f"stock without code: {stock.get('stock_name') or '-'}",
-                    }
-                )
-                continue
-            detail = build_web_view_stock_detail_snapshot(
-                config,
-                repository,
-                business_date=business_date,
-                stock_code=str(stock_code),
-            )
-            _collect_web_view_value_qa_issues(
-                detail,
-                path=f"stock[{business_date.isoformat()}:{stock_code}]",
-                issues=issues,
-                warnings=warnings,
-            )
-            if detail.get("market_reference") is None and not krx_snapshot_not_yet_available:
-                unresolved_krx_metadata = repository.get_latest_krx_stock_metadata(str(stock_code)) is None
-                if unresolved_krx_metadata:
-                    warnings.append(
-                        {
-                            "code": "unresolved_stock_market_reference",
-                            "path": f"stock[{business_date.isoformat()}:{stock_code}].market_reference",
-                            "message": "selected stock has no KRX metadata mapping, so same-date market reference is unavailable",
-                        }
-                    )
-                    continue
-                issues.append(
-                    {
-                        "code": "missing_market_reference",
-                        "path": f"stock[{business_date.isoformat()}:{stock_code}].market_reference",
-                        "message": "selected stock has no same-date KRX market reference",
-                    }
-                )
+    from stock_monitor.cli_web_view_checks import _build_web_view_value_qa_payload as impl
 
-    payload = {
-        "surface": "web-view-value-qa",
-        "read_only": True,
-        "dates": [item.isoformat() for item in dates],
-        "stock_limit": stock_limit,
-        "scanned_surfaces": [
-            "static_html",
-            "archive",
-            "market",
-            "rotation_alias_mapping",
-            "rotation_etf_mapping",
-            "daily",
-            "candidate_evidence",
-            "backtest_observation",
-            "intraday",
-            "category",
-            "category_trend",
-            "flow_trend",
-            "etf_trend",
-            "rotation_overlay",
-            "stock_detail",
-        ],
-        "issue_count": len(issues),
-        "warning_count": len(warnings),
-        "issues": issues,
-        "warnings": warnings,
-    }
-    return payload
+    return impl(config, repository, dates=dates, stock_limit=stock_limit, runtime=_web_view_check_runtime())
 
+def _web_view_check_runtime():
+    from stock_monitor.web_view_runtime import WebViewCheckRuntime
+
+    return WebViewCheckRuntime(
+        render_web_view_html=_render_web_view_html,
+        build_web_view_archive_snapshot=build_web_view_archive_snapshot,
+        build_web_view_market_snapshot=build_web_view_market_snapshot,
+        collect_rotation_alias_mapping_qa_issues=_collect_rotation_alias_mapping_qa_issues,
+        collect_rotation_etf_mapping_qa_issues=_collect_rotation_etf_mapping_qa_issues,
+        build_web_view_daily_snapshot=build_web_view_daily_snapshot,
+        build_web_view_candidate_evidence_snapshot=build_web_view_candidate_evidence_snapshot,
+        build_web_view_backtest_observation_snapshot=build_web_view_backtest_observation_snapshot,
+        build_web_view_intraday_snapshot=build_web_view_intraday_snapshot,
+        build_web_view_category_detail_snapshot=build_web_view_category_detail_snapshot,
+        build_web_view_category_trend_snapshot=build_web_view_category_trend_snapshot,
+        build_web_view_flow_trend_snapshot=build_web_view_flow_trend_snapshot,
+        build_web_view_etf_trend_snapshot=build_web_view_etf_trend_snapshot,
+        build_web_view_rotation_overlay_snapshot=build_web_view_rotation_overlay_snapshot,
+        build_web_view_stock_detail_snapshot=build_web_view_stock_detail_snapshot,
+        create_web_view_server=create_web_view_server,
+    )
 
 def _run_web_view_value_qa(
     config: RuntimeConfig,
@@ -20313,27 +23100,9 @@ def _run_web_view_value_qa(
     stock_limit: int,
     as_json: bool,
 ) -> int:
-    payload = _build_web_view_value_qa_payload(
-        config,
-        repository,
-        dates=dates,
-        stock_limit=stock_limit,
-    )
-    if as_json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return 1 if payload["issue_count"] else 0
+    from stock_monitor.cli_web_view_checks import _run_web_view_value_qa as impl
 
-    print("Web-view value QA")
-    print(f"- dates: {', '.join(payload['dates'])}")
-    print(f"- scanned surfaces: {', '.join(payload['scanned_surfaces'])}")
-    print(f"- issues: {payload['issue_count']}")
-    print(f"- warnings: {payload['warning_count']}")
-    for issue in payload["issues"]:
-        print(f"- issue | {issue['code']} | {issue['path']} | {issue['message']}")
-    for warning in payload["warnings"]:
-        print(f"- warning | {warning['code']} | {warning['path']} | {warning['message']}")
-    return 1 if payload["issue_count"] else 0
-
+    return impl(config, repository, dates=dates, stock_limit=stock_limit, as_json=as_json, runtime=_web_view_check_runtime())
 
 def _run_web_view_browser_smoke(
     config: RuntimeConfig,
@@ -20344,54 +23113,143 @@ def _run_web_view_browser_smoke(
     respect_access_code: bool,
     as_json: bool,
 ) -> int:
-    if stock_limit < 1:
-        raise ValueError("--stock-limit must be at least 1.")
-    resolved_date = business_date or _resolve_web_view_browser_smoke_date(repository)
-    payload = _probe_web_view_browser_smoke(
+    from stock_monitor.cli_web_view_checks import _run_web_view_browser_smoke as impl
+
+    return impl(
         config,
         repository,
-        business_date=resolved_date,
+        business_date=business_date,
         stock_limit=stock_limit,
         respect_access_code=respect_access_code,
+        as_json=as_json,
+        runtime=_web_view_check_runtime(),
     )
-    if as_json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return 1 if payload["issue_count"] else 0
-
-    print("Web-view browser smoke")
-    print(f"- read-only: {payload['read_only']}")
-    print(f"- host: {payload['host']}")
-    print(f"- business date: {payload['business_date']}")
-    print(f"- stock limit: {payload['stock_limit']}")
-    print(f"- access code mode: {payload['access_code_mode']}")
-    print(f"- viewports: {len(payload['viewports'])}")
-    print(f"- api checks: {len(payload['api_checks'])}")
-    print(f"- issues: {payload['issue_count']}")
-    for viewport in payload["viewports"]:
-        tab_order = "/".join(viewport.get("tab_order") or [])
-        panel_state = (
-            f"watch={viewport.get('watch_panel_clickable')} "
-            f"stock={viewport.get('stock_panel_clickable')} "
-            f"market={viewport.get('market_panel_clickable')} "
-            f"rotation={viewport.get('rotation_panel_clickable')}"
-        )
-        print(
-            f"- viewport | {viewport['name']} | {viewport['width']}x{viewport['height']} | "
-            f"tabs={viewport['tab_count']} | order={tab_order} | panels={panel_state} | "
-            f"overflow={viewport['horizontal_overflow_px']}px"
-        )
-    for check in payload["api_checks"]:
-        print(f"- api | {check['path']} | {check['method']} | {check['status']}")
-    for issue in payload["issues"]:
-        print(f"- issue | {issue['code']} | {issue['path']} | {issue['message']}")
-    return 1 if payload["issue_count"] else 0
-
 
 def _resolve_web_view_browser_smoke_date(repository: StockMonitorRepository) -> date:
-    summary_dates = repository.count_summaries_by_business_date(limit=1)
-    if summary_dates:
-        return summary_dates[0][0]
-    raise ValueError("No daily summary date is available for web-view-browser-smoke. Pass --date explicitly.")
+    from stock_monitor.cli_web_view_checks import _resolve_web_view_browser_smoke_date as impl
+
+    return impl(repository)
+
+def _probe_web_view_browser_smoke(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    business_date: date,
+    stock_limit: int,
+    respect_access_code: bool,
+) -> dict[str, object]:
+    from stock_monitor.cli_web_view_checks import _probe_web_view_browser_smoke as impl
+
+    return impl(
+        config,
+        repository,
+        business_date=business_date,
+        stock_limit=stock_limit,
+        respect_access_code=respect_access_code,
+        runtime=_web_view_check_runtime(),
+    )
+
+def _collect_web_view_browser_api_smoke_issues(
+    base_url: str,
+    *,
+    business_date: date,
+    stock_limit: int,
+    issues: list[dict[str, object]],
+    api_checks: list[dict[str, object]],
+) -> None:
+    from stock_monitor.cli_web_view_checks import _collect_web_view_browser_api_smoke_issues as impl
+
+    return impl(base_url, business_date=business_date, stock_limit=stock_limit, issues=issues, api_checks=api_checks)
+
+def _collect_web_view_browser_render_smoke_issues(
+    config: RuntimeConfig,
+    *,
+    base_url: str,
+    business_date: date,
+    issues: list[dict[str, object]],
+    viewports: list[dict[str, object]],
+) -> None:
+    from stock_monitor.cli_web_view_checks import _collect_web_view_browser_render_smoke_issues as impl
+
+    return impl(config, base_url=base_url, business_date=business_date, issues=issues, viewports=viewports)
+
+def _web_view_smoke_http_request(
+    url: str,
+    *,
+    method: str = "GET",
+    data: bytes | None = None,
+) -> tuple[int, bytes, str]:
+    from stock_monitor.cli_web_view_checks import _web_view_smoke_http_request as impl
+
+    return impl(url, method=method, data=data)
+
+def _resolve_web_view_value_qa_dates(
+    config: RuntimeConfig,
+    *,
+    explicit_dates: tuple[date, ...],
+    recent_business_days: int | None,
+    today: date | None = None,
+) -> tuple[date, ...]:
+    from stock_monitor.cli_web_view_checks import _resolve_web_view_value_qa_dates as impl
+
+    return impl(config, explicit_dates=explicit_dates, recent_business_days=recent_business_days, today=today)
+
+def _web_view_value_qa_category_targets(daily_snapshot: dict, *, limit: int) -> list[dict[str, str]]:
+    from stock_monitor.cli_web_view_checks import _web_view_value_qa_category_targets as impl
+
+    return impl(daily_snapshot, limit=limit)
+
+def _collect_web_view_static_html_copy_issues(markup: str, *, issues: list[dict]) -> None:
+    from stock_monitor.cli_web_view_checks import _collect_web_view_static_html_copy_issues as impl
+
+    return impl(markup, issues=issues)
+
+def _collect_web_view_value_qa_issues(
+    value: object,
+    *,
+    path: str,
+    issues: list[dict],
+    warnings: list[dict],
+) -> None:
+    from stock_monitor.cli_web_view_checks import _collect_web_view_value_qa_issues as impl
+
+    return impl(value, path=path, issues=issues, warnings=warnings)
+
+def _is_web_view_display_field(field_name: str) -> bool:
+    from stock_monitor.cli_web_view_checks import _is_web_view_display_field as impl
+
+    return impl(field_name)
+
+def _is_market_briefing_turnover_display_path(path: str) -> bool:
+    from stock_monitor.cli_web_view_checks import _is_market_briefing_turnover_display_path as impl
+
+    return impl(path)
+
+def _looks_like_raw_won_amount(value: str) -> bool:
+    from stock_monitor.cli_web_view_checks import _looks_like_raw_won_amount as impl
+
+    return impl(value)
+
+def _is_web_view_forbidden_public_key(key: str) -> bool:
+    from stock_monitor.cli_web_view_checks import _is_web_view_forbidden_public_key as impl
+
+    return impl(key)
+
+def _collect_public_observation_text_issue(value: str, *, path: str, issues: list[dict]) -> None:
+    from stock_monitor.cli_web_view_checks import _collect_public_observation_text_issue as impl
+
+    return impl(value, path=path, issues=issues)
+
+def _is_source_report_text_path(path: str) -> bool:
+    from stock_monitor.cli_web_view_checks import _is_source_report_text_path as impl
+
+    return impl(path)
+
+def _has_public_observation_decision_wording(value: str) -> bool:
+    from stock_monitor.cli_web_view_checks import _has_public_observation_decision_wording as impl
+
+    return impl(value)
+
 
 
 def _run_external_web_view_smoke(
@@ -20913,793 +23771,9 @@ def _external_web_view_first_stock_code(payload: object | None) -> str | None:
 
 
 def _external_web_view_forbidden_public_json_keys(body: bytes) -> list[str]:
-    try:
-        payload = json.loads(body.decode("utf-8"))
-    except Exception:
-        return []
-    forbidden = {
-        "admin_audit_log",
-        "db_path",
-        "env_run_suppressed_dates",
-        "health",
-        "internal_candidate_signals",
-        "internal_missing_information",
-        "operator_controls",
-        "operation_profile",
-        "quality_flags",
-        "recent_admin_audit_logs",
-        "safe_settings",
-        "scheduler_tasks",
-        "worker_states",
-        "_internal_candidate_signals",
-        "_internal_missing_information",
-        "_sort_density",
-        "_sort_signal",
-        "five_business_day_broker_count",
-        "previous_broker_count",
-    }
-    found: set[str] = set()
+    from stock_monitor.web_view_runtime import forbidden_public_json_keys
 
-    def visit(value: object) -> None:
-        if isinstance(value, dict):
-            for key, nested in value.items():
-                if str(key) in forbidden:
-                    found.add(str(key))
-                visit(nested)
-        elif isinstance(value, list):
-            for item in value:
-                visit(item)
-
-    visit(payload)
-    return sorted(found)
-
-
-def _probe_web_view_browser_smoke(
-    config: RuntimeConfig,
-    repository: StockMonitorRepository,
-    *,
-    business_date: date,
-    stock_limit: int,
-    respect_access_code: bool,
-) -> dict[str, object]:
-    smoke_config = config
-    access_code_mode = "configured"
-    if not respect_access_code:
-        access_code_mode = "temporary_disabled_for_local_smoke"
-        smoke_config = replace(
-            config,
-            access_code_path=config.data_dir / f".web_view_browser_smoke_{secrets.token_hex(8)}.json",
-        )
-
-    issues: list[dict[str, object]] = []
-    viewports: list[dict[str, object]] = []
-    api_checks: list[dict[str, object]] = []
-    server = create_web_view_server(
-        smoke_config,
-        repository,
-        host="127.0.0.1",
-        port=0,
-        limit=stock_limit,
-        allow_non_loopback=False,
-    )
-    base_url = f"http://127.0.0.1:{server.server_port}"
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        _collect_web_view_browser_api_smoke_issues(
-            base_url,
-            business_date=business_date,
-            stock_limit=stock_limit,
-            issues=issues,
-            api_checks=api_checks,
-        )
-        _collect_web_view_browser_render_smoke_issues(
-            config,
-            base_url=base_url,
-            business_date=business_date,
-            issues=issues,
-            viewports=viewports,
-        )
-    finally:
-        server.shutdown()
-        server.server_close()
-
-    return {
-        "surface": "web-view-browser-smoke",
-        "read_only": True,
-        "sends_telegram": False,
-        "registers_scheduler": False,
-        "host": "127.0.0.1",
-        "business_date": business_date.isoformat(),
-        "stock_limit": stock_limit,
-        "access_code_mode": access_code_mode,
-        "issue_count": len(issues),
-        "issues": issues,
-        "viewports": viewports,
-        "api_checks": api_checks,
-    }
-
-
-def _collect_web_view_browser_api_smoke_issues(
-    base_url: str,
-    *,
-    business_date: date,
-    stock_limit: int,
-    issues: list[dict[str, object]],
-    api_checks: list[dict[str, object]],
-) -> None:
-    daily_path = f"/api/daily/{business_date.isoformat()}"
-    daily_status, daily_body, daily_content_type = _web_view_smoke_http_request(f"{base_url}{daily_path}")
-    api_checks.append({"path": daily_path, "method": "GET", "status": daily_status})
-    daily_payload: dict[str, object] | None = None
-    if daily_status != HTTPStatus.OK:
-        issues.append(
-            {
-                "code": "daily_api_unavailable",
-                "path": daily_path,
-                "message": f"GET daily API returned {daily_status}",
-            }
-        )
-    elif "application/json" not in daily_content_type:
-        issues.append(
-            {
-                "code": "daily_api_not_json",
-                "path": daily_path,
-                "message": f"GET daily API returned content-type {daily_content_type or '-'}",
-            }
-        )
-    else:
-        try:
-            daily_payload = json.loads(daily_body.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            issues.append(
-                {
-                    "code": "daily_api_invalid_json",
-                    "path": daily_path,
-                    "message": str(exc),
-                }
-            )
-        if daily_payload is not None and "business_date" not in daily_payload:
-            issues.append(
-                {
-                    "code": "daily_api_missing_business_date",
-                    "path": daily_path,
-                    "message": "daily API response does not include business_date",
-                }
-            )
-
-    live_daily_path = (
-        f"/api/daily/{business_date.isoformat()}"
-        "?intraday_market_top=1&market_top_limit=100&market_top_page_size=20"
-    )
-    live_daily_status, live_daily_body, live_daily_content_type = _web_view_smoke_http_request(
-        f"{base_url}{live_daily_path}"
-    )
-    api_checks.append({"path": "/api/daily/{date}?intraday_market_top=1", "method": "GET", "status": live_daily_status})
-    if live_daily_status != HTTPStatus.OK:
-        issues.append(
-            {
-                "code": "daily_intraday_market_top_api_unavailable",
-                "path": live_daily_path,
-                "message": f"GET live daily API returned {live_daily_status}",
-            }
-        )
-    elif "application/json" not in live_daily_content_type:
-        issues.append(
-            {
-                "code": "daily_intraday_market_top_api_not_json",
-                "path": live_daily_path,
-                "message": f"GET live daily API returned content-type {live_daily_content_type or '-'}",
-            }
-        )
-    else:
-        forbidden_keys = _external_web_view_forbidden_public_json_keys(live_daily_body)
-        if forbidden_keys:
-            issues.append(
-                {
-                    "code": "daily_intraday_market_top_json_exposes_operator_keys",
-                    "path": live_daily_path,
-                    "message": f"GET live daily API exposes operator/admin keys: {', '.join(forbidden_keys)}.",
-                }
-            )
-        try:
-            live_daily_payload = json.loads(live_daily_body.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            issues.append(
-                {
-                    "code": "daily_intraday_market_top_api_invalid_json",
-                    "path": live_daily_path,
-                    "message": str(exc),
-                }
-            )
-        else:
-            commentary = live_daily_payload.get("market_commentary")
-            reference = commentary.get("intraday_market_top_reference") if isinstance(commentary, dict) else None
-            same_day_status = commentary.get("same_day_report_status") if isinstance(commentary, dict) else None
-            can_overlap = not isinstance(same_day_status, dict) or same_day_status.get("can_overlap_intraday_market_top") is not False
-            if can_overlap and (not isinstance(reference, dict) or reference.get("live_fetch") is not True):
-                issues.append(
-                    {
-                        "code": "daily_intraday_market_top_not_live",
-                        "path": live_daily_path,
-                        "message": "live daily API did not mark intraday_market_top_reference.live_fetch=true.",
-                    }
-                )
-            if isinstance(reference, dict) and reference.get("writes_snapshot_tables") is not False:
-                issues.append(
-                    {
-                        "code": "daily_intraday_market_top_write_boundary",
-                        "path": live_daily_path,
-                        "message": "live daily API must not write snapshot tables.",
-                    }
-                )
-
-    candidate_path = f"/api/candidate-evidence?date={business_date.isoformat()}&limit={max(1, min(stock_limit, 20))}"
-    candidate_status, candidate_body, candidate_content_type = _web_view_smoke_http_request(f"{base_url}{candidate_path}")
-    api_checks.append({"path": "/api/candidate-evidence", "method": "GET", "status": candidate_status})
-    if candidate_status != HTTPStatus.OK or "application/json" not in candidate_content_type:
-        issues.append(
-            {
-                "code": "candidate_api_unavailable",
-                "path": candidate_path,
-                "message": f"candidate evidence API returned {candidate_status} / {candidate_content_type or '-'}",
-            }
-        )
-    else:
-        try:
-            json.loads(candidate_body.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            issues.append(
-                {
-                    "code": "candidate_api_invalid_json",
-                    "path": candidate_path,
-                    "message": str(exc),
-                }
-            )
-        forbidden_keys = _external_web_view_forbidden_public_json_keys(candidate_body)
-        if forbidden_keys:
-            issues.append(
-                {
-                    "code": "candidate_json_exposes_operator_keys",
-                    "path": candidate_path,
-                    "message": f"candidate evidence JSON exposed forbidden keys: {', '.join(forbidden_keys)}",
-                }
-            )
-
-    first_stock_code = ""
-    if daily_payload is not None:
-        stocks = daily_payload.get("stocks")
-        if isinstance(stocks, list):
-            first_stock = next((item for item in stocks if isinstance(item, dict) and item.get("stock_code")), None)
-            if first_stock:
-                first_stock_code = str(first_stock["stock_code"])
-    if first_stock_code:
-        stock_path = f"/api/daily/{business_date.isoformat()}/stocks/{url_parse.quote(first_stock_code)}"
-        stock_status, stock_body, stock_content_type = _web_view_smoke_http_request(f"{base_url}{stock_path}")
-        api_checks.append({"path": "/api/daily/{date}/stocks/{stock_code}", "method": "GET", "status": stock_status})
-        if stock_status != HTTPStatus.OK or "application/json" not in stock_content_type:
-            issues.append(
-                {
-                    "code": "stock_detail_api_unavailable",
-                    "path": stock_path,
-                    "message": f"stock detail API returned {stock_status} / {stock_content_type or '-'}",
-                }
-            )
-        else:
-            try:
-                json.loads(stock_body.decode("utf-8"))
-            except json.JSONDecodeError as exc:
-                issues.append(
-                    {
-                        "code": "stock_detail_api_invalid_json",
-                        "path": stock_path,
-                        "message": str(exc),
-                    }
-                )
-
-    post_status, _post_body, _post_content_type = _web_view_smoke_http_request(
-        f"{base_url}{daily_path}",
-        method="POST",
-        data=b"{}",
-    )
-    api_checks.append({"path": daily_path, "method": "POST", "status": post_status})
-    if post_status != HTTPStatus.METHOD_NOT_ALLOWED:
-        issues.append(
-            {
-                "code": "write_method_not_blocked",
-                "path": daily_path,
-                "message": f"POST daily API returned {post_status}, expected 405",
-            }
-        )
-
-    admin_status, _admin_body, _admin_content_type = _web_view_smoke_http_request(f"{base_url}/api/status")
-    api_checks.append({"path": "/api/status", "method": "GET", "status": admin_status})
-    if admin_status != HTTPStatus.NOT_FOUND:
-        issues.append(
-            {
-                "code": "admin_status_exposed",
-                "path": "/api/status",
-                "message": f"web-view /api/status returned {admin_status}, expected 404",
-            }
-        )
-
-
-def _collect_web_view_browser_render_smoke_issues(
-    config: RuntimeConfig,
-    *,
-    base_url: str,
-    business_date: date,
-    issues: list[dict[str, object]],
-    viewports: list[dict[str, object]],
-) -> None:
-    try:
-        from playwright.sync_api import Error as PlaywrightError
-        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-        from playwright.sync_api import sync_playwright
-    except Exception as exc:  # pragma: no cover - exercised only when Playwright is missing locally.
-        issues.append(
-            {
-                "code": "playwright_unavailable",
-                "path": "web-view-browser-smoke",
-                "message": f"Playwright is not importable: {exc}",
-            }
-        )
-        return
-
-    timeout_ms = max(1_000, min(config.browser_timeout_ms, 15_000))
-    viewport_specs = (
-        {"name": "desktop", "width": 1366, "height": 900},
-        {"name": "tablet", "width": 768, "height": 1024},
-        {"name": "large_mobile", "width": 430, "height": 932},
-        {"name": "mobile", "width": 390, "height": 844},
-    )
-    try:
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            try:
-                preview_context = browser.new_context(viewport={"width": 1366, "height": 900})
-                try:
-                    preview_page = preview_context.new_page()
-                    preview_page.goto(
-                        f"{base_url}/v2?date={business_date.isoformat()}",
-                        wait_until="domcontentloaded",
-                        timeout=timeout_ms,
-                    )
-                    preview_page.wait_for_selector("#v2-candidate-list", timeout=timeout_ms)
-                    preview_page.wait_for_function(
-                        """
-                        () => document.querySelector('#v2-candidate-list')?.dataset.loaded === 'true'
-                        """,
-                        timeout=timeout_ms,
-                    )
-                    v2_runtime_error = "불러오기 오류:" in preview_page.locator("#v2-candidate-list").inner_text(
-                        timeout=timeout_ms
-                    )
-                    if v2_runtime_error:
-                        issues.append(
-                            {
-                                "code": "v2_preview_runtime_error",
-                                "path": "/v2",
-                                "message": "web-view v2 candidate layer reported a runtime error",
-                            }
-                        )
-                finally:
-                    preview_context.close()
-                for spec in viewport_specs:
-                    context = browser.new_context(viewport={"width": spec["width"], "height": spec["height"]})
-                    page = context.new_page()
-                    try:
-                        page.goto(base_url, wait_until="domcontentloaded", timeout=timeout_ms)
-                        page.wait_for_selector("#archive-calendar", timeout=timeout_ms)
-                        page.wait_for_timeout(500)
-                        body_text = page.locator("body").inner_text(timeout=timeout_ms)
-                        view_tab_locator = page.locator("[data-view-tab]")
-                        tab_count = view_tab_locator.count()
-                        tab_order = view_tab_locator.evaluate_all(
-                            "(nodes) => nodes.map((node) => node.getAttribute('data-view-tab'))"
-                        )
-                        current_tab_count = page.locator('[data-view-tab][aria-current="page"]').count()
-                        search_count = page.locator("#stock-search-input").count()
-                        intraday_button_visible = page.locator("#intraday-market-top-check").is_visible()
-                        intraday_overlap_count = page.locator("#intraday-market-top-overlap").count()
-                        candidate_count = page.locator("#main-priority-rows").count()
-                        horizontal_overflow_px = int(
-                            page.evaluate(
-                                """
-                                () => Math.max(
-                                  0,
-                                  Math.max(
-                                    document.documentElement.scrollWidth,
-                                    document.body ? document.body.scrollWidth : 0
-                                  ) - document.documentElement.clientWidth
-                                )
-                                """
-                            )
-                        )
-                        candidate_panel_visible = page.locator("#main-priority-rows").is_visible()
-                        intraday_overlap_initial_visible = page.locator("#intraday-market-top-overlap").is_visible()
-                        observation_summary_main_visible = page.locator("#observation-summary-card").is_visible()
-                        page.locator('[data-view-tab="watch"]').click(timeout=timeout_ms)
-                        page.wait_for_timeout(250)
-                        watch_panel_visible = page.locator("#candidate-evidence-card").is_visible()
-                        watch_observation_summary_visible = page.locator("#observation-summary-card").is_visible()
-                        watch_tab_current = page.locator('[data-view-tab="watch"]').get_attribute("aria-current") == "page"
-                        page.locator('[data-view-tab="stock"]').click(timeout=timeout_ms)
-                        page.wait_for_timeout(250)
-                        stock_panel_visible = page.locator("#stock-context-card").is_visible()
-                        stock_tab_current = page.locator('[data-view-tab="stock"]').get_attribute("aria-current") == "page"
-                        stock_search_flow = page.evaluate(
-                            """
-                            async ({ date }) => {
-                              const result = {
-                                queried: true,
-                                matched_no_report_stock: false,
-                                clicked_visible_result: false,
-                                visible_empty_state: false,
-                                stock_detail_empty_state: false,
-                                picked_stock_code: null,
-                                picked_stock_name: null,
-                                report_empty_state: null,
-                              };
-                              const response = await fetch(`/api/stocks/search?date=${encodeURIComponent(date)}&q=Beta&limit=5`, { cache: "no-store" });
-                              const search = await response.json();
-                              const picked = (search.items || []).find((item) => item.has_selected_date_report === false);
-                              if (!picked) return result;
-                              result.matched_no_report_stock = true;
-                              result.picked_stock_code = picked.stock_code || null;
-                              result.picked_stock_name = picked.stock_name || null;
-                              const detailResponse = await fetch(`/api/daily/${encodeURIComponent(date)}/stocks/${encodeURIComponent(picked.stock_code)}`, { cache: "no-store" });
-                              const detail = await detailResponse.json();
-                              result.report_empty_state = detail.report_empty_state || null;
-                              result.stock_detail_empty_state = detail.has_selected_date_report === false && Array.isArray(detail.reports) && detail.reports.length === 0;
-                              return result;
-                            }
-                            """,
-                            {"date": business_date.isoformat()},
-                        )
-                        if isinstance(stock_search_flow, dict) and stock_search_flow.get("matched_no_report_stock"):
-                            picked_name = str(stock_search_flow.get("picked_stock_name") or "Beta")
-                            picked_code = str(stock_search_flow.get("picked_stock_code") or "")
-                            search_input = page.locator("#stock-search-input")
-                            search_input.fill(picked_name, timeout=timeout_ms)
-                            page.wait_for_timeout(350)
-                            result_locator = page.locator(f'[data-stock-search-code="{picked_code}"]').first
-                            if result_locator.count():
-                                result_locator.click(timeout=timeout_ms)
-                                page.wait_for_timeout(350)
-                                stock_search_flow["clicked_visible_result"] = True
-                                detail_text = page.locator("#stock-detail").inner_text(timeout=timeout_ms)
-                                stock_search_flow["visible_empty_state"] = "선택 날짜에 등록된 리포트가 없습니다." in detail_text
-                        candidate_journey_flow = {
-                            "candidate_action_found": False,
-                            "stock_observation_journey_visible": False,
-                            "journey_market_current": False,
-                            "journey_rotation_current": False,
-                        }
-                        page.locator('[data-view-tab="watch"]').click(timeout=timeout_ms)
-                        page.wait_for_timeout(250)
-                        candidate_action = page.locator("#candidate-evidence-rows .candidate-detail-action").first
-                        if candidate_action.count():
-                            candidate_journey_flow["candidate_action_found"] = True
-                            candidate_code = candidate_action.get_attribute("data-stock-code") or ""
-                            candidate_action.click(timeout=timeout_ms)
-                            if candidate_code:
-                                page.wait_for_function(
-                                    """
-                                    (stockCode) => {
-                                      const searchInput = document.getElementById("stock-search-input");
-                                      const journey = document.querySelector("#stock-context .stock-observation-journey");
-                                      return Boolean(journey && searchInput && searchInput.value.includes(stockCode));
-                                    }
-                                    """,
-                                    arg=candidate_code,
-                                    timeout=timeout_ms,
-                                )
-                            else:
-                                page.wait_for_selector("#stock-context .stock-observation-journey", timeout=timeout_ms)
-                            candidate_journey_flow["stock_observation_journey_visible"] = page.locator(
-                                "#stock-context .stock-observation-journey"
-                            ).is_visible()
-                            market_action = page.locator('#stock-context [data-journey-view="market"]').first
-                            if market_action.count():
-                                market_action.dispatch_event("click")
-                                page.wait_for_timeout(250)
-                                candidate_journey_flow["journey_market_current"] = (
-                                    page.locator('[data-view-tab="market"]').get_attribute("aria-current") == "page"
-                                )
-                            page.locator('[data-view-tab="stock"]').click(timeout=timeout_ms)
-                            page.wait_for_timeout(250)
-                            rotation_action = page.locator('#stock-context [data-journey-view="rotation"]').first
-                            if rotation_action.count():
-                                rotation_action.dispatch_event("click")
-                                page.wait_for_timeout(250)
-                                candidate_journey_flow["journey_rotation_current"] = (
-                                    page.locator('[data-view-tab="rotation"]').get_attribute("aria-current") == "page"
-                                )
-                        page.locator('[data-view-tab="market"]').click(timeout=timeout_ms)
-                        page.wait_for_timeout(250)
-                        market_panel_visible = page.locator("#market-reference-card").is_visible()
-                        market_tab_current = page.locator('[data-view-tab="market"]').get_attribute("aria-current") == "page"
-                        page.locator('[data-view-tab="rotation"]').click(timeout=timeout_ms)
-                        page.wait_for_timeout(250)
-                        rotation_panel_visible = page.locator("#rotation-details").is_visible()
-                        rotation_tab_current = page.locator('[data-view-tab="rotation"]').get_attribute("aria-current") == "page"
-                        page.locator('[data-view-tab="stock"]').focus(timeout=timeout_ms)
-                        page.keyboard.press("ArrowRight")
-                        page.wait_for_timeout(250)
-                        keyboard_market_current = page.locator('[data-view-tab="market"]').get_attribute("aria-current") == "page"
-                        viewport_result = {
-                            "name": spec["name"],
-                            "width": spec["width"],
-                            "height": spec["height"],
-                            "tab_count": tab_count,
-                            "tab_order": tab_order,
-                            "current_tab_count": current_tab_count,
-                            "search_input": bool(search_count),
-                            "intraday_button": intraday_button_visible,
-                            "intraday_overlap_panel": bool(intraday_overlap_count),
-                            "candidate_panel": bool(candidate_count) and candidate_panel_visible,
-                            "intraday_overlap_initial_visible": intraday_overlap_initial_visible,
-                            "observation_summary_main_visible": observation_summary_main_visible,
-                            "watch_panel_clickable": watch_panel_visible,
-                            "watch_observation_summary_visible": watch_observation_summary_visible,
-                            "stock_panel_clickable": stock_panel_visible,
-                            "stock_search_flow": stock_search_flow,
-                            "candidate_journey_flow": candidate_journey_flow,
-                            "market_panel_clickable": market_panel_visible,
-                            "rotation_panel_clickable": rotation_panel_visible,
-                            "watch_tab_current": watch_tab_current,
-                            "stock_tab_current": stock_tab_current,
-                            "market_tab_current": market_tab_current,
-                            "rotation_tab_current": rotation_tab_current,
-                            "keyboard_market_current": keyboard_market_current,
-                            "horizontal_overflow_px": horizontal_overflow_px,
-                        }
-                        viewports.append(viewport_result)
-                        for text in ("오늘 읽을 요약", "오늘의 우선순위"):
-                            if text not in body_text:
-                                issues.append(
-                                    {
-                                        "code": "missing_required_text",
-                                        "path": f"viewport[{spec['name']}].body",
-                                        "message": f"required visible text is missing: {text}",
-                                    }
-                                )
-                        expected_tab_order = ["main", "watch", "stock", "market", "rotation"]
-                        if tab_count != len(expected_tab_order):
-                            issues.append(
-                                {
-                                    "code": "missing_view_tabs",
-                                    "path": f"viewport[{spec['name']}].tabs",
-                                    "message": f"expected exactly {len(expected_tab_order)} view tabs, found {tab_count}",
-                                }
-                            )
-                        if tab_order != expected_tab_order:
-                            issues.append(
-                                {
-                                    "code": "invalid_view_tab_order",
-                                    "path": f"viewport[{spec['name']}].tabs",
-                                    "message": "expected view tab order main/watch/stock/market/rotation",
-                                }
-                            )
-                        if current_tab_count != 1:
-                            issues.append(
-                                {
-                                    "code": "invalid_current_tab_count",
-                                    "path": f"viewport[{spec['name']}].tabs",
-                                    "message": f"expected exactly one current tab, found {current_tab_count}",
-                                }
-                            )
-                        if not search_count:
-                            issues.append(
-                                {
-                                    "code": "missing_stock_search",
-                                    "path": f"viewport[{spec['name']}].search",
-                                    "message": "stock search input is missing",
-                                }
-                            )
-                        if not intraday_button_visible:
-                            issues.append(
-                                {
-                                    "code": "missing_intraday_market_top_button",
-                                    "path": f"viewport[{spec['name']}].intraday_button",
-                                    "message": "intraday market-top check button is missing",
-                                }
-                            )
-                        if intraday_overlap_initial_visible:
-                            issues.append(
-                                {
-                                    "code": "intraday_overlap_visible_before_check",
-                                    "path": f"viewport[{spec['name']}].intraday_overlap",
-                                    "message": "intraday market-top overlap panel should stay hidden before the user checks it",
-                                }
-                            )
-                        if not watch_panel_visible:
-                            issues.append(
-                                {
-                                    "code": "watch_tab_not_clickable",
-                                    "path": f"viewport[{spec['name']}].watch_tab",
-                                    "message": "watch tab did not expose candidate evidence panel",
-                                }
-                            )
-                        if observation_summary_main_visible:
-                            issues.append(
-                                {
-                                    "code": "observation_summary_visible_on_main",
-                                    "path": f"viewport[{spec['name']}].main",
-                                    "message": "observation summary should stay out of the default main panel",
-                                }
-                            )
-                        if not watch_observation_summary_visible:
-                            issues.append(
-                                {
-                                    "code": "watch_observation_summary_missing",
-                                    "path": f"viewport[{spec['name']}].watch_tab",
-                                    "message": "watch tab did not expose observation summary panel",
-                                }
-                            )
-                        if not watch_tab_current:
-                            issues.append(
-                                {
-                                    "code": "watch_tab_state_not_current",
-                                    "path": f"viewport[{spec['name']}].watch_tab",
-                                    "message": "watch tab did not expose current state after click",
-                                }
-                            )
-                        if not stock_panel_visible:
-                            issues.append(
-                                {
-                                    "code": "stock_tab_not_clickable",
-                                    "path": f"viewport[{spec['name']}].stock_tab",
-                                    "message": "stock tab did not expose selected-stock detail panel",
-                                }
-                            )
-                        if not stock_tab_current:
-                            issues.append(
-                                {
-                                    "code": "stock_tab_state_not_current",
-                                    "path": f"viewport[{spec['name']}].stock_tab",
-                                    "message": "stock tab did not expose current state after click",
-                                }
-                            )
-                        if (
-                            isinstance(stock_search_flow, dict)
-                            and stock_search_flow.get("matched_no_report_stock")
-                            and not stock_search_flow.get("stock_detail_empty_state")
-                        ):
-                            issues.append(
-                                {
-                                    "code": "stock_search_empty_state_api_missing",
-                                    "path": f"viewport[{spec['name']}].stock_search",
-                                    "message": "stored no-report stock did not expose report_empty_state through stock detail API",
-                                }
-                            )
-                        if candidate_journey_flow["candidate_action_found"] and not candidate_journey_flow[
-                            "stock_observation_journey_visible"
-                        ]:
-                            issues.append(
-                                {
-                                    "code": "candidate_journey_missing_in_stock_detail",
-                                    "path": f"viewport[{spec['name']}].candidate_journey",
-                                    "message": "candidate detail action did not preserve observation context in stock detail",
-                                }
-                            )
-                        if candidate_journey_flow["candidate_action_found"] and not candidate_journey_flow[
-                            "journey_market_current"
-                        ]:
-                            issues.append(
-                                {
-                                    "code": "candidate_journey_market_navigation_failed",
-                                    "path": f"viewport[{spec['name']}].candidate_journey",
-                                    "message": "candidate journey market action did not activate the market tab",
-                                }
-                            )
-                        if candidate_journey_flow["candidate_action_found"] and not candidate_journey_flow[
-                            "journey_rotation_current"
-                        ]:
-                            issues.append(
-                                {
-                                    "code": "candidate_journey_rotation_navigation_failed",
-                                    "path": f"viewport[{spec['name']}].candidate_journey",
-                                    "message": "candidate journey rotation action did not activate the rotation tab",
-                                }
-                            )
-                        if (
-                            isinstance(stock_search_flow, dict)
-                            and stock_search_flow.get("matched_no_report_stock")
-                            and not stock_search_flow.get("visible_empty_state")
-                        ):
-                            issues.append(
-                                {
-                                    "code": "stock_search_empty_state_not_visible",
-                                    "path": f"viewport[{spec['name']}].stock_search",
-                                    "message": "stored no-report stock search flow did not render the selected-date empty state",
-                                }
-                            )
-                        if not market_panel_visible:
-                            issues.append(
-                                {
-                                    "code": "market_tab_not_clickable",
-                                    "path": f"viewport[{spec['name']}].market_tab",
-                                    "message": "market tab did not expose market reference panel",
-                                }
-                            )
-                        if not market_tab_current:
-                            issues.append(
-                                {
-                                    "code": "market_tab_current_state_missing",
-                                    "path": f"viewport[{spec['name']}].market_tab",
-                                    "message": "market tab did not expose current state after click",
-                                }
-                            )
-                        if not rotation_panel_visible:
-                            issues.append(
-                                {
-                                    "code": "rotation_tab_not_clickable",
-                                    "path": f"viewport[{spec['name']}].rotation_tab",
-                                    "message": "rotation tab did not expose rotation reference panel",
-                                }
-                            )
-                        if not rotation_tab_current:
-                            issues.append(
-                                {
-                                    "code": "rotation_tab_current_state_missing",
-                                    "path": f"viewport[{spec['name']}].rotation_tab",
-                                    "message": "rotation tab did not expose current state after click",
-                                }
-                            )
-                        if not keyboard_market_current:
-                            issues.append(
-                                {
-                                    "code": "top_tab_keyboard_navigation_failed",
-                                    "path": f"viewport[{spec['name']}].tabs",
-                                    "message": "ArrowRight from stock tab did not move current state to market tab",
-                                }
-                            )
-                        if not intraday_overlap_count:
-                            issues.append(
-                                {
-                                    "code": "missing_intraday_overlap_panel",
-                                    "path": f"viewport[{spec['name']}].intraday_overlap",
-                                    "message": "main tab did not expose Naver intraday overlap panel",
-                                }
-                            )
-                        if horizontal_overflow_px > 8:
-                            issues.append(
-                                {
-                                    "code": "horizontal_overflow",
-                                    "path": f"viewport[{spec['name']}].layout",
-                                    "message": f"document overflows viewport by {horizontal_overflow_px}px",
-                                }
-                            )
-                    finally:
-                        context.close()
-            finally:
-                browser.close()
-    except (PlaywrightError, PlaywrightTimeoutError, RuntimeError) as exc:
-        issues.append(
-            {
-                "code": "browser_smoke_failed",
-                "path": "web-view-browser-smoke",
-                "message": str(exc),
-            }
-        )
-
-
-def _web_view_smoke_http_request(
-    url: str,
-    *,
-    method: str = "GET",
-    data: bytes | None = None,
-) -> tuple[int, bytes, str]:
-    request = url_request.Request(url, data=data, method=method, headers={"User-Agent": "StockMonitorWebViewSmoke/1.0"})
-    try:
-        with url_request.urlopen(request, timeout=10) as response:
-            return int(response.status), response.read(), response.headers.get("Content-Type", "")
-    except url_error.HTTPError as exc:
-        return int(exc.code), exc.read(), exc.headers.get("Content-Type", "")
-    except url_error.URLError as exc:
-        return 0, str(exc).encode("utf-8"), ""
+    return forbidden_public_json_keys(body)
 
 
 def _run_rotation_mapping_audit(
@@ -21969,313 +24043,6 @@ def _collect_rotation_alias_mapping_qa_issues(
             )
 
 
-def _resolve_web_view_value_qa_dates(
-    config: RuntimeConfig,
-    *,
-    explicit_dates: tuple[date, ...],
-    recent_business_days: int | None,
-    today: date | None = None,
-) -> tuple[date, ...]:
-    resolved: list[date] = []
-    seen: set[date] = set()
-    for item in explicit_dates:
-        if item not in seen:
-            resolved.append(item)
-            seen.add(item)
-    if recent_business_days is not None:
-        if recent_business_days < 1:
-            raise ValueError("--recent-business-days must be at least 1.")
-        probe = today or datetime.now(ZoneInfo(config.timezone)).date()
-        while len([item for item in resolved if item not in explicit_dates]) < recent_business_days:
-            if is_business_day(probe, config.holiday_overrides) and probe not in seen:
-                resolved.append(probe)
-                seen.add(probe)
-            probe -= timedelta(days=1)
-    if not resolved:
-        raise ValueError("Pass at least one --date or --recent-business-days N.")
-    return tuple(resolved)
-
-
-def _web_view_value_qa_category_targets(daily_snapshot: dict, *, limit: int) -> list[dict[str, str]]:
-    targets: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for default_type, key in (("sector", "sector_rollups"), ("theme", "theme_rollups")):
-        for item in daily_snapshot.get(key, []) or []:
-            if not isinstance(item, dict):
-                continue
-            category_type = str(item.get("category_type") or default_type)
-            if category_type not in {"sector", "theme"}:
-                continue
-            display_name = str(
-                item.get("display_name")
-                or item.get("category_display_name")
-                or item.get("category_name")
-                or item.get("category_key")
-                or ""
-            ).strip()
-            if not display_name:
-                continue
-            identity = (category_type, display_name)
-            if identity in seen:
-                continue
-            seen.add(identity)
-            targets.append(
-                {
-                    "category_type": category_type,
-                    "display_name": display_name,
-                    "category_name": str(item.get("category_name") or item.get("category_key") or display_name),
-                }
-            )
-            if len(targets) >= limit:
-                return targets
-    return targets
-
-
-def _collect_web_view_static_html_copy_issues(markup: str, *, issues: list[dict]) -> None:
-    text = html.unescape(markup)
-    generic_text = text
-    blocked_internal_copy = {
-        "read-only</span>": "read-only",
-        "관찰 후보 근거": "관찰 후보 근거",
-        "리포트 후 반응 관찰": "리포트 후 반응 관찰",
-        "선택 상태": "선택 상태",
-        "<th>D+1</th><th>D+5</th><th>D+10</th><th>D+20</th>": "D+ reaction columns",
-        'colspan="8"': "8-column observation table",
-        "선택 날짜 KRX 마감값 없음": "선택 날짜 KRX 마감값 없음",
-    }
-    blocked_decision_copy = {
-        "추천/점수 아님": "추천/점수 아님",
-        "추천 순위": "추천 순위",
-        "추천이나 매수/매도": "추천이나 매수/매도",
-    }
-    blocked_admin_copy = (
-        "/api/status",
-        "/api/scheduler",
-        "operator-settings",
-        "admin-gui",
-        "db_path",
-        ".env",
-        "Telegram token",
-        "shutdown",
-    )
-    for needle, label in blocked_internal_copy.items():
-        if needle in text:
-            issues.append(
-                {
-                    "code": "public_html_internal_copy",
-                    "path": f"web_view_html.{label}",
-                    "message": "static web-view HTML exposes old internal/process copy",
-                }
-            )
-    for needle, label in blocked_decision_copy.items():
-        if needle in text:
-            issues.append(
-                {
-                    "code": "public_html_decision_wording",
-                    "path": f"web_view_html.{label}",
-                    "message": "static web-view HTML exposes blocked decision/disclaimer wording",
-                }
-            )
-            generic_text = generic_text.replace(needle, "")
-    for needle in ("추천", "점수", "등급", "매수 후보", "매도 신호"):
-        if needle in generic_text:
-            issues.append(
-                {
-                    "code": "public_html_decision_wording",
-                    "path": f"web_view_html.{needle}",
-                    "message": "static web-view HTML exposes blocked decision/disclaimer wording",
-                }
-            )
-    for needle in blocked_admin_copy:
-        if needle in text:
-            issues.append(
-                {
-                    "code": "public_html_admin_surface_leak",
-                    "path": f"web_view_html.{needle}",
-                    "message": "static web-view HTML exposes an admin/operator surface reference",
-                }
-            )
-
-
-def _collect_web_view_value_qa_issues(
-    value: object,
-    *,
-    path: str,
-    issues: list[dict],
-    warnings: list[dict],
-) -> None:
-    if isinstance(value, dict):
-        for key, child in value.items():
-            child_path = f"{path}.{key}"
-            if _is_web_view_forbidden_public_key(key):
-                issues.append(
-                    {
-                        "code": "public_dto_admin_key",
-                        "path": child_path,
-                        "message": "public web-view DTO exposes an admin/operator key",
-                    }
-                )
-            _collect_web_view_value_qa_issues(
-                child,
-                path=child_path,
-                issues=issues,
-                warnings=warnings,
-            )
-        return
-    if isinstance(value, list):
-        for index, child in enumerate(value):
-            _collect_web_view_value_qa_issues(
-                child,
-                path=f"{path}[{index}]",
-                issues=issues,
-                warnings=warnings,
-            )
-        return
-    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
-        issues.append({"code": "invalid_number", "path": path, "message": f"invalid numeric value: {value}"})
-        return
-    if isinstance(value, str):
-        normalized = value.strip().upper()
-        field_name = path.rsplit(".", 1)[-1]
-        if path.endswith(".category_contract.mapping_basis") and value.strip() == "latest_mapping_fallback":
-            warnings.append(
-                {
-                    "code": "category_mapping_fallback",
-                    "path": path,
-                    "message": "selected date uses latest stored category classification instead of a source-date snapshot",
-                }
-            )
-        if normalized in {"NAN", "INF", "INFINITY", "-INF", "-INFINITY"}:
-            issues.append({"code": "invalid_number", "path": path, "message": f"invalid numeric string: {value}"})
-            return
-        _collect_public_observation_text_issue(value, path=path, issues=issues)
-        is_display_field = _is_web_view_display_field(field_name)
-        if is_display_field and re.search(r"\b00:00(?::00)?\b", value):
-            issues.append(
-                {
-                    "code": "display_placeholder_time",
-                    "path": path,
-                    "message": "display field exposes a midnight placeholder time",
-                }
-            )
-        if (
-            normalized in {"N/A", "NA", "NULL", "NONE", "-"}
-            or (normalized == "" and field_name.endswith(("_display_name", "_display")))
-        ) and (
-            is_display_field
-            or field_name.endswith("_display_name")
-            or field_name in {"title_display", "category_display_name", "sector_display_name", "theme_display_name"}
-        ):
-            issues.append({"code": "display_na", "path": path, "message": "display field exposes internal N/A marker"})
-        if _is_market_briefing_turnover_display_path(path) and _looks_like_raw_won_amount(value):
-            issues.append(
-                {
-                    "code": "public_market_briefing_raw_turnover_display",
-                    "path": path,
-                    "message": "market briefing turnover display should use compact 조/억 units",
-                }
-            )
-
-
-def _is_web_view_display_field(field_name: str) -> bool:
-    return field_name.endswith(("_display", "_display_name", "_label"))
-
-
-def _is_market_briefing_turnover_display_path(path: str) -> bool:
-    return ".market_briefing.turnover_summary." in path and path.endswith(".turnover_display")
-
-
-def _looks_like_raw_won_amount(value: str) -> bool:
-    text = value.strip()
-    if not text.endswith("원"):
-        return False
-    numeric = text[:-1].replace(",", "").strip()
-    return numeric.isdigit() and len(numeric) >= 10
-
-
-def _is_web_view_forbidden_public_key(key: str) -> bool:
-    return key in {
-        "safe_settings",
-        "recent_admin_audit_logs",
-        "admin_audit_log",
-        "scheduler_tasks",
-        "worker_states",
-        "health",
-        "db_path",
-        "operation_profile",
-        "daily_summary_min_mention_count",
-        "daily_summary_require_target_price",
-        "notification_default_limit",
-        "overall_sentiment",
-        "sentiment_score",
-        "stock_impact",
-        "operator_recommendation",
-        "recommendation_support",
-    }
-
-
-def _collect_public_observation_text_issue(value: str, *, path: str, issues: list[dict]) -> None:
-    lower = value.lower()
-    if any(token in lower for token in ("prototype_value", "candidate_score", "candidate_reasons")):
-        issues.append(
-            {
-                "code": "public_observation_internal_value",
-                "path": path,
-                "message": "public observation text exposes an internal prototype/scoring field",
-            }
-        )
-        return
-    if _is_source_report_text_path(path):
-        return
-    if _has_public_observation_decision_wording(value):
-        issues.append(
-            {
-                "code": "public_observation_decision_wording",
-                "path": path,
-                "message": "public observation text uses blocked decision wording",
-            }
-        )
-
-
-def _is_source_report_text_path(path: str) -> bool:
-    return ".reports[" in path and path.rsplit(".", 1)[-1] in {"title", "title_display"}
-
-
-def _has_public_observation_decision_wording(value: str) -> bool:
-    text = value.strip()
-    lower = text.lower()
-    if any(token in text for token in ("추천 후보", "추천 종목", "추천주", "매수 후보", "매수추천")):
-        return True
-    if any(token in text for token in ("점수:", "점수=", "등급:", "등급=")):
-        return True
-    if "추천" in text:
-        return True
-    if "점수" in text:
-        return True
-    if "등급" in text:
-        return True
-    if any(
-        token in lower
-        for token in (
-            "buy candidate",
-            "sell candidate",
-            "buy signal",
-            "sell signal",
-            "recommendation candidate",
-            "entry price",
-            "exit price",
-            "take-profit",
-            "take profit",
-            "conviction",
-            "score=",
-            "score:",
-            "rating=",
-        )
-    ):
-        return True
-    return False
-
-
 def _run_access_code_command(config: RuntimeConfig, *, action: str, code: str | None, confirm: bool) -> int:
     if action == "status":
         if _access_code_enabled(config):
@@ -22328,10 +24095,10 @@ def create_web_view_server(
     allow_non_loopback: bool = False,
     toss_quote_provider: TossPriorityQuoteProvider | None = None,
 ) -> ThreadingHTTPServer:
-    _validate_web_view_host(host, allow_non_loopback=allow_non_loopback)
-    repository.enable_wal_mode()
-    handler = _make_web_view_handler(config, repository, limit=limit, toss_quote_provider=toss_quote_provider)
-    return ThreadingHTTPServer((host, port), handler)
+    return web_view_server_module.create_web_view_server(
+        config, repository, host=host, port=port, limit=limit, make_handler=_make_web_view_handler,
+        allow_non_loopback=allow_non_loopback, toss_quote_provider=toss_quote_provider,
+    )
 
 
 def _validate_admin_gui_host(host: str, *, allow_non_loopback: bool = False) -> None:
@@ -22354,16 +24121,11 @@ def _is_loopback_admin_host(host: str) -> bool:
 
 
 def _validate_web_view_host(host: str, *, allow_non_loopback: bool = False) -> None:
-    if allow_non_loopback or _is_loopback_web_view_host(host):
-        return
-    raise ValueError(
-        "web-view refuses non-loopback host by default. "
-        "Use --host 127.0.0.1 and tunnel that local port; pass --allow-non-loopback only on a trusted private network."
-    )
+    return web_view_server_module._validate_web_view_host(host, allow_non_loopback=allow_non_loopback)
 
 
 def _is_loopback_web_view_host(host: str) -> bool:
-    return _is_loopback_admin_host(host)
+    return web_view_server_module._is_loopback_web_view_host(host)
 
 
 def _make_admin_gui_handler(
@@ -23210,15 +24972,7 @@ def _omit_none_values(value):
 
 
 def _query_int(query: str, name: str, *, default: int, minimum: int, maximum: int) -> int:
-    params = url_parse.parse_qs(query)
-    raw = params.get(name, [None])[0]
-    if raw is None:
-        return default
-    try:
-        value = int(raw)
-    except ValueError:
-        return default
-    return min(max(value, minimum), maximum)
+    return web_view_http_module.query_int(query, name, default=default, minimum=minimum, maximum=maximum)
 
 
 def _parse_web_view_public_category_id(value: str) -> dict[str, str] | None:
@@ -23584,16 +25338,7 @@ def _read_json_request(handler: BaseHTTPRequestHandler) -> dict:
 
 
 def _discard_http_request_body(handler: BaseHTTPRequestHandler) -> None:
-    try:
-        content_length = int(handler.headers.get("Content-Length") or "0")
-    except ValueError:
-        return
-    if content_length <= 0:
-        return
-    try:
-        handler.rfile.read(content_length)
-    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
-        return
+    return web_view_http_module.discard_http_request_body(handler)
 
 
 def _handle_admin_gui_post(
@@ -24058,18 +25803,9 @@ def _write_http_response(
     content_type: str,
     headers: dict[str, str] | None = None,
 ) -> None:
-    encoded = body.encode("utf-8")
-    handler.send_response(status)
-    handler.send_header("Content-Type", content_type)
-    handler.send_header("Content-Length", str(len(encoded)))
-    handler.send_header("Cache-Control", "no-store")
-    for key, value in (headers or {}).items():
-        handler.send_header(key, value)
-    handler.end_headers()
-    try:
-        handler.wfile.write(encoded)
-    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
-        return
+    return web_view_http_module.write_http_response(
+        handler, status, body, content_type=content_type, headers=headers
+    )
 
 
 def _write_binary_http_response(
@@ -24080,17 +25816,9 @@ def _write_binary_http_response(
     content_type: str,
     headers: dict[str, str] | None = None,
 ) -> None:
-    handler.send_response(status)
-    handler.send_header("Content-Type", content_type)
-    handler.send_header("Content-Length", str(len(body)))
-    handler.send_header("Cache-Control", "no-store")
-    for key, value in (headers or {}).items():
-        handler.send_header(key, value)
-    handler.end_headers()
-    try:
-        handler.wfile.write(body)
-    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
-        return
+    return web_view_http_module.write_binary_http_response(
+        handler, status, body, content_type=content_type, headers=headers
+    )
 
 
 def _render_admin_gui_html() -> str:
@@ -25463,6 +27191,9 @@ def _render_web_view_html() -> str:
     .top-two-card b { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 5px; color: var(--accent); font-size: 13px; }
     .top-two-card .status-pill { font-size: 11px; padding: 2px 7px; }
     .top-two-card span { display: block; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .top-two-news-line { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 6px; color: var(--ink); }
+    .top-two-news-line strong { color: var(--accent); font-size: 11px; }
+    .top-two-news-line .top-two-news-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--ink); }
     .top-two-card .priority-toss-quote { display: inline-flex; width: fit-content; border-radius: 999px; padding: 2px 7px; background: #eef7f2; color: #245746; font-size: 11px; font-weight: 900; }
     .top-two-card .priority-toss-quote.muted { background: #eef1f2; color: #5d676d; }
     .top-two-card .priority-toss-quote.stale { background: #fff0cf; color: #7a5400; }
@@ -25479,6 +27210,11 @@ def _render_web_view_html() -> str:
     .candidate-market-inline span:first-child { color: var(--ink); font-size: 18px; font-weight: 900; }
     .candidate-intraday-line { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; margin: -2px 0 8px; color: var(--muted); font-size: 12px; }
     .candidate-intraday-line b { color: var(--accent); font-size: 12px; }
+    .top-two-value-context, .value-context-line { display: grid; gap: 4px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .top-two-value-context strong, .value-context-line strong { color: var(--accent); font-size: 12px; }
+    .value-context-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+    .value-context-grid span { min-width: 0; border: 1px solid rgba(222,216,204,.8); border-radius: 8px; padding: 7px 8px; background: #fffaf1; overflow-wrap: anywhere; }
+    .value-context-grid b { display: block; color: var(--accent); font-size: 11px; }
     .candidate-evidence-grid { display: grid; grid-template-columns: minmax(120px, .72fr) minmax(0, 1.14fr) minmax(0, 1.14fr); gap: 8px; }
     .candidate-evidence-grid > span { border: 1px solid rgba(222,216,204,.8); border-radius: 12px; padding: 8px; color: var(--muted); font-size: 12px; }
     .candidate-evidence-grid > span > b { display: block; color: var(--ink); font-size: 13px; }
@@ -25524,6 +27260,11 @@ def _render_web_view_html() -> str:
     .detail-meta { color: var(--muted); font-size: 13px; }
     .stock-news-observation-detail { display: grid; gap: 6px; border-color: #e7d8bf; background: #fff; }
     .stock-news-observation-detail b { color: var(--accent); }
+    .stock-news-digest-list { display: grid; gap: 7px; margin-top: 2px; }
+    .stock-news-digest-item { display: grid; grid-template-columns: 82px minmax(0, 1fr) 70px; gap: 8px; align-items: start; border-top: 1px solid var(--line); padding-top: 7px; color: var(--ink); font-size: 12px; line-height: 1.45; }
+    .stock-news-digest-item:first-child { border-top: 0; padding-top: 0; }
+    .stock-news-digest-item span { overflow-wrap: anywhere; }
+    .stock-news-digest-item .news-digest-type { color: var(--accent); font-size: 11px; font-weight: 800; text-align: right; }
     .stock-observation-journey { display: grid; gap: 7px; border-color: rgba(37,99,80,.28); background: #f3f8f3; }
     .stock-observation-journey b { color: var(--accent); }
     .stock-observation-journey span { color: var(--ink); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
@@ -25633,6 +27374,8 @@ def _render_web_view_html() -> str:
       .observation-summary-grid { grid-template-columns: 1fr; }
       .candidate-evidence-grid { grid-template-columns: 1fr; }
       .candidate-target-grid, .candidate-flow-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .stock-news-digest-item { grid-template-columns: 74px minmax(0, 1fr); }
+      .stock-news-digest-item .news-digest-type { grid-column: 2; text-align: left; }
     }
   </style>
 </head>
@@ -27641,6 +29384,7 @@ def _render_web_view_html() -> str:
       const market = data.market_reference
         ? `KRX ${price(data.market_reference.close_price)} · ${percent(data.market_reference.change_percent)} · ${esc(data.market_reference.market || "-")}`
         : "당일 시장 참고 없음";
+      const valueContext = renderStockValueContext(data.value_context);
       const volumeItems = data.recent_volume_days?.items || [];
       const investorTabs = data.investor_flow_tabs || {};
       const targetTrail = data.target_price_trail || {};
@@ -27685,7 +29429,7 @@ def _render_web_view_html() -> str:
         </div>
       </div>`;
       document.getElementById("stock-context").innerHTML = `
-        <div class="detail-item"><b>${esc(data.stock_name || "-")} ${esc(data.stock_code || "")} | ${market}</b></div>
+        <div class="detail-item"><b>${esc(data.stock_name || "-")} ${esc(data.stock_code || "")} | ${market}</b>${valueContext}</div>
         ${renderStockCandidateJourney(data)}
         ${targetJourneyBlock}
         ${targetTrailBlock}
@@ -27694,6 +29438,19 @@ def _render_web_view_html() -> str:
         ${periodFlow}
         ${dailyReference}
       `;
+    }
+
+    function renderStockValueContext(context) {
+      if (!context) return "";
+      const rows = [
+        ["현재가", valueContextPriceBasis(context)],
+        ["거래대금", valueContextDate(context.turnover_reference_date)],
+        ["KRX 기준일", valueContextDate(context.krx_reference_date)],
+        ["수급 기준일", valueContextDate(context.investor_flow_reference_date)],
+        ["리포트", valueContextDate(context.report_reference_date)],
+        ["뉴스 수집 상태", valueContextNewsStatus(context.news_collection_status)]
+      ];
+      return `<div class="value-context-line"><strong>데이터 기준</strong><div class="value-context-grid">${rows.map(([label, value]) => `<span><b>${esc(label)}</b>${esc(value)}</span>`).join("")}</div></div>`;
     }
 
     function renderTargetJourney(items) {
@@ -27722,8 +29479,12 @@ def _render_web_view_html() -> str:
       }
       if (item.status === "in_progress") {
         const parts = ["진행 중"];
-        if (item.current_attainment_percent !== null && item.current_attainment_percent !== undefined) parts.push(`현재 ${percent(item.current_attainment_percent)}`);
-        if (item.max_attainment_percent !== null && item.max_attainment_percent !== undefined) parts.push(`최대 ${percent(item.max_attainment_percent)}`);
+        if (item.current_attainment_percent !== null && item.current_attainment_percent !== undefined) {
+          parts.push(`현재 ${percent(item.current_attainment_percent)}`);
+        }
+        if (item.max_attainment_percent !== null && item.max_attainment_percent !== undefined) {
+          parts.push(`최대 ${percent(item.max_attainment_percent)}`);
+        }
         return parts.join(" · ");
       }
       return "가격 검증 대기";
@@ -27827,15 +29588,15 @@ def _render_web_view_html() -> str:
       const caution = Number(detail.caution_count || 0);
       const marketContext = Number(detail.market_context_count || 0);
       const countLine = `뉴스 근거 직접 ${number(direct)} · ${newsCautionCountText(direct, caution, detail.connection_label || detail.display_label)} · 시장맥락 ${number(marketContext)} · ${status}`;
-      const titles = Array.isArray(detail.top_titles) ? detail.top_titles.slice(0, 3) : [];
-      const titleList = titles.length
-        ? `<ul class="stock-news-title-list">${titles.map((title) => `<li>${esc(title)}</li>`).join("")}</ul>`
+      const digest = Array.isArray(detail.news_digest) ? detail.news_digest.slice(0, 5) : [];
+      const digestList = digest.length
+        ? `<div class="stock-news-digest-list">${digest.map((item) => `<div class="stock-news-digest-item"><span class="muted">${esc(item.date || "-")}</span><span>${esc(item.stock_name || "")}${item.stock_name ? "<br>" : ""}${esc(item.label || "-")}</span><span class="news-digest-type">${esc(item.evidence_label || "참고 뉴스")}</span></div>`).join("")}</div>`
         : "";
       return `<div class="detail-item stock-news-observation-detail">
-        <b>저장 뉴스 근거 · ${esc(detail.connection_label || detail.display_label || "뉴스 근거 있음")}</b>
+        <b>뉴스 근거 · ${esc(detail.connection_label || detail.display_label || "뉴스 근거 있음")}</b>
         <span class="detail-meta">${esc(detail.connection_reason || detail.reason || countLine)}</span>
         <span class="detail-meta">${esc(countLine)}</span>
-        ${titleList}
+        ${digestList}
       </div>`;
     }
 
@@ -28001,7 +29762,7 @@ def _render_web_view_html() -> str:
         const newsBadge = renderCandidateNewsBadge(item.news_observation_badge);
         const valueProfile = item.value_profile || {};
         const decisionLine = index < 2 && valueProfile.value_label
-          ? `<div class="candidate-priority-line"><b>판단 상태</b><span>${esc(valueProfile.value_label)}${valueProfile.value_reason ? ` · ${esc(valueProfile.value_reason)}` : ""}</span></div>`
+          ? `<div class="candidate-priority-line"><b>근거 상태</b><span>${esc(valueProfile.value_label)}${valueProfile.value_reason ? ` · ${esc(valueProfile.value_reason)}` : ""}</span></div>`
           : "";
         const intradayLine = index < 2
           ? `<div class="candidate-intraday-line"><b>장중 참고</b><span data-intraday-reference="${esc(item.stock_code || "")}">${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span></div>`
@@ -28063,24 +29824,59 @@ def _render_web_view_html() -> str:
         const why = whyItems.length
           ? candidateCompactLabel(whyItems, 2)
           : "근거 보강 필요";
-        const newsLine = candidateNewsCompactLine(item.news_observation_badge);
-        const tossBaselineLine = candidateTossBaselineCompactLine(item.toss_baseline_reference);
         const tossQuote = tossPriorityQuoteByCode.get(String(item?.stock_code || ""));
         const valueProfile = item.value_profile || {};
         const valueLine = valueProfile.value_label
-          ? `판단 상태: ${valueProfile.value_label}${valueProfile.value_reason ? ` · ${valueProfile.value_reason}` : ""}`
-          : "판단 상태: 저장 근거 확인";
+          ? `근거 상태: ${valueProfile.value_label}`
+          : "근거 상태: 저장 근거 확인";
+        const referenceLine = candidateCompactLabel(valueProfile.reference_notes, 4) || "근거 기준 확인 전";
         const targetRevisionLine = targetRevisionTrailLine(item);
+        const newsDigestLine = candidateNewsDigestLine(item.news_observation_badge);
+        const valueContextLine = candidateValueContextLine(item.value_context);
         return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote-context="main" data-toss-quote="${esc(item.stock_code || "")}">${esc(tossQuote || "Toss 현재가 확인 중")}</span></b>
           <span class="muted">관찰 사유: ${esc(why)}</span>
+          <span class="top-two-news-line"><strong>뉴스</strong><span class="top-two-news-text">${esc(newsDigestLine)}</span></span>
           <span class="target-revision-line">${esc(targetRevisionLine)}</span>
           <span>${esc(valueLine)}</span>
+          <span>근거 기준: ${esc(referenceLine)}</span>
+          <span class="top-two-value-context"><strong>데이터 기준</strong><span>${esc(valueContextLine)}</span></span>
           <span>장중 참고: ${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span>
-          <span>${esc(newsLine)}</span>
-          <span>${esc(tossBaselineLine)}</span>
         </button>`;
       }).join("")}</section>`;
+    }
+
+    function candidateValueContextLine(context) {
+      if (!context) return "다음 확인 필요";
+      return [
+        `리포트 ${valueContextDate(context.report_reference_date)}`,
+        `KRX ${valueContextDate(context.krx_reference_date)}`,
+        `현재가 ${valueContextPriceBasis(context)}`,
+        `수급 ${valueContextDate(context.investor_flow_reference_date)}`
+      ].join(" · ");
+    }
+
+    function valueContextDate(value) {
+      return value || "다음 확인 필요";
+    }
+
+    function valueContextPriceBasis(context) {
+      if (!context) return "다음 확인 필요";
+      if (context.current_price_basis === "20:00 stored") {
+        const time = String(context.current_price_reference_time || "");
+        return time ? `${time.slice(11, 16) || "20:00"} 저장` : "20:00 저장";
+      }
+      if (context.current_price_basis === "KRX close") {
+        return context.current_price_reference_time ? `${context.current_price_reference_time} KRX 종가` : "KRX 종가";
+      }
+      return "다음 확인 필요";
+    }
+
+    function valueContextNewsStatus(value) {
+      if (value === "stored_evidence") return "최신 저장 기준";
+      if (value === "stored_no_match") return "매칭 뉴스 없음";
+      if (value === "next_check_needed") return "다음 확인 필요";
+      return "다음 확인 필요";
     }
 
     function targetRevisionTrailLine(item) {
@@ -28246,6 +30042,11 @@ def _render_web_view_html() -> str:
       const observedAt = newsObservationTimeLabel(badge);
       if (observedAt) parts.push(observedAt);
       return `뉴스 근거: ${parts.join(" · ")}`;
+    }
+
+    function candidateNewsDigestLine(badge) {
+      if (!badge || badge.available !== true) return badge?.connection_label || badge?.display_label || "수집 전";
+      return badge.digest_label || badge.top_title || badge.connection_label || badge.display_label || "뉴스 근거 있음";
     }
 
     function candidateNewsPrimaryLabel(badge) {
@@ -30018,6 +31819,1061 @@ def _web_view_source_freshness_status(reference_date: date | None, business_date
     return "missing"
 
 
+def _run_decision_journal_dry_run(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    business_date: date | None,
+    recent_business_days: int | None,
+    candidate_limit: int,
+    as_json: bool,
+) -> int:
+    if recent_business_days is not None:
+        payload = _build_decision_journal_dry_run_batch_payload(
+            config,
+            repository,
+            recent_business_days=recent_business_days,
+            candidate_limit=candidate_limit,
+        )
+        if as_json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0
+        print(f"Decision Journal v0 dry-run batch: {payload['run_count']} dates")
+        for item in payload["runs"]:
+            print(
+                f"- {item['business_date']}: {item['explainability_status']} / "
+                f"{item['data_completeness_status']} / candidates={item['candidate_pool_size']}"
+            )
+        return 0
+
+    payload = _build_decision_journal_dry_run_payload(
+        config,
+        repository,
+        business_date=business_date,
+        candidate_limit=candidate_limit,
+    )
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    print(f"Decision Journal v0 dry-run: {payload['business_date']}")
+    print(f"- candidates: {payload['candidate_pool_size']} (top {payload['selected_top_n']} selected)")
+    for item in payload["candidates"]:
+        marker = "*" if item["selected"] else "-"
+        print(f"{marker} {item['rank']}. {item['stock_name']} {item['stock_code']} | {item['decision_explanation']}")
+    return 0
+
+
+def _run_decision_journal_tie_analysis(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    recent_business_days: int,
+    candidate_limit: int,
+    as_json: bool,
+) -> int:
+    batch = _build_decision_journal_dry_run_batch_payload(
+        config,
+        repository,
+        recent_business_days=recent_business_days,
+        candidate_limit=candidate_limit,
+    )
+    payload = _build_decision_journal_tie_analysis_payload_from_batch(batch)
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    print(f"Decision Journal tie analysis: {payload['date_count']} dates")
+    for row in payload["date_rows"]:
+        print(
+            f"- {row['business_date']}: candidates={row['candidate_count']} "
+            f"tie_causes={row['tie_causes']}"
+        )
+    return 0
+
+
+def _run_decision_journal_target_revision_analysis(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    recent_business_days: int,
+    candidate_limit: int,
+    as_json: bool,
+) -> int:
+    batch = _build_decision_journal_dry_run_batch_payload(
+        config,
+        repository,
+        recent_business_days=recent_business_days,
+        candidate_limit=candidate_limit,
+    )
+    records = _build_decision_journal_target_revision_records(repository, batch)
+    payload = _build_decision_journal_target_revision_summary(records, date_count=int(batch.get("run_count") or 0))
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    print(f"Decision Journal target revision analysis: {payload['date_count']} dates")
+    print(f"- records: {payload['record_count']}")
+    print(f"- judgment: {payload['judgment']['target_revision_tie_break_candidate']}")
+    return 0
+
+
+def _build_decision_journal_dry_run_batch_payload(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    recent_business_days: int,
+    candidate_limit: int,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    if recent_business_days < 1:
+        raise ValueError("--recent-business-days must be at least 1.")
+    generated_at = now or datetime.now(ZoneInfo(config.timezone))
+    dates = [
+        business_date
+        for business_date, _summary_count in repository.count_summaries_by_business_date(limit=recent_business_days)
+    ] if repository.db_path.exists() else []
+    runs = [
+        _build_decision_journal_dry_run_payload(
+            config,
+            repository,
+            business_date=business_date,
+            candidate_limit=candidate_limit,
+            now=generated_at,
+        )
+        for business_date in dates
+    ]
+    return {
+        "surface": "decision-journal-v0-batch",
+        "read_only": True,
+        "writes_db": False,
+        "live_fetch": False,
+        "scoring": False,
+        "recommendation": False,
+        "generated_at": generated_at.isoformat(),
+        "recent_business_days": recent_business_days,
+        "candidate_limit": max(1, candidate_limit),
+        "run_count": len(runs),
+        "business_dates": [item.isoformat() for item in dates],
+        "runs": runs,
+    }
+
+
+def _build_decision_journal_tie_analysis_payload_from_batch(batch: dict[str, object]) -> dict[str, object]:
+    runs = [run for run in batch.get("runs", []) if isinstance(run, dict)]
+    feature_names = [
+        "sort_value_signal",
+        "sort_signal",
+        "sort_density",
+        "report_count",
+        "broker_count",
+        "turnover",
+        "target_revision_direction",
+        "target_revision_available",
+        "news_direct_count",
+        "news_collected_at",
+        "flow_freshness",
+        "flow_reference_date",
+        "krx_exact_available",
+        "price_reference_time",
+    ]
+    feature_stats = {
+        name: {"different_date_count": 0, "same_date_count": 0, "missing_or_null_candidate_count": 0}
+        for name in feature_names
+    }
+    tie_cause_counts: dict[str, int] = {}
+    tie_break_counts: dict[str, int] = {}
+    fallback_counts: dict[str, int] = {}
+    flag_counts: dict[str, int] = {}
+    date_rows: list[dict[str, object]] = []
+
+    for run in runs:
+        candidates = [
+            candidate
+            for candidate in run.get("candidates", [])
+            if isinstance(candidate, dict) and 2 <= int(candidate.get("rank") or 0) <= 5
+        ]
+        if not candidates:
+            continue
+        causes = _decision_journal_tie_analysis_causes(candidates)
+        for key, value in causes.items():
+            if value:
+                tie_cause_counts[key] = tie_cause_counts.get(key, 0) + 1
+        for candidate in candidates:
+            tie_break = str(candidate.get("tie_break_reason") or "none")
+            fallback = str(candidate.get("fallback_reason") or "none")
+            tie_break_counts[tie_break] = tie_break_counts.get(tie_break, 0) + 1
+            fallback_counts[fallback] = fallback_counts.get(fallback, 0) + 1
+            for flag in candidate.get("data_completeness_flags") or []:
+                flag_text = str(flag)
+                flag_counts[flag_text] = flag_counts.get(flag_text, 0) + 1
+        for feature in feature_names:
+            values = [_decision_journal_tie_analysis_feature_value(candidate, feature) for candidate in candidates]
+            missing_count = sum(1 for value in values if value is None)
+            distinct_values = {json.dumps(value, ensure_ascii=False, sort_keys=True) for value in values}
+            if len(distinct_values) > 1:
+                feature_stats[feature]["different_date_count"] += 1
+            else:
+                feature_stats[feature]["same_date_count"] += 1
+            feature_stats[feature]["missing_or_null_candidate_count"] += missing_count
+        date_rows.append(
+            {
+                "business_date": run.get("business_date"),
+                "candidate_count": len(candidates),
+                "ranks": [candidate.get("rank") for candidate in candidates],
+                "tie_causes": causes,
+                "tie_break_reasons": [candidate.get("tie_break_reason") for candidate in candidates],
+                "fallback_reasons": [candidate.get("fallback_reason") for candidate in candidates],
+            }
+        )
+
+    total_dates = len(date_rows)
+    return {
+        "surface": "decision-journal-tie-analysis",
+        "read_only": True,
+        "writes_db": False,
+        "live_fetch": False,
+        "scoring": False,
+        "recommendation": False,
+        "rank_window": [2, 5],
+        "date_count": total_dates,
+        "candidate_count": sum(int(row["candidate_count"]) for row in date_rows),
+        "business_dates": [row["business_date"] for row in date_rows],
+        "date_rows": date_rows,
+        "tie_cause_distribution": tie_cause_counts,
+        "tie_break_reason_distribution": tie_break_counts,
+        "fallback_reason_distribution": fallback_counts,
+        "data_completeness_flag_distribution": flag_counts,
+        "feature_differentiation": feature_stats,
+        "feature_roi": _decision_journal_tie_analysis_feature_roi(feature_stats, total_dates),
+        "migration_judgment": "hold",
+        "migration_judgment_reason": (
+            "Tie analysis is read-only. Persisting should wait until near-tie causes are reviewed across more dates."
+        ),
+    }
+
+
+def _decision_journal_tie_analysis_causes(candidates: list[dict[str, object]]) -> dict[str, bool]:
+    meaningful_tuples = {_decision_journal_meaningful_sort_tuple(candidate) for candidate in candidates}
+    sort_tuples = [dict(candidate.get("sort_tuple") or {}) for candidate in candidates]
+    report_broker_pairs = {
+        (sort_tuple.get("report_count"), sort_tuple.get("broker_count"))
+        for sort_tuple in sort_tuples
+    }
+    turnovers = {sort_tuple.get("turnover") for sort_tuple in sort_tuples}
+    news_counts = {int(candidate.get("news_direct_count") or 0) for candidate in candidates}
+    flow_values = {candidate.get("flow_freshness") for candidate in candidates}
+    price_values = {candidate.get("price_reference_time") for candidate in candidates}
+    fallback_values = {candidate.get("fallback_reason") for candidate in candidates}
+    return {
+        "meaningful_tuple_identical": len(meaningful_tuples) == 1,
+        "report_broker_identical": len(report_broker_pairs) == 1,
+        "krx_missing": any(candidate.get("krx_exact_available") is not True for candidate in candidates),
+        "news_direct_missing_all": news_counts == {0},
+        "flow_freshness_identical": len(flow_values) == 1,
+        "price_reference_missing": any(candidate.get("price_reference_time") is None for candidate in candidates),
+        "turnover_only_difference": len(meaningful_tuples) == 1 and len(turnovers) > 1,
+        "deterministic_fallback": any(value for value in fallback_values),
+    }
+
+
+def _decision_journal_tie_analysis_feature_value(candidate: dict[str, object], feature: str) -> object:
+    sort_tuple = dict(candidate.get("sort_tuple") or {})
+    if feature in sort_tuple:
+        return sort_tuple.get(feature)
+    return candidate.get(feature)
+
+
+def _decision_journal_tie_analysis_feature_roi(
+    feature_stats: dict[str, dict[str, int]],
+    total_dates: int,
+) -> dict[str, dict[str, object]]:
+    roi: dict[str, dict[str, object]] = {}
+    for feature, stats in feature_stats.items():
+        different = int(stats["different_date_count"])
+        missing = int(stats["missing_or_null_candidate_count"])
+        if feature == "turnover" and different:
+            classification = "immediate_tie_break_candidate"
+        elif feature == "news_direct_count" and different:
+            classification = "data_backfill_then_candidate"
+        elif feature in {"target_revision_direction", "flow_freshness", "price_reference_time"} and different:
+            classification = "data_backfill_then_candidate" if missing else "immediate_tie_break_candidate"
+        elif feature in {"sort_value_signal", "sort_signal", "sort_density", "report_count", "broker_count"}:
+            classification = "weak_explanatory_power"
+        elif feature in {"news_collected_at", "flow_reference_date", "krx_exact_available", "target_revision_available"}:
+            classification = "supporting_freshness_only"
+        else:
+            classification = "do_not_use"
+        roi[feature] = {
+            "classification": classification,
+            "different_date_count": different,
+            "different_date_ratio": (different / total_dates) if total_dates else 0,
+            "missing_or_null_candidate_count": missing,
+        }
+    return roi
+
+
+def _build_decision_journal_target_revision_records(
+    repository: StockMonitorRepository,
+    batch: dict[str, object],
+    *,
+    horizons: tuple[int, ...] = (1, 5, 20),
+) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for run in batch.get("runs", []):
+        if not isinstance(run, dict) or not run.get("business_date"):
+            continue
+        business_date = date.fromisoformat(str(run["business_date"]))
+        for candidate in run.get("candidates", []):
+            if not isinstance(candidate, dict):
+                continue
+            rank = int(candidate.get("rank") or 0)
+            stock_code = str(candidate.get("stock_code") or "").strip()
+            if rank < 1 or not stock_code:
+                continue
+            market_series = repository.list_stock_market_daily_for_code_on_or_after(
+                business_date,
+                stock_code,
+                limit=max(horizons) + 1,
+            )
+            records.append(
+                {
+                    "business_date": business_date.isoformat(),
+                    "stock_code": stock_code,
+                    "stock_name": candidate.get("stock_name"),
+                    "rank": rank,
+                    "rank_group": _decision_journal_rank_group(rank),
+                    "near_tie_rank_2_to_5": (
+                        2 <= rank <= 5
+                        and (
+                            str(candidate.get("tie_group") or "").startswith("tie:")
+                            or candidate.get("comparable_to_rank_above") is True
+                            or candidate.get("comparable_to_rank_below") is True
+                        )
+                    ),
+                    "target_revision_direction": _decision_journal_normalized_target_direction(
+                        candidate.get("target_revision_direction")
+                    ),
+                    "target_revision_change_group": _decision_journal_target_change_group(
+                        candidate.get("target_revision_direction")
+                    ),
+                    "turnover": dict(candidate.get("sort_tuple") or {}).get("turnover"),
+                    "outcomes": {
+                        f"D+{horizon}": _decision_journal_candidate_outcome(
+                            repository,
+                            market_series,
+                            horizon=horizon,
+                        )
+                        for horizon in horizons
+                    },
+                }
+            )
+    return records
+
+
+def _build_decision_journal_target_revision_summary(
+    records: list[dict[str, object]],
+    *,
+    date_count: int,
+) -> dict[str, object]:
+    return {
+        "surface": "decision-journal-target-revision-analysis",
+        "read_only": True,
+        "writes_db": False,
+        "live_fetch": False,
+        "scoring": False,
+        "recommendation": False,
+        "date_count": date_count,
+        "record_count": len(records),
+        "horizons": ["D+1", "D+5", "D+20"],
+        "by_direction": _decision_journal_group_outcomes(records, "target_revision_direction"),
+        "by_change_group": _decision_journal_group_outcomes(records, "target_revision_change_group"),
+        "by_rank_group": _decision_journal_group_outcomes(records, "rank_group"),
+        "near_tie_by_direction": _decision_journal_group_outcomes(
+            [record for record in records if record.get("near_tie_rank_2_to_5") is True],
+            "target_revision_direction",
+        ),
+        "stability": _decision_journal_target_revision_stability(records),
+        "turnover_comparison": _decision_journal_target_turnover_comparison(records),
+        "judgment": _decision_journal_target_revision_judgment(records),
+    }
+
+
+def _decision_journal_group_outcomes(records: list[dict[str, object]], group_key: str) -> dict[str, dict[str, object]]:
+    groups: dict[str, list[dict[str, object]]] = {}
+    for record in records:
+        groups.setdefault(str(record.get(group_key) or "missing"), []).append(record)
+    return {
+        group: {horizon: _decision_journal_outcome_stats(items, horizon) for horizon in ("D+1", "D+5", "D+20")}
+        for group, items in sorted(groups.items())
+    }
+
+
+def _decision_journal_outcome_stats(records: list[dict[str, object]], horizon: str) -> dict[str, object]:
+    outcomes = [dict(record.get("outcomes", {}).get(horizon) or {}) for record in records]
+    available = [outcome for outcome in outcomes if outcome.get("available") is True]
+    returns = [float(outcome["return_pct"]) for outcome in available if outcome.get("return_pct") is not None]
+    excess_returns = [
+        float(outcome["excess_return_pct"])
+        for outcome in available
+        if outcome.get("excess_return_pct") is not None
+    ]
+    drawdowns = [
+        float(outcome["max_drawdown_proxy"])
+        for outcome in available
+        if outcome.get("max_drawdown_proxy") is not None
+    ]
+    return {
+        "sample_count": len(records),
+        "candidate_count": len(records),
+        "available_count": len(available),
+        "missing_outcome_count": len(records) - len(available),
+        "avg_return_pct": _decision_journal_average(returns),
+        "median_return_pct": _decision_journal_median(returns),
+        "avg_median_gap_pct": _decision_journal_gap(_decision_journal_average(returns), _decision_journal_median(returns)),
+        "win_rate": (sum(1 for value in returns if value > 0) / len(returns)) if returns else None,
+        "avg_excess_return_pct": _decision_journal_average(excess_returns),
+        "median_excess_return_pct": _decision_journal_median(excess_returns),
+        "max_drawdown_proxy": _decision_journal_average(drawdowns),
+    }
+
+
+def _decision_journal_candidate_outcome(
+    repository: StockMonitorRepository,
+    market_series: list[StockMarketDailySnapshot],
+    *,
+    horizon: int,
+) -> dict[str, object]:
+    if len(market_series) <= horizon:
+        return {"available": False, "missing_reason": "missing_horizon_market"}
+    base = market_series[0]
+    target = market_series[horizon]
+    if base.close_price is None or target.close_price is None:
+        return {"available": False, "missing_reason": "missing_close_price"}
+    return_pct = _decision_journal_percent(target.close_price - base.close_price, base.close_price)
+    drawdown_values = [
+        _decision_journal_percent(item.close_price - base.close_price, base.close_price)
+        for item in market_series[: horizon + 1]
+        if item.close_price is not None
+    ]
+    market_return = _decision_journal_market_return(repository, base, target)
+    return {
+        "available": True,
+        "base_date": base.business_date.isoformat(),
+        "horizon_date": target.business_date.isoformat(),
+        "return_pct": return_pct,
+        "excess_return_pct": return_pct - market_return if return_pct is not None and market_return is not None else None,
+        "max_drawdown_proxy": min(drawdown_values) if drawdown_values else None,
+    }
+
+
+def _decision_journal_market_return(
+    repository: StockMonitorRepository,
+    base: StockMarketDailySnapshot,
+    target: StockMarketDailySnapshot,
+) -> float | None:
+    series = "KOSDAQ" if str(base.market or "").upper() == "KOSDAQ" else "KOSPI"
+    base_index = _decision_journal_market_index_close(repository, base.business_date, series)
+    target_index = _decision_journal_market_index_close(repository, target.business_date, series)
+    if base_index is None or target_index is None:
+        return None
+    return _decision_journal_percent(target_index - base_index, base_index)
+
+
+def _decision_journal_market_index_close(
+    repository: StockMonitorRepository,
+    business_date: date,
+    series: str,
+) -> float | None:
+    rows = repository.list_market_index_daily(business_date, index_series=series, limit=20)
+    picked = _find_named_market_index(rows, series=series, name="코스닥" if series == "KOSDAQ" else "코스피")
+    if picked is not None and picked.close_index is not None:
+        return float(picked.close_index)
+    fallback = next((row for row in rows if row.close_index is not None), None)
+    return float(fallback.close_index) if fallback is not None else None
+
+
+def _decision_journal_target_turnover_comparison(records: list[dict[str, object]]) -> dict[str, object]:
+    near_tie = [record for record in records if record.get("near_tie_rank_2_to_5") is True]
+    return {
+        "near_tie_record_count": len(near_tie),
+        "target_revision_direction_values": sorted({str(record.get("target_revision_direction")) for record in near_tie}),
+        "turnover_available_count": sum(1 for record in near_tie if record.get("turnover") is not None),
+        "note": "Read-only comparison only; no ordering change is applied.",
+    }
+
+
+def _decision_journal_target_revision_stability(records: list[dict[str, object]]) -> dict[str, object]:
+    scopes = {
+        "all": records,
+        "top2": [record for record in records if record.get("rank_group") == "top2"],
+        "rank_3_5": [record for record in records if record.get("rank_group") == "rank_3_5"],
+        "near_tie_rank_2_to_5": [record for record in records if record.get("near_tie_rank_2_to_5") is True],
+    }
+    return {
+        "primary_horizon": "D+5",
+        "note": "Read-only stability view only; no ordering change is applied.",
+        "scopes": {name: _decision_journal_target_revision_stability_scope(items) for name, items in scopes.items()},
+    }
+
+
+def _decision_journal_target_revision_stability_scope(records: list[dict[str, object]]) -> dict[str, object]:
+    non_missing = [
+        record for record in records if str(record.get("target_revision_direction") or "missing") != "missing"
+    ]
+    changed_vs_unchanged = [
+        record
+        for record in records
+        if str(record.get("target_revision_change_group") or "missing") in {"changed", "unchanged"}
+    ]
+    return {
+        "record_count": len(records),
+        "missing_direction_count": len(records) - len(non_missing),
+        "groupings": {
+            "up_vs_non_up": _decision_journal_classified_group_outcomes(
+                records,
+                lambda record: "up" if record.get("target_revision_direction") == "up" else "non_up",
+            ),
+            "changed_vs_unchanged": _decision_journal_classified_group_outcomes(
+                changed_vs_unchanged,
+                lambda record: str(record.get("target_revision_change_group") or "missing"),
+            ),
+            "changed_vs_unchanged_or_missing": _decision_journal_classified_group_outcomes(
+                records,
+                lambda record: "changed"
+                if record.get("target_revision_change_group") == "changed"
+                else "unchanged_or_missing",
+            ),
+            "missing_excluded_direction": _decision_journal_group_outcomes(non_missing, "target_revision_direction"),
+            "missing_bucket": _decision_journal_group_outcomes(records, "target_revision_direction"),
+        },
+    }
+
+
+def _decision_journal_classified_group_outcomes(records: list[dict[str, object]], classifier) -> dict[str, dict[str, object]]:
+    groups: dict[str, list[dict[str, object]]] = {}
+    for record in records:
+        groups.setdefault(str(classifier(record) or "missing"), []).append(record)
+    return {
+        group: {horizon: _decision_journal_outcome_stats(items, horizon) for horizon in ("D+1", "D+5", "D+20")}
+        for group, items in sorted(groups.items())
+    }
+
+
+def _decision_journal_target_revision_judgment(records: list[dict[str, object]]) -> dict[str, object]:
+    by_direction = _decision_journal_group_outcomes(records, "target_revision_direction")
+    up_d5 = by_direction.get("up", {}).get("D+5", {})
+    up_d20 = by_direction.get("up", {}).get("D+20", {})
+    enough = int(up_d5.get("available_count") or 0) >= 10 and int(up_d20.get("available_count") or 0) >= 10
+    return {
+        "target_revision_tie_break_candidate": "review_candidate" if enough else "hold",
+        "reason": (
+            "D+5 and D+20 up-group samples are large enough for review."
+            if enough
+            else "Sample is too small or horizon coverage is incomplete; do not promote to tie-break yet."
+        ),
+    }
+
+
+def _decision_journal_rank_group(rank: int) -> str:
+    if rank <= 2:
+        return "top2"
+    if rank <= 5:
+        return "rank_3_5"
+    return "rank_6_10"
+
+
+def _decision_journal_normalized_target_direction(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"up", "raise", "raised", "increase"}:
+        return "up"
+    if text in {"down", "lower", "lowered", "decrease"}:
+        return "down"
+    if text in {"flat", "same", "unchanged", "maintain", "maintained"}:
+        return "unchanged"
+    if text == "mixed":
+        return "mixed"
+    return "missing"
+
+
+def _decision_journal_target_change_group(value: object) -> str:
+    direction = _decision_journal_normalized_target_direction(value)
+    if direction in {"up", "down", "mixed"}:
+        return "changed"
+    return direction
+
+
+def _decision_journal_percent(numerator: float, denominator: float | int | None) -> float | None:
+    if denominator in (None, 0):
+        return None
+    return round((numerator / float(denominator)) * 100, 4)
+
+
+def _decision_journal_average(values: list[float]) -> float | None:
+    return round(sum(values) / len(values), 4) if values else None
+
+
+def _decision_journal_gap(left: float | None, right: float | None) -> float | None:
+    return round(abs(left - right), 4) if left is not None and right is not None else None
+
+
+def _decision_journal_median(values: list[float]) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return round(ordered[mid], 4)
+    return round((ordered[mid - 1] + ordered[mid]) / 2, 4)
+
+
+def _build_decision_journal_dry_run_payload(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    business_date: date | None,
+    candidate_limit: int,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    generated_at = now or datetime.now(ZoneInfo(config.timezone))
+    if not repository.db_path.exists():
+        return _empty_decision_journal_dry_run_payload(generated_at)
+    resolved_date = business_date or _resolve_decision_journal_latest_business_date(repository)
+    if resolved_date is None:
+        return _empty_decision_journal_dry_run_payload(generated_at)
+    limit = max(1, candidate_limit)
+    candidate_snapshot = build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=resolved_date,
+        limit=limit,
+        now=generated_at,
+        include_internal=True,
+    )
+    summaries = [summary for summary in repository.list_daily_summaries(resolved_date) if summary.stock_code]
+    report_count = sum(summary.mention_count for summary in summaries)
+    source_freshness = _build_web_view_source_freshness_summary(
+        business_date=resolved_date,
+        report_count=report_count,
+        recent_krx_snapshot_dates=repository.list_recent_krx_snapshot_dates(on_or_before=resolved_date, limit=1),
+        recent_flow_dates=repository.list_recent_investor_flow_dates(on_or_before=resolved_date, limit=1),
+        toss_openapi_ready=_web_view_toss_openapi_ready(config),
+        investor_flow_item=_build_stock_flow_source_freshness_item(
+            repository,
+            resolved_date,
+            summaries=summaries,
+            priority_stock_codes=[
+                str(row.get("stock_code") or "")
+                for row in list(candidate_snapshot.get("rows") or [])[:2]
+                if str(row.get("stock_code") or "").strip()
+            ],
+        ),
+    )
+    rows = list(candidate_snapshot.get("rows") or [])
+    candidates = [
+        _decision_journal_candidate_from_web_view_row(row, rank=index + 1, business_date=resolved_date)
+        for index, row in enumerate(rows)
+    ]
+    explainability = _decision_journal_explainability_summary(candidates)
+    return {
+        "surface": "decision-journal-v0",
+        "read_only": True,
+        "writes_db": False,
+        "live_fetch": False,
+        "scoring": False,
+        "recommendation": False,
+        "algorithm_version": "decision-journal-v0.web-view-candidate-evidence",
+        "generated_at": generated_at.isoformat(),
+        "business_date": resolved_date.isoformat(),
+        "candidate_limit": limit,
+        "candidate_pool_size": len(candidates),
+        "selected_top_n": min(2, len(candidates)),
+        "tie_break_policy_version": "decision-journal-tie-break-v0",
+        "explainability_status": explainability["status"],
+        "explainability_notes": explainability["notes"],
+        "tie_break_applied": explainability["tie_break_applied"],
+        "fallback_reason": explainability["fallback_reason"],
+        "data_completeness_status": explainability["data_completeness_status"],
+        "data_completeness_notes": explainability["data_completeness_notes"],
+        "source_freshness": source_freshness,
+        "sort_tuple_source": "build_web_view_candidate_evidence_snapshot(include_internal=True)",
+        "candidates": candidates,
+        "field_coverage": _decision_journal_field_coverage(
+            sort_tuple_available=all(bool(item.get("sort_tuple")) for item in candidates),
+            top2_explainable=_decision_journal_top2_explainable(candidates),
+        ),
+    }
+
+
+def _empty_decision_journal_dry_run_payload(generated_at: datetime) -> dict[str, object]:
+    return {
+        "surface": "decision-journal-v0",
+        "read_only": True,
+        "writes_db": False,
+        "live_fetch": False,
+        "algorithm_version": "decision-journal-v0.web-view-candidate-evidence",
+        "generated_at": generated_at.isoformat(),
+        "business_date": None,
+        "candidate_pool_size": 0,
+        "selected_top_n": 0,
+        "tie_break_policy_version": "decision-journal-tie-break-v0",
+        "explainability_status": "insufficient_data",
+        "explainability_notes": ["No stored candidate pool is available."],
+        "tie_break_applied": False,
+        "fallback_reason": None,
+        "data_completeness_status": "insufficient",
+        "data_completeness_notes": ["No stored candidate pool is available."],
+        "candidates": [],
+        "field_coverage": _decision_journal_field_coverage(sort_tuple_available=False, top2_explainable=False),
+    }
+
+
+def _resolve_decision_journal_latest_business_date(repository: StockMonitorRepository) -> date | None:
+    summary_dates = repository.count_summaries_by_business_date(limit=1)
+    if summary_dates:
+        return summary_dates[0][0]
+    report_dates = repository.count_reports_by_business_date(limit=1)
+    return report_dates[0][0] if report_dates else None
+
+
+def _decision_journal_candidate_from_web_view_row(
+    row: dict[str, object],
+    *,
+    rank: int,
+    business_date: date,
+) -> dict[str, object]:
+    report_summary = dict(row.get("report_summary") or {})
+    market_reference = dict(row.get("market_reference") or {})
+    stock_flow_reference = dict(row.get("stock_flow_reference") or {})
+    news_badge = dict(row.get("news_observation_badge") or {})
+    value_profile = dict(row.get("value_profile") or {})
+    target_revision = dict(row.get("target_price_revision") or {})
+    sort_tuple = dict(row.get("sort_tuple") or {})
+    why_notable = [str(item) for item in row.get("why_notable") or [] if str(item).strip()]
+    missing_information = [str(item) for item in row.get("missing_information") or [] if str(item).strip()]
+    reference_notes = [str(item) for item in value_profile.get("reference_notes") or [] if str(item).strip()]
+    krx_freshness = _decision_journal_date_freshness(market_reference.get("business_date"), business_date)
+    flow_freshness = _decision_journal_date_freshness(stock_flow_reference.get("snapshot_date"), business_date)
+    news_freshness = _decision_journal_news_freshness(news_badge, business_date)
+    price_reference_time = _decision_journal_price_reference_time(row)
+    target_revision_available = target_revision.get("available") is True
+    return {
+        "rank": rank,
+        "stock_code": row.get("stock_code"),
+        "stock_name": row.get("stock_name"),
+        "selected": rank <= 2,
+        "observation_priority": row.get("observation_priority"),
+        "why_notable": why_notable,
+        "missing_information": missing_information,
+        "reference_notes": reference_notes,
+        "sort_tuple": sort_tuple,
+        "report_count": report_summary.get("report_count"),
+        "broker_count": report_summary.get("broker_count"),
+        "turnover": market_reference.get("turnover"),
+        "krx_freshness": krx_freshness,
+        "krx_exact_available": krx_freshness == "exact",
+        "investor_flow_freshness": flow_freshness,
+        "flow_freshness": flow_freshness,
+        "news_freshness": news_freshness,
+        "news_direct_count": int(news_badge.get("direct_count") or 0),
+        "news_collected_at": news_badge.get("observed_at"),
+        "target_revision_available": target_revision_available,
+        "target_revision_direction": target_revision.get("direction"),
+        "price_reference_time": price_reference_time,
+        "flow_reference_date": stock_flow_reference.get("snapshot_date"),
+        "data_completeness_flags": _decision_journal_candidate_data_completeness_flags(
+            krx_freshness=krx_freshness,
+            flow_freshness=flow_freshness,
+            news_freshness=news_freshness,
+            price_reference_time=price_reference_time,
+            target_revision_available=target_revision_available,
+        ),
+        "decision_explanation": _decision_journal_decision_explanation(
+            rank=rank,
+            why_notable=why_notable,
+            missing_information=missing_information,
+            reference_notes=reference_notes,
+            sort_tuple=sort_tuple,
+        ),
+    }
+
+
+def _decision_journal_date_freshness(value: object, business_date: date) -> str:
+    if not value:
+        return "missing"
+    try:
+        reference_date = date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return "unknown"
+    if reference_date == business_date:
+        return "exact"
+    return "stale"
+
+
+def _decision_journal_news_freshness(news_badge: dict[str, object], business_date: date) -> str:
+    if news_badge.get("available") is not True:
+        return "missing"
+    observed_at = news_badge.get("observed_at")
+    if not observed_at:
+        return "available_without_time"
+    return _decision_journal_date_freshness(observed_at, business_date)
+
+
+def _decision_journal_price_reference_time(row: dict[str, object]) -> str | None:
+    toss_baseline = dict(row.get("toss_baseline_reference") or {})
+    if toss_baseline.get("available") and toss_baseline.get("reference_time"):
+        return str(toss_baseline["reference_time"])
+    market_reference = dict(row.get("market_reference") or {})
+    if market_reference.get("business_date"):
+        return str(market_reference["business_date"])
+    return None
+
+
+def _decision_journal_decision_explanation(
+    *,
+    rank: int,
+    why_notable: list[str],
+    missing_information: list[str],
+    reference_notes: list[str],
+    sort_tuple: dict[str, object],
+) -> str:
+    selected = "top2 freeze" if rank <= 2 else "outside top2"
+    why = "; ".join(why_notable[:2]) if why_notable else "no strong notable marker"
+    missing = "; ".join(missing_information[:2]) if missing_information else "no visible missing marker"
+    references = "; ".join(reference_notes[:2]) if reference_notes else "stored references only"
+    return f"{selected}; why={why}; missing={missing}; refs={references}; sort={sort_tuple}"
+
+
+def _decision_journal_top2_explainable(candidates: list[dict[str, object]]) -> bool:
+    if len(candidates) <= 2:
+        return len(candidates) > 0
+    second = dict(candidates[1].get("sort_tuple") or {})
+    if not second:
+        return False
+    meaningful_second = _decision_journal_meaningful_sort_tuple(candidates[1])
+    for candidate in candidates[2:5]:
+        if _decision_journal_meaningful_sort_tuple(candidate) == meaningful_second:
+            return False
+    return True
+
+
+def _decision_journal_candidate_data_completeness_flags(
+    *,
+    krx_freshness: str,
+    flow_freshness: str,
+    news_freshness: str,
+    price_reference_time: str | None,
+    target_revision_available: bool,
+) -> list[str]:
+    flags: list[str] = []
+    if krx_freshness != "exact":
+        flags.append("missing_exact_krx")
+    if flow_freshness == "missing":
+        flags.append("missing_flow")
+    elif flow_freshness != "exact":
+        flags.append("stale_flow")
+    if news_freshness == "missing":
+        flags.append("missing_news")
+    elif news_freshness == "available_without_time":
+        flags.append("news_without_timestamp")
+    if not price_reference_time:
+        flags.append("missing_price_reference")
+    if not target_revision_available:
+        flags.append("missing_target_revision")
+    return flags
+
+
+def _decision_journal_meaningful_sort_tuple(candidate: dict[str, object]) -> tuple[tuple[str, object], ...]:
+    sort_tuple = dict(candidate.get("sort_tuple") or {})
+    tie_break_only_keys = {"stock_code", "turnover"}
+    return tuple((key, value) for key, value in sort_tuple.items() if key not in tie_break_only_keys)
+
+
+def _decision_journal_explainability_summary(candidates: list[dict[str, object]]) -> dict[str, object]:
+    if not candidates:
+        return {
+            "status": "insufficient_data",
+            "notes": ["No candidates are available."],
+            "tie_break_applied": False,
+            "fallback_reason": None,
+            "data_completeness_status": "insufficient",
+            "data_completeness_notes": ["No candidates are available."],
+        }
+    if any(not candidate.get("sort_tuple") for candidate in candidates):
+        return {
+            "status": "insufficient_data",
+            "notes": ["At least one candidate has no frozen sort tuple."],
+            "tie_break_applied": False,
+            "fallback_reason": None,
+            "data_completeness_status": "insufficient",
+            "data_completeness_notes": ["At least one candidate has no frozen sort tuple."],
+        }
+
+    notes: list[str] = []
+    tuple_to_ranks: dict[tuple[tuple[str, object], ...], list[int]] = {}
+    for candidate in candidates:
+        tuple_to_ranks.setdefault(_decision_journal_meaningful_sort_tuple(candidate), []).append(int(candidate["rank"]))
+
+    tie_groups = {key: ranks for key, ranks in tuple_to_ranks.items() if len(ranks) > 1}
+    for candidate in candidates:
+        rank = int(candidate["rank"])
+        meaningful_tuple = _decision_journal_meaningful_sort_tuple(candidate)
+        ranks = tie_groups.get(meaningful_tuple, [rank])
+        tied_candidates = [
+            item
+            for item in candidates
+            if int(item.get("rank") or 0) in ranks
+        ]
+        tied_turnovers = {
+            dict(item.get("sort_tuple") or {}).get("turnover")
+            for item in tied_candidates
+        }
+        if len(ranks) > 1 and len(tied_turnovers) > 1:
+            tie_break_reason = "turnover"
+            fallback_reason = None
+        elif len(ranks) > 1:
+            tie_break_reason = "none"
+            fallback_reason = "deterministic_order"
+        else:
+            tie_break_reason = "meaningful_tuple"
+            fallback_reason = None
+        candidate["tie_group"] = f"tie:{min(ranks)}-{max(ranks)}" if len(ranks) > 1 else f"unique:{rank}"
+        candidate["tie_break_reason"] = tie_break_reason
+        candidate["fallback_reason"] = fallback_reason
+        above = candidates[rank - 2] if rank > 1 and rank - 2 < len(candidates) else None
+        below = candidates[rank] if rank < len(candidates) else None
+        candidate["comparable_to_rank_above"] = (
+            _decision_journal_meaningful_sort_tuple(above) == meaningful_tuple if isinstance(above, dict) else None
+        )
+        candidate["comparable_to_rank_below"] = (
+            _decision_journal_meaningful_sort_tuple(below) == meaningful_tuple if isinstance(below, dict) else None
+        )
+        if rank == 1:
+            candidate["rank_reason"] = "highest meaningful sort tuple"
+        elif candidate["comparable_to_rank_above"]:
+            candidate["rank_reason"] = f"near-tie with rank {rank - 1}; {candidate['tie_break_reason']}"
+        elif candidate["comparable_to_rank_below"]:
+            candidate["rank_reason"] = f"near-tie with rank {rank + 1}; {candidate['tie_break_reason']}"
+        else:
+            candidate["rank_reason"] = f"meaningful sort tuple below rank {rank - 1}"
+
+    top_boundary_tie = any(
+        int(candidate["rank"]) == 2 and candidate.get("comparable_to_rank_below") is True
+        for candidate in candidates
+    )
+    selected = [
+        candidate
+        for candidate in candidates
+        if candidate.get("selected", int(candidate.get("rank") or 0) <= 2)
+    ]
+    selected_sort_tuples = [dict(candidate.get("sort_tuple") or {}) for candidate in selected]
+    selected_has_signal = any(
+        int(sort_tuple.get("sort_value_signal") or 0) > 0
+        or int(sort_tuple.get("sort_signal") or 0) > 0
+        or int(sort_tuple.get("sort_density") or 0) > 0
+        for sort_tuple in selected_sort_tuples
+    )
+    data_notes: list[str] = []
+    top_boundary_candidate = next(
+        (candidate for candidate in candidates if int(candidate.get("rank") or 0) == 2),
+        None,
+    )
+    top_boundary_fallback_reason = (
+        top_boundary_candidate.get("fallback_reason")
+        if top_boundary_tie and isinstance(top_boundary_candidate, dict)
+        else None
+    )
+    if top_boundary_tie:
+        notes.append("rank 2 and rank 3 share the same meaningful sort tuple")
+    if any(candidate.get("krx_freshness") != "exact" for candidate in selected):
+        notes.append("selected candidates lack exact-date KRX market reference.")
+        data_notes.append("selected candidates lack exact-date KRX market reference.")
+    if any(candidate.get("price_reference_time") is None for candidate in selected):
+        notes.append("at least one selected candidate has no stored price reference time.")
+        data_notes.append("at least one selected candidate has no stored price reference time.")
+    if not selected_has_signal:
+        data_notes.append("selected candidates have no positive sort signal")
+    if any(candidate.get("flow_freshness", candidate.get("investor_flow_freshness")) != "exact" for candidate in selected):
+        data_notes.append("selected candidates lack exact investor-flow reference.")
+    if all(int(candidate.get("news_direct_count") or 0) == 0 for candidate in selected):
+        data_notes.append("selected candidates have no direct news evidence.")
+
+    if not selected_has_signal:
+        status = "insufficient_data"
+        data_status = "insufficient"
+    elif top_boundary_tie:
+        status = "near_tie"
+        data_status = "weak" if data_notes else "partial"
+    elif notes:
+        status = "weak"
+        data_status = "weak"
+    else:
+        status = "clear"
+        data_status = "complete"
+    if data_notes:
+        data_completeness_notes = data_notes
+    elif data_status == "partial":
+        data_completeness_notes = [
+            "Selected candidates have required stored freshness references, but the Top2 boundary remains near-tie."
+        ]
+    else:
+        data_completeness_notes = ["Selected candidates have complete stored evidence for v0 policy."]
+    return {
+        "status": status,
+        "notes": notes or ["Top2 separates on meaningful sort tuple."],
+        "tie_break_applied": bool(top_boundary_tie and selected_has_signal),
+        "fallback_reason": top_boundary_fallback_reason if top_boundary_tie and selected_has_signal else None,
+        "data_completeness_status": data_status,
+        "data_completeness_notes": data_completeness_notes,
+    }
+
+
+def _decision_journal_field_coverage(
+    *,
+    sort_tuple_available: bool,
+    top2_explainable: bool,
+) -> dict[str, object]:
+    return {
+        "current_payload_can_fill": [
+            "business_date",
+            "generated_at",
+            "algorithm_version",
+            "surface",
+            "candidate_pool_size",
+            "selected_top_n",
+            "rank",
+            "stock_code",
+            "stock_name",
+            "selected",
+            "observation_priority",
+            "why_notable",
+            "missing_information",
+            "reference_notes",
+            "sort_tuple",
+            "report_count",
+            "broker_count",
+            "turnover",
+            "KRX freshness",
+            "수급 freshness",
+            "뉴스 freshness",
+            "가격 기준 시각",
+            "decision_explanation",
+        ],
+        "insufficient_fields": [
+            "D+1/D+5/D+20 outcome rows",
+            "persisted review/outcome id",
+            "target-history table",
+            "counterfactual comparison",
+        ],
+        "sort_tuple_available": sort_tuple_available,
+        "top2_vs_3_to_5_explainable": top2_explainable,
+        "top2_vs_3_to_5_note": (
+            "Top2 separates on evidence tuple."
+            if top2_explainable
+            else "Top2 has at least one rank 3-5 tie on meaningful tuple; secondary tie-break metadata is required."
+        ),
+        "outcome_link_ready": False,
+        "outcome_link_note": "stock_code + business_date + rank can link later; outcome rows are not stored in v0 dry-run.",
+    }
+
+
 def _build_web_view_market_briefing_context(
     repository: StockMonitorRepository,
     business_date: date,
@@ -31764,6 +34620,66 @@ def _web_view_stock_flow_totals(rows: list[StockInvestorFlowDaily]) -> dict:
     }
 
 
+def _web_view_news_collection_status(news_reference: dict[str, object] | None) -> str:
+    if not news_reference or news_reference.get("available") is not True:
+        return "next_check_needed"
+    direct_count = int(news_reference.get("direct_count") or 0)
+    caution_count = int(news_reference.get("caution_count") or 0)
+    market_context_count = int(news_reference.get("market_context_count") or 0)
+    if direct_count > 0 or caution_count > 0 or market_context_count > 0:
+        return "stored_evidence"
+    return "stored_no_match"
+
+
+def _web_view_value_context(
+    *,
+    report_reference_date: date | str | None,
+    market_reference: StockMarketDailySnapshot | None,
+    stock_flow_reference: dict[str, object] | None,
+    news_reference: dict[str, object] | None,
+    toss_baseline_reference: dict[str, object] | None = None,
+) -> dict[str, object]:
+    report_date = report_reference_date.isoformat() if isinstance(report_reference_date, date) else report_reference_date
+    krx_date = market_reference.business_date.isoformat() if market_reference else None
+    turnover_date = krx_date if market_reference and market_reference.turnover is not None else None
+    flow_date = str(
+        (stock_flow_reference or {}).get("snapshot_date")
+        or (stock_flow_reference or {}).get("reference_date")
+        or ""
+    ) or None
+    has_toss_baseline = bool(toss_baseline_reference and toss_baseline_reference.get("available") is True)
+    if has_toss_baseline:
+        current_price_reference_time = toss_baseline_reference.get("reference_time")
+        current_price_basis = "20:00 stored"
+    elif market_reference is not None and market_reference.close_price is not None:
+        current_price_reference_time = krx_date
+        current_price_basis = "KRX close"
+    else:
+        current_price_reference_time = None
+        current_price_basis = None
+    context = {
+        "report_reference_date": report_date,
+        "krx_reference_date": krx_date,
+        "current_price_reference_time": current_price_reference_time,
+        "current_price_basis": current_price_basis,
+        "turnover_reference_date": turnover_date,
+        "investor_flow_reference_date": flow_date,
+        "news_collection_status": _web_view_news_collection_status(news_reference),
+    }
+    context["missing_labels"] = [
+        label
+        for label, value in (
+            ("report", context["report_reference_date"]),
+            ("krx", context["krx_reference_date"]),
+            ("current_price", context["current_price_reference_time"]),
+            ("turnover", context["turnover_reference_date"]),
+            ("investor_flow", context["investor_flow_reference_date"]),
+        )
+        if not value
+    ]
+    return context
+
+
 def _web_view_percent(numerator: float, denominator: float) -> float | None:
     if denominator == 0:
         return None
@@ -32112,6 +35028,8 @@ def _web_view_empty_candidate_news_badge() -> dict[str, object]:
         "krx_reference_status": "missing",
         "observed_at": None,
         "top_title": None,
+        "digest_label": None,
+        "news_digest": [],
     }
 
 
@@ -32128,7 +35046,70 @@ def _web_view_collected_empty_candidate_news_badge() -> dict[str, object]:
         "krx_reference_status": "missing",
         "observed_at": None,
         "top_title": None,
+        "digest_label": None,
+        "news_digest": [],
     }
+
+
+def _web_view_news_digest_kind(row: ReportLinkedNewsEvidenceRecord) -> str:
+    if row.relevance == "direct":
+        return "직접 근거"
+    if row.relevance == "market_context":
+        return "시장 맥락"
+    return "참고 뉴스"
+
+
+def _web_view_news_digest_priority(row: ReportLinkedNewsEvidenceRecord) -> int:
+    if row.relevance == "direct":
+        return 0
+    if row.relevance == "market_context":
+        return 1
+    return 2
+
+
+def _web_view_news_digest_label(row: ReportLinkedNewsEvidenceRecord, *, limit: int = 44) -> str:
+    text = re.sub(r"\s+", " ", (row.title or row.summary or "").strip())
+    stock_name = (row.stock_name or "").strip()
+    if stock_name:
+        text = re.sub(rf"^{re.escape(stock_name)}\s*[,，:：·-]?\s*", "", text).strip()
+    text = text.strip(" -:：,，·")
+    if not text:
+        text = row.relevance_reason or row.match_reason or _web_view_news_digest_kind(row)
+    if len(text) <= limit:
+        return text
+    return f"{text[: max(limit - 1, 1)].rstrip()}…"
+
+
+def _web_view_news_digest_items(
+    rows: list[ReportLinkedNewsEvidenceRecord],
+    *,
+    limit: int,
+) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = []
+    seen: set[tuple[str, str, str]] = set()
+    ordered_rows = sorted(
+        rows,
+        key=lambda row: (_web_view_news_digest_priority(row), -row.published_at.timestamp(), row.title),
+    )
+    for row in ordered_rows:
+        label = _web_view_news_digest_label(row)
+        key = (row.published_at.date().isoformat(), _web_view_news_digest_kind(row), label)
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(
+            {
+                "date": row.published_at.date().isoformat(),
+                "stock_name": row.stock_name or row.stock_code or "-",
+                "label": label,
+                "evidence_label": _web_view_news_digest_kind(row),
+                "relevance": row.relevance,
+                "source_lane": row.source_lane,
+            }
+        )
+        if len(items) >= max(limit, 0):
+            break
+    return items
 
 
 def _web_view_candidate_news_badge(
@@ -32168,6 +35149,7 @@ def _web_view_candidate_news_badge(
     )
     top_title = next((title for title in _web_view_unique_texts([row.title for row in ordered_rows], limit=1)), None)
     display_label = connection_label
+    digest_items = _web_view_news_digest_items(rows, limit=3)
     return {
         "available": True,
         "display_label": display_label,
@@ -32182,6 +35164,8 @@ def _web_view_candidate_news_badge(
         "evidence_direction": evidence_direction,
         "evidence_direction_reason": evidence_direction_reason,
         "top_title": top_title,
+        "digest_label": (digest_items[0]["label"] if digest_items else None),
+        "news_digest": digest_items,
         "connection_label": connection_label,
         "connection_reason": connection_reason,
     }
@@ -32239,7 +35223,18 @@ def _web_view_stock_news_observation_detail(
         stock_name=stock_name,
     )
     if not rows:
-        empty = _web_view_empty_candidate_news_badge()
+        normalized_stock_name = _web_view_normalize_news_identity(stock_name)
+        matching_runs = [
+            run
+            for run in repository.list_news_intelligence_runs(target_date=business_date, limit=100)
+            if run.stock_code == stock_code
+            or (normalized_stock_name and _web_view_normalize_news_identity(run.stock_name) == normalized_stock_name)
+        ]
+        empty = (
+            _web_view_collected_empty_candidate_news_badge()
+            if matching_runs
+            else _web_view_empty_candidate_news_badge()
+        )
         return {
             "source": "stored_news_intelligence_observation",
             "read_only": True,
@@ -32264,6 +35259,7 @@ def _web_view_stock_news_observation_detail(
         "live_fetch": False,
         **badge,
         "top_titles": _web_view_unique_texts([row.title for row in ordered_rows], limit=3),
+        "news_digest": _web_view_news_digest_items(rows, limit=5),
     }
 
 
@@ -32675,6 +35671,7 @@ def build_web_view_candidate_evidence_snapshot(
             ),
             gap=candidate_profile["missing_information"],
         )
+        stock_flow_reference = _web_view_stock_flow_totals(stock_flow_rows)
         rows.append(
             {
                 "business_date": summary.business_date.isoformat(),
@@ -32705,7 +35702,14 @@ def build_web_view_candidate_evidence_snapshot(
                 ),
                 "opinion_summary": summary.dominant_opinion,
                 "market_reference": _web_view_stock_market_reference(market_reference),
-                "stock_flow_reference": _web_view_stock_flow_totals(stock_flow_rows),
+                "stock_flow_reference": stock_flow_reference,
+                "value_context": _web_view_value_context(
+                    report_reference_date=summary.business_date,
+                    market_reference=market_reference,
+                    stock_flow_reference=stock_flow_reference,
+                    news_reference=news_badge,
+                    toss_baseline_reference=toss_baseline_reference,
+                ),
                 "flow_window_reference": flow_window_reference,
                 "price_volume_reference": price_volume_reference,
                 "rank_reference": {
@@ -32750,6 +35754,15 @@ def build_web_view_candidate_evidence_snapshot(
         if include_internal:
             item["internal_candidate_signals"] = row.get("_internal_candidate_signals") or []
             item["internal_missing_information"] = row.get("_internal_missing_information") or []
+            item["sort_tuple"] = {
+                "sort_value_signal": int(row.get("_sort_value_signal") or 0),
+                "sort_signal": int(row.get("_sort_signal") or 0),
+                "sort_density": int(row.get("_sort_density") or 0),
+                "report_count": int((row.get("report_summary") or {}).get("report_count") or 0),
+                "broker_count": int((row.get("report_summary") or {}).get("broker_count") or 0),
+                "turnover": int((row.get("market_reference") or {}).get("turnover") or 0),
+                "stock_code": str(row.get("stock_code") or ""),
+            }
         else:
             report_summary = dict(item.get("report_summary") or {})
             item["report_summary"] = {
@@ -33065,14 +36078,21 @@ def _web_view_candidate_value_profile(
         value_reason = "저장 리포트와 시장 참고값 기준 후보입니다."
 
     reference_notes: list[str] = []
-    if news_label:
-        reference_notes.append(f"뉴스 {news_label}")
+    if has_actionable_news:
+        if direct_count > 0 or caution_count > 0:
+            reference_notes.append("뉴스: 후보 직접 근거 있음")
+        else:
+            reference_notes.append("뉴스: 시장 맥락 근거 있음")
+    elif news_available:
+        reference_notes.append("뉴스: 직접 매칭 없음")
+    else:
+        reference_notes.append("뉴스: 수집 전")
     if not has_market_reference:
-        reference_notes.append("KRX missing")
+        reference_notes.append("KRX: 선택일 저장값 없음")
     if not has_stock_flow:
-        reference_notes.append("수급 missing")
+        reference_notes.append("수급: 저장값 없음")
     if has_toss_baseline:
-        reference_notes.append("Toss 20:00 저장")
+        reference_notes.append("20:00 저장 현재가 기준")
     return {
         "observation_priority": observation_priority,
         "value_label": value_label,
@@ -34236,6 +37256,15 @@ def build_web_view_stock_detail_snapshot(
             "notice": "선택 날짜의 저장 리포트 요약이 없어 목표가 도달 참고를 계산하지 않습니다.",
         }
     )
+    news_observation_detail = _web_view_stock_news_observation_detail(
+        repository,
+        business_date=business_date,
+        stock_code=stock_code,
+        stock_name=stock_name,
+    )
+    recent_volume_days = _build_web_view_stock_volume_context(repository, business_date, stock_code)
+    investor_flow = _build_web_view_stock_investor_flow_context(repository, business_date, stock_code)
+    investor_flow_tabs = _build_web_view_stock_investor_flow_tabs(repository, business_date, stock_code)
     return {
         "now": current.isoformat(),
         "timezone": config.timezone,
@@ -34247,6 +37276,12 @@ def build_web_view_stock_detail_snapshot(
         "has_selected_date_report": bool(reports),
         "report_empty_state": "선택 날짜에 등록된 리포트가 없습니다." if not reports else None,
         "market_reference": _web_view_stock_market_reference(market_reference),
+        "value_context": _web_view_value_context(
+            report_reference_date=business_date if reports else None,
+            market_reference=market_reference,
+            stock_flow_reference=investor_flow_tabs,
+            news_reference=news_observation_detail,
+        ),
         "target_price_progress": target_price_progress,
         "target_price_trail": _build_web_view_target_price_trail(
             repository,
@@ -34265,15 +37300,10 @@ def build_web_view_stock_detail_snapshot(
             business_date=business_date,
             stock_code=stock_code,
         ),
-        "news_observation_detail": _web_view_stock_news_observation_detail(
-            repository,
-            business_date=business_date,
-            stock_code=stock_code,
-            stock_name=stock_name,
-        ),
-        "recent_volume_days": _build_web_view_stock_volume_context(repository, business_date, stock_code),
-        "investor_flow": _build_web_view_stock_investor_flow_context(repository, business_date, stock_code),
-        "investor_flow_tabs": _build_web_view_stock_investor_flow_tabs(repository, business_date, stock_code),
+        "news_observation_detail": news_observation_detail,
+        "recent_volume_days": recent_volume_days,
+        "investor_flow": investor_flow,
+        "investor_flow_tabs": investor_flow_tabs,
         "reports": [
             {
                 "stock_name": report.stock_name,

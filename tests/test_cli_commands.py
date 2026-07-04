@@ -1,3 +1,4 @@
+import importlib
 import json
 import sqlite3
 from argparse import Namespace
@@ -7,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import stock_monitor.cli as cli_module
+import stock_monitor.cli_web_view_checks as web_view_checks
 from stock_monitor.cli import (
     _build_check_command_response,
     _build_help_command_response,
@@ -48,6 +50,7 @@ from stock_monitor.cli import (
     _prepare_repository_for_command,
     _uses_read_only_schema_current_check,
 )
+
 from stock_monitor.config import RuntimeConfig
 from stock_monitor.db.repository import StockMonitorRepository
 from stock_monitor.db.schema import (
@@ -84,6 +87,29 @@ from stock_monitor.models import (
     InvestorNetBuyTopDaily,
     KrxStockMetadataSnapshot,
 )
+
+
+def test_web_view_checks_do_not_import_cli_module() -> None:
+    source = Path("src/stock_monitor/cli_web_view_checks.py").read_text(encoding="utf-8")
+
+    assert "stock_monitor import cli" not in source
+    assert "stock_monitor.cli" not in source
+
+
+def test_web_view_server_module_does_not_import_cli_module() -> None:
+    importlib.import_module("stock_monitor.web_view_server")
+    source = Path("src/stock_monitor/web_view_server.py").read_text(encoding="utf-8")
+
+    assert "stock_monitor import cli" not in source
+    assert "stock_monitor.cli" not in source
+
+
+def test_web_view_http_module_does_not_import_cli_module() -> None:
+    importlib.import_module("stock_monitor.web_view_http")
+    source = Path("src/stock_monitor/web_view_http.py").read_text(encoding="utf-8")
+
+    assert "stock_monitor import cli" not in source
+    assert "stock_monitor.cli" not in source
 
 
 def _create_schema_v5_database(db_path) -> None:
@@ -277,6 +303,23 @@ def test_prepare_repository_for_read_only_command_initializes_missing_db(tmp_pat
 
     assert repository.initialize_count == 1
     assert repository.db_path.exists()
+
+
+def test_prepare_repository_for_decision_journal_dry_run_does_not_create_missing_db(tmp_path) -> None:
+    class CountingInitializeRepository(StockMonitorRepository):
+        def __init__(self, db_path):
+            super().__init__(db_path)
+            self.initialize_count = 0
+
+        def initialize(self) -> None:
+            self.initialize_count += 1
+            super().initialize()
+
+    repository = CountingInitializeRepository(tmp_path / "stock_monitor.db")
+    _prepare_repository_for_command(repository, Namespace(command="decision-journal-dry-run"))
+
+    assert repository.initialize_count == 0
+    assert not repository.db_path.exists()
 
 
 def test_prepare_repository_for_read_only_command_rejects_stale_schema(tmp_path) -> None:
@@ -558,6 +601,56 @@ def test_observation_cli_parsers_accept_read_only_analysis_commands() -> None:
     assert sweep_args.exclude_feature == ["target_progress_caution"]
 
 
+def test_hidden_scoring_commands_are_hidden_from_top_level_help(capsys) -> None:
+    parser = cli_module.build_parser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["--help"])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "observation-weight-draft" not in output
+    assert "observation-hidden-prototype" not in output
+    assert "observation-hidden-holdout" not in output
+    assert "observation-hidden-holdout-sweep" not in output
+
+
+def test_deprecated_readiness_audit_commands_are_hidden_from_top_level_help(capsys) -> None:
+    parser = cli_module.build_parser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["--help"])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    hidden_commands = (
+        "observation-feature-audit",
+        "observation-summary-audit",
+        "periodic-data-needs-audit",
+        "next-phase-readiness",
+        "admin-boundary-audit",
+        "docs-hygiene-audit",
+        "data-source-lane-audit",
+        "external-web-view-sharing-plan",
+        "web-view-startup-fallback-check",
+        "rotation-mapping-audit",
+        "ops-readiness",
+    )
+    for command in hidden_commands:
+        assert command not in output
+
+    kept_commands = (
+        "db-verify",
+        "candidate-evidence-readiness",
+        "web-view-value-qa",
+        "web-view-browser-smoke",
+        "krx-baseline-analysis",
+        "market-day-observation",
+    )
+    for command in kept_commands:
+        assert command in output
+
+
 def test_inspect_page_parser_accepts_drift_fixture_output_path(tmp_path) -> None:
     parser = cli_module.build_parser()
     fixture_path = tmp_path / "naver_live_fixture.json"
@@ -740,6 +833,643 @@ def test_web_view_value_qa_parser_accepts_recent_business_days_without_dates() -
     assert args.dates is None
     assert args.recent_business_days == 4
     assert args.stock_limit == 20
+
+
+def test_decision_journal_dry_run_parser_accepts_latest_json() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "decision-journal-dry-run",
+            "--date",
+            "latest",
+            "--candidate-limit",
+            "10",
+            "--json",
+        ]
+    )
+
+    assert args.command == "decision-journal-dry-run"
+    assert args.date is None
+    assert args.recent_business_days is None
+    assert args.candidate_limit == 10
+    assert args.json is True
+    assert _uses_read_only_schema_current_check(args) is True
+
+
+def test_decision_journal_dry_run_parser_accepts_recent_business_days_json() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "decision-journal-dry-run",
+            "--recent-business-days",
+            "10",
+            "--candidate-limit",
+            "10",
+            "--json",
+        ]
+    )
+
+    assert args.command == "decision-journal-dry-run"
+    assert args.recent_business_days == 10
+    assert args.candidate_limit == 10
+    assert args.json is True
+    assert _uses_read_only_schema_current_check(args) is True
+
+
+def test_decision_journal_tie_analysis_parser_accepts_recent_business_days_json() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "decision-journal-tie-analysis",
+            "--recent-business-days",
+            "10",
+            "--candidate-limit",
+            "10",
+            "--json",
+        ]
+    )
+
+    assert args.command == "decision-journal-tie-analysis"
+    assert args.recent_business_days == 10
+    assert args.candidate_limit == 10
+    assert args.json is True
+    assert _uses_read_only_schema_current_check(args) is True
+
+
+def test_decision_journal_target_revision_analysis_parser_accepts_recent_business_days_json() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "decision-journal-target-revision-analysis",
+            "--recent-business-days",
+            "60",
+            "--candidate-limit",
+            "10",
+            "--json",
+        ]
+    )
+
+    assert args.command == "decision-journal-target-revision-analysis"
+    assert args.recent_business_days == 60
+    assert args.candidate_limit == 10
+    assert args.json is True
+    assert _uses_read_only_schema_current_check(args) is True
+
+
+def test_decision_journal_dry_run_json_freezes_candidate_pool(tmp_path, monkeypatch, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 24)
+    collected_at = datetime(2026, 6, 24, 9, 0, 0)
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name="Alpha",
+                title="Alpha report A",
+                broker_name="A Securities",
+                published_at=datetime(2026, 6, 24, 8, 0, 0),
+                collected_at=collected_at,
+                stock_code="000001",
+                target_price_raw="10000",
+                target_price_value=10_000,
+                opinion_raw="hold",
+                opinion_normalized="hold",
+                source_id="decision-alpha-a",
+                identity_key="decision-alpha-a",
+            ),
+            Report(
+                business_date=business_date,
+                stock_name="Alpha",
+                title="Alpha report B",
+                broker_name="B Securities",
+                published_at=datetime(2026, 6, 24, 8, 10, 0),
+                collected_at=collected_at,
+                stock_code="000001",
+                target_price_raw="11000",
+                target_price_value=11_000,
+                opinion_raw="hold",
+                opinion_normalized="hold",
+                source_id="decision-alpha-b",
+                identity_key="decision-alpha-b",
+            ),
+            Report(
+                business_date=business_date,
+                stock_name="Beta",
+                title="Beta report",
+                broker_name="A Securities",
+                published_at=datetime(2026, 6, 24, 8, 20, 0),
+                collected_at=collected_at,
+                stock_code="000002",
+                target_price_raw="9000",
+                target_price_value=9_000,
+                opinion_raw="hold",
+                opinion_normalized="hold",
+                source_id="decision-beta",
+                identity_key="decision-beta",
+            ),
+            Report(
+                business_date=business_date,
+                stock_name="Gamma",
+                title="Gamma report",
+                broker_name="A Securities",
+                published_at=datetime(2026, 6, 24, 8, 30, 0),
+                collected_at=collected_at,
+                stock_code="000003",
+                target_price_raw="7000",
+                target_price_value=7_000,
+                opinion_raw="hold",
+                opinion_normalized="hold",
+                source_id="decision-gamma",
+                identity_key="decision-gamma",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="000001",
+                stock_name="Alpha",
+                market="KOSPI",
+                close_price=9_500,
+                change_percent=1.2,
+                volume=1000,
+                turnover=3_000_000_000,
+                fetched_at=collected_at,
+            ),
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="000002",
+                stock_name="Beta",
+                market="KOSPI",
+                close_price=8_500,
+                change_percent=-0.4,
+                volume=800,
+                turnover=1_000_000_000,
+                fetched_at=collected_at,
+            ),
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="000003",
+                stock_name="Gamma",
+                market="KOSPI",
+                close_price=6_500,
+                change_percent=0.1,
+                volume=500,
+                turnover=500_000_000,
+                fetched_at=collected_at,
+            ),
+        ]
+    )
+    monkeypatch.setenv("STOCK_MONITOR_DB_PATH", str(config.db_path))
+
+    exit_code = cli_module.main(["decision-journal-dry-run", "--date", "latest", "--candidate-limit", "3", "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["surface"] == "decision-journal-v0"
+    assert payload["read_only"] is True
+    assert payload["writes_db"] is False
+    assert payload["business_date"] == "2026-06-24"
+    assert payload["candidate_pool_size"] == 3
+    assert payload["selected_top_n"] == 2
+    assert [row["rank"] for row in payload["candidates"]] == [1, 2, 3]
+    assert [row["selected"] for row in payload["candidates"]] == [True, True, False]
+    assert payload["candidates"][0]["sort_tuple"]["report_count"] == 2
+    assert payload["candidates"][0]["report_count"] == 2
+    assert payload["candidates"][0]["broker_count"] == 2
+    assert payload["candidates"][0]["turnover"] == 3_000_000_000
+    assert payload["candidates"][0]["decision_explanation"]
+    assert payload["explainability_status"] in {"clear", "near_tie", "weak", "insufficient_data"}
+    assert payload["explainability_notes"]
+    assert payload["tie_break_policy_version"] == "decision-journal-tie-break-v0"
+    assert isinstance(payload["tie_break_applied"], bool)
+    assert payload["data_completeness_status"] in {"complete", "partial", "weak", "insufficient"}
+    assert payload["data_completeness_notes"]
+    assert payload["candidates"][0]["rank_reason"]
+    assert payload["candidates"][0]["tie_group"]
+    assert payload["candidates"][0]["comparable_to_rank_below"] is not None
+    assert isinstance(payload["candidates"][0]["data_completeness_flags"], list)
+    assert "krx_exact_available" in payload["candidates"][0]
+    assert "flow_freshness" in payload["candidates"][0]
+    assert "news_direct_count" in payload["candidates"][0]
+    assert "target_revision_available" in payload["candidates"][0]
+
+
+def test_decision_journal_dry_run_recent_business_days_wraps_read_only_runs(tmp_path, monkeypatch, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    collected_at = datetime(2026, 6, 25, 9, 0, 0)
+    for index, business_date in enumerate((date(2026, 6, 24), date(2026, 6, 25)), start=1):
+        repository.insert_reports(
+            [
+                Report(
+                    business_date=business_date,
+                    stock_name=f"Batch {index}",
+                    title=f"Batch report {index}",
+                    broker_name="A Securities",
+                    published_at=collected_at,
+                    collected_at=collected_at,
+                    stock_code=f"00000{index}",
+                    target_price_raw="10000",
+                    target_price_value=10_000,
+                    opinion_raw="hold",
+                    opinion_normalized="hold",
+                    source_id=f"decision-batch-{index}",
+                    identity_key=f"decision-batch-{index}",
+                )
+            ]
+        )
+        repository.rebuild_daily_summaries(business_date)
+    monkeypatch.setenv("STOCK_MONITOR_DB_PATH", str(config.db_path))
+
+    exit_code = cli_module.main(
+        [
+            "decision-journal-dry-run",
+            "--recent-business-days",
+            "2",
+            "--candidate-limit",
+            "1",
+            "--json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["surface"] == "decision-journal-v0-batch"
+    assert payload["read_only"] is True
+    assert payload["writes_db"] is False
+    assert payload["run_count"] == 2
+    assert payload["business_dates"] == ["2026-06-25", "2026-06-24"]
+    assert [run["surface"] for run in payload["runs"]] == ["decision-journal-v0", "decision-journal-v0"]
+    assert [run["candidate_limit"] for run in payload["runs"]] == [1, 1]
+
+
+def test_decision_journal_tie_analysis_summarizes_rank_two_to_five_features() -> None:
+    dry_run_batch = {
+        "runs": [
+            {
+                "business_date": "2026-06-30",
+                "candidates": [
+                    {
+                        "rank": 1,
+                        "sort_tuple": {"sort_value_signal": 6, "sort_signal": 6, "sort_density": 3, "report_count": 3, "broker_count": 3, "turnover": 300, "stock_code": "000003"},
+                        "tie_break_reason": "meaningful_tuple",
+                        "fallback_reason": None,
+                        "target_revision_direction": "up",
+                        "target_revision_available": True,
+                        "news_direct_count": 1,
+                        "news_collected_at": "2026-06-30T10:00:00+09:00",
+                        "flow_freshness": "exact",
+                        "flow_reference_date": "2026-06-30",
+                        "krx_exact_available": True,
+                        "price_reference_time": "2026-06-30",
+                        "data_completeness_flags": [],
+                    },
+                    {
+                        "rank": 2,
+                        "sort_tuple": {"sort_value_signal": 6, "sort_signal": 6, "sort_density": 3, "report_count": 2, "broker_count": 2, "turnover": 200, "stock_code": "000002"},
+                        "tie_break_reason": "turnover",
+                        "fallback_reason": None,
+                        "target_revision_direction": "up",
+                        "target_revision_available": True,
+                        "news_direct_count": 0,
+                        "news_collected_at": None,
+                        "flow_freshness": "exact",
+                        "flow_reference_date": "2026-06-30",
+                        "krx_exact_available": True,
+                        "price_reference_time": "2026-06-30",
+                        "data_completeness_flags": ["missing_news"],
+                    },
+                    {
+                        "rank": 3,
+                        "sort_tuple": {"sort_value_signal": 6, "sort_signal": 6, "sort_density": 3, "report_count": 2, "broker_count": 2, "turnover": 100, "stock_code": "000001"},
+                        "tie_break_reason": "turnover",
+                        "fallback_reason": None,
+                        "target_revision_direction": "down",
+                        "target_revision_available": True,
+                        "news_direct_count": 1,
+                        "news_collected_at": "2026-06-30T10:00:00+09:00",
+                        "flow_freshness": "exact",
+                        "flow_reference_date": "2026-06-30",
+                        "krx_exact_available": True,
+                        "price_reference_time": "2026-06-30",
+                        "data_completeness_flags": [],
+                    },
+                    {
+                        "rank": 4,
+                        "sort_tuple": {"sort_value_signal": 6, "sort_signal": 6, "sort_density": 3, "report_count": 2, "broker_count": 2, "turnover": 50, "stock_code": "000004"},
+                        "tie_break_reason": "turnover",
+                        "fallback_reason": None,
+                        "target_revision_direction": "down",
+                        "target_revision_available": True,
+                        "news_direct_count": 0,
+                        "news_collected_at": None,
+                        "flow_freshness": "stale",
+                        "flow_reference_date": "2026-06-29",
+                        "krx_exact_available": True,
+                        "price_reference_time": None,
+                        "data_completeness_flags": ["missing_news", "stale_flow", "missing_price_reference"],
+                    },
+                    {
+                        "rank": 5,
+                        "sort_tuple": {"sort_value_signal": 6, "sort_signal": 6, "sort_density": 3, "report_count": 2, "broker_count": 2, "turnover": 0, "stock_code": "000005"},
+                        "tie_break_reason": "turnover",
+                        "fallback_reason": None,
+                        "target_revision_direction": None,
+                        "target_revision_available": False,
+                        "news_direct_count": 0,
+                        "news_collected_at": None,
+                        "flow_freshness": "missing",
+                        "flow_reference_date": None,
+                        "krx_exact_available": False,
+                        "price_reference_time": None,
+                        "data_completeness_flags": ["missing_exact_krx", "missing_flow", "missing_news", "missing_price_reference"],
+                    },
+                ],
+            }
+        ]
+    }
+
+    payload = cli_module._build_decision_journal_tie_analysis_payload_from_batch(dry_run_batch)
+
+    assert payload["surface"] == "decision-journal-tie-analysis"
+    assert payload["rank_window"] == [2, 5]
+    assert payload["date_count"] == 1
+    assert payload["feature_differentiation"]["turnover"]["different_date_count"] == 1
+    assert payload["feature_differentiation"]["news_direct_count"]["different_date_count"] == 1
+    assert payload["feature_differentiation"]["flow_freshness"]["different_date_count"] == 1
+    assert payload["feature_roi"]["turnover"]["classification"] == "immediate_tie_break_candidate"
+    assert payload["feature_roi"]["news_direct_count"]["classification"] == "data_backfill_then_candidate"
+    assert payload["date_rows"][0]["tie_causes"]["turnover_only_difference"] is True
+
+
+def test_decision_journal_target_revision_analysis_aggregates_direction_outcomes() -> None:
+    records = [
+        {
+            "business_date": "2026-06-01",
+            "rank": 2,
+            "rank_group": "top2",
+            "near_tie_rank_2_to_5": True,
+            "target_revision_direction": "up",
+            "target_revision_change_group": "changed",
+            "outcomes": {
+                "D+1": {"available": True, "return_pct": 2.0, "excess_return_pct": 1.5, "max_drawdown_proxy": -1.0},
+                "D+5": {"available": True, "return_pct": 5.0, "excess_return_pct": 3.0, "max_drawdown_proxy": -2.0},
+            },
+        },
+        {
+            "business_date": "2026-06-01",
+            "rank": 3,
+            "rank_group": "rank_3_5",
+            "near_tie_rank_2_to_5": True,
+            "target_revision_direction": "down",
+            "target_revision_change_group": "changed",
+            "outcomes": {
+                "D+1": {"available": True, "return_pct": -1.0, "excess_return_pct": -1.2, "max_drawdown_proxy": -3.0},
+                "D+5": {"available": False},
+            },
+        },
+        {
+            "business_date": "2026-06-01",
+            "rank": 6,
+            "rank_group": "rank_6_10",
+            "near_tie_rank_2_to_5": False,
+            "target_revision_direction": "missing",
+            "target_revision_change_group": "missing",
+            "outcomes": {
+                "D+1": {"available": False},
+                "D+5": {"available": False},
+            },
+        },
+    ]
+
+    payload = cli_module._build_decision_journal_target_revision_summary(records, date_count=1)
+
+    up_d1 = payload["by_direction"]["up"]["D+1"]
+    down_d1 = payload["by_direction"]["down"]["D+1"]
+    missing_d1 = payload["by_direction"]["missing"]["D+1"]
+    near_tie_up_d5 = payload["near_tie_by_direction"]["up"]["D+5"]
+
+    assert payload["surface"] == "decision-journal-target-revision-analysis"
+    assert up_d1["available_count"] == 1
+    assert up_d1["avg_return_pct"] == 2.0
+    assert up_d1["win_rate"] == 1.0
+    assert down_d1["avg_return_pct"] == -1.0
+    assert missing_d1["missing_outcome_count"] == 1
+    assert near_tie_up_d5["available_count"] == 1
+    assert payload["judgment"]["target_revision_tie_break_candidate"] == "hold"
+
+
+def test_decision_journal_target_revision_analysis_reports_stability_groupings() -> None:
+    records = [
+        {
+            "rank_group": "rank_3_5",
+            "near_tie_rank_2_to_5": True,
+            "target_revision_direction": "up",
+            "target_revision_change_group": "changed",
+            "outcomes": {
+                "D+5": {"available": True, "return_pct": 4.0, "excess_return_pct": 2.0},
+                "D+20": {"available": True, "return_pct": 30.0, "excess_return_pct": 20.0},
+            },
+        },
+        {
+            "rank_group": "rank_3_5",
+            "near_tie_rank_2_to_5": True,
+            "target_revision_direction": "down",
+            "target_revision_change_group": "changed",
+            "outcomes": {
+                "D+5": {"available": True, "return_pct": -1.0, "excess_return_pct": -2.0},
+                "D+20": {"available": True, "return_pct": -2.0, "excess_return_pct": -3.0},
+            },
+        },
+        {
+            "rank_group": "rank_3_5",
+            "near_tie_rank_2_to_5": True,
+            "target_revision_direction": "unchanged",
+            "target_revision_change_group": "unchanged",
+            "outcomes": {
+                "D+5": {"available": True, "return_pct": 1.0, "excess_return_pct": 0.5},
+                "D+20": {"available": True, "return_pct": 1.0, "excess_return_pct": 0.2},
+            },
+        },
+        {
+            "rank_group": "rank_3_5",
+            "near_tie_rank_2_to_5": True,
+            "target_revision_direction": "missing",
+            "target_revision_change_group": "missing",
+            "outcomes": {
+                "D+5": {"available": True, "return_pct": 0.5, "excess_return_pct": 0.1},
+                "D+20": {"available": False},
+            },
+        },
+    ]
+
+    payload = cli_module._build_decision_journal_target_revision_summary(records, date_count=1)
+    near_tie = payload["stability"]["scopes"]["near_tie_rank_2_to_5"]
+
+    assert near_tie["record_count"] == 4
+    assert near_tie["missing_direction_count"] == 1
+    assert near_tie["groupings"]["up_vs_non_up"]["up"]["D+5"]["avg_return_pct"] == 4.0
+    assert near_tie["groupings"]["up_vs_non_up"]["non_up"]["D+5"]["available_count"] == 3
+    assert near_tie["groupings"]["changed_vs_unchanged"]["changed"]["D+5"]["available_count"] == 2
+    assert "missing" not in near_tie["groupings"]["changed_vs_unchanged"]
+    assert near_tie["groupings"]["changed_vs_unchanged_or_missing"]["unchanged_or_missing"]["D+5"]["available_count"] == 2
+    assert near_tie["groupings"]["missing_excluded_direction"]["up"]["D+5"]["available_count"] == 1
+    assert "missing" in near_tie["groupings"]["missing_bucket"]
+    assert near_tie["groupings"]["up_vs_non_up"]["up"]["D+20"]["avg_median_gap_pct"] == 0.0
+
+
+def test_decision_journal_dry_run_missing_db_is_empty_and_does_not_write(tmp_path, monkeypatch, capsys) -> None:
+    db_path = tmp_path / "missing.db"
+    monkeypatch.setenv("STOCK_MONITOR_DB_PATH", str(db_path))
+
+    exit_code = cli_module.main(["decision-journal-dry-run", "--date", "latest", "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["candidate_pool_size"] == 0
+    assert payload["writes_db"] is False
+    assert payload["tie_break_policy_version"] == "decision-journal-tie-break-v0"
+    assert payload["data_completeness_status"] == "insufficient"
+    assert not db_path.exists()
+
+
+def test_decision_journal_top2_explainability_rejects_stock_code_only_tie() -> None:
+    candidates = [
+        {"sort_tuple": {"sort_value_signal": 6, "report_count": 3, "stock_code": "100000"}},
+        {"sort_tuple": {"sort_value_signal": 6, "report_count": 2, "stock_code": "200000"}},
+        {"sort_tuple": {"sort_value_signal": 6, "report_count": 2, "stock_code": "000001"}},
+    ]
+
+    assert cli_module._decision_journal_top2_explainable(candidates) is False
+
+
+def test_decision_journal_explainability_marks_rank_two_near_tie() -> None:
+    candidates = [
+        {
+            "rank": 1,
+            "sort_tuple": {"sort_value_signal": 6, "sort_signal": 6, "sort_density": 3, "report_count": 3, "broker_count": 3, "turnover": 0, "stock_code": "300000"},
+            "krx_freshness": "missing",
+            "investor_flow_freshness": "exact",
+            "news_freshness": "exact",
+        },
+        {
+            "rank": 2,
+            "sort_tuple": {"sort_value_signal": 6, "sort_signal": 6, "sort_density": 3, "report_count": 2, "broker_count": 2, "turnover": 0, "stock_code": "200000"},
+            "krx_freshness": "missing",
+            "investor_flow_freshness": "exact",
+            "news_freshness": "available_without_time",
+        },
+        {
+            "rank": 3,
+            "sort_tuple": {"sort_value_signal": 6, "sort_signal": 6, "sort_density": 3, "report_count": 2, "broker_count": 2, "turnover": 0, "stock_code": "100000"},
+            "krx_freshness": "missing",
+            "investor_flow_freshness": "exact",
+            "news_freshness": "missing",
+        },
+    ]
+
+    summary = cli_module._decision_journal_explainability_summary(candidates)
+
+    assert summary["status"] == "near_tie"
+    assert summary["tie_break_applied"] is True
+    assert summary["fallback_reason"] == "deterministic_order"
+    assert summary["data_completeness_status"] == "weak"
+    assert "rank 2 and rank 3 share the same meaningful sort tuple" in summary["notes"]
+    assert candidates[1]["tie_group"] == "tie:2-3"
+    assert candidates[1]["tie_break_reason"] == "none"
+    assert candidates[1]["fallback_reason"] == "deterministic_order"
+    assert candidates[1]["comparable_to_rank_below"] is True
+    assert candidates[2]["comparable_to_rank_above"] is True
+
+
+def test_decision_journal_explainability_marks_turnover_only_boundary_as_near_tie() -> None:
+    candidates = [
+        {
+            "rank": 1,
+            "selected": True,
+            "sort_tuple": {"sort_value_signal": 6, "sort_signal": 6, "sort_density": 3, "report_count": 3, "broker_count": 3, "turnover": 1000, "stock_code": "300000"},
+            "krx_freshness": "exact",
+            "investor_flow_freshness": "exact",
+            "flow_freshness": "exact",
+            "news_freshness": "exact",
+            "news_direct_count": 1,
+            "price_reference_time": "2026-06-30",
+        },
+        {
+            "rank": 2,
+            "selected": True,
+            "sort_tuple": {"sort_value_signal": 6, "sort_signal": 6, "sort_density": 3, "report_count": 2, "broker_count": 2, "turnover": 900, "stock_code": "200000"},
+            "krx_freshness": "exact",
+            "investor_flow_freshness": "exact",
+            "flow_freshness": "exact",
+            "news_freshness": "missing",
+            "news_direct_count": 0,
+            "price_reference_time": "2026-06-30",
+        },
+        {
+            "rank": 3,
+            "selected": False,
+            "sort_tuple": {"sort_value_signal": 6, "sort_signal": 6, "sort_density": 3, "report_count": 2, "broker_count": 2, "turnover": 800, "stock_code": "100000"},
+            "krx_freshness": "exact",
+            "investor_flow_freshness": "exact",
+            "flow_freshness": "exact",
+            "news_freshness": "missing",
+            "news_direct_count": 0,
+            "price_reference_time": "2026-06-30",
+        },
+    ]
+
+    summary = cli_module._decision_journal_explainability_summary(candidates)
+
+    assert summary["status"] == "near_tie"
+    assert summary["tie_break_applied"] is True
+    assert summary["fallback_reason"] is None
+    assert candidates[1]["tie_group"] == "tie:2-3"
+    assert candidates[1]["tie_break_reason"] == "turnover"
+    assert candidates[1]["fallback_reason"] is None
+    assert cli_module._decision_journal_top2_explainable(candidates) is False
+
+
+def test_decision_journal_explainability_marks_all_zero_pool_insufficient() -> None:
+    candidates = [
+        {
+            "rank": 1,
+            "selected": True,
+            "sort_tuple": {"sort_value_signal": 0, "sort_signal": 0, "sort_density": 0, "report_count": 1, "broker_count": 1, "turnover": 0, "stock_code": "200000"},
+            "krx_freshness": "missing",
+            "investor_flow_freshness": "missing",
+            "flow_freshness": "missing",
+            "news_freshness": "missing",
+            "price_reference_time": None,
+        },
+        {
+            "rank": 2,
+            "selected": True,
+            "sort_tuple": {"sort_value_signal": 0, "sort_signal": 0, "sort_density": 0, "report_count": 1, "broker_count": 1, "turnover": 0, "stock_code": "100000"},
+            "krx_freshness": "missing",
+            "investor_flow_freshness": "missing",
+            "flow_freshness": "missing",
+            "news_freshness": "missing",
+            "price_reference_time": None,
+        },
+    ]
+
+    summary = cli_module._decision_journal_explainability_summary(candidates)
+
+    assert summary["status"] == "insufficient_data"
+    assert summary["data_completeness_status"] == "insufficient"
+    assert summary["tie_break_applied"] is False
+    assert "selected candidates have no positive sort signal" in summary["data_completeness_notes"]
 
 
 def test_krx_daily_backfill_parsers_accept_json_dry_run() -> None:
@@ -1245,11 +1975,11 @@ def test_web_view_browser_api_smoke_checks_intraday_market_top_route(monkeypatch
             return 404, b"not found", "text/plain"
         return 404, b"not found", "text/plain"
 
-    monkeypatch.setattr(cli_module, "_web_view_smoke_http_request", fake_request)
+    monkeypatch.setattr(web_view_checks, "_web_view_smoke_http_request", fake_request)
     issues: list[dict[str, object]] = []
     api_checks: list[dict[str, object]] = []
 
-    cli_module._collect_web_view_browser_api_smoke_issues(
+    web_view_checks._collect_web_view_browser_api_smoke_issues(
         base_url,
         business_date=date(2026, 5, 20),
         stock_limit=5,
@@ -1302,10 +2032,10 @@ def test_web_view_browser_api_smoke_flags_candidate_json_operator_keys(monkeypat
             return 404, b"not found", "text/plain"
         return 404, b"not found", "text/plain"
 
-    monkeypatch.setattr(cli_module, "_web_view_smoke_http_request", fake_request)
+    monkeypatch.setattr(web_view_checks, "_web_view_smoke_http_request", fake_request)
     issues: list[dict[str, object]] = []
 
-    cli_module._collect_web_view_browser_api_smoke_issues(
+    web_view_checks._collect_web_view_browser_api_smoke_issues(
         base_url,
         business_date=date(2026, 5, 20),
         stock_limit=5,
@@ -1484,7 +2214,9 @@ def test_web_view_browser_smoke_json_reports_read_only_contract(tmp_path, monkey
         business_date,
         stock_limit,
         respect_access_code,
+        runtime,
     ):
+        assert runtime.create_web_view_server is cli_module.create_web_view_server
         captured["config"] = config_arg
         captured["repository"] = repository_arg
         captured["business_date"] = business_date
@@ -1531,7 +2263,7 @@ def test_web_view_browser_smoke_json_reports_read_only_contract(tmp_path, monkey
             ],
         }
 
-    monkeypatch.setattr(cli_module, "_probe_web_view_browser_smoke", fake_probe)
+    monkeypatch.setattr(web_view_checks, "_probe_web_view_browser_smoke", fake_probe)
 
     exit_code = cli_module._run_web_view_browser_smoke(
         config,
@@ -1569,7 +2301,9 @@ def test_web_view_browser_smoke_text_reports_tab_contract(tmp_path, monkeypatch,
         business_date,
         stock_limit,
         respect_access_code,
+        runtime,
     ):
+        assert runtime.create_web_view_server is cli_module.create_web_view_server
         return {
             "surface": "web-view-browser-smoke",
             "read_only": True,
@@ -1601,7 +2335,7 @@ def test_web_view_browser_smoke_text_reports_tab_contract(tmp_path, monkeypatch,
             "api_checks": [],
         }
 
-    monkeypatch.setattr(cli_module, "_probe_web_view_browser_smoke", fake_probe)
+    monkeypatch.setattr(web_view_checks, "_probe_web_view_browser_smoke", fake_probe)
 
     exit_code = cli_module._run_web_view_browser_smoke(
         config,
@@ -2659,6 +3393,7 @@ def test_mini_pc_preflight_snapshot_reports_scheduler_scripts(tmp_path) -> None:
         "run_scheduled_notify.ps1",
         "run_scheduled_poll.ps1",
         "run_scheduled_krx_mentioned_flow_backfill.ps1",
+        "run_scheduled_market_briefing_slot.ps1",
         "run_process_telegram_commands.ps1",
         "restart_web_view.ps1",
         "run_scheduled_shutdown.ps1",
@@ -2921,6 +3656,95 @@ def test_news_intelligence_briefing_collect_parser_accepts_save_guard() -> None:
     assert args.save_observation is True
     assert args.confirm_save is True
     assert args.format == "json"
+
+
+def test_news_intelligence_collect_top_candidates_parser_accepts_safe_options() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "news-intelligence-collect-top-candidates",
+            "--date",
+            "latest",
+            "--candidate-limit",
+            "10",
+            "--top-n",
+            "5",
+            "--dry-run",
+            "--json",
+        ]
+    )
+
+    assert args.command == "news-intelligence-collect-top-candidates"
+    assert args.date is None
+    assert args.candidate_limit == 10
+    assert args.top_n == 5
+    assert args.dry_run is True
+    assert args.json is True
+
+
+def test_news_source_coverage_lab_parser_accepts_lab_targets() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "news-source-coverage-lab",
+            "--date",
+            "2026-07-02",
+            "--stock-name",
+            "Alpha Rental",
+            "--stock-name",
+            "Beta Materials",
+            "--scrapling-exe",
+            "C:/tools/scrapling.exe",
+            "--strict-title-match",
+            "--exclude-market-noise",
+            "--max-results",
+            "3",
+            "--json",
+        ]
+    )
+
+    assert args.command == "news-source-coverage-lab"
+    assert args.date == date(2026, 7, 2)
+    assert args.stock_name == ["Alpha Rental", "Beta Materials"]
+    assert str(args.scrapling_exe).endswith("tools\\scrapling.exe")
+    assert args.strict_title_match is True
+    assert args.exclude_market_noise is True
+    assert args.max_results == 3
+    assert args.json is True
+
+
+def test_news_search_lane_qa_report_parser_accepts_strict_filters() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "news-search-lane-qa-report",
+            "--recent-business-days",
+            "3",
+            "--candidate-limit",
+            "10",
+            "--top-n",
+            "5",
+            "--strict-title-match",
+            "--exclude-market-noise",
+            "--post-filter-v2",
+            "--max-results",
+            "3",
+            "--json",
+        ]
+    )
+
+    assert args.command == "news-search-lane-qa-report"
+    assert args.recent_business_days == 3
+    assert args.candidate_limit == 10
+    assert args.top_n == 5
+    assert args.strict_title_match is True
+    assert args.exclude_market_noise is True
+    assert args.post_filter_v2 is True
+    assert args.max_results == 3
+    assert args.json is True
 
 
 def test_news_flow_preview_parser_accepts_source_urls_and_fixture() -> None:
@@ -3816,12 +4640,23 @@ def test_news_intelligence_briefing_collect_saves_observations_for_actual_surfac
     assert daily_snapshot["market_briefing"]["news_observation_summary"]["direct_count"] == 2
 
 
-def test_news_intelligence_briefing_target_summaries_preserves_explicit_order_and_dedupes_codes() -> None:
+def test_news_intelligence_briefing_target_summaries_preserves_explicit_top_two_scope() -> None:
     business_date = date(2026, 6, 29)
     summaries = [
         DailyStockSummary(
             business_date=business_date,
-            stock_name="?먯궛",
+            stock_name="삼성바이오로직스",
+            stock_code="207940",
+            mention_count=7,
+            broker_display="Test",
+            target_price_min=None,
+            target_price_max=None,
+            dominant_opinion="unknown",
+            generated_at=datetime(2026, 6, 29, 12, 0, 0),
+        ),
+        DailyStockSummary(
+            business_date=business_date,
+            stock_name="두산",
             stock_code="000150",
             mention_count=9,
             broker_display="Test",
@@ -3832,9 +4667,20 @@ def test_news_intelligence_briefing_target_summaries_preserves_explicit_order_an
         ),
         DailyStockSummary(
             business_date=business_date,
-            stock_name="?쇱꽦?꾩옄",
+            stock_name="삼성전자",
             stock_code="005930",
-            mention_count=1,
+            mention_count=2,
+            broker_display="Test",
+            target_price_min=None,
+            target_price_max=None,
+            dominant_opinion="unknown",
+            generated_at=datetime(2026, 6, 29, 12, 0, 0),
+        ),
+        DailyStockSummary(
+            business_date=business_date,
+            stock_name="온코크로스",
+            stock_code="382150",
+            mention_count=6,
             broker_display="Test",
             target_price_min=None,
             target_price_max=None,
@@ -3861,47 +4707,71 @@ def test_news_intelligence_briefing_target_summaries_preserves_explicit_order_an
     )
 
     assert [(target.stock_code, target.stock_name) for target in targets] == [
-        ("005930", "?쇱꽦?꾩옄"),
-        ("000150", "?먯궛"),
+        ("005930", "삼성전자"),
+        ("000150", "두산"),
     ]
 
 
-def test_news_intelligence_top_candidate_targets_deduplicate_candidate_snapshot_codes(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    config = RuntimeConfig.from_env(root_dir=tmp_path)
-    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
-    warnings = []
+def test_news_intelligence_briefing_target_summaries_uses_partial_mixed_top_two_scope() -> None:
+    business_date = date(2026, 6, 24)
+    summaries = [
+        DailyStockSummary(
+            business_date=business_date,
+            stock_name="DL이앤씨",
+            stock_code="375500",
+            mention_count=1,
+            broker_display="Test",
+            target_price_min=None,
+            target_price_max=None,
+            dominant_opinion="unknown",
+            generated_at=datetime(2026, 6, 24, 12, 0, 0),
+        ),
+        DailyStockSummary(
+            business_date=business_date,
+            stock_name="BGF리테일",
+            stock_code="282330",
+            mention_count=8,
+            broker_display="Test",
+            target_price_min=None,
+            target_price_max=None,
+            dominant_opinion="unknown",
+            generated_at=datetime(2026, 6, 24, 12, 0, 0),
+        ),
+        DailyStockSummary(
+            business_date=business_date,
+            stock_name="LG이노텍",
+            stock_code="011070",
+            mention_count=9,
+            broker_display="Test",
+            target_price_min=None,
+            target_price_max=None,
+            dominant_opinion="unknown",
+            generated_at=datetime(2026, 6, 24, 12, 0, 0),
+        ),
+    ]
 
-    def fake_candidate_snapshot(_config, _repository, *, business_date, limit, include_internal):
-        assert business_date == date(2026, 6, 24)
-        assert limit == 10
-        assert include_internal is True
-        return {
-            "rows": [
-                {"stock_name": "DL E&C", "stock_code": "375500"},
-                {"stock_name": "DL E&C", "stock_code": "375500"},
-                {"stock_name": "LG Innotek", "stock_code": "011070"},
-            ]
-        }
+    class RepositoryStub:
+        timezone = "Asia/Seoul"
 
-    monkeypatch.setattr(cli_module, "build_web_view_candidate_evidence_snapshot", fake_candidate_snapshot)
+        def list_daily_summaries(self, target_date):
+            assert target_date == business_date
+            return summaries
 
-    targets = cli_module._news_intelligence_top_candidate_targets(
-        config,
-        repository,
-        business_date=date(2026, 6, 24),
-        candidate_limit=10,
-        top_n=3,
-        warnings=warnings,
+        def list_reports_for_business_date(self, _target_date):
+            raise AssertionError("stored daily summaries should be used")
+
+    targets = cli_module._news_intelligence_briefing_target_summaries(
+        RepositoryStub(),
+        target_date=business_date,
+        limit=2,
+        stock_codes=("375500", "011070"),
     )
 
-    assert targets == [
-        {"rank": 1, "stock_code": "375500", "stock_name": "DL E&C"},
-        {"rank": 3, "stock_code": "011070", "stock_name": "LG Innotek"},
+    assert [(target.stock_code, target.stock_name) for target in targets] == [
+        ("375500", "DL이앤씨"),
+        ("011070", "LG이노텍"),
     ]
-    assert warnings == []
+
 
 def test_news_intelligence_briefing_collect_saves_empty_observation_for_no_match(
     tmp_path,
@@ -3994,6 +4864,378 @@ def test_news_intelligence_briefing_collect_saves_empty_observation_for_no_match
         limit=1,
     )
     assert candidate_snapshot["rows"][0]["news_observation_badge"]["display_label"] == "매칭 뉴스 없음"
+
+
+def test_news_intelligence_collect_top_candidates_dry_run_outputs_candidate_targets(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 4)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="Alpha",
+                stock_code="000001",
+                title="Alpha report",
+                broker_name="A",
+                published_at=datetime(2026, 6, 4, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 4, 9, 1, 0),
+                target_price_value=10_000,
+                source_id="top-candidate-alpha",
+                identity_key="top-candidate-alpha",
+            ),
+            Report(
+                stock_name="Beta",
+                stock_code="000002",
+                title="Beta report",
+                broker_name="B",
+                published_at=datetime(2026, 6, 4, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 4, 9, 1, 0),
+                target_price_value=20_000,
+                source_id="top-candidate-beta",
+                identity_key="top-candidate-beta",
+            ),
+            Report(
+                stock_name="Gamma",
+                stock_code="000003",
+                title="Gamma report",
+                broker_name="C",
+                published_at=datetime(2026, 6, 4, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 4, 9, 1, 0),
+                target_price_value=30_000,
+                source_id="top-candidate-gamma",
+                identity_key="top-candidate-gamma",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    exit_code = cli_module._run_news_intelligence_collect_top_candidates(
+        config,
+        repository,
+        business_date=business_date,
+        candidate_limit=10,
+        top_n=2,
+        dry_run=True,
+        confirm_collect=False,
+        scrapling_exe=None,
+        as_json=True,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    expected_rows = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=10,
+    )["rows"][:2]
+    assert exit_code == 0
+    assert payload["surface"] == "news-intelligence-collect-top-candidates"
+    assert payload["read_only"] is True
+    assert payload["live_fetch"] is False
+    assert payload["writes_db"] is False
+    assert payload["business_date"] == "2026-06-04"
+    assert payload["target_date"] == "2026-06-04"
+    assert payload["top_n"] == 2
+    assert payload["targets"] == [
+        {
+            "rank": 1,
+            "stock_code": expected_rows[0]["stock_code"],
+            "stock_name": expected_rows[0]["stock_name"],
+        },
+        {
+            "rank": 2,
+            "stock_code": expected_rows[1]["stock_code"],
+            "stock_name": expected_rows[1]["stock_name"],
+        },
+    ]
+
+
+def test_news_intelligence_top_candidate_targets_deduplicate_candidate_snapshot_codes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    warnings = []
+
+    def fake_candidate_snapshot(_config, _repository, *, business_date, limit, include_internal):
+        assert business_date == date(2026, 6, 24)
+        assert limit == 2
+        assert include_internal is True
+        return {
+            "rows": [
+                {"stock_code": "375500", "stock_name": "DL이앤씨"},
+                {"stock_code": "375500", "stock_name": "DL이앤씨"},
+            ]
+        }
+
+    monkeypatch.setattr(cli_module, "build_web_view_candidate_evidence_snapshot", fake_candidate_snapshot)
+
+    targets = cli_module._news_intelligence_top_candidate_targets(
+        config,
+        repository,
+        business_date=date(2026, 6, 24),
+        candidate_limit=2,
+        top_n=2,
+        warnings=warnings,
+    )
+
+    assert targets == [{"rank": 1, "stock_code": "375500", "stock_name": "DL이앤씨"}]
+    assert warnings == []
+
+
+def test_web_view_candidate_news_badges_do_not_fallback_to_other_dates(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 26)
+    repository.save_news_intelligence_observation(
+        _news_intelligence_cli_run(
+            run_id="news-fallback-prev-date",
+            target_date=date(2026, 6, 25),
+            stock_name="SK하이닉스",
+            stock_code="000660",
+        ),
+        [
+            _news_intelligence_cli_evidence(
+                run_id="news-fallback-prev-date",
+                evidence_key="news-fallback-prev-evidence",
+                target_date=date(2026, 6, 25),
+                stock_name="SK하이닉스",
+                stock_code="000660",
+                relevance="direct",
+                match_scope="title",
+            )
+        ],
+    )
+    repository.save_news_intelligence_observation(
+        _news_intelligence_cli_run(
+            run_id="news-fallback-future-date",
+            target_date=date(2026, 6, 30),
+            stock_name="삼성전자",
+            stock_code="005930",
+        ),
+        [
+            _news_intelligence_cli_evidence(
+                run_id="news-fallback-future-date",
+                evidence_key="news-fallback-future-evidence",
+                target_date=date(2026, 6, 30),
+                stock_name="삼성전자",
+                stock_code="005930",
+                relevance="direct",
+                match_scope="title",
+            )
+        ],
+    )
+
+    badges = cli_module._web_view_candidate_news_badges_by_code(
+        repository,
+        business_date=business_date,
+        stock_codes=["000660", "005930"],
+        stock_names_by_code={"000660": "SK하이닉스", "005930": "삼성전자"},
+    )
+
+    assert badges["000660"]["display_label"] == "뉴스 근거 수집 전"
+    assert badges["005930"]["display_label"] == "뉴스 근거 수집 전"
+    assert badges["000660"]["direct_count"] == 0
+    assert badges["005930"]["direct_count"] == 0
+
+
+def test_news_intelligence_collect_top_candidates_caps_top_n_and_candidate_limit(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 4)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name=f"Stock{i:02d}",
+                stock_code=f"{i:06d}",
+                title=f"Stock {i} report",
+                broker_name="A",
+                published_at=datetime(2026, 6, 4, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 4, 9, 1, 0),
+                target_price_value=10_000 + i,
+                source_id=f"top-candidate-cap-{i}",
+                identity_key=f"top-candidate-cap-{i}",
+            )
+            for i in range(1, 13)
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    exit_code = cli_module._run_news_intelligence_collect_top_candidates(
+        config,
+        repository,
+        business_date=business_date,
+        candidate_limit=99,
+        top_n=99,
+        dry_run=True,
+        confirm_collect=False,
+        scrapling_exe=None,
+        as_json=True,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["candidate_limit"] == 10
+    assert payload["top_n"] == 10
+    assert len(payload["targets"]) == 10
+    assert "candidate_limit capped at 10" in payload["warnings"]
+    assert "top_n capped at 10" in payload["warnings"]
+
+
+def test_news_intelligence_collect_top_candidates_requires_confirm_for_write(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 4)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="Alpha",
+                stock_code="000001",
+                title="Alpha report",
+                broker_name="A",
+                published_at=datetime(2026, 6, 4, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 4, 9, 1, 0),
+                target_price_value=10_000,
+                source_id="top-candidate-confirm-alpha",
+                identity_key="top-candidate-confirm-alpha",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    exit_code = cli_module._run_news_intelligence_collect_top_candidates(
+        config,
+        repository,
+        business_date=business_date,
+        candidate_limit=10,
+        top_n=1,
+        dry_run=False,
+        confirm_collect=False,
+        scrapling_exe=None,
+        as_json=True,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert payload["read_only"] is False
+    assert payload["live_fetch"] is False
+    assert payload["writes_db"] is False
+    assert payload["error"] == "--confirm-collect is required without --dry-run"
+
+
+def test_news_intelligence_collect_top_candidates_reuses_briefing_collector(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 4)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="Alpha",
+                stock_code="000001",
+                title="Alpha report",
+                broker_name="A",
+                published_at=datetime(2026, 6, 4, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 4, 9, 1, 0),
+                target_price_value=10_000,
+                source_id="top-candidate-reuse-alpha",
+                identity_key="top-candidate-reuse-alpha",
+            ),
+            Report(
+                stock_name="Beta",
+                stock_code="000002",
+                title="Beta report",
+                broker_name="B",
+                published_at=datetime(2026, 6, 4, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 4, 9, 1, 0),
+                target_price_value=20_000,
+                source_id="top-candidate-reuse-beta",
+                identity_key="top-candidate-reuse-beta",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    captured: dict[str, object] = {}
+
+    def fake_collect(args):
+        captured["args"] = args
+        print(
+            json.dumps(
+                {
+                    "surface": "news-intelligence-briefing-collect",
+                    "writes_db": True,
+                    "saved_observation_count": 2,
+                    "saved_evidence_count": 1,
+                    "items": [],
+                }
+            )
+        )
+        return 0
+
+    monkeypatch.setattr(cli_module, "_run_news_intelligence_briefing_collect", fake_collect)
+
+    exit_code = cli_module._run_news_intelligence_collect_top_candidates(
+        config,
+        repository,
+        business_date=business_date,
+        candidate_limit=10,
+        top_n=2,
+        dry_run=False,
+        confirm_collect=True,
+        scrapling_exe=None,
+        as_json=True,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    collector_args = captured["args"]
+    assert exit_code == 0
+    assert payload["read_only"] is False
+    assert payload["live_fetch"] is True
+    assert payload["writes_db"] is True
+    assert payload["collected_count"] == 2
+    assert payload["evidence_count"] == 1
+    assert collector_args.date == business_date
+    assert collector_args.limit == 2
+    assert collector_args.stock_code == [target["stock_code"] for target in payload["targets"]]
+    assert collector_args.save_observation is True
+    assert collector_args.confirm_save is True
 
 
 def test_news_intelligence_preview_cli_saves_observation_only_when_explicit(tmp_path, monkeypatch, capsys) -> None:
@@ -4429,6 +5671,1063 @@ def test_news_intelligence_daily_brief_parser_accepts_operator_filters() -> None
     assert args.limit == 5
     assert args.format == "json"
     assert str(args.db_path).endswith("news-intelligence.db")
+
+
+def test_news_evidence_coverage_audit_parser_accepts_read_only_limits() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "news-evidence-coverage-audit",
+            "--recent-business-days",
+            "10",
+            "--candidate-limit",
+            "10",
+            "--json",
+        ]
+    )
+
+    assert args.command == "news-evidence-coverage-audit"
+    assert args.recent_business_days == 10
+    assert args.candidate_limit == 10
+    assert args.json is True
+
+
+def test_news_evidence_coverage_audit_json_explains_candidate_digest_gaps(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    first_date = date(2026, 6, 1)
+    second_date = date(2026, 6, 2)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="Alpha",
+                stock_code="000001",
+                title="Alpha report",
+                broker_name="A",
+                published_at=datetime(2026, 6, 1, 9, 0, 0),
+                business_date=first_date,
+                collected_at=datetime(2026, 6, 1, 9, 1, 0),
+                target_price_value=10_000,
+                source_id="news-coverage-alpha",
+                identity_key="news-coverage-alpha",
+            ),
+            Report(
+                stock_name="Beta",
+                stock_code="000002",
+                title="Beta report",
+                broker_name="B",
+                published_at=datetime(2026, 6, 1, 9, 0, 0),
+                business_date=first_date,
+                collected_at=datetime(2026, 6, 1, 9, 1, 0),
+                target_price_value=20_000,
+                source_id="news-coverage-beta",
+                identity_key="news-coverage-beta",
+            ),
+            Report(
+                stock_name="Gamma",
+                stock_code="000003",
+                title="Gamma report",
+                broker_name="C",
+                published_at=datetime(2026, 6, 1, 9, 0, 0),
+                business_date=first_date,
+                collected_at=datetime(2026, 6, 1, 9, 1, 0),
+                target_price_value=30_000,
+                source_id="news-coverage-gamma",
+                identity_key="news-coverage-gamma",
+            ),
+            Report(
+                stock_name="Delta",
+                stock_code="000004",
+                title="Delta report",
+                broker_name="D",
+                published_at=datetime(2026, 6, 2, 9, 0, 0),
+                business_date=second_date,
+                collected_at=datetime(2026, 6, 2, 9, 1, 0),
+                target_price_value=40_000,
+                source_id="news-coverage-delta",
+                identity_key="news-coverage-delta",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(first_date)
+    repository.rebuild_daily_summaries(second_date)
+    repository.save_news_intelligence_observation(
+        _news_intelligence_cli_run(
+            run_id="coverage-alpha-run",
+            target_date=first_date,
+            stock_name="Alpha",
+            stock_code="000001",
+        ),
+        [
+            _news_intelligence_cli_evidence(
+                run_id="coverage-alpha-run",
+                evidence_key="coverage-alpha-direct",
+                target_date=first_date,
+                stock_name="Alpha",
+                stock_code="000001",
+                title="Alpha direct contract",
+                relevance="direct",
+                match_scope="title",
+                source_lane="mainnews",
+            )
+        ],
+    )
+    repository.save_news_intelligence_observation(
+        _news_intelligence_cli_run(
+            run_id="coverage-beta-run",
+            target_date=first_date,
+            stock_name="Beta",
+            stock_code="000002",
+        ),
+        [
+            _news_intelligence_cli_evidence(
+                run_id="coverage-beta-run",
+                evidence_key="coverage-beta-context",
+                target_date=first_date,
+                stock_name="Beta",
+                stock_code="000002",
+                title="Beta sector context",
+                relevance="market_context",
+                match_scope="summary",
+                source_lane="market",
+            )
+        ],
+    )
+    repository.save_news_intelligence_observation(
+        _news_intelligence_cli_run(
+            run_id="coverage-gamma-run",
+            target_date=first_date,
+            stock_name="Gamma",
+            stock_code="000003",
+        ),
+        [],
+    )
+
+    exit_code = cli_module._run_news_evidence_coverage_audit(
+        config,
+        repository,
+        recent_business_days=2,
+        candidate_limit=5,
+        as_json=True,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["surface"] == "news-evidence-coverage-audit"
+    assert payload["read_only"] is True
+    assert payload["writes_db"] is False
+    assert payload["recent_business_days"] == 2
+    assert payload["candidate_limit"] == 5
+    assert payload["dates"] == ["2026-06-02", "2026-06-01"]
+    assert payload["top2"]["candidate_count"] == 3
+    assert payload["top2"]["with_digest_count"] == 1
+    assert payload["top5"]["candidate_count"] == 4
+    assert payload["top5"]["with_digest_count"] == 2
+    assert payload["runs"] == {
+        "available_dates": 1,
+        "missing_dates": 1,
+        "run_count": 3,
+        "completed_without_evidence_count": 1,
+    }
+    assert payload["linked_evidence"]["date_count"] == 1
+    assert payload["linked_evidence"]["row_count"] == 2
+    assert payload["relevance_distribution"] == {
+        "direct": 1,
+        "market_context": 1,
+    }
+    assert payload["source_lane_distribution"] == {
+        "mainnews": 1,
+        "market": 1,
+    }
+    assert payload["failure_reasons"] == {
+        "no_news_run": 1,
+        "no_linked_evidence": 1,
+        "only_market_context": 1,
+    }
+    assert payload["bottleneck"] == "latest_or_date_level_news_runs_missing"
+
+
+def test_news_evidence_match_audit_parser_accepts_read_only_limits() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "news-evidence-match-audit",
+            "--recent-business-days",
+            "10",
+            "--candidate-limit",
+            "10",
+            "--json",
+        ]
+    )
+
+    assert args.command == "news-evidence-match-audit"
+    assert args.recent_business_days == 10
+    assert args.candidate_limit == 10
+    assert args.json is True
+
+
+def test_news_evidence_match_audit_json_splits_collection_and_matching_gaps(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 1)
+    other_date = date(2026, 6, 2)
+    reports = [
+        Report(
+            stock_name="Alpha Holdings",
+            stock_code="000001",
+            title="Alpha report",
+            broker_name="A",
+            published_at=datetime(2026, 6, 1, 9, 0, 0),
+            business_date=business_date,
+            collected_at=datetime(2026, 6, 1, 9, 1, 0),
+            target_price_value=10_000,
+            source_id="match-alpha",
+            identity_key="match-alpha",
+        ),
+        Report(
+            stock_name="Beta Corp",
+            stock_code="000002",
+            title="Beta report",
+            broker_name="B",
+            published_at=datetime(2026, 6, 1, 9, 0, 0),
+            business_date=business_date,
+            collected_at=datetime(2026, 6, 1, 9, 1, 0),
+            target_price_value=20_000,
+            source_id="match-beta",
+            identity_key="match-beta",
+        ),
+        Report(
+            stock_name="Gamma",
+            stock_code="000003",
+            title="Gamma report",
+            broker_name="C",
+            published_at=datetime(2026, 6, 1, 9, 0, 0),
+            business_date=business_date,
+            collected_at=datetime(2026, 6, 1, 9, 1, 0),
+            target_price_value=30_000,
+            source_id="match-gamma",
+            identity_key="match-gamma",
+        ),
+        Report(
+            stock_name="Delta",
+            stock_code="000004",
+            title="Delta report",
+            broker_name="D",
+            published_at=datetime(2026, 6, 1, 9, 0, 0),
+            business_date=business_date,
+            collected_at=datetime(2026, 6, 1, 9, 1, 0),
+            target_price_value=40_000,
+            source_id="match-delta",
+            identity_key="match-delta",
+        ),
+        Report(
+            stock_name="Epsilon",
+            stock_code="000005",
+            title="Epsilon report",
+            broker_name="E",
+            published_at=datetime(2026, 6, 1, 9, 0, 0),
+            business_date=business_date,
+            collected_at=datetime(2026, 6, 1, 9, 1, 0),
+            target_price_value=50_000,
+            source_id="match-epsilon",
+            identity_key="match-epsilon",
+        ),
+    ]
+    repository.insert_reports(reports)
+    repository.rebuild_daily_summaries(business_date)
+    repository.save_news_intelligence_observation(
+        _news_intelligence_cli_run(
+            run_id="match-alpha-run",
+            target_date=business_date,
+            stock_name="AlphaHoldings",
+            stock_code="999001",
+        ),
+        [
+            _news_intelligence_cli_evidence(
+                run_id="match-alpha-run",
+                evidence_key="match-alpha-alias",
+                target_date=business_date,
+                stock_name="AlphaHoldings",
+                stock_code="999001",
+                title="AlphaHoldings contract",
+                relevance="direct",
+                match_scope="title",
+            )
+        ],
+    )
+    repository.save_news_intelligence_observation(
+        _news_intelligence_cli_run(
+            run_id="match-beta-run",
+            target_date=business_date,
+            stock_name="BetaCorp",
+            stock_code="999002",
+        ),
+        [
+            _news_intelligence_cli_evidence(
+                run_id="match-beta-run",
+                evidence_key="match-beta-missing-code",
+                target_date=business_date,
+                stock_name="BetaCorp",
+                stock_code=None,
+                title="Beta Corp demand",
+                relevance="direct",
+                match_scope="title",
+            )
+        ],
+    )
+    repository.save_news_intelligence_observation(
+        _news_intelligence_cli_run(
+            run_id="match-gamma-run",
+            target_date=business_date,
+            stock_name="Gamma",
+            stock_code="000003",
+        ),
+        [],
+    )
+    repository.save_news_intelligence_observation(
+        _news_intelligence_cli_run(
+            run_id="match-epsilon-run",
+            target_date=other_date,
+            stock_name="Epsilon",
+            stock_code="000005",
+        ),
+        [
+            _news_intelligence_cli_evidence(
+                run_id="match-epsilon-run",
+                evidence_key="match-epsilon-other-date",
+                target_date=other_date,
+                stock_name="Epsilon",
+                stock_code="000005",
+                title="Epsilon delayed evidence",
+                relevance="direct",
+                match_scope="title",
+            )
+        ],
+    )
+
+    exit_code = cli_module._run_news_evidence_match_audit(
+        config,
+        repository,
+        recent_business_days=1,
+        candidate_limit=10,
+        as_json=True,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["surface"] == "news-evidence-match-audit"
+    assert payload["read_only"] is True
+    assert payload["writes_db"] is False
+    assert payload["summary"]["candidate_count"] == 5
+    assert payload["summary"]["missing_digest_count"] == 5
+    assert payload["summary"]["stock_match_missing_count"] == 4
+    assert payload["summary"]["stock_match_missing_reasons"] == {
+        "evidence_stock_name_alias_mismatch": 1,
+        "evidence_missing_stock_code": 1,
+        "evidence_date_mismatch": 1,
+        "candidate_not_in_news_collection_scope": 1,
+    }
+    assert payload["summary"]["missing_digest_reasons"] == {
+        "no_evidence_for_candidate_stock": 1,
+        "evidence_stock_name_alias_mismatch": 1,
+        "evidence_missing_stock_code": 1,
+        "evidence_date_mismatch": 1,
+        "candidate_not_in_news_collection_scope": 1,
+    }
+    assert payload["collection_gap"]["count"] == 1
+    assert payload["matching_gap"]["count"] == 3
+    assert payload["stock_code_missing_examples"][0]["stock_name"] == "Beta Corp"
+    assert payload["date_mismatch_examples"][0]["stock_name"] == "Epsilon"
+    assert payload["alias_mismatch_examples"][0]["stock_name"] == "Alpha Holdings"
+
+
+def test_news_evidence_run_scope_audit_parser_accepts_read_only_limits() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "news-evidence-run-scope-audit",
+            "--recent-business-days",
+            "10",
+            "--candidate-limit",
+            "10",
+            "--json",
+        ]
+    )
+
+    assert args.command == "news-evidence-run-scope-audit"
+    assert args.recent_business_days == 10
+    assert args.candidate_limit == 10
+    assert args.json is True
+
+
+def test_news_source_coverage_lab_json_compares_5_lane_with_search(
+    capsys,
+) -> None:
+    target_date = date(2026, 7, 2)
+    section_json = json.dumps(
+        {
+            "articles": [
+                {
+                    "officeHName": "Test News",
+                    "title": "Unrelated market headline",
+                    "subcontent": "The existing five lanes do not mention the target.",
+                    "date": "20260702101000",
+                    "url": "https://n.news.naver.com/mnews/article/015/1000001",
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+    search_markdown = """
+[### Alpha Rental signs fleet contract](https://n.news.naver.com/mnews/article/001/2000001)
+Alpha Rental expands its fleet operation.
+
+[### Rental industry demand improves](https://n.news.naver.com/mnews/article/001/2000002)
+Industry-wide rental demand improved without a direct title keyword.
+"""
+
+    def fake_transport(spec):
+        page_url = str(getattr(spec, "page_url", ""))
+        if "search.naver.com" in page_url:
+            return search_markdown
+        return section_json if str(getattr(spec, "response_format", "")) == "focus_json" else ""
+
+    args = Namespace(
+        date=target_date,
+        stock_name=["Alpha Rental"],
+        alias=[],
+        scrapling_exe=None,
+        json=True,
+    )
+
+    exit_code = cli_module._run_news_source_coverage_lab(args, transport=fake_transport)
+
+    payload = json.loads(capsys.readouterr().out)
+    target = payload["targets"][0]
+    assert exit_code == 0
+    assert payload["surface"] == "news-source-coverage-lab"
+    assert payload["lab_surface"] is True
+    assert payload["read_only"] is True
+    assert payload["writes_db"] is False
+    assert payload["registers_scheduler"] is False
+    assert target["stock_name"] == "Alpha Rental"
+    assert target["checked_date"] == "2026-07-02"
+    assert target["existing_5_lane_matched"] is False
+    assert target["external_visible_candidate_count"] == 2
+    assert target["title_exact_match_count"] == 1
+    assert target["theme_only_count"] == 1
+    assert target["likely_reason"] == "source_coverage_gap"
+    assert target["example_titles"] == [
+        "Alpha Rental signs fleet contract",
+        "Rental industry demand improves",
+    ]
+
+
+def test_news_source_coverage_lab_strict_filters_select_digest_safe_titles(
+    capsys,
+) -> None:
+    target_date = date(2026, 7, 2)
+    search_markdown = """
+[### Alpha Rental signs fleet contract](https://n.news.naver.com/mnews/article/001/2000001)
+Alpha Rental expands its fleet operation.
+
+[### Alpha Rental intraday price ranking](https://n.news.naver.com/mnews/article/001/2000002)
+Alpha Rental appears in a market price table.
+
+[### Rental industry demand improves](https://n.news.naver.com/mnews/article/001/2000003)
+Industry-wide rental demand improved.
+
+[### Alpha Rental signs fleet contract](https://n.news.naver.com/mnews/article/001/2000001)
+Duplicate title and URL.
+
+[### Alpha Rental expands airport fleet](https://n.news.naver.com/mnews/article/001/2000004)
+Alpha Rental adds airport vehicles.
+"""
+
+    def fake_transport(spec):
+        if "search.naver.com" in str(getattr(spec, "page_url", "")):
+            return search_markdown
+        return ""
+
+    args = Namespace(
+        date=target_date,
+        stock_name=["Alpha Rental"],
+        alias=[],
+        scrapling_exe=None,
+        strict_title_match=True,
+        exclude_market_noise=True,
+        max_results=1,
+        json=True,
+    )
+
+    exit_code = cli_module._run_news_source_coverage_lab(args, transport=fake_transport)
+
+    payload = json.loads(capsys.readouterr().out)
+    target = payload["targets"][0]
+    assert exit_code == 0
+    assert payload["filter_options"] == {
+        "strict_title_match": True,
+        "exclude_market_noise": True,
+        "max_results": 1,
+    }
+    assert target["raw_count"] == 5
+    assert target["exact_title_count"] == 4
+    assert target["after_dedup_count"] == 4
+    assert target["after_noise_filter_count"] == 2
+    assert target["selected_count"] == 1
+    assert target["excluded_count"] == 3
+    assert target["excluded_reason_distribution"] == {
+        "market_noise": 1,
+        "not_title_match": 1,
+        "over_max_results": 1,
+    }
+    assert target["example_selected_titles"] == ["Alpha Rental signs fleet contract"]
+    assert target["example_excluded_titles"][0]["reason"] == "market_noise"
+    assert target["likely_reason"] == "usable_search_lane_candidate"
+
+
+def test_news_search_lane_qa_report_json_labels_selected_titles(
+    tmp_path,
+    capsys,
+) -> None:
+    business_date = date(2026, 7, 2)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="Alpha Rental",
+                stock_code="000001",
+                title="Alpha report",
+                broker_name="A",
+                published_at=datetime(2026, 7, 2, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 7, 2, 9, 1, 0),
+                target_price_value=10_000,
+                source_id="qa-alpha",
+                identity_key="qa-alpha",
+            ),
+            Report(
+                stock_name="Beta Materials",
+                stock_code="000002",
+                title="Beta report",
+                broker_name="B",
+                published_at=datetime(2026, 7, 2, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 7, 2, 9, 1, 0),
+                target_price_value=20_000,
+                source_id="qa-beta",
+                identity_key="qa-beta",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    def fake_transport(spec):
+        page_url = str(getattr(spec, "page_url", ""))
+        if "Alpha+Rental" in page_url:
+            return """
+[### Alpha Rental signs fleet contract](https://n.news.naver.com/mnews/article/001/3000001)
+Alpha Rental expands its fleet operation.
+
+[### Alpha Rental intraday price ranking](https://n.news.naver.com/mnews/article/001/3000002)
+Alpha Rental appears in a market price table.
+"""
+        if "Beta+Materials" in page_url:
+            return """
+[### Beta Materials target price raised by Broker](https://n.news.naver.com/mnews/article/001/3000003)
+Broker repeats the report target price.
+"""
+        return ""
+
+    exit_code = cli_module._run_news_search_lane_qa_report(
+        config,
+        repository,
+        recent_business_days=1,
+        candidate_limit=10,
+        top_n=2,
+        strict_title_match=True,
+        exclude_market_noise=True,
+        max_results=3,
+        scrapling_exe=None,
+        as_json=True,
+        transport=fake_transport,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    selected_rows = [
+        row
+        for date_report in payload["date_reports"]
+        for target in date_report["targets"]
+        for row in target["selected_titles"]
+    ]
+    assert exit_code == 0
+    assert payload["surface"] == "news-search-lane-qa-report"
+    assert payload["lab_surface"] is True
+    assert payload["read_only"] is True
+    assert payload["writes_db"] is False
+    assert payload["summary"]["candidate_count"] == 2
+    assert payload["summary"]["selected_title_count"] == 2
+    assert payload["summary"]["qa_label_distribution"] == {
+        "usable_digest": 1,
+        "report_rehash": 1,
+    }
+    assert payload["summary"]["usable_digest_percent"] == 50.0
+    assert {row["qa_label"] for row in selected_rows} == {"usable_digest", "report_rehash"}
+    assert all(row["direct_stock_name_in_title"] is True for row in selected_rows)
+    assert all("url" in row for row in selected_rows)
+
+
+def test_news_search_lane_qa_report_post_filter_v2_reduces_false_positives(
+    tmp_path,
+    capsys,
+) -> None:
+    business_date = date(2026, 7, 2)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="NAVER",
+                stock_code="000001",
+                title="NAVER report",
+                broker_name="A",
+                published_at=datetime(2026, 7, 2, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 7, 2, 9, 1, 0),
+                target_price_value=10_000,
+                source_id="qa-v2-naver",
+                identity_key="qa-v2-naver",
+            ),
+            Report(
+                stock_name="Samsung Electronics",
+                stock_code="000002",
+                title="Samsung report",
+                broker_name="B",
+                published_at=datetime(2026, 7, 2, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 7, 2, 9, 1, 0),
+                target_price_value=20_000,
+                source_id="qa-v2-samsung",
+                identity_key="qa-v2-samsung",
+            ),
+            Report(
+                stock_name="Alpha Rental",
+                stock_code="000003",
+                title="Alpha report",
+                broker_name="C",
+                published_at=datetime(2026, 7, 2, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 7, 2, 9, 1, 0),
+                target_price_value=30_000,
+                source_id="qa-v2-alpha",
+                identity_key="qa-v2-alpha",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    def fake_transport(spec):
+        page_url = str(getattr(spec, "page_url", ""))
+        if "NAVER" in page_url:
+            return """
+[### *© NAVER Corp.*](https://www.navercorp.com/)
+Footer fragment.
+
+[### NAVER wins enterprise AI contract](https://n.news.naver.com/mnews/article/001/4000001)
+Direct business event.
+"""
+        if "Samsung+Electronics" in page_url:
+            return """
+[### Samsung Electronics installer becomes actor](https://n.news.naver.com/mnews/article/001/4000002)
+Celebrity career story.
+
+[### Samsung Electronics wins chip supply contract](https://n.news.naver.com/mnews/article/001/4000003)
+Direct business event.
+"""
+        if "Alpha+Rental" in page_url:
+            return """
+[### Alpha Rental ESG report published](https://n.news.naver.com/mnews/article/001/4000004)
+Weak PR article.
+
+[### Alpha Rental ESG report publication](https://n.news.naver.com/mnews/article/001/4000005)
+Same weak PR topic.
+
+[### Alpha Rental target price raised by Broker](https://n.news.naver.com/mnews/article/001/4000006)
+Report rehash article.
+
+[### Alpha Rental wins supply contract](https://n.news.naver.com/mnews/article/001/4000007)
+Direct business event.
+"""
+        return ""
+
+    exit_code = cli_module._run_news_search_lane_qa_report(
+        config,
+        repository,
+        recent_business_days=1,
+        candidate_limit=10,
+        top_n=3,
+        strict_title_match=True,
+        exclude_market_noise=True,
+        post_filter_v2=True,
+        max_results=3,
+        scrapling_exe=None,
+        as_json=True,
+        transport=fake_transport,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    selected_rows = [
+        row
+        for date_report in payload["date_reports"]
+        for target in date_report["targets"]
+        for row in target["selected_titles"]
+    ]
+    summary = payload["summary"]
+    assert exit_code == 0
+    assert payload["filter_options"]["post_filter_v2"] is True
+    assert summary["selected_count_before"] == 8
+    assert summary["selected_count_after"] == 5
+    assert summary["usable_digest_count"] == 3
+    assert summary["report_rehash_count"] == 1
+    assert summary["parser_artifact_count"] == 1
+    assert summary["false_positive_count"] == 1
+    assert summary["weak_pr_count"] == 1
+    assert summary["duplicate_removed_count"] == 1
+    assert summary["excluded_reason_distribution"]["parser_artifact"] == 1
+    assert summary["excluded_reason_distribution"]["false_positive"] == 1
+    assert summary["excluded_reason_distribution"]["duplicate_topic"] == 1
+    assert summary["qa_label_distribution"] == {
+        "usable_digest": 3,
+        "report_rehash": 1,
+        "esg_pr": 1,
+    }
+    assert {row["qa_label"] for row in selected_rows} == {"usable_digest", "report_rehash", "esg_pr"}
+    assert all(row["qa_label"] != "parser_artifact" for row in selected_rows)
+    assert all("installer becomes actor" not in row["title"] for row in selected_rows)
+
+
+def test_news_search_lane_post_filter_v2_excludes_investment_success_story() -> None:
+    result = cli_module._news_search_lane_post_filter_v2(
+        [
+            Namespace(
+                title="SK Hynix investment success story star enters silver town",
+                url="https://n.news.naver.com/mnews/article/001/4000008",
+                source="naver_search",
+            ),
+            Namespace(
+                title="SK Hynix wins HBM supply contract",
+                url="https://n.news.naver.com/mnews/article/001/4000009",
+                source="naver_search",
+            ),
+        ],
+        stock_name="SK Hynix",
+        max_results=3,
+    )
+
+    assert [getattr(article, "title") for article in result["selected"]] == [
+        "SK Hynix wins HBM supply contract",
+    ]
+    assert result["excluded"][0]["reason"] == "false_positive"
+
+
+def test_news_no_match_diagnosis_parser_accepts_read_only_targets() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "news-no-match-diagnosis",
+            "--date",
+            "latest",
+            "--candidate-limit",
+            "10",
+            "--top-n",
+            "5",
+            "--json",
+        ]
+    )
+
+    assert args.command == "news-no-match-diagnosis"
+    assert args.date is None
+    assert args.candidate_limit == 10
+    assert args.top_n == 5
+    assert args.json is True
+
+
+def test_news_no_match_diagnosis_json_splits_no_match_reasons(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 1)
+    other_date = date(2026, 5, 29)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="Alpha Rental",
+                stock_code="000001",
+                title="Alpha Rental report",
+                broker_name="A",
+                published_at=datetime(2026, 6, 1, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 1, 9, 1, 0),
+                target_price_value=10_000,
+                source_id="no-match-alpha",
+                identity_key="no-match-alpha",
+            ),
+            Report(
+                stock_name="Beta Engineering",
+                stock_code="000002",
+                title="Beta Engineering report",
+                broker_name="B",
+                published_at=datetime(2026, 6, 1, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 1, 9, 1, 0),
+                target_price_value=20_000,
+                source_id="no-match-beta",
+                identity_key="no-match-beta",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.save_news_intelligence_observation(
+        _news_intelligence_cli_run(
+            run_id="no-match-alpha-run",
+            target_date=business_date,
+            stock_name="Alpha Rental",
+            stock_code="000001",
+            aliases=(),
+            matched_count=0,
+            warnings=("No parsed articles matched the requested stock name, code, or aliases.",),
+        ),
+        [],
+    )
+    repository.save_news_intelligence_observation(
+        _news_intelligence_cli_run(
+            run_id="no-match-beta-run",
+            target_date=business_date,
+            stock_name="Beta Engineering",
+            stock_code="000002",
+            aliases=(),
+            matched_count=0,
+            warnings=("No parsed articles matched the requested stock name, code, or aliases.",),
+        ),
+        [],
+    )
+    repository.save_news_intelligence_observation(
+        _news_intelligence_cli_run(
+            run_id="no-match-beta-other-date-run",
+            target_date=other_date,
+            stock_name="Beta Engineering",
+            stock_code="000002",
+        ),
+        [
+            _news_intelligence_cli_evidence(
+                run_id="no-match-beta-other-date-run",
+                evidence_key="no-match-beta-other-date",
+                target_date=other_date,
+                stock_name="Beta Engineering",
+                stock_code="000002",
+                title="Beta Engineering delayed order",
+                relevance="direct",
+                match_scope="title",
+            )
+        ],
+    )
+
+    exit_code = cli_module._run_news_no_match_diagnosis(
+        config,
+        repository,
+        business_date=business_date,
+        stock_code=None,
+        stock_name=None,
+        candidate_limit=10,
+        top_n=2,
+        as_json=True,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["surface"] == "news-no-match-diagnosis"
+    assert payload["read_only"] is True
+    assert payload["writes_db"] is False
+    assert payload["business_date"] == "2026-06-01"
+    assert payload["target_count"] == 2
+    assert payload["summary"]["reason_distribution"] == {
+        "source_coverage_gap": 1,
+        "date_window_gap": 1,
+    }
+    alpha = next(item for item in payload["targets"] if item["stock_code"] == "000001")
+    beta = next(item for item in payload["targets"] if item["stock_code"] == "000002")
+    assert alpha["current_status"] == "no_matching_article"
+    assert alpha["same_date_run_exists"] is True
+    assert alpha["parsed_article_count"] == 85
+    assert alpha["matched_count"] == 0
+    assert alpha["likely_reason"] == "source_coverage_gap"
+    assert beta["likely_reason"] == "date_window_gap"
+    assert beta["other_date_evidence_dates"] == ["2026-05-29"]
+    assert payload["diagnostic_limitations"]["unmatched_article_titles_available"] is False
+
+
+def test_news_evidence_run_scope_audit_json_traces_candidate_universe_gap(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 1)
+    other_date = date(2026, 6, 2)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="Alpha",
+                stock_code="000001",
+                title="Alpha report",
+                broker_name="A",
+                published_at=datetime(2026, 6, 1, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 1, 9, 1, 0),
+                target_price_value=10_000,
+                source_id="scope-alpha",
+                identity_key="scope-alpha",
+            ),
+            Report(
+                stock_name="Beta",
+                stock_code="000002",
+                title="Beta report",
+                broker_name="B",
+                published_at=datetime(2026, 6, 1, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 1, 9, 1, 0),
+                target_price_value=20_000,
+                source_id="scope-beta",
+                identity_key="scope-beta",
+            ),
+            Report(
+                stock_name="Gamma",
+                stock_code="000003",
+                title="Gamma report",
+                broker_name="C",
+                published_at=datetime(2026, 6, 1, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 1, 9, 1, 0),
+                target_price_value=30_000,
+                source_id="scope-gamma",
+                identity_key="scope-gamma",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.save_news_intelligence_observation(
+        _news_intelligence_cli_run(
+            run_id="scope-alpha-run",
+            target_date=business_date,
+            stock_name="Alpha",
+            stock_code="000001",
+            created_at=datetime(2026, 6, 1, 10, 0, 0),
+        ),
+        [
+            _news_intelligence_cli_evidence(
+                run_id="scope-alpha-run",
+                evidence_key="scope-alpha-direct",
+                target_date=business_date,
+                stock_name="Alpha",
+                stock_code="000001",
+                title="Alpha direct",
+                relevance="direct",
+                match_scope="title",
+            )
+        ],
+    )
+    repository.save_news_intelligence_observation(
+        _news_intelligence_cli_run(
+            run_id="scope-external-run",
+            target_date=business_date,
+            stock_name="External",
+            stock_code="999999",
+            created_at=datetime(2026, 6, 1, 10, 5, 0),
+        ),
+        [],
+    )
+    repository.save_news_intelligence_observation(
+        _news_intelligence_cli_run(
+            run_id="scope-beta-other-date",
+            target_date=other_date,
+            stock_name="Beta",
+            stock_code="000002",
+            created_at=datetime(2026, 6, 2, 10, 0, 0),
+        ),
+        [
+            _news_intelligence_cli_evidence(
+                run_id="scope-beta-other-date",
+                evidence_key="scope-beta-other-date",
+                target_date=other_date,
+                stock_name="Beta",
+                stock_code="000002",
+                title="Beta delayed evidence",
+                relevance="direct",
+                match_scope="title",
+            )
+        ],
+    )
+
+    exit_code = cli_module._run_news_evidence_run_scope_audit(
+        config,
+        repository,
+        recent_business_days=1,
+        candidate_limit=10,
+        as_json=True,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    date_row = payload["date_breakdown"][0]
+    assert exit_code == 0
+    assert payload["surface"] == "news-evidence-run-scope-audit"
+    assert payload["read_only"] is True
+    assert payload["writes_db"] is False
+    assert payload["summary"]["candidate_count"] == 3
+    assert payload["summary"]["run_target_count"] == 2
+    assert payload["summary"]["candidate_run_overlap_count"] == 1
+    assert payload["summary"]["missing_candidate_count"] == 2
+    assert payload["summary"]["non_candidate_run_target_count"] == 1
+    assert payload["summary"]["date_mismatch_candidate_count"] == 1
+    assert payload["summary"]["candidate_not_in_scope_count"] == 2
+    assert date_row["candidate_stock_codes"] == ["000003", "000002", "000001"]
+    assert date_row["run_target_stock_codes"] == ["000001", "999999"]
+    assert date_row["overlap_stock_codes"] == ["000001"]
+    assert date_row["missing_candidate_stock_codes"] == ["000003", "000002"]
+    assert date_row["non_candidate_run_stock_codes"] == ["999999"]
+    assert date_row["date_mismatch_candidates"][0]["stock_code"] == "000002"
+    assert date_row["run_scope_inference"] == "mixed_or_partial_candidate_universe"
+    assert payload["known_input_paths"][0]["path"] == "news-intelligence-preview"
 
 
 def test_news_intelligence_observations_outputs_read_only_run_comparison(

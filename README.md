@@ -88,17 +88,26 @@ python -m pytest
 
 ## Common Commands
 
-Read-only checks:
+Daily minimal checks:
 
 ```powershell
 python -m stock_monitor db-verify --json
-python -m stock_monitor docs-hygiene-audit --json
-python -m stock_monitor next-phase-readiness --recent-report-dates 5 --stock-limit 20 --json
-python -m stock_monitor market-briefing-readiness --recent-report-dates 5 --json
-python -m stock_monitor ops-readiness --recent-business-days 4 --stock-limit 20 --json
-python -m stock_monitor web-view-value-qa --date latest --stock-limit 20 --json
+python -m stock_monitor candidate-evidence-readiness --recent-report-dates 5 --stock-limit 20 --json
+python -m stock_monitor web-view-value-qa --recent-business-days 4 --stock-limit 20 --json
 python -m stock_monitor web-view-browser-smoke --date latest --json
+python -m stock_monitor krx-baseline-analysis --json
+python -m stock_monitor market-day-observation --date YYYY-MM-DD --json
 ```
+
+Problem checks:
+
+```powershell
+python -m stock_monitor market-briefing-readiness --recent-report-dates 5 --json
+python -m stock_monitor external-web-view-smoke --url https://YOUR-WEB-VIEW-URL --date YYYY-MM-DD --json
+python -m stock_monitor db-restore-smoke PATH
+```
+
+Historical/deprecated closeout and audit commands remain callable for compatibility, but they are not active README workflow commands and are hidden from top-level CLI help.
 
 Collection and summary:
 
@@ -121,9 +130,6 @@ KRX and evidence review:
 ```powershell
 python -m stock_monitor krx-openapi-availability-probe --date latest --endpoint daily --json
 python -m stock_monitor krx-backfill-missing daily --lookback-days 90 --max-dates 5 --dry-run
-python -m stock_monitor candidate-evidence-readiness --recent-report-dates 5 --stock-limit 20 --json
-python -m stock_monitor observation-summary-audit --recent-report-dates 5 --stock-limit 20 --json
-python -m stock_monitor rotation-mapping-audit --date latest --json
 ```
 
 Provider 호출, Telegram 발송, 스케줄러 변경, DB write가 있는 명령은 관련 문서를 먼저 확인하고 의도한 confirmation flag로만 실행합니다.
