@@ -154,6 +154,7 @@ TEST_DELIVERY_CHANNEL = "telegram_test"
 MARKET_BRIEFING_DELIVERY_CHANNEL = "telegram_market_briefing"
 MARKET_BRIEFING_PHONE_REVIEW_SETTING = "market_briefing_phone_review_accepted"
 MARKET_BRIEFING_MIN_MANUAL_REVIEW_SENDS = 3
+MARKET_BRIEFING_LAYOUTS = ("default", "realtime-first")
 MARKET_BRIEFING_SLOT_WINDOW_MINUTES = 30
 ASCII_STOCK_CODE_PATTERN = re.compile(r"^[0-9A-Z]{6}$")
 ADMIN_GUI_SCHEDULER_STATUS_CACHE_SECONDS = 20.0
@@ -1524,6 +1525,7 @@ def build_parser() -> argparse.ArgumentParser:
     market_briefing_parser.add_argument("--date", type=date.fromisoformat, help="Use an explicit business date.")
     market_briefing_parser.add_argument("--limit", type=int, default=5, help="Maximum notable report stocks to include.")
     market_briefing_parser.add_argument("--slot", choices=tuple(MARKET_BRIEFING_SLOT_LABELS), default="mood")
+    market_briefing_parser.add_argument("--layout", choices=MARKET_BRIEFING_LAYOUTS, default="default")
     market_briefing_parser.add_argument("--send", action="store_true", help="Send the briefing to Telegram instead of printing it.")
     market_briefing_parser.add_argument("--json", action="store_true")
     market_briefing_parser.add_argument(
@@ -2789,6 +2791,7 @@ def main(argv: list[str] | None = None) -> int:
                 limit=args.limit,
                 send=args.send,
                 slot=args.slot,
+                layout=args.layout,
                 as_json=args.json,
                 news_flow_source_urls=tuple(args.news_flow_source_url or ()),
                 news_flow_fixture=args.news_flow_fixture,
@@ -19231,10 +19234,14 @@ def _run_market_briefing(
     limit: int,
     send: bool,
     slot: str = "mood",
+    layout: str = "default",
     as_json: bool = False,
     news_flow_source_urls: tuple[str, ...] = (),
     news_flow_fixture: Path | None = None,
 ) -> int:
+    if layout == "realtime-first" and send:
+        print("realtime-first layout is preview-only and cannot be used with --send")
+        return 1
     if as_json and send:
         raise ValueError("--json cannot be combined with --send for market-briefing.")
     if bool(news_flow_source_urls) != bool(news_flow_fixture):
@@ -19255,6 +19262,7 @@ def _run_market_briefing(
         business_date=business_date,
         limit=limit,
         slot=slot,
+        layout=layout,
         toss_context=toss_context,
     )
     news_flow_lines: list[str] | None = None
@@ -19296,6 +19304,9 @@ def _run_market_briefing(
             "business_date": business_date.isoformat(),
             "slot": slot,
             "slot_label": MARKET_BRIEFING_SLOT_LABELS.get(slot, MARKET_BRIEFING_SLOT_LABELS["mood"]),
+            "layout": layout,
+            "preview_only": True,
+            "send_blocked_reason": None,
             "limit": limit,
             "sends_telegram": False,
             "registers_scheduler": False,
@@ -21668,6 +21679,7 @@ def _build_market_briefing_message(
     include_live_candidate_quotes: bool = False,
     naver_quote_fetcher: Callable[..., StockQuoteSnapshot] | None = None,
     candidate_stock_codes: tuple[str, ...] | None = None,
+    layout: str = "default",
 ) -> str:
     summaries = repository.list_daily_summaries(business_date)
     if not summaries:
@@ -21723,23 +21735,52 @@ def _build_market_briefing_message(
         effective_toss_context,
         candidate_rows=candidate_rows,
     )
-    message = format_market_close_briefing_message(
+    market_reference_lines = _build_daily_briefing_market_reference_lines(repository, business_date)
+    turnover_reference_lines = _build_market_briefing_turnover_lines(repository, business_date)
+    flow_reference_lines = _build_daily_briefing_flow_reference_lines(
+        repository,
         business_date,
-        report_count=report_count,
-        stock_count=len(summaries),
-        market_reference_lines=_build_daily_briefing_market_reference_lines(repository, business_date),
-        turnover_reference_lines=_build_market_briefing_turnover_lines(repository, business_date),
-        flow_reference_lines=_build_daily_briefing_flow_reference_lines(
-            repository,
-            business_date,
-            summaries=summaries,
-            stock_limit=limit,
-            priority_stock_codes=tuple(str(row.get("stock_code") or "").strip() for row in candidate_rows),
-        ),
-        notable_lines=_build_market_briefing_notable_lines(summaries, limit=limit),
-        check_point_lines=_build_market_briefing_check_point_lines(repository, business_date),
+        summaries=summaries,
+        stock_limit=limit,
+        priority_stock_codes=tuple(str(row.get("stock_code") or "").strip() for row in candidate_rows),
     )
+    notable_lines = _build_market_briefing_notable_lines(summaries, limit=limit)
+    check_point_lines = _build_market_briefing_check_point_lines(repository, business_date)
+    if layout == "realtime-first":
+        message = _format_market_briefing_realtime_first_preview(
+            business_date=business_date,
+            candidate_rows=candidate_rows,
+            report_count=report_count,
+            stock_count=len(summaries),
+            news_observation_lines=news_observation_lines,
+            toss_context=effective_toss_context,
+            market_reference_lines=market_reference_lines,
+            turnover_reference_lines=turnover_reference_lines,
+            flow_reference_lines=flow_reference_lines,
+            source_freshness_summary=_build_market_briefing_source_freshness_summary(
+                repository,
+                business_date,
+                report_count=report_count,
+                toss_context=effective_toss_context,
+                summaries=summaries,
+                priority_stock_codes=tuple(str(row.get("stock_code") or "").strip() for row in candidate_rows),
+            ),
+        )
+    else:
+        message = format_market_close_briefing_message(
+            business_date,
+            report_count=report_count,
+            stock_count=len(summaries),
+            market_reference_lines=market_reference_lines,
+            turnover_reference_lines=turnover_reference_lines,
+            flow_reference_lines=flow_reference_lines,
+            notable_lines=notable_lines,
+            check_point_lines=check_point_lines,
+        )
     message = _apply_market_briefing_slot_header(message, business_date=business_date, slot=slot)
+    if layout == "realtime-first":
+        _ensure_market_briefing_message_public_safe(message)
+        return message
     if news_observation_lines:
         message = _insert_market_briefing_section_before_check_points(message, news_observation_lines)
     if priority_lines:
@@ -21750,6 +21791,110 @@ def _build_market_briefing_message(
         message = _insert_market_briefing_section_before_check_points(message, source_freshness_lines)
     _ensure_market_briefing_message_public_safe(message)
     return message
+
+
+def _format_market_briefing_realtime_first_preview(
+    *,
+    business_date: date,
+    candidate_rows: list[dict[str, object]],
+    report_count: int,
+    stock_count: int,
+    news_observation_lines: list[str],
+    toss_context: dict[str, object],
+    market_reference_lines: list[str],
+    turnover_reference_lines: list[str],
+    flow_reference_lines: list[str],
+    source_freshness_summary: dict,
+) -> str:
+    current_lines = _market_briefing_realtime_current_quote_lines(toss_context, candidate_rows)
+    if news_observation_lines:
+        current_lines.extend(news_observation_lines[1:] or news_observation_lines)
+    if not current_lines:
+        current_lines.append("- 현재가/거래대금 현재 근거 없음; 저장 뉴스와 source gap 확인")
+
+    previous_day_lines = [
+        *(market_reference_lines or []),
+        *(turnover_reference_lines or []),
+        *(flow_reference_lines or []),
+    ] or ["- KRX daily/index/flow/ETF 전일 참고 없음"]
+
+    return "\n\n".join(
+        "\n".join(section)
+        for section in [
+            [f"Realtime-first preview · {business_date.isoformat()}"],
+            [
+                "오늘 볼 것",
+                *_market_briefing_realtime_candidate_lines(
+                    candidate_rows,
+                    report_count=report_count,
+                    stock_count=stock_count,
+                ),
+            ],
+            ["현재 근거", *current_lines],
+            ["전일 참고", *previous_day_lines],
+            ["부족한 근거", *_market_briefing_realtime_gap_lines(source_freshness_summary)],
+            ["복기/연구", "- reaction/backtest는 preview 비교에서 후순위; 운영 검수표에만 기록"],
+        ]
+    )
+
+
+def _market_briefing_realtime_candidate_lines(
+    candidate_rows: list[dict[str, object]],
+    *,
+    report_count: int,
+    stock_count: int,
+) -> list[str]:
+    if not candidate_rows:
+        return [f"- Top2 후보 없음; 리포트 {report_count}건 / {stock_count}종목"]
+    lines: list[str] = []
+    for index, row in enumerate(candidate_rows[:2], start=1):
+        stock_code = str(row.get("stock_code") or "").strip()
+        stock_name = str(row.get("stock_name") or stock_code or "-").strip()
+        value_profile = row.get("value_profile") if isinstance(row.get("value_profile"), dict) else {}
+        reason = str(value_profile.get("value_reason") or "").strip()
+        if not reason:
+            reasons = [str(item).strip() for item in row.get("why_notable") or [] if str(item).strip()]
+            reason = " / ".join(reasons[:2]) if reasons else "저장 리포트 근거 확인"
+        lines.append(f"{index}. {stock_name} {stock_code} - {reason}")
+    return lines
+
+
+def _market_briefing_realtime_current_quote_lines(
+    toss_context: dict[str, object],
+    candidate_rows: list[dict[str, object]],
+) -> list[str]:
+    payload = toss_context.get("payload") if isinstance(toss_context.get("payload"), dict) else {}
+    if payload.get("live_fetch") is not True:
+        return []
+    names_by_code = {
+        str(row.get("stock_code") or "").strip(): str(row.get("stock_name") or row.get("stock_code") or "-").strip()
+        for row in candidate_rows
+    }
+    lines: list[str] = []
+    for quote in payload.get("quotes", []):
+        if not isinstance(quote, dict):
+            continue
+        symbol = str(quote.get("symbol") or "").strip()
+        price = _safe_optional_int(quote.get("lastPrice"))
+        if not symbol or price is None:
+            continue
+        checked_at = _market_briefing_toss_checked_time(quote.get("timestamp") or payload.get("fetched_at"))
+        suffix = f" · 조회 {checked_at}" if checked_at else ""
+        lines.append(f"- {names_by_code.get(symbol, symbol)}: Toss 현재가 {price:,}원{suffix}")
+    return lines
+
+
+def _market_briefing_realtime_gap_lines(source_freshness_summary: dict) -> list[str]:
+    lines: list[str] = []
+    for item in source_freshness_summary.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status") or "missing")
+        if status in {"exact", "current", "ready"}:
+            continue
+        label = str(item.get("label") or item.get("key") or "source")
+        lines.append(f"- {label}: {_market_briefing_source_freshness_item_text(item)}")
+    return lines or ["- 주요 현재성 공백 없음"]
 
 
 def _build_market_briefing_toss_priority_context(
