@@ -27339,6 +27339,9 @@ def _render_web_view_html() -> str:
     .top-two-news-line { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 6px; color: var(--ink); }
     .top-two-news-line strong { color: var(--accent); font-size: 11px; }
     .top-two-news-line .top-two-news-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--ink); }
+    .top-two-evidence-line { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 6px; color: var(--ink); }
+    .top-two-evidence-line strong { color: var(--accent); font-size: 11px; }
+    .top-two-evidence-line .top-two-evidence-text { color: var(--ink); overflow-wrap: anywhere; }
     .top-two-card .priority-toss-quote { display: inline-flex; width: fit-content; border-radius: 999px; padding: 2px 7px; background: #eef7f2; color: #245746; font-size: 11px; font-weight: 900; }
     .top-two-card .priority-toss-quote.muted { background: #eef1f2; color: #5d676d; }
     .top-two-card .priority-toss-quote.stale { background: #fff0cf; color: #7a5400; }
@@ -27617,7 +27620,7 @@ def _render_web_view_html() -> str:
         <div class="briefing-live-tools">
           <p class="briefing-live-status" id="intraday-market-top-status">날짜를 선택하면 우선 확인 종목과 장중 거래대금 교집합을 확인할 수 있습니다.</p>
         </div>
-        <p class="brief">전체 근거는 관찰 탭에서 확인합니다.</p>
+        <p class="brief">오늘 볼 것: Top2 후보와 현재 확인 가능한 근거만 먼저 봅니다. 전일 KRX/수급/ETF는 참고 영역입니다.</p>
         <div id="main-priority-rows" class="main-priority-list"><span class="muted">날짜를 선택하세요.</span></div>
         <div id="news-observation-summary" class="news-observation-summary" aria-live="polite">
           <div class="news-observation-summary-head"><b>뉴스 관찰</b><span class="status-pill">저장 데이터</span></div>
@@ -29978,9 +29981,13 @@ def _render_web_view_html() -> str:
         const targetRevisionLine = targetRevisionTrailLine(item);
         const newsDigestLine = candidateNewsDigestLine(item.news_observation_badge);
         const valueContextLine = candidateValueContextLine(item.value_context);
+        const currentEvidenceLine = topTwoCurrentEvidenceLine(item, tossQuote);
+        const missingEvidenceLine = topTwoMissingEvidenceLine(item, tossQuote);
         return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote-context="main" data-toss-quote="${esc(item.stock_code || "")}">${esc(tossQuote || "Toss 현재가 확인 중")}</span></b>
           <span class="muted">관찰 사유: ${esc(why)}</span>
+          <span class="top-two-evidence-line"><strong>현재 근거:</strong><span class="top-two-evidence-text">${esc(currentEvidenceLine)}</span></span>
+          <span class="top-two-evidence-line"><strong>부족한 근거:</strong><span class="top-two-evidence-text">${esc(missingEvidenceLine)}</span></span>
           <span class="top-two-news-line"><strong>뉴스</strong><span class="top-two-news-text">${esc(newsDigestLine)}</span></span>
           <span class="target-revision-line">${esc(targetRevisionLine)}</span>
           <span>${esc(valueLine)}</span>
@@ -29989,6 +29996,35 @@ def _render_web_view_html() -> str:
           <span>장중 참고: ${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span>
         </button>`;
       }).join("")}</section>`;
+    }
+
+    function topTwoCurrentEvidenceLine(item, tossQuote) {
+      const parts = [];
+      if (item?.news_observation_badge?.available === true) {
+        parts.push(candidateNewsDigestLine(item.news_observation_badge));
+      }
+      if (item?.intraday_reference?.available === true) {
+        parts.push(`장중 ${candidateIntradayReferenceLabel(item.intraday_reference)}`);
+      }
+      if (topTwoTossQuoteIsCurrent(tossQuote)) {
+        parts.push(tossQuote);
+      }
+      return parts.length ? parts.join(" · ") : "현재 근거 부족";
+    }
+
+    function topTwoMissingEvidenceLine(item, tossQuote) {
+      const layers = candidateEvidenceLayers(item);
+      const gaps = candidateWhyDisplayItems(layers.gap);
+      const missing = [];
+      if (item?.news_observation_badge?.available !== true) missing.push("뉴스 근거 대기");
+      if (item?.intraday_reference?.available !== true) missing.push("현재가 확인 전");
+      if (!topTwoTossQuoteIsCurrent(tossQuote)) missing.push("Toss 현재가 확인 전");
+      return candidateCompactLabel([...missing, ...gaps], 3) || "추가 공백 없음";
+    }
+
+    function topTwoTossQuoteIsCurrent(tossQuote) {
+      const text = String(tossQuote || "");
+      return Boolean(text) && !/(확인|없음|불가|대기|disabled|stale)/i.test(text);
     }
 
     function candidateValueContextLine(context) {
