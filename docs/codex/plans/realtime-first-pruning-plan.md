@@ -146,31 +146,65 @@ Draft shape:
 
 Use one row per market day before marking the related TODO2 items complete.
 
-| Date | Top2 candidates | Current evidence present? | Did previous-day evidence help or distract? | News evidence state | Telegram readability | Web-view readability | Keep/lower next day |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Day 1 |  | none / partial / strong | helped / distracted / neutral | not collected / no match / direct / caution / mixed | pass / revise | pass / revise |  |
-| Day 2 |  | none / partial / strong | helped / distracted / neutral | not collected / no match / direct / caution / mixed | pass / revise | pass / revise |  |
-| Day 3 |  | none / partial / strong | helped / distracted / neutral | not collected / no match / direct / caution / mixed | pass / revise | pass / revise |  |
-| Day 4 |  | none / partial / strong | helped / distracted / neutral | not collected / no match / direct / caution / mixed | pass / revise | pass / revise |  |
-| Day 5 |  | none / partial / strong | helped / distracted / neutral | not collected / no match / direct / caution / mixed | pass / revise | pass / revise |  |
-| Day 6 |  | none / partial / strong | helped / distracted / neutral | not collected / no match / direct / caution / mixed | pass / revise | pass / revise |  |
-| Day 7 |  | none / partial / strong | helped / distracted / neutral | not collected / no match / direct / caution / mixed | pass / revise | pass / revise |  |
-| Day 8 |  | none / partial / strong | helped / distracted / neutral | not collected / no match / direct / caution / mixed | pass / revise | pass / revise |  |
-| Day 9 |  | none / partial / strong | helped / distracted / neutral | not collected / no match / direct / caution / mixed | pass / revise | pass / revise |  |
-| Day 10 |  | none / partial / strong | helped / distracted / neutral | not collected / no match / direct / caution / mixed | pass / revise | pass / revise |  |
+Do not fabricate rows. Fill them only from same-day read-only previews and browser review.
+
+| Day | Date | Slot / checked time | Top2 candidates | Current evidence | Previous-day reference usefulness | News evidence state | Telegram readability | Web-view 10-second readability | Keep/lower/delete decision | Next-day check |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 |  | mood / lunch / preclose / HH:MM |  | none / partial / strong; news / quote / freshness gap | KRX daily/index: helped / distracted / neutral; flow: helped / distracted / neutral; ETF: helped / distracted / neutral | direct / caution / market-context / none / waiting / stale | pass / revise | pass / revise | keep / lower / hide |  |
+| 2 |  | mood / lunch / preclose / HH:MM |  | none / partial / strong; news / quote / freshness gap | KRX daily/index: helped / distracted / neutral; flow: helped / distracted / neutral; ETF: helped / distracted / neutral | direct / caution / market-context / none / waiting / stale | pass / revise | pass / revise | keep / lower / hide |  |
+| 3 |  | mood / lunch / preclose / HH:MM |  | none / partial / strong; news / quote / freshness gap | KRX daily/index: helped / distracted / neutral; flow: helped / distracted / neutral; ETF: helped / distracted / neutral | direct / caution / market-context / none / waiting / stale | pass / revise | pass / revise | keep / lower / hide |  |
+| 4 |  | mood / lunch / preclose / HH:MM |  | none / partial / strong; news / quote / freshness gap | KRX daily/index: helped / distracted / neutral; flow: helped / distracted / neutral; ETF: helped / distracted / neutral | direct / caution / market-context / none / waiting / stale | pass / revise | pass / revise | keep / lower / hide |  |
+| 5 |  | mood / lunch / preclose / HH:MM |  | none / partial / strong; news / quote / freshness gap | KRX daily/index: helped / distracted / neutral; flow: helped / distracted / neutral; ETF: helped / distracted / neutral | direct / caution / market-context / none / waiting / stale | pass / revise | pass / revise | keep / lower / hide |  |
+| 6 |  | mood / lunch / preclose / HH:MM |  | none / partial / strong; news / quote / freshness gap | KRX daily/index: helped / distracted / neutral; flow: helped / distracted / neutral; ETF: helped / distracted / neutral | direct / caution / market-context / none / waiting / stale | pass / revise | pass / revise | keep / lower / hide |  |
+| 7 |  | mood / lunch / preclose / HH:MM |  | none / partial / strong; news / quote / freshness gap | KRX daily/index: helped / distracted / neutral; flow: helped / distracted / neutral; ETF: helped / distracted / neutral | direct / caution / market-context / none / waiting / stale | pass / revise | pass / revise | keep / lower / hide |  |
+| 8 |  | mood / lunch / preclose / HH:MM |  | none / partial / strong; news / quote / freshness gap | KRX daily/index: helped / distracted / neutral; flow: helped / distracted / neutral; ETF: helped / distracted / neutral | direct / caution / market-context / none / waiting / stale | pass / revise | pass / revise | keep / lower / hide |  |
+| 9 |  | mood / lunch / preclose / HH:MM |  | none / partial / strong; news / quote / freshness gap | KRX daily/index: helped / distracted / neutral; flow: helped / distracted / neutral; ETF: helped / distracted / neutral | direct / caution / market-context / none / waiting / stale | pass / revise | pass / revise | keep / lower / hide |  |
+| 10 |  | mood / lunch / preclose / HH:MM |  | none / partial / strong; news / quote / freshness gap | KRX daily/index: helped / distracted / neutral; flow: helped / distracted / neutral; ETF: helped / distracted / neutral | direct / caution / market-context / none / waiting / stale | pass / revise | pass / revise | keep / lower / hide |  |
+
+Daily read-only routine:
+
+```powershell
+python -m stock_monitor candidate-evidence-readiness --recent-report-dates 1 --stock-limit 20 --json
+python -m stock_monitor market-briefing-readiness --recent-report-dates 1 --json
+python -m stock_monitor market-briefing --date YYYY-MM-DD --layout realtime-first --json
+python -m stock_monitor market-briefing --date YYYY-MM-DD --layout realtime-first
+python -m stock_monitor data-source-lane-audit --json
+python -m stock_monitor web-view-value-qa --date YYYY-MM-DD --stock-limit 20 --json
+```
+
+Routine limits:
+
+- These commands are read-only review inputs.
+- Do not use `--send`, scheduler registration, DB migration, or production source expansion for this checklist.
+- If a command cannot run on the current PC, record the command, failure reason, and the nearest read-only substitute.
 
 Minimum daily note:
 
 ```text
 YYYY-MM-DD
+- Slot / checked time:
 - Top2:
-- Current evidence: none / partial / strong
-- Previous-day KRX/flow: helped / distracted / neutral, why:
-- News: not collected / no match / direct / caution / mixed
-- Telegram: pass / revise, note:
-- Web-view: pass / revise, note:
+- Current evidence:
+  - same-day news: direct / caution / market-context / none / waiting / stale
+  - current quote/turnover: present / absent / unavailable, source/time:
+  - source freshness gap:
+- Previous-day reference:
+  - KRX daily/index: helped / distracted / neutral, why:
+  - flow: helped / distracted / neutral, why:
+  - ETF: helped / distracted / neutral, why:
+- Telegram realtime-first preview: pass / revise, note:
+- Web-view first 10 seconds: pass / revise, note:
 - Tomorrow: keep / lower / hide:
+- Next-day check:
 ```
+
+Judgment rules:
+
+- If current evidence is repeatedly useful, keep or raise it as top-2 primary evidence.
+- If previous-day KRX, flow, or ETF repeatedly distracts, lower it further from the main top block.
+- If news evidence is repeatedly empty, improve the empty/waiting UX before expanding automated collection.
+- If reaction/backtest rarely changes operating judgment, isolate it as research/review only.
+- If realtime-first preview is hard to read, shorten wording before adding another data lane.
 
 ## TODO Board Reinterpretation
 

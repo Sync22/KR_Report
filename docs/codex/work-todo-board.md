@@ -344,10 +344,12 @@ Reorder public `web-view` and Telegram thinking around current observation evide
 - Keep KRX daily, `[12009]` flow, ETF, Toss 20:00 baseline, target progress, and reaction windows available but lower in visual/message priority unless they directly explain current top-2 evidence.
 - Maintain the public boundary: no scores, grades, buy/sell calls, entry/exit/take-profit/target-return/conviction, broker execution, or order routing.
 - Use the 10-business-day operating checklist in `docs/codex/plans/realtime-first-pruning-plan.md` before declaring the related TODO2 items complete.
+- Use the daily read-only routine in that plan; do not treat one clean preview or smoke run as completion.
 
 **Done When:**
 
 - 10 business days have a review row covering Top2, current evidence, previous-day evidence usefulness, news state, Telegram readability, web-view readability, and next-day keep/lower decisions.
+- Each review row records the command evidence used for the check, including any command that could not run and its read-only substitute.
 - Telegram no-send previews read in the new order and still pass public-safe wording checks.
 - The web-view first mobile viewport can be understood in about 10 seconds as top-2/current evidence/gaps.
 - Stale KRX/flow/ETF and reaction/backtest evidence no longer dominate the first-read path.
