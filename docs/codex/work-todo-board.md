@@ -19,9 +19,11 @@
 
 | Order | Todo ID | Why Now |
 | --- | --- | --- |
-| 1 | TODO2-TG-LIVE-DRYRUN | Telegram output is preview-verified; the next risk is real operating data, paging/retry/outbox behavior, and final no-send dry-run evidence before any live send. |
-| 2 | TODO2-WV-CONTENT-QA | Web-view flow is fixture/browser-smoke verified; the next product risk is recent-date content quality, public-safe wording, and mobile/tablet scan quality on operating-like data. |
-| 3 | TODO2-DATA-FRESHNESS-LIVE | Operating sync is ready; the next data risk is keeping recent KRX/ETF/flow freshness evidence honest across CLI, web-view, and Telegram preview. |
+| 1 | TODO2-RT-PRUNE | The next product risk is not missing infrastructure; it is that stored/fallback/review evidence can obscure what to check now. |
+| 2 | TODO2-TG-LIVE-DRYRUN | Telegram output is preview-verified; now judge no-send previews over operating days using realtime-first order before any live send. |
+| 3 | TODO2-WV-CONTENT-QA | Web-view flow is fixture/browser-smoke verified; now judge whether the mobile first viewport answers top-2, current evidence, and evidence gaps within 10 seconds. |
+| 4 | TODO2-DATA-FRESHNESS-LIVE | Freshness must stay honest across CLI, web-view, and Telegram while stale KRX/flow/ETF is lowered to fallback/detail. |
+| 5 | TODO2-NI-EVAL | News quality needs operating-sample evidence before it can be trusted as a primary current-evidence lane. |
 
 ## Todo Board
 
@@ -330,6 +332,36 @@ Turn the dev-verified closeout into a controlled operating-PC handoff without si
 **Completion Note:**
 2026-06-05 operating-PC sync and readiness finished at dev commit `2fa1efc`. The operating worktree is `dev...origin/dev`, tracked clean, with only `data/` untracked and untouched. `db-verify --json` is ready with integrity `ok`, schema `7/7`, no pending migrations, FK violations `0`, and quality issue totals `0`; `db-migration-rehearsal --json` returned `ready=true`; `ops-sync-preview --base origin/main --head dev --json` returned `source_sync_ready=true` with empty blockers. No additional KRX retry, cleanup/delete/import, real `db-migrate`, scheduler registration/change, Telegram real send, admin-gui process operation, broker/order routing, or secret output was performed.
 
+### [ ] TODO2-RT-PRUNE: Realtime-First Public Surface Pruning
+
+**Goal:**
+Reorder public `web-view` and Telegram thinking around current observation evidence first, while lowering previous-day/stored/reference/reaction evidence to fallback/detail/review.
+
+**Scope:**
+
+- Use `오늘 볼 것 -> 현재 근거 -> 전일 참고 -> 부족한 근거 -> 복기/연구` as the shared ordering contract.
+- Keep top-2 candidate identity, same-day saved news, current quote/turnover evidence, and source checked time in the first-read path when available.
+- Keep KRX daily, `[12009]` flow, ETF, Toss 20:00 baseline, target progress, and reaction windows available but lower in visual/message priority unless they directly explain current top-2 evidence.
+- Maintain the public boundary: no scores, grades, buy/sell calls, entry/exit/take-profit/target-return/conviction, broker execution, or order routing.
+- Use the 10-business-day operating checklist in `docs/codex/plans/realtime-first-pruning-plan.md` before declaring the related TODO2 items complete.
+- Use the daily read-only routine in that plan; do not treat one clean preview or smoke run as completion.
+
+**Done When:**
+
+- 10 business days have a review row covering Top2, current evidence, previous-day evidence usefulness, news state, Telegram readability, web-view readability, and next-day keep/lower decisions.
+- Each review row records the command evidence used for the check, including any command that could not run and its read-only substitute.
+- Telegram no-send previews read in the new order and still pass public-safe wording checks.
+- The web-view first mobile viewport can be understood in about 10 seconds as top-2/current evidence/gaps.
+- Stale KRX/flow/ETF and reaction/backtest evidence no longer dominate the first-read path.
+- No production DB write, scheduler change, Telegram real send, admin-gui process action, or broker/order route is added for this TODO.
+
+**Start By Reading:**
+
+- `docs/codex/plans/realtime-first-pruning-plan.md`
+- `docs/codex/next-phase.md`
+- `docs/codex/surface-contract.md`
+- `docs/codex/data-quality-checklist.md`
+
 ### [ ] TODO2-TG-LIVE-DRYRUN: Telegram Real-Data No-Send Dry Run
 
 **Goal:**
@@ -345,11 +377,12 @@ Use operating-like stored data to prove Telegram briefing payload quality, pagin
 
 **Done When:**
 
-- Mood/lunch/preclose previews render with recent data and no public trading call, numeric score, buy/sell signal, broker, or order-routing wording.
+- Mood/lunch/preclose previews render in the realtime-first order: `오늘 볼 것`, `현재 근거`, `전일 참고`, `부족한 근거`, `복기/연구`.
+- Recent-data previews have no public trading call, numeric score, buy/sell signal, broker, or order-routing wording.
 - Outbox/readiness state can be reviewed without sending.
 - Retry/paging behavior has focused test or CLI evidence.
 - Missing/stale source states are visible in the message instead of hidden.
-- The final report says exactly what remains before live send approval.
+- The final report includes 10-business-day readability evidence before live send approval.
 
 **Start By Reading:**
 
@@ -373,7 +406,7 @@ Move beyond fixture smoke and verify that recent-date web-view content is usable
 
 **Done When:**
 
-- Multiple recent dates have CLI/browser evidence.
+- Multiple recent dates have CLI/browser evidence and the 10-business-day checklist records first-read usefulness.
 - Desktop/tablet/mobile smoke finds no blocking overlap or broken navigation.
 - Public-safe wording scan passes.
 - Empty/low-evidence states are understandable without operator context.
@@ -403,6 +436,7 @@ Validate source freshness behavior on recent operating-like dates so KRX, ETF, i
 
 - Source lanes remain classified as production, production_limited, lab, or hold.
 - Freshness output is consistent across CLI, web-view, and Telegram preview.
+- Stale or previous-day KRX/flow/ETF states are labelled as fallback/detail and do not lead the first-read path when current evidence exists.
 - ETF constituent absence is explicit and not presented as loaded coverage.
 - Toss/X are not connected to production DB writes, Telegram, scheduler, admin-gui, or public web-view runtime paths.
 - Any source gap has a dated evidence note and next action.
@@ -431,6 +465,7 @@ Evaluate whether the news-intelligence evidence layer is useful on real samples,
 
 - Sample cases have a reviewed evidence table or CLI output.
 - False-positive, duplicate, stale, and weak-evidence cases are classified.
+- The review records whether direct/caution/no-match news changed the current top-2 reading or only belonged in fallback/detail.
 - At least one quality improvement is implemented if a repeated defect appears.
 - Public projection remains recommendation-safe.
 - Remaining evaluation gaps are tied to specific sample dates or source lanes.

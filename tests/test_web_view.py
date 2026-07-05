@@ -5340,10 +5340,10 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     daily_briefing_body = html.split('class="card span-12 daily-briefing"', 1)[1].split(
         'id="main-priority-card"', 1
     )[0]
+    assert "오늘 볼 것: Top2 후보와 현재 확인 가능한 근거만 먼저 봅니다. 전일 KRX/수급/ETF는 참고 영역입니다." in main_priority_body
     assert 'id="intraday-market-top-check"' in main_priority_body
     assert 'id="intraday-market-top-status"' in main_priority_body
     assert 'id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden' in main_priority_body
-    assert "전체 근거는 관찰 탭에서 확인합니다." in main_priority_body
     assert "메인은 오늘 먼저 볼 2종만 압축합니다." not in html
     assert 'class="live-source-pill"' not in main_priority_body
     assert ".live-source-pill" not in html
@@ -5413,6 +5413,10 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
         "function updateTossPriorityRefreshButton", 1
     )[0]
     assert top_two_body.index("관찰 사유:") < top_two_body.index("esc(valueLine)")
+    assert "현재 근거:" in top_two_body
+    assert "부족한 근거:" in top_two_body
+    assert "topTwoCurrentEvidenceLine(item, tossQuote)" in top_two_body
+    assert "topTwoMissingEvidenceLine(item, tossQuote)" in top_two_body
     assert "top-two-news-line" in top_two_body
     assert "candidateNewsDigestLine(item.news_observation_badge)" in top_two_body
     assert top_two_body.index("esc(valueLine)") < top_two_body.index("근거 기준:")

@@ -7661,6 +7661,7 @@ def test_market_briefing_parser_defaults_to_preview_only() -> None:
     assert args.date == date(2026, 5, 14)
     assert args.limit == 3
     assert args.slot == "mood"
+    assert args.layout == "default"
     assert args.send is False
     assert args.json is False
 
@@ -7684,6 +7685,15 @@ def test_market_briefing_parser_accepts_slot_and_json_preview() -> None:
     assert args.command == "market-briefing"
     assert args.slot == "lunch"
     assert args.json is True
+
+
+def test_market_briefing_parser_accepts_realtime_first_layout() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(["market-briefing", "--layout", "realtime-first"])
+
+    assert args.command == "market-briefing"
+    assert args.layout == "realtime-first"
 
 
 def test_scheduled_market_briefing_legacy_command_is_not_exposed() -> None:
@@ -8279,6 +8289,100 @@ def test_market_briefing_json_preview_includes_slot_and_public_news_observation(
     assert "삼성전자, AI 반도체 공급 계약 체결" in payload["message"]
     assert "sentiment_score" not in json.dumps(payload, ensure_ascii=False)
     assert "operator_recommendation" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_market_briefing_realtime_first_preview_orders_sections(tmp_path, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 14)
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name="삼성전자",
+                title="삼성전자 AI 반도체 수요 확대",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 5, 14, 9, 0, 0),
+                collected_at=datetime(2026, 5, 14, 16, 0, 0),
+                stock_code="005930",
+                target_price_raw="320000",
+                target_price_value=320_000,
+                opinion_raw="매수",
+                opinion_normalized="buy",
+                source_id="market-briefing-realtime-first-1",
+                identity_key="market-briefing-realtime-first-1",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    exit_code = _run_market_briefing(
+        config,
+        repository,
+        explicit_date=business_date,
+        limit=5,
+        send=False,
+        layout="realtime-first",
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    headings = ["오늘 볼 것", "현재 근거", "전일 참고", "부족한 근거", "복기/연구"]
+    positions = [output.index(heading) for heading in headings]
+    assert positions == sorted(positions)
+    assert "삼성전자 005930" in output
+    assert "sends_telegram" not in output
+    for forbidden in ("매수 추천", "매도 추천", "투자등급", "진입가", "청산가", "익절가", "목표수익률", "확신도"):
+        assert forbidden not in output
+
+
+def test_market_briefing_realtime_first_json_marks_preview_only(tmp_path, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 14)
+
+    exit_code = _run_market_briefing(
+        config,
+        repository,
+        explicit_date=business_date,
+        limit=5,
+        send=False,
+        as_json=True,
+        layout="realtime-first",
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["layout"] == "realtime-first"
+    assert payload["preview_only"] is True
+    assert payload["send_blocked_reason"] is None
+    assert payload["sends_telegram"] is False
+    headings = ["오늘 볼 것", "현재 근거", "전일 참고", "부족한 근거", "복기/연구"]
+    positions = [payload["message"].index(heading) for heading in headings]
+    assert positions == sorted(positions)
+
+
+def test_market_briefing_realtime_first_send_is_blocked(tmp_path, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+
+    exit_code = _run_market_briefing(
+        config,
+        repository,
+        explicit_date=date(2026, 5, 14),
+        limit=5,
+        send=True,
+        layout="realtime-first",
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "realtime-first layout is preview-only and cannot be used with --send" in output
+    assert "오늘 볼 것" not in output
+    assert "sends_telegram" not in output
 
 
 def test_market_briefing_preview_can_include_news_flow_fixture_without_send(tmp_path, capsys) -> None:

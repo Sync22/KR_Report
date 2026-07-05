@@ -39,6 +39,22 @@ Treat a feature as product-complete only when a user can follow its evidence to 
 
 Stop rule: do not replace missing stored data with a new explanatory card. Link to the existing collection/storage lane or show the actual unavailable state.
 
+## Realtime-First Pruning Direction
+
+Use [plans/realtime-first-pruning-plan.md](plans/realtime-first-pruning-plan.md) for the detailed plan.
+
+The next web-view and Telegram refinement should prune order and emphasis before adding new features:
+
+| First-read order | Meaning |
+| --- | --- |
+| `오늘 볼 것` | Top-2 candidates and one visible observation reason. |
+| `현재 근거` | Same-day saved news, approved current quote/turnover, checked time, and source state when available. |
+| `전일 참고` | KRX daily, `[12009]` flow, ETF, and stored Toss baseline as labelled fallback/detail. |
+| `부족한 근거` | Missing current quote, no saved news, stale KRX, missing exact stock flow. |
+| `복기/연구` | Reaction windows, backtest, X recap lab, and long validation items. |
+
+Closeout should come from a 10-business-day operating review log, not a single browser-smoke pass. Existing TODO2 live checks remain active, but their completion now depends on whether current evidence helps the first read and whether previous-day/reference evidence distracts from it.
+
 ## Observation Evidence Maturity Direction
 
 The next candidate-evidence work should improve judgment quality, not visible label volume.

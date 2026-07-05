@@ -8,7 +8,7 @@ Use this file first when deciding which project document is authoritative. Older
 
 ## Current Scope
 
-As of `2026-06-21`, the operating web-view has progressed beyond the initial five-tab separation. The active product task is to make its already-stored evidence useful as one continuous path: `메인 우선 후보 -> 관찰 근거 -> 종목 상세 -> 시장/순환매 맥락`. Canonical updates must distinguish an unavailable source row from an unimplemented UI path. Do not add another planning-only document when the relevant contract belongs in `current-work.md`, `next-phase.md`, `surface-contract.md`, or `data-quality-checklist.md`.
+As of `2026-07-05`, the active product task is to prune the already-built stored-evidence surface into a realtime-first reading path: `오늘 볼 것 -> 현재 근거 -> 전일 참고 -> 부족한 근거 -> 복기/연구`. The detailed pruning plan is [realtime-first-pruning-plan.md](plans/realtime-first-pruning-plan.md). Canonical updates must distinguish an unavailable current source row from fallback stored reference and from research/review-only evidence.
 
 ## Current Command Surface
 
@@ -52,6 +52,7 @@ Implementation-heavy follow-up work should use this map to avoid adding duplicat
 | Module ownership | [module-ownership.md](module-ownership.md) | Proposed role boundaries by module and next work axis. |
 | Agent reassessment | [agent-reassessment.md](agent-reassessment.md) | Current local `.codex/agents` keep/add/merge evaluation. |
 | Rotation overlay | [rotation-overlay-plan.md](rotation-overlay-plan.md) | SVG overlay plan for the cycle image. |
+| Realtime-first pruning | [realtime-first-pruning-plan.md](plans/realtime-first-pruning-plan.md) | Information-architecture pruning plan for raising current evidence and lowering stored fallback/review evidence. |
 | Mini PC handoff | [mini-pc-migration-handoff.md](mini-pc-migration-handoff.md) | Current Windows N100 migration, archive, restore, scheduler registration, source-desktop cutover, and external web-view readiness notes. |
 | Weekly PC sync | [weekly-sync/WEEKLY_SYNC_GUIDE.md](weekly-sync/WEEKLY_SYNC_GUIDE.md) | Weekly main-PC and mini-PC sync guide/prompt docs. Generated weekly handoff notes and sync archives live under `handoff/mini_pc_changes/`. |
 
