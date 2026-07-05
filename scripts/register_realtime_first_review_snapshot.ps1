@@ -11,7 +11,10 @@ $Action = New-ScheduledTaskAction `
     -Execute "powershell.exe" `
     -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$Runner`"" `
     -WorkingDirectory $ProjectRoot
-$Trigger = New-ScheduledTaskTrigger -Daily -At "15:00"
+$Trigger = New-ScheduledTaskTrigger `
+    -Weekly `
+    -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday `
+    -At "15:00"
 $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew
 
 $Existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -24,6 +27,7 @@ Register-ScheduledTask `
     -Action $Action `
     -Trigger $Trigger `
     -Settings $Settings `
-    -Description "Writes read-only realtime-first review snapshots at 15:00 KST." | Out-Null
+    -Description "Writes read-only realtime-first review snapshots on weekdays at 15:00 KST." | Out-Null
 
 Get-ScheduledTask -TaskName $TaskName
+Get-ScheduledTaskInfo -TaskName $TaskName
