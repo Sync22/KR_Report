@@ -42,6 +42,7 @@ from stock_monitor.cli import (
     _run_scheduled_krx_mentioned_flow_backfill,
     _run_naver_fixture_validate,
     _run_market_briefing,
+    _run_realtime_first_review_snapshot,
     _run_web_view_value_qa,
     _collect_market_briefing_message_issues,
     _collect_web_view_value_qa_issues,
@@ -7694,6 +7695,232 @@ def test_market_briefing_parser_accepts_realtime_first_layout() -> None:
 
     assert args.command == "market-briefing"
     assert args.layout == "realtime-first"
+
+
+def test_realtime_first_review_snapshot_parser_defaults_to_today_all_formats() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(["realtime-first-review-snapshot"])
+
+    assert args.command == "realtime-first-review-snapshot"
+    assert args.date == "today"
+    assert args.time == "15:00"
+    assert args.format == "all"
+    assert args.output_dir == Path("data/reviews/realtime-first")
+
+
+def test_realtime_first_review_snapshot_parser_accepts_date_time_format_and_output_dir() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "realtime-first-review-snapshot",
+            "--date",
+            "2026-07-03",
+            "--time",
+            "15:00",
+            "--format",
+            "json",
+            "--output-dir",
+            "tmp/reviews",
+        ]
+    )
+
+    assert args.command == "realtime-first-review-snapshot"
+    assert args.date == "2026-07-03"
+    assert args.time == "15:00"
+    assert args.format == "json"
+    assert args.output_dir == Path("tmp/reviews")
+
+
+def test_realtime_first_review_snapshot_creates_ready_json_and_markdown_with_time_mismatch(
+    tmp_path,
+    capsys,
+) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 7, 3)
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name=stock_name,
+                stock_code=stock_code,
+                title=f"{stock_name} review",
+                broker_name="Test Securities",
+                published_at=datetime(2026, 7, 3, 9, index, 0),
+                collected_at=datetime(2026, 7, 3, 9, index, 30),
+                target_price_value=100_000 + index,
+                source_id=f"rt-snapshot-{stock_code}",
+                identity_key=f"rt-snapshot-{stock_code}",
+            )
+            for index, (stock_code, stock_name) in enumerate(
+                (("483650", "Dalba Global"), ("462870", "Shift Up"))
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    class FakeTossProvider:
+        def get_quotes(self, *, priority_date: date, symbols: tuple[str, ...]) -> dict[str, object]:
+            return {
+                "configured": True,
+                "live_fetch": True,
+                "priority_date": priority_date.isoformat(),
+                "fetched_at": "2026-07-03T19:59:00+09:00",
+                "quotes": [
+                    {
+                        "symbol": symbol,
+                        "lastPrice": 100_000 + index,
+                        "currency": "KRW",
+                        "timestamp": "2026-07-03T19:59:00+09:00",
+                    }
+                    for index, symbol in enumerate(symbols)
+                ],
+            }
+
+    exit_code = _run_realtime_first_review_snapshot(
+        config,
+        repository,
+        date_arg="2026-07-03",
+        snapshot_time="15:00",
+        output_format="all",
+        output_dir=tmp_path / "reviews",
+        toss_quote_provider=FakeTossProvider(),
+    )
+
+    stdout = capsys.readouterr().out
+    json_path = tmp_path / "reviews" / "2026-07-03_1500.json"
+    markdown_path = tmp_path / "reviews" / "2026-07-03_1500.md"
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    markdown = markdown_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert str(json_path) in stdout
+    assert str(markdown_path) in stdout
+    assert payload["metadata"]["status"] == "ready"
+    assert payload["metadata"]["read_only"] is True
+    assert payload["metadata"]["writes_db"] is False
+    assert payload["metadata"]["sends_telegram"] is False
+    assert payload["metadata"]["registers_scheduler"] is False
+    assert [item["stock_code"] for item in payload["top2"]] == ["483650", "462870"]
+    assert payload["top2"][0]["current_evidence"]["quote"]["status"] == "time_mismatch"
+    assert payload["top2"][0]["current_evidence"]["quote"]["promoted"] is False
+    assert "quote_time_mismatch" in payload["top2"][0]["missing_evidence"]
+    assert "오늘 볼 것" in markdown
+    assert "time_mismatch" in json.dumps(payload, ensure_ascii=False)
+
+
+def test_realtime_first_review_snapshot_skips_non_business_day(tmp_path) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+
+    exit_code = _run_realtime_first_review_snapshot(
+        config,
+        repository,
+        date_arg="2026-07-04",
+        snapshot_time="15:00",
+        output_format="all",
+        output_dir=tmp_path / "reviews",
+    )
+
+    json_path = tmp_path / "reviews" / "2026-07-04_1500.json"
+    markdown_path = tmp_path / "reviews" / "2026-07-04_1500.md"
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert payload["metadata"]["status"] == "skipped"
+    assert payload["metadata"]["reason"] == "non_business_day"
+    assert payload["metadata"]["read_only"] is True
+    assert payload["metadata"]["writes_db"] is False
+    assert payload["metadata"]["sends_telegram"] is False
+    assert "non_business_day" in markdown_path.read_text(encoding="utf-8")
+
+
+def test_realtime_first_review_snapshot_format_json_writes_only_json(tmp_path) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+
+    exit_code = _run_realtime_first_review_snapshot(
+        config,
+        repository,
+        date_arg="2026-07-03",
+        snapshot_time="15:00",
+        output_format="json",
+        output_dir=tmp_path / "reviews",
+    )
+
+    assert exit_code == 0
+    assert (tmp_path / "reviews" / "2026-07-03_1500.json").exists()
+    assert not (tmp_path / "reviews" / "2026-07-03_1500.md").exists()
+
+
+def test_realtime_first_review_snapshot_format_markdown_writes_only_markdown(tmp_path) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+
+    exit_code = _run_realtime_first_review_snapshot(
+        config,
+        repository,
+        date_arg="2026-07-03",
+        snapshot_time="15:00",
+        output_format="markdown",
+        output_dir=tmp_path / "reviews",
+    )
+
+    assert exit_code == 0
+    assert not (tmp_path / "reviews" / "2026-07-03_1500.json").exists()
+    assert (tmp_path / "reviews" / "2026-07-03_1500.md").exists()
+
+
+def test_realtime_first_review_snapshot_blocks_public_trading_wording(tmp_path) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+
+    _run_realtime_first_review_snapshot(
+        config,
+        repository,
+        date_arg="2026-07-03",
+        snapshot_time="15:00",
+        output_format="all",
+        output_dir=tmp_path / "reviews",
+    )
+
+    payload_text = (tmp_path / "reviews" / "2026-07-03_1500.json").read_text(encoding="utf-8")
+    markdown = (tmp_path / "reviews" / "2026-07-03_1500.md").read_text(encoding="utf-8")
+    combined = f"{payload_text}\n{markdown}".lower()
+
+    blocked_terms = (
+        "buy signal",
+        "sell signal",
+        "trading call",
+        "investment grade",
+        "entry price",
+        "exit price",
+        "take-profit",
+        "target return",
+        "conviction",
+        "order routing",
+    )
+    assert not any(term in combined for term in blocked_terms)
+
+
+def test_realtime_first_review_snapshot_powershell_scripts_document_safe_scheduler_boundary() -> None:
+    runner = Path("scripts/run_realtime_first_review_snapshot.ps1").read_text(encoding="utf-8")
+    registrar = Path("scripts/register_realtime_first_review_snapshot.ps1").read_text(encoding="utf-8")
+
+    assert "realtime-first-review-snapshot --date today --time 15:00" in runner
+    assert "data/reviews/realtime-first" in runner
+    assert "data\\logs" in runner
+    assert "realtime-first-review-snapshot.log" in runner
+    assert "StockMonitorRealtimeFirstReviewSnapshot" in registrar
+    assert "New-ScheduledTaskTrigger -Daily -At \"15:00\"" in registrar
+    assert "run_realtime_first_review_snapshot.ps1" in registrar
 
 
 def test_scheduled_market_briefing_legacy_command_is_not_exposed() -> None:

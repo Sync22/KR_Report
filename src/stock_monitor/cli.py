@@ -243,6 +243,7 @@ READ_ONLY_SCHEMA_CURRENT_COMMANDS = {
     "operator-status",
     "market-commentary-practice",
     "periodic-data-needs-audit",
+    "realtime-first-review-snapshot",
     "rotation-mapping-audit",
     "scheduled-krx-daily-backfill",
     "web-view-browser-smoke",
@@ -1558,6 +1559,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     market_briefing_readiness_parser.add_argument("--json", action="store_true")
 
+    realtime_snapshot_parser = subparsers.add_parser(
+        "realtime-first-review-snapshot",
+        help="Write a read-only realtime-first operating review snapshot for a KST date/time.",
+    )
+    realtime_snapshot_parser.add_argument("--date", default="today", help="Use today or YYYY-MM-DD. Defaults to today.")
+    realtime_snapshot_parser.add_argument("--time", default="15:00", help="Snapshot time in HH:MM KST. Defaults to 15:00.")
+    realtime_snapshot_parser.add_argument("--format", choices=("all", "json", "markdown"), default="all")
+    realtime_snapshot_parser.add_argument("--output-dir", type=Path, default=Path("data/reviews/realtime-first"))
+
     next_phase_readiness_parser = subparsers.add_parser(
         "next-phase-readiness",
         help="Read-only aggregate readiness audit for the current next-phase closeout state.",
@@ -2804,6 +2814,15 @@ def main(argv: list[str] | None = None) -> int:
                 limit=args.limit,
                 min_manual_reviews=args.min_manual_reviews,
                 as_json=args.json,
+            )
+        if args.command == "realtime-first-review-snapshot":
+            return _run_realtime_first_review_snapshot(
+                config,
+                repository,
+                date_arg=args.date,
+                snapshot_time=args.time,
+                output_format=args.format,
+                output_dir=args.output_dir,
             )
         if args.command == "next-phase-readiness":
             return _run_next_phase_readiness(
@@ -19338,6 +19357,490 @@ def _run_market_briefing(
     _send_market_briefing_message(config, repository, business_date=business_date, message=message, source="manual")
     print(f"Market briefing sent for {business_date.isoformat()}.")
     return 0
+
+
+def _run_realtime_first_review_snapshot(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    date_arg: str,
+    snapshot_time: str,
+    output_format: str,
+    output_dir: Path,
+    toss_quote_provider: object | None = None,
+) -> int:
+    try:
+        business_date = _resolve_realtime_first_snapshot_date(config, date_arg)
+        snapshot_time_value = _parse_realtime_first_snapshot_time(snapshot_time)
+    except ValueError as exc:
+        print(f"realtime-first review snapshot argument error: {exc}")
+        return 1
+
+    generated_at = datetime.now(ZoneInfo(config.timezone))
+    payload = _build_realtime_first_review_snapshot_payload(
+        config,
+        repository,
+        business_date=business_date,
+        snapshot_time=snapshot_time_value,
+        generated_at=generated_at,
+        toss_quote_provider=toss_quote_provider,
+    )
+    markdown = _format_realtime_first_review_snapshot_markdown(payload)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"{business_date.isoformat()}_{snapshot_time_value.strftime('%H%M')}"
+    written_paths: list[Path] = []
+    if output_format in {"all", "json"}:
+        json_path = output_dir / f"{stem}.json"
+        json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        written_paths.append(json_path)
+    if output_format in {"all", "markdown"}:
+        markdown_path = output_dir / f"{stem}.md"
+        markdown_path.write_text(markdown, encoding="utf-8")
+        written_paths.append(markdown_path)
+
+    metadata = payload["metadata"]
+    top2 = payload.get("top2") or []
+    top2_text = ", ".join(
+        f"{item.get('stock_name')}({item.get('stock_code')})"
+        for item in top2
+        if isinstance(item, dict) and item.get("stock_code")
+    ) or "none"
+    print(f"realtime-first review snapshot: {metadata.get('status')}")
+    print(f"date: {metadata.get('date')} {metadata.get('snapshot_time_kst')} KST")
+    for path in written_paths:
+        print(f"- wrote: {path}")
+    print(f"top2: {top2_text}")
+    return 0
+
+
+def _resolve_realtime_first_snapshot_date(config: RuntimeConfig, date_arg: str) -> date:
+    value = str(date_arg or "today").strip().lower()
+    if value == "today":
+        return datetime.now(ZoneInfo(config.timezone)).date()
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("--date must be today or YYYY-MM-DD") from exc
+
+
+def _parse_realtime_first_snapshot_time(value: str) -> datetime_time:
+    text = str(value or "").strip()
+    try:
+        parsed = datetime_time.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError("--time must be HH:MM") from exc
+    return datetime_time(hour=parsed.hour, minute=parsed.minute)
+
+
+def _build_realtime_first_review_snapshot_payload(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    business_date: date,
+    snapshot_time: datetime_time,
+    generated_at: datetime,
+    toss_quote_provider: object | None = None,
+) -> dict[str, object]:
+    metadata = {
+        "status": "ready",
+        "reason": None,
+        "date": business_date.isoformat(),
+        "snapshot_time_kst": snapshot_time.strftime("%H:%M"),
+        "generated_at_kst": generated_at.isoformat(),
+        "read_only": True,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+    }
+    if not is_business_day(business_date, config.holiday_overrides):
+        metadata["status"] = "skipped"
+        metadata["reason"] = "non_business_day"
+        return {
+            "metadata": metadata,
+            "top2": [],
+            "previous_day_reference": _empty_realtime_previous_day_reference(),
+            "telegram_realtime_first_preview": _realtime_first_preview_sections(summary="non_business_day"),
+            "web_view_first_10_seconds": {
+                "summary": "Skipped because the selected date is not a business day.",
+                "warnings": ["non_business_day"],
+            },
+            "decisions": {
+                "keep": [],
+                "lower": [],
+                "research_only": ["reaction", "backtest"],
+                "next_day_checks": ["Run again on the next business day at 15:00 KST."],
+            },
+        }
+
+    summaries = repository.list_daily_summaries(business_date)
+    report_count = sum(summary.mention_count for summary in summaries)
+    candidate_snapshot = build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=2,
+    )
+    candidate_rows = [row for row in candidate_snapshot.get("rows", []) if isinstance(row, dict)][:2]
+    priority_stock_codes = tuple(
+        str(row.get("stock_code") or "").strip()
+        for row in candidate_rows
+        if str(row.get("stock_code") or "").strip()
+    )
+    toss_context = _build_market_briefing_toss_priority_context(
+        config,
+        repository,
+        business_date=business_date,
+        toss_quote_provider=toss_quote_provider,
+        candidate_rows=candidate_rows,
+    )
+    source_freshness = _build_market_briefing_source_freshness_summary(
+        repository,
+        business_date,
+        report_count=report_count,
+        toss_context=toss_context,
+        summaries=summaries,
+        priority_stock_codes=priority_stock_codes,
+    )
+    news_summary = _build_web_view_news_observation_summary(
+        repository,
+        business_date,
+        limit=2,
+        stock_codes=priority_stock_codes,
+    )
+    source_gaps = _realtime_first_source_gaps(source_freshness, business_date)
+    top2 = [
+        _realtime_first_snapshot_candidate(
+            row,
+            rank=index,
+            business_date=business_date,
+            snapshot_time=snapshot_time,
+            toss_context=toss_context,
+            news_summary=news_summary,
+            source_gaps=source_gaps,
+        )
+        for index, row in enumerate(candidate_rows, start=1)
+    ]
+    if not top2:
+        source_gaps.append("top2_missing")
+
+    previous_day_reference = _realtime_first_previous_day_reference(source_freshness)
+    warnings = sorted({gap for item in top2 for gap in item.get("missing_evidence", [])})
+    if source_gaps:
+        warnings.extend(gap for gap in source_gaps if gap not in warnings)
+    return {
+        "metadata": metadata,
+        "top2": top2,
+        "previous_day_reference": previous_day_reference,
+        "telegram_realtime_first_preview": _realtime_first_preview_sections(
+            summary=_realtime_first_preview_summary(top2, source_gaps)
+        ),
+        "web_view_first_10_seconds": {
+            "summary": (
+                "오늘 볼 것: Top2 후보와 현재 확인 가능한 근거만 먼저 봅니다. "
+                "전일 KRX/수급/ETF는 참고 영역입니다."
+            ),
+            "warnings": warnings,
+        },
+        "decisions": _realtime_first_snapshot_decisions(top2, source_gaps),
+    }
+
+
+def _empty_realtime_previous_day_reference() -> dict[str, object]:
+    return {
+        "krx_daily_index": {"status": "not_checked", "judgement": "reference_only"},
+        "flow": {"status": "not_checked", "judgement": "reference_only"},
+        "etf": {"status": "not_checked", "judgement": "reference_only"},
+    }
+
+
+def _realtime_first_snapshot_candidate(
+    row: dict[str, object],
+    *,
+    rank: int,
+    business_date: date,
+    snapshot_time: datetime_time,
+    toss_context: dict[str, object],
+    news_summary: dict[str, object],
+    source_gaps: list[str],
+) -> dict[str, object]:
+    stock_code = str(row.get("stock_code") or "").strip()
+    stock_name = str(row.get("stock_name") or "").strip()
+    news_evidence = _realtime_first_news_evidence(stock_code, news_summary, business_date)
+    quote_evidence = _realtime_first_quote_evidence(stock_code, toss_context, snapshot_time)
+    turnover_evidence = {"status": "missing", "promoted": False, "source": None, "checked_time": None}
+    freshness_evidence = _realtime_first_candidate_freshness(source_gaps)
+    missing = []
+    if news_evidence["status"] in {"none", "waiting", "stale", "missing"}:
+        missing.append(f"news_{news_evidence['status']}")
+    if quote_evidence["status"] == "missing":
+        missing.append("quote_missing")
+    elif quote_evidence["status"] in {"time_mismatch", "source_gap"}:
+        missing.append(f"quote_{quote_evidence['status']}")
+    if turnover_evidence["status"] == "missing":
+        missing.append("current_turnover_missing")
+    missing.extend(source_gaps)
+    return {
+        "rank": rank,
+        "stock_name": stock_name,
+        "stock_code": stock_code,
+        "current_evidence": {
+            "same_day_news": news_evidence,
+            "quote": quote_evidence,
+            "turnover": turnover_evidence,
+            "source_freshness": freshness_evidence,
+        },
+        "missing_evidence": sorted(set(missing)),
+    }
+
+
+def _realtime_first_news_evidence(
+    stock_code: str,
+    news_summary: dict[str, object],
+    business_date: date,
+) -> dict[str, object]:
+    items = [item for item in news_summary.get("items", []) if isinstance(item, dict)]
+    item = next((item for item in items if str(item.get("stock_code") or "").strip() == stock_code), None)
+    if not item:
+        return {"status": "none", "direct": 0, "caution": 0, "market_context": 0, "observed_at": None}
+    observed_at = item.get("observed_at")
+    status = "direct" if int(item.get("direct_count") or 0) > 0 else "none"
+    if status == "none" and int(item.get("caution_count") or 0) > 0:
+        status = "caution"
+    if status == "none" and int(item.get("market_context_count") or 0) > 0:
+        status = "market_context"
+    if observed_at and _realtime_first_iso_date_status(observed_at, business_date) == "stale":
+        status = "stale"
+    return {
+        "status": status,
+        "direct": int(item.get("direct_count") or 0),
+        "caution": int(item.get("caution_count") or 0),
+        "market_context": int(item.get("market_context_count") or 0),
+        "observed_at": observed_at,
+    }
+
+
+def _realtime_first_quote_evidence(
+    stock_code: str,
+    toss_context: dict[str, object],
+    snapshot_time: datetime_time,
+) -> dict[str, object]:
+    payload = toss_context.get("payload") if isinstance(toss_context, dict) else None
+    if not isinstance(payload, dict) or payload.get("live_fetch") is not True:
+        return {
+            "status": "missing",
+            "promoted": False,
+            "source": "toss_openapi",
+            "checked_time": None,
+            "price": None,
+        }
+    quote = next(
+        (
+            item
+            for item in payload.get("quotes", [])
+            if isinstance(item, dict) and str(item.get("symbol") or "").strip() == stock_code
+        ),
+        None,
+    )
+    if not isinstance(quote, dict):
+        return {
+            "status": "missing",
+            "promoted": False,
+            "source": "toss_openapi",
+            "checked_time": _market_briefing_toss_checked_time(payload.get("fetched_at")),
+            "price": None,
+        }
+    checked_time = _market_briefing_toss_checked_time(quote.get("timestamp") or payload.get("fetched_at"))
+    status = "current"
+    promoted = True
+    if not checked_time:
+        status = "source_gap"
+        promoted = False
+    elif checked_time != snapshot_time.strftime("%H:%M"):
+        status = "time_mismatch"
+        promoted = False
+    price = quote.get("lastPrice", quote.get("last_price"))
+    return {
+        "status": status,
+        "promoted": promoted,
+        "source": "toss_openapi",
+        "checked_time": checked_time,
+        "price": price,
+        "currency": quote.get("currency", "KRW"),
+    }
+
+
+def _realtime_first_candidate_freshness(source_gaps: list[str]) -> dict[str, object]:
+    return {
+        "status": "source_gap" if source_gaps else "checked",
+        "gaps": list(source_gaps),
+        "checked_time": None,
+    }
+
+
+def _realtime_first_source_gaps(source_freshness: dict[str, object], business_date: date) -> list[str]:
+    gaps: list[str] = []
+    for item in source_freshness.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("key") or "")
+        status = str(item.get("status") or "missing")
+        if key == "toss_openapi":
+            if item.get("live_fetch") is not True:
+                gaps.append("toss_quote_missing")
+            continue
+        if status == "missing":
+            gaps.append(f"{key}_missing")
+        elif status == "stale":
+            gaps.append(f"{key}_stale")
+        elif item.get("reference_date") and _realtime_first_iso_date_status(item.get("reference_date"), business_date) == "stale":
+            gaps.append(f"{key}_stale")
+    return sorted(set(gaps))
+
+
+def _realtime_first_previous_day_reference(source_freshness: dict[str, object]) -> dict[str, object]:
+    items = {
+        str(item.get("key") or ""): item
+        for item in source_freshness.get("items", [])
+        if isinstance(item, dict)
+    }
+    return {
+        "krx_daily_index": _realtime_first_reference_item(items.get("krx_market")),
+        "flow": _realtime_first_reference_item(items.get("investor_flow")),
+        "etf": _realtime_first_reference_item(items.get("etf_daily")),
+    }
+
+
+def _realtime_first_reference_item(item: dict[str, object] | None) -> dict[str, object]:
+    if not item:
+        return {"status": "missing", "reference_date": None, "judgement": "source_gap"}
+    status = str(item.get("status") or "missing")
+    judgement = "reference_only"
+    if status == "missing":
+        judgement = "source_gap"
+    elif status == "exact":
+        judgement = "helps_as_same_day_fallback"
+    elif status == "stale":
+        judgement = "may_distract_if_promoted"
+    return {
+        "status": status,
+        "reference_date": item.get("reference_date"),
+        "judgement": judgement,
+    }
+
+
+def _realtime_first_preview_sections(*, summary: str) -> dict[str, object]:
+    return {
+        "sections": ["오늘 볼 것", "현재 근거", "전일 참고", "부족한 근거", "복기/연구"],
+        "summary": summary,
+    }
+
+
+def _realtime_first_preview_summary(top2: list[dict[str, object]], source_gaps: list[str]) -> str:
+    if not top2:
+        return "Top2 후보 없음; today data/source gap 확인 필요."
+    names = ", ".join(
+        f"{item.get('stock_name')}({item.get('stock_code')})"
+        for item in top2
+        if item.get("stock_code")
+    )
+    gap_text = ", ".join(source_gaps) if source_gaps else "none"
+    return f"Top2: {names}; gaps: {gap_text}"
+
+
+def _realtime_first_snapshot_decisions(
+    top2: list[dict[str, object]],
+    source_gaps: list[str],
+) -> dict[str, object]:
+    keep = ["top2_first_read_block"] if top2 else []
+    lower = ["krx_daily_index_flow_etf"]
+    if any("quote_" in gap or "news_" in gap for item in top2 for gap in item.get("missing_evidence", [])):
+        lower.append("current_evidence_claims")
+    next_day_checks = [
+        "Confirm whether same-day news exists for Top2.",
+        "Confirm quote/turnover checked time is at or before the snapshot target.",
+    ]
+    if source_gaps:
+        next_day_checks.append("Review source freshness gaps before promoting evidence.")
+    return {
+        "keep": keep,
+        "lower": sorted(set(lower)),
+        "research_only": ["reaction", "backtest"],
+        "next_day_checks": next_day_checks,
+    }
+
+
+def _realtime_first_iso_date_status(value: object, business_date: date) -> str:
+    try:
+        reference_date = date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return "unknown"
+    return "exact" if reference_date == business_date else "stale"
+
+
+def _format_realtime_first_review_snapshot_markdown(payload: dict[str, object]) -> str:
+    metadata = payload["metadata"]
+    top2 = [item for item in payload.get("top2", []) if isinstance(item, dict)]
+    previous = payload.get("previous_day_reference", {})
+    web_view = payload.get("web_view_first_10_seconds", {})
+    decisions = payload.get("decisions", {})
+    lines = [
+        f"# Realtime-first Review Snapshot {metadata.get('date')} {metadata.get('snapshot_time_kst')} KST",
+        "",
+        f"- status: {metadata.get('status')}",
+        f"- reason: {metadata.get('reason') or 'none'}",
+        f"- read_only: {str(metadata.get('read_only')).lower()}",
+        f"- writes_db: {str(metadata.get('writes_db')).lower()}",
+        f"- sends_telegram: {str(metadata.get('sends_telegram')).lower()}",
+        "",
+        "## 오늘 볼 것",
+    ]
+    if top2:
+        for item in top2:
+            lines.append(f"- {item.get('rank')}. {item.get('stock_name')} ({item.get('stock_code')})")
+    else:
+        lines.append("- Top2 후보 없음")
+    lines.extend(["", "## 현재 근거"])
+    for item in top2:
+        current = item.get("current_evidence", {})
+        if not isinstance(current, dict):
+            continue
+        news = current.get("same_day_news", {})
+        quote = current.get("quote", {})
+        freshness = current.get("source_freshness", {})
+        lines.append(
+            f"- {item.get('stock_name')}: news={news.get('status') if isinstance(news, dict) else 'unknown'}, "
+            f"quote={quote.get('status') if isinstance(quote, dict) else 'unknown'} "
+            f"checked={quote.get('checked_time') if isinstance(quote, dict) else None}, "
+            f"freshness={freshness.get('status') if isinstance(freshness, dict) else 'unknown'}"
+        )
+    if not top2:
+        lines.append("- 현재 근거 없음")
+    lines.extend(["", "## 전일 참고"])
+    if isinstance(previous, dict):
+        for key in ("krx_daily_index", "flow", "etf"):
+            item = previous.get(key, {})
+            if isinstance(item, dict):
+                lines.append(
+                    f"- {key}: status={item.get('status')}, reference_date={item.get('reference_date')}, "
+                    f"judgement={item.get('judgement')}"
+                )
+    lines.extend(["", "## 부족한 근거"])
+    gaps = sorted({gap for item in top2 for gap in item.get("missing_evidence", [])})
+    if gaps:
+        lines.extend(f"- {gap}" for gap in gaps)
+    else:
+        lines.append("- none")
+    lines.extend(["", "## 복기/연구", "- reaction/backtest는 research/review only"])
+    lines.extend(["", "## web-view 첫 10초 블록", f"- {web_view.get('summary') if isinstance(web_view, dict) else ''}"])
+    lines.extend(["", "## 오늘 유지/하향/삭제 판단"])
+    if isinstance(decisions, dict):
+        lines.append(f"- keep: {', '.join(decisions.get('keep', []) or ['none'])}")
+        lines.append(f"- lower: {', '.join(decisions.get('lower', []) or ['none'])}")
+        lines.append(f"- research_only: {', '.join(decisions.get('research_only', []) or ['none'])}")
+        lines.append("- next_day_checks:")
+        lines.extend(f"  - {item}" for item in decisions.get("next_day_checks", []))
+    return "\n".join(lines) + "\n"
 
 
 def _run_market_briefing_readiness(
