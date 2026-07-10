@@ -15,7 +15,7 @@ from stock_monitor.config import _parse_bool, _read_dotenv
 TOSS_OPENAPI_BASE_URL = "https://openapi.tossinvest.com"
 TOSS_OPENAPI_MAX_RESPONSE_BYTES = 1_048_576
 _SYMBOL_PATTERN = re.compile(r"^\d{6}$")
-_FORBIDDEN_GROUPS = ("account", "asset", "order-info", "order-history", "order")
+_FORBIDDEN_GROUPS = ("account", "asset", "order-info", "order-history", "order", "conditional-order")
 _PRICE_FIELDS = frozenset({"symbol", "timestamp", "lastPrice", "currency"})
 _STOCK_FIELDS = frozenset(
     {
@@ -44,6 +44,14 @@ _INTEGRATED_HOUR_FIELDS = frozenset({"preMarket", "regularMarket", "afterMarket"
 _MARKET_SESSION_FIELDS = frozenset(
     {"startTime", "endTime", "singlePriceAuctionStartTime", "singlePriceAuctionEndTime"}
 )
+_RANKING_RESPONSE_FIELDS = frozenset({"rankedAt", "rankings"})
+_RANKING_ITEM_FIELDS = frozenset({"rank", "symbol", "currency", "price", "tradingVolume", "tradingAmount"})
+_RANKING_PRICE_FIELDS = frozenset({"lastPrice", "basePrice", "changeRate"})
+_INVESTOR_TRADING_RESPONSE_FIELDS = frozenset({"nextUntil", "records"})
+_INVESTOR_TRADING_RECORD_FIELDS = frozenset(
+    {"date", "updatedAt", "individual", "foreigner", "institution", "otherCorporation"}
+)
+_INVESTOR_TRADING_AMOUNT_FIELDS = frozenset({"buyAmount", "sellAmount"})
 
 
 class TossOpenApiSafetyError(RuntimeError):
@@ -75,6 +83,7 @@ class TossReadonlyEndpoint:
     rate_group: str
     requires_symbols: bool = False
     accepts_date: bool = False
+    fixed_params: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -112,7 +121,7 @@ class TossOpenApiLabConfig:
         )
 
 
-_FIXED_READONLY_ENDPOINTS = (
+_PROBE_READONLY_ENDPOINTS = (
     TossReadonlyEndpoint("stocks", "getStocks", "/api/v1/stocks", "STOCK", requires_symbols=True),
     TossReadonlyEndpoint(
         "market-calendar-kr",
@@ -123,8 +132,37 @@ _FIXED_READONLY_ENDPOINTS = (
     ),
     TossReadonlyEndpoint("prices", "getPrices", "/api/v1/prices", "MARKET_DATA", requires_symbols=True),
 )
+_MARKET_CONTEXT_ENDPOINTS = (
+    TossReadonlyEndpoint(
+        "ranking-kr-top20",
+        "getRankings",
+        "/api/v1/rankings",
+        "RANKING",
+        fixed_params=(
+            ("type", "MARKET_TRADING_AMOUNT"),
+            ("marketCountry", "KR"),
+            ("duration", "realtime"),
+            ("count", "20"),
+        ),
+    ),
+    TossReadonlyEndpoint(
+        "market-investor-kospi",
+        "getMarketIndicatorInvestorTrading",
+        "/api/v1/market-indicators/KOSPI/investor-trading",
+        "MARKET_INDICATOR",
+        fixed_params=(("interval", "1d"), ("count", "1")),
+    ),
+    TossReadonlyEndpoint(
+        "market-investor-kosdaq",
+        "getMarketIndicatorInvestorTrading",
+        "/api/v1/market-indicators/KOSDAQ/investor-trading",
+        "MARKET_INDICATOR",
+        fixed_params=(("interval", "1d"), ("count", "1")),
+    ),
+)
+_FIXED_READONLY_ENDPOINTS = _PROBE_READONLY_ENDPOINTS + _MARKET_CONTEXT_ENDPOINTS
 TOSS_READONLY_ENDPOINTS: Mapping[str, TossReadonlyEndpoint] = MappingProxyType(
-    {endpoint.key: endpoint for endpoint in _FIXED_READONLY_ENDPOINTS}
+    {endpoint.key: endpoint for endpoint in _PROBE_READONLY_ENDPOINTS}
 )
 
 
@@ -140,14 +178,25 @@ def _urlopen_no_redirect(http_request: request.Request, *, timeout: float) -> ob
 def resolve_toss_readonly_endpoint(selector: str) -> TossReadonlyEndpoint:
     selector_key = selector.strip().lower()
     endpoint = next(
-        (candidate for candidate in _FIXED_READONLY_ENDPOINTS if candidate.key == selector_key),
+        (candidate for candidate in _PROBE_READONLY_ENDPOINTS if candidate.key == selector_key),
         None,
     )
     if endpoint is None:
-        allowed = ", ".join(endpoint.key for endpoint in _FIXED_READONLY_ENDPOINTS)
+        allowed = ", ".join(endpoint.key for endpoint in _PROBE_READONLY_ENDPOINTS)
         raise TossOpenApiSafetyError(
             f"Toss endpoint '{selector}' is not allowed by the read-only lab profile. Allowed values: {allowed}."
         )
+    return endpoint
+
+
+def resolve_toss_market_context_endpoint(selector: str) -> TossReadonlyEndpoint:
+    selector_key = selector.strip().lower()
+    endpoint = next(
+        (candidate for candidate in _MARKET_CONTEXT_ENDPOINTS if candidate.key == selector_key),
+        None,
+    )
+    if endpoint is None:
+        raise TossOpenApiSafetyError(f"Toss market-context endpoint '{selector}' is not allowed.")
     return endpoint
 
 
@@ -272,7 +321,12 @@ def fetch_toss_readonly_endpoint(
     except (error.URLError, TimeoutError, OSError):
         raise RuntimeError(f"Toss OpenAPI {endpoint.key} request failed (transport error).") from None
     result = payload.get("result")
-    expected_type = dict if endpoint.key == "market-calendar-kr" else list
+    expected_type = dict if endpoint.key in {
+        "market-calendar-kr",
+        "ranking-kr-top20",
+        "market-investor-kospi",
+        "market-investor-kosdaq",
+    } else list
     if not isinstance(result, expected_type):
         raise RuntimeError(f"Toss OpenAPI {endpoint.key} response had an unexpected shape.")
     _validate_readonly_result(endpoint, result)
@@ -342,6 +396,10 @@ def _build_readonly_params(
     symbols: tuple[str, ...],
     query_date: date | None,
 ) -> dict[str, str]:
+    if endpoint.fixed_params:
+        if symbols or query_date is not None:
+            raise TossOpenApiSafetyError(f"Toss endpoint '{endpoint.key}' accepts only its fixed market-context query.")
+        return dict(endpoint.fixed_params)
     normalized_symbols = tuple(symbol.strip() for symbol in symbols if symbol.strip())
     if len(normalized_symbols) > 2:
         raise TossOpenApiSafetyError("The Toss read-only lab probe accepts at most 2 symbols.")
@@ -362,6 +420,17 @@ def _build_readonly_params(
 
 
 def _validate_fetch_params(endpoint: TossReadonlyEndpoint, params: dict[str, str]) -> None:
+    if endpoint.fixed_params:
+        expected = dict(endpoint.fixed_params)
+        if endpoint.key.startswith("market-investor-"):
+            expected["until"] = params.get("until", "")
+            try:
+                date.fromisoformat(expected["until"])
+            except ValueError:
+                raise TossOpenApiSafetyError("Toss market investor context requires an ISO reference date.") from None
+        if params != expected:
+            raise TossOpenApiSafetyError(f"Toss endpoint '{endpoint.key}' received a noncanonical fixed query.")
+        return
     allowed_keys = {"symbols"} if endpoint.requires_symbols else set()
     if endpoint.accepts_date:
         allowed_keys.add("date")
@@ -384,6 +453,50 @@ def _validate_readonly_result(endpoint: TossReadonlyEndpoint, result: object) ->
         rows = _validate_object_list(result, allowed=_PRICE_FIELDS, label="prices")
         for row in rows:
             _validate_scalar_values(row, nested_fields=frozenset(), label="prices item")
+        return
+    if endpoint.key == "ranking-kr-top20":
+        ranking = _validate_object(result, allowed=_RANKING_RESPONSE_FIELDS, label="ranking")
+        ranked_at = ranking.get("rankedAt")
+        if ranked_at is not None and not isinstance(ranked_at, str):
+            raise RuntimeError("Toss OpenAPI ranking result had an unexpected rankedAt value.")
+        rows = _validate_object_list(ranking.get("rankings"), allowed=_RANKING_ITEM_FIELDS, label="ranking rows")
+        if len(rows) > 20:
+            raise RuntimeError("Toss OpenAPI ranking result exceeded the fixed Top20 limit.")
+        for row in rows:
+            _validate_scalar_values(row, nested_fields=frozenset({"price"}), label="ranking item")
+            price = row.get("price")
+            if price is not None:
+                price_object = _validate_object(price, allowed=_RANKING_PRICE_FIELDS, label="ranking item.price")
+                _validate_scalar_values(price_object, nested_fields=frozenset(), label="ranking item.price")
+        return
+    if endpoint.key.startswith("market-investor-"):
+        investor = _validate_object(result, allowed=_INVESTOR_TRADING_RESPONSE_FIELDS, label="market investor trading")
+        records = _validate_object_list(
+            investor.get("records"),
+            allowed=_INVESTOR_TRADING_RECORD_FIELDS,
+            label="market investor trading records",
+        )
+        if len(records) > 1:
+            raise RuntimeError("Toss OpenAPI market investor context exceeded the fixed one-record limit.")
+        for record in records:
+            _validate_scalar_values(
+                record,
+                nested_fields=frozenset({"individual", "foreigner", "institution", "otherCorporation"}),
+                label="market investor trading record",
+            )
+            for key in ("individual", "foreigner", "institution", "otherCorporation"):
+                amount = record.get(key)
+                if amount is not None:
+                    amount_object = _validate_object(
+                        amount,
+                        allowed=_INVESTOR_TRADING_AMOUNT_FIELDS,
+                        label=f"market investor trading record.{key}",
+                    )
+                    _validate_scalar_values(
+                        amount_object,
+                        nested_fields=frozenset(),
+                        label=f"market investor trading record.{key}",
+                    )
         return
     if endpoint.key == "stocks":
         rows = _validate_object_list(result, allowed=_STOCK_FIELDS, label="stocks")

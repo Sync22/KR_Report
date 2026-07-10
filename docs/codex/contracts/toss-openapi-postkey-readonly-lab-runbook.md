@@ -207,7 +207,7 @@ python -m stock_monitor web-view --host 127.0.0.1 --port 8792 --no-open
 - Labels the value as `Toss 현재가`; it is not the selected historical date's price.
 - Reuses the existing `데이터 기준` section to show `ready/current/disabled` and cache
   state after a successful quote response; it does not add a separate Toss screen.
-- The normal `web-view` command exposes only the bounded top-2 quote reference route.
+- The normal `web-view` command exposes the bounded top-2 quote route plus the fixed market-context route. The latter has no user-selectable query: ranking is always KR real-time trading-amount Top20, and market investor trading is always prior-business-day KOSPI/KOSDAQ `1d`.
 - Exposes no account, order, DB write, scheduler, Telegram, or admin control.
 - It is public-safe only as current-price reference beside server-derived priority candidates.
 

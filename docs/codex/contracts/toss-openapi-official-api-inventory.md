@@ -43,7 +43,7 @@ Official sources:
 | Refresh token | Not provided. Reissue through the token endpoint. | Token lifecycle must be designed post-key. |
 | Active token count | One valid access token per client; reissue invalidates previous token. | Avoid background token refresh by default. |
 | Account header | `X-Tossinvest-Account` uses `accountSeq` from `GET /api/v1/accounts` | Sensitive operational identifier. Operator-only. |
-| Public surface | Auth/account/order values may not reach `web-view`; only bounded top-2 market price projection is approved. | Enforce through tests before any surface connection. |
+| Public surface | Auth/account/order values may not reach `web-view`; bounded top-2 prices plus fixed ranking/aggregate-flow market context are approved. | Enforce source, freshness, fixed-query, and public-safe DTO tests before any surface connection. |
 
 ## Rate Limits
 
@@ -102,7 +102,7 @@ Default retry policy for any future lab client:
 | Market Info | `GET` | `/api/v1/exchange-rate` | `getExchangeRate` | No | `baseCurrency`, `quoteCurrency`, optional `dateTime` | `MARKET_INFO` | Future reference only; not order FX. |
 | Market Info | `GET` | `/api/v1/market-calendar/KR` | `getKrMarketCalendar` | No | optional `date` | `MARKET_INFO` | Future calendar comparison candidate. |
 | Market Info | `GET` | `/api/v1/market-calendar/US` | `getUsMarketCalendar` | No | optional `date` | `MARKET_INFO` | Future only if US scope is approved. |
-| Ranking | `GET` | `/api/v1/rankings` | `getRankings` | No | `type`, `marketCountry`, `duration`, optional caution exclusion/count | `RANKING` | Documentation only. Ranking basis must not overwrite candidate priority. |
+| Ranking | `GET` | `/api/v1/rankings` | `getRankings` | No | `type`, `marketCountry`, `duration`, optional caution exclusion/count | `RANKING` | Promoted only as fixed KR real-time market-trading-amount Top20. It may show Top2 overlap but cannot reorder candidates. |
 | Market Indicators | `GET` | `/api/v1/market-indicators/prices` | `getMarketIndicatorPrices` | No | `symbols` | `MARKET_INDICATOR` | Future market-context lab only. |
 | Market Indicators | `GET` | `/api/v1/market-indicators/{symbol}/candles` | `getMarketIndicatorCandles` | No | path `symbol`, `interval`, `count`, optional `before` | `MARKET_INDICATOR_CHART` | Future market-context lab only; no broad backfill. |
 | Market Indicators | `GET` | `/api/v1/market-indicators/{symbol}/investor-trading` | `getMarketIndicatorInvestorTrading` | No | path `symbol`, `interval`, `count`, optional `until` | `MARKET_INDICATOR` | Future aggregate KOSPI/KOSDAQ context only; not a replacement for stock-level KRX flow. |
@@ -248,7 +248,7 @@ narrow. Future patches should choose one profile explicitly.
 | `market_reference_lab` | `prices`, `stocks`, `stock warnings`, `market-calendar/KR`, maybe `trades` for freshness | Account, holdings, order info/history, order POST | Candidate after keys and approval. |
 | `operator_account_lab` | `accounts`, maybe `holdings` with redaction | Public surfaces, DB write, Telegram, scheduler, order POST | Not approved now. |
 | `execution_review_lab` | Order docs, order fixture schemas, safety tests | Real order create/modify/cancel | Separate contract required. |
-| `public_projection` | Source/freshness labels and current prices for server-derived top-2 observation candidates | Account, holdings, orders, buying power, sellable quantity, commissions, score/trading call, arbitrary public symbols | Approved only for bounded `web-view` top-2 current-price projection. |
+| `public_projection` | Source/freshness labels, current prices for server-derived top-2 candidates, and fixed market-context ranking/aggregate flow | Account, holdings, orders, buying power, sellable quantity, commissions, score/trading call, arbitrary public queries | Approved only for bounded latest-date `web-view` top-2 current-price and fixed market-context projections. |
 
 ## Cut-Down Rules
 

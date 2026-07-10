@@ -13,6 +13,7 @@ from stock_monitor.fetch.toss_openapi import (
     TossReadonlyResponse,
     fetch_toss_readonly_endpoint,
     issue_toss_access_token,
+    resolve_toss_market_context_endpoint,
     resolve_toss_readonly_endpoint,
 )
 
@@ -134,6 +135,110 @@ class TossPriorityQuoteProvider:
             "reason": "not_configured",
         }
 
+    def get_market_context(
+        self,
+        *,
+        reference_date: date,
+        priority_symbols: tuple[str, ...],
+    ) -> dict[str, object]:
+        normalized_symbols = tuple(dict.fromkeys(symbol.strip() for symbol in priority_symbols if symbol.strip()))[:2]
+        if not self.configured:
+            return self._disabled_market_context(reference_date=reference_date, priority_symbols=normalized_symbols)
+
+        cache_key = (f"market-context:{reference_date.isoformat()}", normalized_symbols)
+        now_monotonic = self._clock()
+        with self._cache_lock:
+            cached = self._cache.get(cache_key)
+            if cached and now_monotonic - cached[0] <= self._cache_ttl_seconds:
+                return {**cached[1], "cache": "hit"}
+            inflight = self._inflight.get(cache_key)
+            if inflight is None:
+                inflight = threading.Event()
+                self._inflight[cache_key] = inflight
+                owns_request = True
+            else:
+                owns_request = False
+
+        if not owns_request:
+            inflight.wait(timeout=max(self._config.timeout_seconds * 4 + 1.0, 1.0))
+            with self._cache_lock:
+                shared = self._cache.get(cache_key)
+            if shared:
+                age = self._clock() - shared[0]
+                if age <= self._cache_ttl_seconds:
+                    return {**shared[1], "cache": "shared"}
+                if age <= self._stale_ttl_seconds:
+                    return {**shared[1], "cache": "stale", "stale_reason": "upstream_unavailable"}
+            raise RuntimeError("Toss market-context request failed.")
+
+        started = time.perf_counter()
+        try:
+            ranking_endpoint = resolve_toss_market_context_endpoint("ranking-kr-top20")
+            ranking_response = self._fetch_endpoint_with_token_recovery(
+                endpoint=ranking_endpoint,
+                params=dict(ranking_endpoint.fixed_params),
+            )
+            investor_flow: dict[str, object] = {}
+            rate_limit = {ranking_endpoint.key: ranking_response.rate_limit}
+            for market, endpoint_key in (("KOSPI", "market-investor-kospi"), ("KOSDAQ", "market-investor-kosdaq")):
+                endpoint = resolve_toss_market_context_endpoint(endpoint_key)
+                response = self._fetch_endpoint_with_token_recovery(
+                    endpoint=endpoint,
+                    params={**dict(endpoint.fixed_params), "until": reference_date.isoformat()},
+                )
+                result = response.result if isinstance(response.result, dict) else {}
+                records = result.get("records") if isinstance(result.get("records"), list) else []
+                investor_flow[market] = next(
+                    (
+                        item
+                        for item in records
+                        if isinstance(item, dict) and item.get("date") == reference_date.isoformat()
+                    ),
+                    None,
+                )
+                rate_limit[endpoint.key] = response.rate_limit
+
+            ranking_result = ranking_response.result if isinstance(ranking_response.result, dict) else {}
+            rankings = ranking_result.get("rankings") if isinstance(ranking_result.get("rankings"), list) else []
+            ranked_symbols = {
+                str(item.get("symbol") or "").strip()
+                for item in rankings
+                if isinstance(item, dict) and str(item.get("symbol") or "").strip()
+            }
+            payload: dict[str, object] = {
+                "surface": "toss-market-context",
+                "read_only": True,
+                "configured": True,
+                "live_fetch": True,
+                "writes_db": False,
+                "sends_telegram": False,
+                "registers_scheduler": False,
+                "affects_ordering": False,
+                "reference_date": reference_date.isoformat(),
+                "ranked_at": ranking_result.get("rankedAt"),
+                "rankings": rankings,
+                "priority_overlap_symbols": [symbol for symbol in normalized_symbols if symbol in ranked_symbols],
+                "investor_flow": investor_flow,
+                "fetched_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+                "rate_limit": rate_limit,
+                "cache": "miss",
+            }
+            with self._cache_lock:
+                self._cache[cache_key] = (self._clock(), payload)
+            return payload
+        except RuntimeError:
+            with self._cache_lock:
+                stale = self._cache.get(cache_key)
+            if stale and self._clock() - stale[0] <= self._stale_ttl_seconds:
+                return {**stale[1], "cache": "stale", "stale_reason": "upstream_unavailable"}
+            raise
+        finally:
+            with self._cache_lock:
+                event = self._inflight.pop(cache_key, None)
+                if event is not None:
+                    event.set()
+
     def _empty_payload(self, *, priority_date: date) -> dict[str, object]:
         return {
             "surface": "web-view-toss-priority-quotes",
@@ -151,14 +256,50 @@ class TossPriorityQuoteProvider:
             "reason": "no_priority_symbols",
         }
 
+    def _disabled_market_context(
+        self,
+        *,
+        reference_date: date,
+        priority_symbols: tuple[str, ...],
+    ) -> dict[str, object]:
+        return {
+            "surface": "toss-market-context",
+            "read_only": True,
+            "configured": False,
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "affects_ordering": False,
+            "reference_date": reference_date.isoformat(),
+            "ranked_at": None,
+            "rankings": [],
+            "priority_overlap_symbols": [],
+            "investor_flow": {"KOSPI": None, "KOSDAQ": None},
+            "priority_symbols": list(priority_symbols),
+            "cache": "disabled",
+            "reason": "not_configured",
+        }
+
     def _fetch_with_token_recovery(self, symbols: tuple[str, ...]) -> TossReadonlyResponse:
+        return self._fetch_endpoint_with_token_recovery(
+            endpoint=self._endpoint,
+            params={"symbols": ",".join(symbols)},
+        )
+
+    def _fetch_endpoint_with_token_recovery(
+        self,
+        *,
+        endpoint: TossReadonlyEndpoint,
+        params: dict[str, str],
+    ) -> TossReadonlyResponse:
         token = self._get_token()
         try:
-            return self._fetch(token, symbols)
+            return self._fetch_endpoint(token, endpoint=endpoint, params=params)
         except RuntimeError as exc:
             if getattr(exc, "status_code", None) != 401:
                 raise
-        return self._fetch(self._reissue_token_once(failed_token=token), symbols)
+        return self._fetch_endpoint(self._reissue_token_once(failed_token=token), endpoint=endpoint, params=params)
 
     def _get_token(self) -> TossAccessToken:
         with self._token_lock:
@@ -191,11 +332,20 @@ class TossPriorityQuoteProvider:
             return self._token
 
     def _fetch(self, token: TossAccessToken, symbols: tuple[str, ...]) -> TossReadonlyResponse:
+        return self._fetch_endpoint(token, endpoint=self._endpoint, params={"symbols": ",".join(symbols)})
+
+    def _fetch_endpoint(
+        self,
+        token: TossAccessToken,
+        *,
+        endpoint: TossReadonlyEndpoint,
+        params: dict[str, str],
+    ) -> TossReadonlyResponse:
         return self._fetch_quotes(
             base_url=self._config.base_url,
             access_token=token.access_token,
-            endpoint=self._endpoint,
-            params={"symbols": ",".join(symbols)},
+            endpoint=endpoint,
+            params=params,
             timeout_seconds=self._config.timeout_seconds,
             live_enabled=True,
         )

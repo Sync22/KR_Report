@@ -174,6 +174,33 @@ def test_toss_market_context_provider_uses_fixed_queries_and_keeps_top_two_order
     assert payload["registers_scheduler"] is False
 
 
+def test_toss_market_context_fetch_rejects_tampered_fixed_queries_before_network() -> None:
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("network must not be used")
+
+    with pytest.raises(TossOpenApiSafetyError, match="noncanonical fixed query"):
+        fetch_toss_readonly_endpoint(
+            base_url=TOSS_OPENAPI_BASE_URL,
+            access_token="token-value",
+            endpoint=resolve_toss_market_context_endpoint("ranking-kr-top20"),
+            params={"type": "TOP_GAINERS", "marketCountry": "KR", "duration": "realtime", "count": "20"},
+            timeout_seconds=12,
+            live_enabled=True,
+            urlopen=fail_if_called,
+        )
+
+    with pytest.raises(TossOpenApiSafetyError, match="noncanonical fixed query"):
+        fetch_toss_readonly_endpoint(
+            base_url=TOSS_OPENAPI_BASE_URL,
+            access_token="token-value",
+            endpoint=resolve_toss_market_context_endpoint("market-investor-kospi"),
+            params={"interval": "1w", "count": "1", "until": "2026-07-09"},
+            timeout_seconds=12,
+            live_enabled=True,
+            urlopen=fail_if_called,
+        )
+
+
 def test_toss_readonly_allowlist_is_immutable() -> None:
     with pytest.raises(TypeError):
         TOSS_READONLY_ENDPOINTS["accounts"] = TossReadonlyEndpoint(  # type: ignore[index]

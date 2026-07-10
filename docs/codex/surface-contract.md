@@ -32,8 +32,8 @@ This is a permission and API boundary, not just a visual layout boundary.
 - `web-view` user data routes remain GET-first, but a narrow access-gated operator action may use `POST /api/news-observations/collect` to turn the selected-date top priority news lane from `수집 전` into saved observation rows. The existing `/auth/login` POST remains the entry-code exception. No other public write/control POST route is allowed without a separate contract.
 - `web-view` must be implemented with a separate handler/router and a separate read-only DTO contract.
 - Shared DB/repository code is allowed. Shared HTTP control handlers are not allowed.
-- Broker or execution API work, including Toss Securities OpenAPI beyond the approved top-2 current-price projection, must not be connected to `admin-gui`, production DB writes, broker secrets, or order routing by default. It belongs in a separate lab/staging lane until docs, permissions, sandbox/test keys, and read-only probes are verified.
-- Toss OpenAPI is approved for server-derived latest-date top-2 `우선 확인` symbols in two bounded read-only consumers: the `web-view` current-price reference and the scheduled `09:15`/`12:00`/`15:15` market-briefing Telegram slots. It must not accept arbitrary symbols, expose account/order data, persist current quotes, affect ordering, or send a standalone trading instruction.
+- Broker or execution API work, including Toss Securities OpenAPI beyond the approved bounded market-reference projections, must not be connected to `admin-gui`, production DB writes, broker secrets, or order routing by default. It belongs in a separate lab/staging lane until docs, permissions, sandbox/test keys, and read-only probes are verified.
+- Toss OpenAPI is approved for three bounded read-only consumers: server-derived latest-date top-2 `우선 확인` current prices; fixed `KR / MARKET_TRADING_AMOUNT / realtime / count=20` ranking context with a Top2 overlap label; and fixed previous-business-day `KOSPI`/`KOSDAQ` `1d` investor-trading context. The last two may appear only in the `web-view` main context and scheduled `09:15`/`12:00`/`15:15` market-briefing slots. They must not accept arbitrary symbols, periods, ranking types, or markets; expose account/order data; persist live values; affect ordering; or send a standalone trading instruction.
 - The current public `web-view` trading-wording ban is not a permanent denial of the product's long-term direction. Trading-decision support belongs in a future operator-only decision-support lane after stable real-time data, permissions, failure handling, and execution safety are proven.
 - External sharing candidates are limited to Tailscale for owner-only remote operation and Cloudflare Tunnel for a future friend-facing read-only `web-view` URL.
 - Direct router port forwarding is not a preferred exposure model for this project.
@@ -151,7 +151,7 @@ Source ownership and Korean display naming are fixed in [data-source-policy.md](
 
 The first `web-view` should prefer clarity over trading interpretation. It can say what was observed, identify what is still missing, and recommend what to check first, but should avoid unsupported scoring.
 
-Broker-origin data is currently allowed only for the bounded Toss top-2 current-price reference. It must be labeled as `Toss 현재가`; KRX/report/flow values remain stored references, and the live quote must not imply a trading decision.
+Broker-origin data is currently allowed for the bounded Toss top-2 current-price reference and fixed market-context projection. The quote must be labeled as `Toss 현재가`; ranking must be labeled as Toss 거래대금 Top20 with its aggregation time; and investor trading must be labeled as prior-business-day KOSPI/KOSDAQ aggregate context. KRX/report/flow values remain stored references, and no live value may imply a trading decision.
 
 When that future lane is approved, `read-only` still means no DB write, no Telegram/scheduler automation, no admin control path, no broker secret exposure, and no order routing. It does not mean the intraday reference is forbidden from changing `우선 확인`, `관찰 우선순위`, or main-card emphasis.
 
@@ -179,6 +179,7 @@ The current endpoint contract is GET-first, with one explicit operator-triggered
 | `GET /api/flow-trend?date={date}` | Investor-flow trend | Stored KRX Data Marketplace samples only; no live fetch, no public numeric scoring, no trading recommendation. |
 | `GET /api/etf-trend?date={date}` | ETF trend | Stored KRX ETF snapshots only; no live fetch, no public numeric scoring, no trading recommendation. |
 | `GET /api/toss-priority-quotes?date={date}` | Toss top-2 current-price reference | Latest stored business date only; server-derived top-2 candidate symbols only; no arbitrary symbol query, account/order data, DB write, scheduler, Telegram, scoring, or trading recommendation. |
+| `GET /api/toss-market-context?date={date}` | Toss Top20 ranking and prior-business-day market-flow context | Latest stored business date only; server derives Top2 overlap but does not change order. Ranking is fixed to KR real-time trading amount Top20; investor flow is fixed KOSPI/KOSDAQ `1d` for the prior business day. No public query controls, account/order data, DB write, scoring, or trading recommendation. |
 | `POST /api/news-observations/collect` | Access-gated news evidence collection | Selected-date/top-priority operator action only. It may live-fetch Naver news through the existing news-intelligence briefing collector and write saved observation/evidence rows, then returns only a public-safe summary. It must not send Telegram, register scheduler tasks, expose raw operator payloads, expose sentiment/impact scores, or accept broker/order actions. |
 | `GET /api/category?date={date}&type=sector|theme&name=...` | Category detail | Same-date category stock list with KRX stock references when available. |
 | `GET /api/category-trend?type=sector|theme&name=...` | Category trend | Recent category report/stock counts, descriptive only; dated snapshot per date when available, latest stored category classification otherwise. |
@@ -303,7 +304,7 @@ Cloudflare Tunnel rule:
 - `web-view` does not import or expose admin POST dispatcher logic.
 - `web-view` responses exclude scheduler controls, shutdown controls, secrets, `.env`, DB path, and raw operational internals.
 - `web-view` responses and HTML exclude safe settings, admin audit logs, operator profiles, and `/api/settings` routes.
-- `web-view` Toss current-price responses expose only `prices` for server-derived top-2 symbols and must not expose tokens, credentials, account ids, order ids, holdings, buying power, sellable quantity, commissions, or arbitrary public symbol lookups.
+- `web-view` Toss responses expose only top-2 `prices` plus fixed Top20 ranking and prior-business-day KOSPI/KOSDAQ aggregate investor-flow context. They must not expose tokens, credentials, account ids, order ids, holdings, buying power, sellable quantity, commissions, or arbitrary public queries.
 - `admin-gui` remains loopback/local control by default.
 - `web-view` archive uses `business_date` and KST semantics.
 - Telegram notification filters and web archive scope are documented so differences are intentional.
