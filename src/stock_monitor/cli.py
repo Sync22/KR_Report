@@ -27615,7 +27615,7 @@ def _render_web_view_html() -> str:
     main { width: min(1120px, calc(100vw - 32px)); margin: 0 auto; padding: 32px 0 48px; }
     .hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
     .hero-copy { min-width: 0; }
-    .hero-sub { display: flex; align-items: center; gap: 8px; }
+    .hero-title-row { display: flex; align-items: center; gap: 10px; }
     .hero-tools { min-width: min(420px, 100%); display: grid; gap: 10px; justify-items: end; }
     .top-tabs { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
     .top-tab { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 8px 13px; background: #fffaf1; color: var(--accent); cursor: pointer; font: inherit; font-size: 13px; font-weight: 800; text-decoration: none; }
@@ -27636,22 +27636,29 @@ def _render_web_view_html() -> str:
     .calendar-trigger, .dialog-close {
       display: inline-grid;
       place-items: center;
-      width: 32px;
-      height: 32px;
-      border: 1px solid var(--line);
+      width: 36px;
+      height: 36px;
       border-radius: 8px;
-      background: #fffaf1;
       color: var(--accent);
       cursor: pointer;
-      font: inherit;
-      font-size: 16px;
     }
-    .calendar-trigger:hover, .calendar-trigger:focus, .dialog-close:hover, .dialog-close:focus { background: var(--accent-soft); outline: none; }
-    .calendar-selected-date { color: var(--muted); font-size: 12px; font-weight: 800; }
-    .calendar-dialog { width: min(720px, calc(100vw - 20px)); max-height: min(760px, calc(100vh - 20px)); border: 1px solid var(--line); border-radius: 8px; padding: 16px; background: #fffdf8; color: var(--ink); box-shadow: 0 24px 64px rgba(31,39,35,.24); }
+    .calendar-trigger { border: 1px solid var(--line); background: #fffaf1; }
+    .calendar-trigger svg, .dialog-close svg { width: 20px; height: 20px; stroke-width: 1.8; }
+    .calendar-trigger:hover, .dialog-close:hover { background: var(--accent-soft); }
+    .calendar-trigger:focus, .dialog-close:focus { outline: none; }
+    .calendar-trigger:focus-visible, .dialog-close:focus-visible, button.nav-button:focus-visible { outline: 3px solid rgba(23, 63, 52, .24); outline-offset: 2px; }
+    .calendar-selected-date { color: var(--muted); font: inherit; font-weight: 700; }
+    .calendar-dialog { width: min(640px, calc(100vw - 32px)); max-height: min(680px, calc(100vh - 32px)); border: 1px solid var(--line); border-radius: 8px; padding: 18px; background: #fffdf8; color: var(--ink); box-shadow: 0 24px 64px rgba(31,39,35,.24); }
     .calendar-dialog::backdrop { background: rgba(31,39,35,.32); }
     .calendar-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-    .calendar-dialog .date-calendar-cell { min-height: 58px; }
+    .dialog-close { border: 0; background: transparent; }
+    .calendar-dialog .date-calendar-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; margin-top: 10px; }
+    .calendar-dialog .date-calendar-head strong { text-align: center; }
+    .calendar-dialog .date-calendar-grid { gap: 6px; margin-top: 10px; }
+    .calendar-dialog .date-calendar-cell { min-height: 56px; padding: 7px; border-radius: 12px; }
+    .calendar-dialog .date-calendar-cell b { font-size: 16px; }
+    .calendar-dialog .date-calendar-cell .report-count { margin-top: 8px; font-size: 11px; }
+    .calendar-dialog .date-calendar-cell .news-count { font-size: 10px; }
     .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; }
     .card { min-width: 0; background: rgba(255,253,248,.94); border: 1px solid var(--line); border-radius: 22px; padding: 18px; box-shadow: var(--shadow); }
     .span-12 { grid-column: span 12; }
@@ -28034,9 +28041,11 @@ def _render_web_view_html() -> str:
       main { width: min(100vw - 20px, 1120px); padding-top: 20px; }
       .card { border-radius: 18px; padding: 14px; }
       .hero { align-items: stretch; }
-      .calendar-dialog { padding: 14px; }
+      .hero-title-row { gap: 8px; }
+      .calendar-trigger { width: 32px; height: 32px; }
+      .calendar-dialog { width: min(100vw - 20px, 640px); max-height: min(640px, calc(100vh - 20px)); padding: 14px; }
       .calendar-dialog .date-calendar-grid { gap: 5px; }
-      .calendar-dialog .date-calendar-cell { min-height: 46px; padding: 6px; border-radius: 10px; }
+      .calendar-dialog .date-calendar-cell { min-height: 44px; padding: 6px; border-radius: 10px; }
       .calendar-dialog .date-calendar-cell .report-count, .calendar-dialog .date-calendar-cell .news-count { display: none; }
       .main-priority-card .section-header { align-items: flex-start; flex-direction: column; }
       .main-priority-card .summary-actions { justify-content: flex-start; }
@@ -28064,12 +28073,13 @@ def _render_web_view_html() -> str:
   <main>
     <header class="hero">
       <div class="hero-copy">
-        <h1>KR-Stock</h1>
-        <div class="hero-sub">
-          <p class="sub">Daily Report</p>
-          <button id="calendar-open" class="calendar-trigger" type="button" aria-label="날짜 선택" title="날짜 선택">🗓</button>
-          <span id="calendar-selected-date" class="calendar-selected-date"></span>
+        <div class="hero-title-row">
+          <h1>KR-Stock</h1>
+          <button id="calendar-open" class="calendar-trigger" type="button" aria-label="날짜 선택" title="날짜 선택">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v4"></path><path d="M16 2v4"></path><rect width="18" height="18" x="3" y="4" rx="2"></rect><path d="M3 10h18"></path><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path><path d="M8 18h.01"></path><path d="M12 18h.01"></path><path d="M16 18h.01"></path></svg>
+          </button>
         </div>
+        <p class="sub">Daily Report <span id="calendar-selected-date" class="calendar-selected-date"></span></p>
       </div>
       <div class="hero-tools">
         <nav class="top-tabs" aria-label="상단 탭">
@@ -28090,7 +28100,7 @@ def _render_web_view_html() -> str:
     <dialog id="archive-calendar-dialog" class="calendar-dialog" aria-labelledby="archive-calendar-dialog-title">
       <div class="calendar-dialog-head">
         <strong id="archive-calendar-dialog-title">날짜 선택</strong>
-        <button id="calendar-close" class="dialog-close" type="button" aria-label="닫기" title="닫기">×</button>
+        <button id="calendar-close" class="dialog-close" type="button" aria-label="닫기" title="닫기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button>
       </div>
       <div class="date-calendar-head">
         <button class="nav-button" id="calendar-prev" type="button">이전 달</button>
@@ -28782,7 +28792,7 @@ def _render_web_view_html() -> str:
       document.getElementById("calendar-title").textContent = `${year}년 ${month + 1}월`;
       document.getElementById("archive-calendar").innerHTML = cells.join("");
       const selectedDateLabel = document.getElementById("calendar-selected-date");
-      selectedDateLabel.textContent = selectedDate || "날짜 선택";
+      selectedDateLabel.textContent = selectedDate ? `(${selectedDate})` : "";
       const calendarOpenButton = document.getElementById("calendar-open");
       calendarOpenButton.title = selectedDate ? `날짜 선택 (${selectedDate})` : "날짜 선택";
       calendarOpenButton.setAttribute("aria-label", calendarOpenButton.title);

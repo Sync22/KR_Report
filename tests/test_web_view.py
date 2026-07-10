@@ -5292,6 +5292,12 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
 
     assert "<h1>KR-Stock</h1>" in html
     assert "Daily Report" in html
+    assert 'class="hero-title-row"' in html
+    assert 'id="calendar-open" class="calendar-trigger"' in html
+    assert 'id="calendar-selected-date" class="calendar-selected-date"' in html
+    assert 'id="archive-calendar-dialog" class="calendar-dialog"' in html
+    assert 'id="calendar-close" class="dialog-close"' in html
+    assert 'selectedDate ? `(${selectedDate})` : ""' in html
     assert "KR-Stock V2 Preview" in v2_html
     assert 'id="surface-v2-app"' in v2_html
     assert 'data-v2-section="candidates"' in v2_html
