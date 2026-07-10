@@ -5470,7 +5470,9 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "증권사 ${number(report.broker_count)}곳" not in html
     assert "<b>KRX</b>" not in html
     assert "renderTopTwoReviewCandidates(rows) + rows.map" not in html
-    assert 'document.getElementById("candidate-evidence-rows").innerHTML = rows.slice(0, 8).map' in html
+    assert 'const primaryCards = rows.slice(0, 2).map(renderCandidateCard).join("");' in html
+    assert 'const additionalRows = rows.slice(2, 8);' in html
+    assert '추가 후보 ${number(additionalRows.length)}개' in html
     assert 'document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(priorityRows);' in html
     assert "오늘의 우선순위" in html
     assert '<p class="brief" id="candidate-evidence-notice"></p>' in html

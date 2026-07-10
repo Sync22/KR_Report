@@ -2247,7 +2247,7 @@ def test_web_view_browser_smoke_json_reports_read_only_contract(tmp_path, monkey
                     "search_input": True,
                     "candidate_panel": True,
                     "watch_panel_clickable": True,
-                    "stock_panel_clickable": True,
+                    "stock_panel_hidden_before_selection": True,
                     "market_panel_clickable": True,
                     "rotation_panel_clickable": True,
                     "watch_tab_current": True,
@@ -2327,7 +2327,7 @@ def test_web_view_browser_smoke_text_reports_tab_contract(tmp_path, monkeypatch,
                     "tab_count": 5,
                     "tab_order": ["main", "watch", "stock", "market", "rotation"],
                     "watch_panel_clickable": True,
-                    "stock_panel_clickable": True,
+                    "stock_panel_hidden_before_selection": True,
                     "market_panel_clickable": True,
                     "rotation_panel_clickable": True,
                     "horizontal_overflow_px": 0,
@@ -2351,7 +2351,7 @@ def test_web_view_browser_smoke_text_reports_tab_contract(tmp_path, monkeypatch,
     assert exit_code == 0
     assert "tabs=5" in output
     assert "order=main/watch/stock/market/rotation" in output
-    assert "panels=watch=True stock=True market=True rotation=True" in output
+    assert "panels=watch=True stock_waiting_for_selection=True market=True rotation=True" in output
 
 
 def test_external_web_view_smoke_accepts_access_gate_and_blocks_admin(monkeypatch) -> None:
