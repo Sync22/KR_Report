@@ -3487,6 +3487,13 @@ def test_web_view_toss_market_context_route_uses_server_derived_top_two_only(tmp
     _assert_public_safe_payload(payload)
 
 
+def test_web_view_main_has_toss_market_context_panel() -> None:
+    html = cli_module._render_web_view_html()
+
+    assert 'id="toss-market-context"' in html
+    assert "/api/toss-market-context" in html
+
+
 def test_web_view_candidate_evidence_uses_stored_toss_2000_baseline(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
