@@ -28167,6 +28167,8 @@ def _render_web_view_html() -> str:
       main { width: min(100vw - 20px, 1120px); padding-top: 20px; }
       .card { border-radius: 18px; padding: 14px; }
       .hero { align-items: stretch; }
+      .main-priority-card .section-header { align-items: flex-start; flex-direction: column; }
+      .main-priority-card .summary-actions { justify-content: flex-start; }
       .stock-context-panel { max-height: none; overflow: visible; padding-right: 0; }
       .target-trail-line { grid-template-columns: 62px minmax(0, 1fr); }
       table.mobile-card-table { display: table; overflow: visible; white-space: normal; }
@@ -28272,7 +28274,6 @@ def _render_web_view_html() -> str:
         <div class="section-header">
           <h2>오늘의 우선순위 <span class="muted" id="main-priority-date"></span></h2>
           <div class="summary-actions">
-            <span class="status-pill">우선 확인 2종</span>
             <button id="toss-priority-refresh" class="ghost-button" type="button" disabled>Toss 현재가 확인</button>
             <button id="intraday-market-top-check" class="ghost-button" type="button" disabled>장중 거래대금 확인</button>
           </div>
@@ -28292,7 +28293,7 @@ def _render_web_view_html() -> str:
           </div>
         </div>
         <div id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden></div>
-        <div id="toss-market-context" class="intraday-overlap-panel" hidden></div>
+        <div id="toss-market-context" class="intraday-overlap-panel" aria-live="polite" hidden></div>
         <p class="main-priority-note">저장 리포트, KRX, [12009] 수급 참고값 기준이며 실시간 시세가 아닙니다.</p>
       </div>
 
@@ -30566,7 +30567,6 @@ def _render_web_view_html() -> str:
       updateTossPriorityRefreshButton();
       maybeAutoCollectNewsObservationForPriorityRows(tossPriorityRows);
       loadTossPriorityQuotes(tossPriorityDate);
-      loadTossMarketContext(tossPriorityDate);
       document.getElementById("candidate-evidence-rows").innerHTML = rows.slice(0, 8).map((item, index) => {
         const report = item.report_summary || {};
         const targetMetrics = candidateTargetMetrics(report, item.target_price_progress);
@@ -30839,8 +30839,10 @@ def _render_web_view_html() -> str:
     function renderTossMarketContext(data) {
       const panel = document.getElementById("toss-market-context");
       if (!data || data.live_fetch !== true) {
-        panel.hidden = true;
-        panel.innerHTML = "";
+        panel.hidden = false;
+        panel.textContent = data?.configured === false
+          ? "Toss 시장 문맥은 연결 준비 상태입니다."
+          : "Toss 시장 문맥을 지금 확인할 수 없습니다.";
         return;
       }
       const rankings = Array.isArray(data.rankings) ? data.rankings.slice(0, 20) : [];
@@ -30877,6 +30879,8 @@ def _render_web_view_html() -> str:
         return;
       }
       const requestId = ++tossMarketContextRequestId;
+      panel.hidden = false;
+      panel.textContent = "Toss 시장 문맥 확인 중";
       try {
         const response = await fetch(`/api/toss-market-context?date=${encodeURIComponent(date)}`, { cache: "no-store" });
         const data = await response.json();
@@ -30885,8 +30889,7 @@ def _render_web_view_html() -> str:
         renderTossMarketContext(data);
       } catch (_error) {
         if (requestId === tossMarketContextRequestId) {
-          panel.hidden = true;
-          panel.innerHTML = "";
+          panel.textContent = "Toss 시장 문맥을 지금 확인할 수 없습니다.";
         }
       }
     }

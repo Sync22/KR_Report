@@ -3492,6 +3492,11 @@ def test_web_view_main_has_toss_market_context_panel() -> None:
 
     assert 'id="toss-market-context"' in html
     assert "/api/toss-market-context" in html
+    assert "Toss 시장 문맥 확인 중" in html
+    assert 'id="toss-market-context" class="intraday-overlap-panel" aria-live="polite"' in html
+    candidate_render = html[html.index("function renderCandidateEvidence"):html.index("function renderTopTwoReviewCandidates")]
+    assert "loadTossMarketContext" not in candidate_render
+    assert html.count("loadTossMarketContext(tossPriorityDate || selectedDate)") == 1
 
 
 def test_web_view_candidate_evidence_uses_stored_toss_2000_baseline(tmp_path, monkeypatch) -> None:
