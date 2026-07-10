@@ -5,9 +5,10 @@
 This runbook covers the first bounded Toss Securities OpenAPI validation after
 client credentials have been issued.
 
-It does not approve account, asset, order-info, order-history, order creation,
-order modification, order cancellation, production DB writes, scheduler,
-Telegram, `admin-gui`, or any `web-view` integration in main.
+It does not approve account, asset, order-info, order-history, conditional-order
+history, order or conditional-order creation/modification/cancellation,
+production DB writes, scheduler, Telegram, `admin-gui`, or any `web-view`
+integration in main.
 
 The active implementation remains a manual lab CLI:
 
@@ -26,7 +27,7 @@ invalidates the client's previously issued token.
 
 ## Official Basis
 
-Verified on `2026-07-04` against:
+Verified on `2026-07-10` against:
 
 - <https://developers.tossinvest.com/docs>
 - <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json>
@@ -36,10 +37,10 @@ Current official spec snapshot:
 | Item | Value |
 | --- | --- |
 | OpenAPI document version | `3.1.0` |
-| Official spec version | `1.1.5` |
-| Paths | `20` |
-| Operations | `21` |
-| Schemas | `53` |
+| Official spec version | `1.2.2` |
+| Paths | `27` |
+| Operations | `30` |
+| Schemas | `72` |
 
 ## Local Key Input
 

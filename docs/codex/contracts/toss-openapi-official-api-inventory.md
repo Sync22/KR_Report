@@ -15,12 +15,13 @@ This is not an approval to call Toss runtime APIs. The active safety contract is
 
 | Item | Value |
 | --- | --- |
-| Snapshot date | `2026-07-04` |
-| Official spec version | `1.1.5` |
+| Snapshot date | `2026-07-10` |
+| Official spec version | `1.2.2` |
 | OpenAPI document version | `3.1.0` |
 | Base server | `https://openapi.tossinvest.com` |
-| Operations | 21 |
-| Schema count | 53 |
+| Paths | 27 |
+| Operations | 30 |
+| Schema count | 72 |
 | Auth model | OAuth 2.0 Client Credentials |
 | Runtime calls made during inventory | None |
 | Keys/accounts/tokens used | None |
@@ -58,9 +59,15 @@ limits are visible in response headers and may change without prior notice.
 | `MARKET_INFO` | 3 | - | Calendar/exchange-rate reference only. |
 | `MARKET_DATA` | 10 | - | Future top-2 quote probe candidate. |
 | `MARKET_DATA_CHART` | 5 | - | Candles can be heavier; no broad polling. |
+| `RANKING` | 5 | - | Ranking semantics differ from the project's candidate evidence; document-only until compared. |
+| `MARKET_INDICATOR_PRICE` | 10 | - | Market-index current-price reference only. |
+| `MARKET_INDICATOR` | 10 | - | Market-index investor trading is aggregate KOSPI/KOSDAQ context, not stock-level flow. |
+| `MARKET_INDICATOR_CHART` | 5 | - | Market-index candles; no broad polling. |
 | `ORDER` | 6 | 3 from 09:00 to 09:10 KST | Denylisted until execution-lab contract. |
 | `ORDER_HISTORY` | 5 | - | Execution-adjacent operator-only. |
 | `ORDER_INFO` | 6 | 3 from 09:00 to 09:10 KST | Execution-adjacent operator-only. |
+| `CONDITIONAL_ORDER` | 5 | - | Denylisted automatic-execution capability. |
+| `CONDITIONAL_ORDER_HISTORY` | 10 | - | Execution-adjacent conditional-order context. |
 
 Relevant response headers:
 
@@ -91,6 +98,10 @@ Default retry policy for any future lab client:
 | Market Info | `GET` | `/api/v1/exchange-rate` | `getExchangeRate` | No | `baseCurrency`, `quoteCurrency`, optional `dateTime` | `MARKET_INFO` | Future reference only; not order FX. |
 | Market Info | `GET` | `/api/v1/market-calendar/KR` | `getKrMarketCalendar` | No | optional `date` | `MARKET_INFO` | Future calendar comparison candidate. |
 | Market Info | `GET` | `/api/v1/market-calendar/US` | `getUsMarketCalendar` | No | optional `date` | `MARKET_INFO` | Future only if US scope is approved. |
+| Ranking | `GET` | `/api/v1/rankings` | `getRankings` | No | `type`, `marketCountry`, `duration`, optional caution exclusion/count | `RANKING` | Documentation only. Ranking basis must not overwrite candidate priority. |
+| Market Indicators | `GET` | `/api/v1/market-indicators/prices` | `getMarketIndicatorPrices` | No | `symbols` | `MARKET_INDICATOR_PRICE` | Future market-context lab only. |
+| Market Indicators | `GET` | `/api/v1/market-indicators/{symbol}/candles` | `getMarketIndicatorCandles` | No | path `symbol`, `interval`, `count`, optional `before` | `MARKET_INDICATOR_CHART` | Future market-context lab only; no broad backfill. |
+| Market Indicators | `GET` | `/api/v1/market-indicators/{symbol}/investor-trading` | `getMarketIndicatorInvestorTrading` | No | path `symbol`, `interval`, `count`, optional `until` | `MARKET_INDICATOR` | Future aggregate KOSPI/KOSDAQ context only; not a replacement for stock-level KRX flow. |
 | Account | `GET` | `/api/v1/accounts` | `getAccounts` | No | none | `ACCOUNT` | Operator-only lab candidate; never public. |
 | Asset | `GET` | `/api/v1/holdings` | `getHoldings` | Yes | optional `symbol` | `ASSET` | Operator-only lab; never public. |
 | Order History | `GET` | `/api/v1/orders` | `getOrders` | Yes | required `status`, optional `symbol/from/to/cursor/limit` | `ORDER_HISTORY` | Execution-adjacent, operator-only lab at most. |
@@ -101,6 +112,11 @@ Default retry policy for any future lab client:
 | Order | `POST` | `/api/v1/orders` | `createOrder` | Yes | `OrderCreateRequest` | `ORDER` | Denylist. Requires separate execution-lab contract. |
 | Order | `POST` | `/api/v1/orders/{orderId}/modify` | `modifyOrder` | Yes | `OrderModifyRequest` | `ORDER` | Denylist. Requires separate execution-lab contract. |
 | Order | `POST` | `/api/v1/orders/{orderId}/cancel` | `cancelOrder` | Yes | optional body | `ORDER` | Denylist. Requires separate execution-lab contract. |
+| Conditional Order History | `GET` | `/api/v1/conditional-orders` | `getConditionalOrders` | Yes | `status`, optional `symbol/cursor/limit` | `CONDITIONAL_ORDER_HISTORY` | Execution-adjacent; never public. |
+| Conditional Order History | `GET` | `/api/v1/conditional-orders/{conditionalOrderId}` | `getConditionalOrder` | Yes | path `conditionalOrderId` | `CONDITIONAL_ORDER_HISTORY` | Execution-adjacent; never public. |
+| Conditional Order | `POST` | `/api/v1/conditional-orders` | `createConditionalOrder` | Yes | conditional-order create request | `CONDITIONAL_ORDER` | Denylist. Automatic execution; separate execution-lab contract required. |
+| Conditional Order | `POST` | `/api/v1/conditional-orders/{conditionalOrderId}/modify` | `modifyConditionalOrder` | Yes | conditional-order modify request | `CONDITIONAL_ORDER` | Denylist. Automatic execution; separate execution-lab contract required. |
+| Conditional Order | `DELETE` | `/api/v1/conditional-orders/{conditionalOrderId}` | `cancelConditionalOrder` | Yes | path `conditionalOrderId` | `CONDITIONAL_ORDER` | Denylist. Automatic execution; separate execution-lab contract required. |
 
 ## Response And Error Model
 
@@ -166,6 +182,14 @@ Common HTTP statuses seen in the spec:
 | `UsMarketCalendarResponse` | `today`, `previousBusinessDay`, `nextBusinessDay` | Future only if US scope is approved. |
 | `ExchangeRateResponse` | `baseCurrency`, `quoteCurrency`, `rate`, `midRate`, `basisPoint`, `rateChangeType`, `validFrom`, `validUntil` | Reference only; docs say actual order FX may differ. |
 
+### Ranking And Market Indicators
+
+| Model / endpoint | Project use candidate |
+| --- | --- |
+| `GET /api/v1/rankings` | Future market-attention comparison only. The official basis includes market-wide and Toss Securities execution-based rankings, so it must not directly alter existing report/candidate priority. |
+| `GET /api/v1/market-indicators/prices` and `.../{symbol}/candles` | Future market-index or government-bond context only. |
+| `GET /api/v1/market-indicators/{symbol}/investor-trading` | Future aggregate market context only. It covers KOSPI/KOSDAQ investor trading amount, not per-stock daily investor flow; KRX Data Marketplace remains the stock-level flow source. |
+
 ### Account And Asset
 
 | Model | Fields | Handling |
@@ -188,6 +212,12 @@ Common HTTP statuses seen in the spec:
 | `Order` | `orderId`, `symbol`, `side`, `orderType`, `timeInForce`, `status`, price/quantity/order amount, currency, timestamps, execution | Private execution data. |
 | `OrderExecution` | filled quantity, average price, filled amount, commission, tax, filled time, settlement date | Private execution data. |
 | `OrderStatus` | `PENDING`, `PENDING_CANCEL`, `PENDING_REPLACE`, `PARTIAL_FILLED`, `FILLED`, `CANCELED`, `REJECTED`, `CANCEL_REJECTED`, `REPLACE_REJECTED`, `REPLACED` | Execution-lab only if ever used. |
+
+### Conditional Order
+
+| Model / endpoint | Handling |
+| --- | --- |
+| Conditional-order create/modify/cancel and history | Automatic execution capability, including `SINGLE`, `OCO`, and `OTO`. Keep entirely denylisted from this project until a separately approved execution-lab contract exists. |
 
 Order safety facts from official docs:
 
@@ -239,6 +269,8 @@ This inventory was built from official documentation endpoints only:
 - No `POST /oauth2/token` call was made.
 - No `/api/v1/...` runtime endpoint was called.
 - No `.env` value, key, token, account, holding, or order value was read.
-- The `2026-07-04` `1.1.5` recheck retained `20` paths, `21` operations, and
-  `53` schemas. No endpoint was added or removed. The bounded implementation
-  still allows only `stocks`, `market-calendar/KR`, and `prices`.
+- The `2026-07-10` `1.2.2` recheck expanded the spec from `20` to `27` paths,
+  `21` to `30` operations, and `53` to `72` schemas. Added groups are Ranking,
+  Market Indicators, Conditional Order, and Conditional Order History. The
+  bounded implementation still allows only `stocks`, `market-calendar/KR`, and
+  `prices`; no new operation was promoted.

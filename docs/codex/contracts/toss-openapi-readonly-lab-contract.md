@@ -40,17 +40,19 @@ Use official Toss Securities documents first:
 | <https://openapi.tossinvest.com/openapi-docs/latest/api-reference/README.md> | Markdown API reference index. |
 | <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json> | Canonical OpenAPI document for exact endpoints and schemas. |
 
-Observed official-doc facts as of `2026-07-04`:
+Observed official-doc facts as of `2026-07-10` (`1.2.2`, `27` paths, `30`
+operations, `72` schemas):
 
 - Base server is `https://openapi.tossinvest.com`.
 - Authentication uses OAuth 2.0 Client Credentials Grant.
 - All API calls except `POST /oauth2/token` require
   `Authorization: Bearer {access_token}`.
-- Account, asset, order-history, order-info, and order APIs require
+- Account, asset, order-history, order-info, order, and conditional-order APIs require
   `X-Tossinvest-Account` when the endpoint is account-contextual.
-- Market data, stock info, and market info are user-account-independent but
-  still require an access token.
-- Order creation, modification, and cancellation are `POST` endpoints.
+- Market data, stock info, market info, ranking, and market indicators are
+  user-account-independent but still require an access token.
+- Conditional orders register automatic execution and are denied alongside
+  direct order creation, modification, and cancellation.
 
 ## Product Role
 
@@ -59,6 +61,7 @@ Observed official-doc facts as of `2026-07-04`:
 | Read-only quote/reference | Promoted for `web-view` and scheduled market-briefing top-2 current price | Server derives up to two `우선 확인` symbols; no arbitrary symbol query. |
 | Stock/reference metadata | Future lab candidate | May be compared with KRX/Naver identity data, but must not overwrite source facts by default. |
 | Market calendar/exchange rate | Future lab candidate | Reference only; label source/freshness if surfaced later. |
+| Ranking/market indicators | Documentation only | Ranking basis and index-level investor trading do not match current candidate or stock-level KRX-flow semantics. |
 | Account/balance read-only | Operator-only lab candidate | Never public. No production DB write. No scheduler or Telegram integration. |
 | Order history/order info | Operator-only lab candidate at most | Treat as execution-adjacent; keep away from public surfaces. |
 | Execution lab | Deferred | Requires separate order-safety, audit, permissions, failure, and rollback contract. |
@@ -108,15 +111,16 @@ Forbidden outside the explicitly promoted top-2 current-price path:
 - Calling any Toss `/api/v1/...` runtime endpoint except allowlisted
   market/reference endpoints, currently `prices` for the promoted `web-view`
   top-2 path and `stocks`/`market-calendar-kr` for manual probes.
-- Capturing real account, holding, order, buying-power, sellable-quantity, or
-  commission data.
+- Capturing real account, holding, order, conditional-order, buying-power,
+  sellable-quantity, or commission data.
 - Writing Toss data into production SQLite.
 - Registering a standalone Toss scheduler task beyond the approved 20:00 baseline task.
 - Sending Toss-derived Telegram messages outside the approved `09:15`/`12:00`/`15:15` market-briefing slots.
 - Connecting Toss to `admin-gui` or any scheduler flow other than the approved market-briefing slots and 20:00 baseline task.
 - Connecting Toss to public `web-view` beyond the top-2 current-price
   projection described in this contract.
-- Implementing order creation, modification, cancellation, or routing.
+- Implementing order or conditional-order creation, modification,
+  cancellation, automatic execution, or routing.
 - Implementing public numeric scores, investment grades, buy/sell wording,
   entry/exit levels, target returns, conviction, or execution language.
 
@@ -128,11 +132,14 @@ Forbidden outside the explicitly promoted top-2 current-price path:
 | Market Data | `GET /api/v1/prices`, `orderbook`, `trades`, `price-limits`, `candles` | `prices` only is allowlisted for top-2 web-view current price. Other market-data endpoints remain lab candidates. |
 | Stock Info | `GET /api/v1/stocks`, `GET /api/v1/stocks/{symbol}/warnings` | Future read-only lab allowlist after token review. |
 | Market Info | `GET /api/v1/exchange-rate`, `GET /api/v1/market-calendar/KR`, `GET /api/v1/market-calendar/US` | Future read-only lab allowlist after token review. |
+| Ranking | `GET /api/v1/rankings` | Documentation only until ranking semantics and source burden are separately reviewed. |
+| Market Indicators | `GET /api/v1/market-indicators/prices`, `.../{symbol}/candles`, `.../{symbol}/investor-trading` | Documentation only. Investor trading is aggregate market context, not stock-level KRX flow. |
 | Account | `GET /api/v1/accounts` | Operator-only lab candidate. Account id is sensitive operational context. |
 | Asset | `GET /api/v1/holdings` | Operator-only lab only. Never public. |
 | Order History | `GET /api/v1/orders`, `GET /api/v1/orders/{orderId}` | Execution-adjacent operator-only lab only. |
 | Order Info | `GET /api/v1/buying-power`, `sellable-quantity`, `commissions` | Execution-adjacent operator-only lab only. |
 | Order | `POST /api/v1/orders`, `modify`, `cancel` | Denylist. Separate execution-lab contract required. |
+| Conditional Order / History | `POST`/`DELETE`/`GET /api/v1/conditional-orders...` | Denylist. Automatic execution or execution-adjacent context; separate execution-lab contract required. |
 
 ## Surface Contract
 
