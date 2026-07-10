@@ -18,6 +18,7 @@ from stock_monitor.fetch.toss_openapi import (
     build_toss_readonly_probe_plan,
     fetch_toss_readonly_endpoint,
     issue_toss_access_token,
+    resolve_toss_market_context_endpoint,
     resolve_toss_readonly_endpoint,
     run_toss_readonly_probe,
 )
@@ -92,6 +93,85 @@ def test_resolve_toss_readonly_endpoint_allows_market_reference_only() -> None:
     for forbidden in ("accounts", "holdings", "orders", "buying-power", "commissions"):
         with pytest.raises(TossOpenApiSafetyError, match="not allowed"):
             resolve_toss_readonly_endpoint(forbidden)
+
+
+def test_toss_market_context_endpoints_are_fixed_and_not_probe_selectors() -> None:
+    ranking = resolve_toss_market_context_endpoint("ranking-kr-top20")
+    kospi_flow = resolve_toss_market_context_endpoint("market-investor-kospi")
+    kosdaq_flow = resolve_toss_market_context_endpoint("market-investor-kosdaq")
+
+    assert ranking.path == "/api/v1/rankings"
+    assert ranking.rate_group == "RANKING"
+    assert kospi_flow.path == "/api/v1/market-indicators/KOSPI/investor-trading"
+    assert kosdaq_flow.path == "/api/v1/market-indicators/KOSDAQ/investor-trading"
+    with pytest.raises(TossOpenApiSafetyError, match="not allowed"):
+        resolve_toss_readonly_endpoint("ranking-kr-top20")
+
+
+def test_toss_market_context_provider_uses_fixed_queries_and_keeps_top_two_ordering_unchanged() -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    seen: list[tuple[str, dict[str, str]]] = []
+
+    def fetch(**kwargs):
+        endpoint = kwargs["endpoint"]
+        params = kwargs["params"]
+        seen.append((endpoint.key, params))
+        if endpoint.key == "ranking-kr-top20":
+            return SimpleNamespace(
+                result={
+                    "rankedAt": "2026-07-10T09:15:00+09:00",
+                    "rankings": [
+                        {"rank": 1, "symbol": "005930", "currency": "KRW", "price": {"lastPrice": 70000}},
+                        {"rank": 2, "symbol": "035420", "currency": "KRW", "price": {"lastPrice": 200000}},
+                    ],
+                },
+                rate_limit={"limit": "5"},
+            )
+        return SimpleNamespace(
+            result={
+                "records": [
+                    {
+                        "date": "2026-07-09",
+                        "updatedAt": "2026-07-09T18:00:00+09:00",
+                        "foreigner": {"buyAmount": 100, "sellAmount": 90},
+                        "institution": {"buyAmount": 80, "sellAmount": 120},
+                    }
+                ]
+            },
+            rate_limit={"limit": "10"},
+        )
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch,
+    )
+
+    payload = provider.get_market_context(
+        reference_date=date(2026, 7, 9),
+        priority_symbols=("005930", "000660"),
+    )
+
+    assert seen == [
+        (
+            "ranking-kr-top20",
+            {"type": "MARKET_TRADING_AMOUNT", "marketCountry": "KR", "duration": "realtime", "count": "20"},
+        ),
+        ("market-investor-kospi", {"interval": "1d", "count": "1", "until": "2026-07-09"}),
+        ("market-investor-kosdaq", {"interval": "1d", "count": "1", "until": "2026-07-09"}),
+    ]
+    assert payload["priority_overlap_symbols"] == ["005930"]
+    assert payload["reference_date"] == "2026-07-09"
+    assert payload["affects_ordering"] is False
+    assert payload["writes_db"] is False
+    assert payload["sends_telegram"] is False
+    assert payload["registers_scheduler"] is False
 
 
 def test_toss_readonly_allowlist_is_immutable() -> None:

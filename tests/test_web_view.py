@@ -3398,6 +3398,95 @@ def test_web_view_toss_priority_quotes_route_uses_server_derived_top_two_only(tm
     assert "999999" not in provider.calls[0][1]
 
 
+def test_web_view_toss_market_context_route_uses_server_derived_top_two_only(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 7, 10)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="삼성전자 보고서",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 7, 10, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 7, 10, 9, 1, 0),
+                source_id="toss-market-route-1",
+                identity_key="toss-market-route-1",
+            ),
+            Report(
+                stock_name="SK하이닉스",
+                stock_code="000660",
+                title="SK하이닉스 보고서",
+                broker_name="KB증권",
+                published_at=datetime(2026, 7, 10, 9, 2, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 7, 10, 9, 3, 0),
+                source_id="toss-market-route-2",
+                identity_key="toss-market-route-2",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    class FakeTossProvider:
+        configured = True
+
+        def get_quotes(self, **_kwargs) -> dict[str, object]:
+            return {"configured": True, "live_fetch": False, "quotes": [], "cache": "disabled"}
+
+        def get_market_context(self, *, reference_date: date, priority_symbols: tuple[str, ...]) -> dict[str, object]:
+            assert reference_date == date(2026, 7, 9)
+            self.symbols = priority_symbols
+            return {
+                "surface": "web-view-toss-market-context",
+                "read_only": True,
+                "configured": True,
+                "live_fetch": True,
+                "writes_db": False,
+                "sends_telegram": False,
+                "registers_scheduler": False,
+                "affects_ordering": False,
+                "reference_date": reference_date.isoformat(),
+                "ranked_at": "2026-07-10T09:15:00+09:00",
+                "rankings": [{"rank": 1, "symbol": "005930", "tradingAmount": 1000}],
+                "priority_overlap_symbols": ["005930"],
+                "investor_flow": {"KOSPI": {"date": "2026-07-09"}, "KOSDAQ": {"date": "2026-07-09"}},
+            }
+
+    provider = FakeTossProvider()
+    server = cli_module.create_web_view_server(
+        config,
+        repository,
+        host="127.0.0.1",
+        port=0,
+        limit=5,
+        toss_quote_provider=provider,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        with urllib.request.urlopen(
+            base_url + "/api/toss-market-context?date=2026-07-10&symbols=999999",
+            timeout=5,
+        ) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert payload["derived_from"] == "web_view_candidate_evidence_top_2"
+    assert payload["priority_overlap_symbols"] == ["005930"]
+    assert provider.symbols == ("005930", "000660")
+    _assert_public_safe_payload(payload)
+
+
 def test_web_view_candidate_evidence_uses_stored_toss_2000_baseline(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
