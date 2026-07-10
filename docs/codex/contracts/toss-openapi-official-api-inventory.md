@@ -60,8 +60,7 @@ limits are visible in response headers and may change without prior notice.
 | `MARKET_DATA` | 10 | - | Future top-2 quote probe candidate. |
 | `MARKET_DATA_CHART` | 5 | - | Candles can be heavier; no broad polling. |
 | `RANKING` | 5 | - | Ranking semantics differ from the project's candidate evidence; document-only until compared. |
-| `MARKET_INDICATOR_PRICE` | 10 | - | Market-index current-price reference only. |
-| `MARKET_INDICATOR` | 10 | - | Market-index investor trading is aggregate KOSPI/KOSDAQ context, not stock-level flow. |
+| `MARKET_INDICATOR` | 10 | - | Current endpoint descriptions assign both market-indicator prices and investor trading here; investor trading is aggregate KOSPI/KOSDAQ context, not stock-level flow. |
 | `MARKET_INDICATOR_CHART` | 5 | - | Market-index candles; no broad polling. |
 | `ORDER` | 6 | 3 from 09:00 to 09:10 KST | Denylisted until execution-lab contract. |
 | `ORDER_HISTORY` | 5 | - | Execution-adjacent operator-only. |
@@ -75,6 +74,11 @@ Relevant response headers:
 - `X-RateLimit-Remaining`
 - `X-RateLimit-Reset`
 - `Retry-After` on 429
+
+The overview currently lists a separate `MARKET_INDICATOR_PRICE` group, but
+the canonical `getMarketIndicatorPrices` endpoint description names
+`MARKET_INDICATOR`. Treat the endpoint description and returned rate-limit
+headers as the runtime source of truth.
 
 Default retry policy for any future lab client:
 
@@ -99,7 +103,7 @@ Default retry policy for any future lab client:
 | Market Info | `GET` | `/api/v1/market-calendar/KR` | `getKrMarketCalendar` | No | optional `date` | `MARKET_INFO` | Future calendar comparison candidate. |
 | Market Info | `GET` | `/api/v1/market-calendar/US` | `getUsMarketCalendar` | No | optional `date` | `MARKET_INFO` | Future only if US scope is approved. |
 | Ranking | `GET` | `/api/v1/rankings` | `getRankings` | No | `type`, `marketCountry`, `duration`, optional caution exclusion/count | `RANKING` | Documentation only. Ranking basis must not overwrite candidate priority. |
-| Market Indicators | `GET` | `/api/v1/market-indicators/prices` | `getMarketIndicatorPrices` | No | `symbols` | `MARKET_INDICATOR_PRICE` | Future market-context lab only. |
+| Market Indicators | `GET` | `/api/v1/market-indicators/prices` | `getMarketIndicatorPrices` | No | `symbols` | `MARKET_INDICATOR` | Future market-context lab only. |
 | Market Indicators | `GET` | `/api/v1/market-indicators/{symbol}/candles` | `getMarketIndicatorCandles` | No | path `symbol`, `interval`, `count`, optional `before` | `MARKET_INDICATOR_CHART` | Future market-context lab only; no broad backfill. |
 | Market Indicators | `GET` | `/api/v1/market-indicators/{symbol}/investor-trading` | `getMarketIndicatorInvestorTrading` | No | path `symbol`, `interval`, `count`, optional `until` | `MARKET_INDICATOR` | Future aggregate KOSPI/KOSDAQ context only; not a replacement for stock-level KRX flow. |
 | Account | `GET` | `/api/v1/accounts` | `getAccounts` | No | none | `ACCOUNT` | Operator-only lab candidate; never public. |
