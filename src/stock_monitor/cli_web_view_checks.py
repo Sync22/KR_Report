@@ -294,7 +294,7 @@ def _run_web_view_browser_smoke(
         tab_order = "/".join(viewport.get("tab_order") or [])
         panel_state = (
             f"watch={viewport.get('watch_panel_clickable')} "
-            f"stock={viewport.get('stock_panel_clickable')} "
+            f"stock_waiting_for_selection={viewport.get('stock_panel_hidden_before_selection')} "
             f"market={viewport.get('market_panel_clickable')} "
             f"rotation={viewport.get('rotation_panel_clickable')}"
         )
@@ -650,7 +650,13 @@ def _collect_web_view_browser_render_smoke_issues(
                     page = context.new_page()
                     try:
                         page.goto(base_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                        page.wait_for_selector("#calendar-open", timeout=timeout_ms)
+                        page.locator("#calendar-open").click(timeout=timeout_ms)
                         page.wait_for_selector("#archive-calendar", timeout=timeout_ms)
+                        calendar_dialog_open = bool(
+                            page.locator("#archive-calendar-dialog").evaluate("(node) => node.open")
+                        )
+                        page.locator("#calendar-close").click(timeout=timeout_ms)
                         page.wait_for_timeout(500)
                         body_text = page.locator("body").inner_text(timeout=timeout_ms)
                         view_tab_locator = page.locator("[data-view-tab]")
@@ -686,7 +692,7 @@ def _collect_web_view_browser_render_smoke_issues(
                         watch_tab_current = page.locator('[data-view-tab="watch"]').get_attribute("aria-current") == "page"
                         page.locator('[data-view-tab="stock"]').click(timeout=timeout_ms)
                         page.wait_for_timeout(250)
-                        stock_panel_visible = page.locator("#stock-context-card").is_visible()
+                        stock_panel_hidden_before_selection = not page.locator("#stock-context-card").is_visible()
                         stock_tab_current = page.locator('[data-view-tab="stock"]').get_attribute("aria-current") == "page"
                         stock_search_flow = page.evaluate(
                             """
@@ -796,6 +802,7 @@ def _collect_web_view_browser_render_smoke_issues(
                             "tab_order": tab_order,
                             "current_tab_count": current_tab_count,
                             "search_input": bool(search_count),
+                            "calendar_dialog_open": calendar_dialog_open,
                             "intraday_button": intraday_button_visible,
                             "intraday_overlap_panel": bool(intraday_overlap_count),
                             "candidate_panel": bool(candidate_count) and candidate_panel_visible,
@@ -803,7 +810,7 @@ def _collect_web_view_browser_render_smoke_issues(
                             "observation_summary_main_visible": observation_summary_main_visible,
                             "watch_panel_clickable": watch_panel_visible,
                             "watch_observation_summary_visible": watch_observation_summary_visible,
-                            "stock_panel_clickable": stock_panel_visible,
+                            "stock_panel_hidden_before_selection": stock_panel_hidden_before_selection,
                             "stock_search_flow": stock_search_flow,
                             "candidate_journey_flow": candidate_journey_flow,
                             "market_panel_clickable": market_panel_visible,
@@ -906,12 +913,20 @@ def _collect_web_view_browser_render_smoke_issues(
                                     "message": "watch tab did not expose current state after click",
                                 }
                             )
-                        if not stock_panel_visible:
+                        if not calendar_dialog_open:
                             issues.append(
                                 {
-                                    "code": "stock_tab_not_clickable",
+                                    "code": "calendar_dialog_not_opened",
+                                    "path": f"viewport[{spec['name']}].calendar",
+                                    "message": "calendar trigger did not expose the date-selection dialog",
+                                }
+                            )
+                        if not stock_panel_hidden_before_selection:
+                            issues.append(
+                                {
+                                    "code": "stock_panel_visible_without_selection",
                                     "path": f"viewport[{spec['name']}].stock_tab",
-                                    "message": "stock tab did not expose selected-stock detail panel",
+                                    "message": "stock detail panel should stay hidden until a stock is selected",
                                 }
                             )
                         if not stock_tab_current:

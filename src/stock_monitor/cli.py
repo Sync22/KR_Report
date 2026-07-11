@@ -27772,6 +27772,7 @@ def _render_web_view_html() -> str:
     main { width: min(1120px, calc(100vw - 32px)); margin: 0 auto; padding: 32px 0 48px; }
     .hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
     .hero-copy { min-width: 0; }
+    .hero-title-row { display: flex; align-items: center; gap: 10px; }
     .hero-tools { min-width: min(420px, 100%); display: grid; gap: 10px; justify-items: end; }
     .top-tabs { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
     .top-tab { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 8px 13px; background: #fffaf1; color: var(--accent); cursor: pointer; font: inherit; font-size: 13px; font-weight: 800; text-decoration: none; }
@@ -27789,6 +27790,32 @@ def _render_web_view_html() -> str:
     h1 { margin: 0; font-size: clamp(28px, 4vw, 44px); letter-spacing: -.04em; }
     h2 { margin: 0 0 14px; font-size: 18px; }
     .sub { margin: 8px 0 0; color: var(--muted); }
+    .calendar-trigger, .dialog-close {
+      display: inline-grid;
+      place-items: center;
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      color: var(--accent);
+      cursor: pointer;
+    }
+    .calendar-trigger { border: 1px solid var(--line); background: #fffaf1; }
+    .calendar-trigger svg, .dialog-close svg { width: 20px; height: 20px; stroke-width: 1.8; }
+    .calendar-trigger:hover, .dialog-close:hover { background: var(--accent-soft); }
+    .calendar-trigger:focus, .dialog-close:focus { outline: none; }
+    .calendar-trigger:focus-visible, .dialog-close:focus-visible, button.nav-button:focus-visible { outline: 3px solid rgba(23, 63, 52, .24); outline-offset: 2px; }
+    .calendar-selected-date { color: var(--muted); font: inherit; font-weight: 700; }
+    .calendar-dialog { width: min(640px, calc(100vw - 32px)); max-height: min(680px, calc(100vh - 32px)); border: 1px solid var(--line); border-radius: 8px; padding: 18px; background: #fffdf8; color: var(--ink); box-shadow: 0 24px 64px rgba(31,39,35,.24); }
+    .calendar-dialog::backdrop { background: rgba(31,39,35,.32); }
+    .calendar-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .dialog-close { border: 0; background: transparent; }
+    .calendar-dialog .date-calendar-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; margin-top: 10px; }
+    .calendar-dialog .date-calendar-head strong { text-align: center; }
+    .calendar-dialog .date-calendar-grid { gap: 6px; margin-top: 10px; }
+    .calendar-dialog .date-calendar-cell { min-height: 56px; padding: 7px; border-radius: 12px; }
+    .calendar-dialog .date-calendar-cell b { font-size: 16px; }
+    .calendar-dialog .date-calendar-cell .report-count { margin-top: 8px; font-size: 11px; }
+    .calendar-dialog .date-calendar-cell .news-count { font-size: 10px; }
     .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; }
     .card { min-width: 0; background: rgba(255,253,248,.94); border: 1px solid var(--line); border-radius: 22px; padding: 18px; box-shadow: var(--shadow); }
     .span-12 { grid-column: span 12; }
@@ -27987,6 +28014,10 @@ def _render_web_view_html() -> str:
     .market-block { min-width: 0; border: 1px solid var(--line); border-radius: 16px; padding: 14px; background: #fffaf1; }
     .market-block h3 { margin: 0 0 10px; font-size: 15px; }
     .candidate-list { display: grid; gap: 10px; }
+    .additional-candidates { margin-top: 10px; }
+    .additional-candidates > summary { cursor: pointer; color: var(--accent); font-size: 13px; font-weight: 800; }
+    .additional-candidates > summary::marker { color: var(--accent); }
+    .additional-candidates .candidate-list { margin-top: 10px; }
     .main-priority-card { order: -1; }
     .main-priority-list { display: grid; gap: 10px; }
     .main-priority-list:empty { display: none; }
@@ -28167,6 +28198,12 @@ def _render_web_view_html() -> str:
       main { width: min(100vw - 20px, 1120px); padding-top: 20px; }
       .card { border-radius: 18px; padding: 14px; }
       .hero { align-items: stretch; }
+      .hero-title-row { gap: 8px; }
+      .calendar-trigger { width: 32px; height: 32px; }
+      .calendar-dialog { width: min(100vw - 20px, 640px); max-height: min(640px, calc(100vh - 20px)); padding: 14px; }
+      .calendar-dialog .date-calendar-grid { gap: 5px; }
+      .calendar-dialog .date-calendar-cell { min-height: 44px; padding: 6px; border-radius: 10px; }
+      .calendar-dialog .date-calendar-cell .report-count, .calendar-dialog .date-calendar-cell .news-count { display: none; }
       .main-priority-card .section-header { align-items: flex-start; flex-direction: column; }
       .main-priority-card .summary-actions { justify-content: flex-start; }
       .stock-context-panel { max-height: none; overflow: visible; padding-right: 0; }
@@ -28193,8 +28230,13 @@ def _render_web_view_html() -> str:
   <main>
     <header class="hero">
       <div class="hero-copy">
-        <h1>KR-Stock</h1>
-        <p class="sub">Daily Report</p>
+        <div class="hero-title-row">
+          <h1>KR-Stock</h1>
+          <button id="calendar-open" class="calendar-trigger" type="button" aria-label="날짜 선택" title="날짜 선택">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v4"></path><path d="M16 2v4"></path><rect width="18" height="18" x="3" y="4" rx="2"></rect><path d="M3 10h18"></path><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path><path d="M8 18h.01"></path><path d="M12 18h.01"></path><path d="M16 18h.01"></path></svg>
+          </button>
+        </div>
+        <p class="sub">Daily Report <span id="calendar-selected-date" class="calendar-selected-date"></span></p>
       </div>
       <div class="hero-tools">
         <nav class="top-tabs" aria-label="상단 탭">
@@ -28212,16 +28254,19 @@ def _render_web_view_html() -> str:
         <p class="stock-search-status" id="stock-search-status" aria-live="polite">날짜를 선택하면 저장 종목을 찾을 수 있습니다.</p>
       </div>
     </header>
+    <dialog id="archive-calendar-dialog" class="calendar-dialog" aria-labelledby="archive-calendar-dialog-title">
+      <div class="calendar-dialog-head">
+        <strong id="archive-calendar-dialog-title">날짜 선택</strong>
+        <button id="calendar-close" class="dialog-close" type="button" aria-label="닫기" title="닫기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button>
+      </div>
+      <div class="date-calendar-head">
+        <button class="nav-button" id="calendar-prev" type="button">이전 달</button>
+        <strong id="calendar-title">-</strong>
+        <button class="nav-button" id="calendar-next" type="button">다음 달</button>
+      </div>
+      <div id="archive-calendar" class="date-calendar-grid"><span class="muted">불러오는 중</span></div>
+    </dialog>
     <section class="grid">
-      <section class="card span-12 date-picker-card" aria-label="날짜 선택">
-        <div class="date-calendar-head">
-          <button class="nav-button" id="calendar-prev" type="button">이전 달</button>
-          <strong id="calendar-title">-</strong>
-          <button class="nav-button" id="calendar-next" type="button">다음 달</button>
-        </div>
-        <div id="archive-calendar" class="date-calendar-grid"><span class="muted">불러오는 중</span></div>
-      </section>
-
       <div class="card span-12 daily-briefing" data-view-panel="main">
         <div class="section-header">
           <h2>오늘 읽을 요약 <span class="muted" id="daily-briefing-date"></span></h2>
@@ -28320,7 +28365,7 @@ def _render_web_view_html() -> str:
         </div>
       </div>
 
-      <div class="card span-7 focus-card stock-focus-card" id="stock-context-card" data-view-panel="stock" tabindex="-1" hidden>
+      <div class="card span-7 focus-card stock-focus-card" id="stock-context-card" data-view-panel="stock" data-view-when="stock-selection" tabindex="-1" hidden>
         <div class="section-header">
           <h2>선택 종목</h2>
           <div class="selection-strip" id="stock-selection-status"><span class="muted">선택된 종목이 없습니다.</span></div>
@@ -28329,7 +28374,7 @@ def _render_web_view_html() -> str:
         <div id="stock-context" class="detail-list scroll-panel stock-context-panel"><span class="muted">종목 행을 선택하면 KRX 참고와 수급 정보를 불러옵니다.</span></div>
       </div>
 
-      <div class="card span-5 focus-card stock-focus-card" id="stock-detail-card" data-view-panel="stock" tabindex="-1" hidden>
+      <div class="card span-5 focus-card stock-focus-card" id="stock-detail-card" data-view-panel="stock" data-view-when="stock-selection" tabindex="-1" hidden>
         <div class="section-header">
           <h2>선택 종목 리포트 <span class="muted" id="detail-title"></span></h2>
           <label class="toggle-switch"><input id="report-no-opinion-toggle" type="checkbox"> 의견없음 제외</label>
@@ -28338,7 +28383,7 @@ def _render_web_view_html() -> str:
         <div id="stock-detail" class="detail-list scroll-panel stock-report-panel"><span class="muted">종목 행을 선택하세요.</span></div>
       </div>
 
-      <div class="card span-12" id="backtest-observation-card" data-view-panel="watch" hidden>
+      <div class="card span-12" id="backtest-observation-card" data-view-panel="watch" data-view-when="backtest-data" hidden>
         <div class="section-header">
           <h2>리포트 후 흐름 <span class="muted" id="backtest-observation-date"></span></h2>
           <div class="summary-actions">
@@ -28393,7 +28438,7 @@ def _render_web_view_html() -> str:
         </div>
       </div>
 
-      <div class="card span-12 focus-card" id="category-detail-card" data-view-panel="rotation" tabindex="-1" hidden>
+      <div class="card span-12 focus-card" id="category-detail-card" data-view-panel="rotation" data-view-when="category-selection" tabindex="-1" hidden>
         <h2>업종/테마 상세 <span class="muted" id="category-title"></span></h2>
         <p class="brief" id="category-selection-status">업종 또는 테마 행을 선택하면 상세 종목과 최근 흐름을 불러옵니다.</p>
         <div class="scroll-panel">
@@ -28405,7 +28450,7 @@ def _render_web_view_html() -> str:
         <p class="notice">업종/테마는 저장된 분류 참고값입니다. 일부 과거 날짜는 최신 저장 분류 기준일 수 있습니다.</p>
       </div>
 
-      <details class="card span-12 compact-details" id="category-trend-details" data-view-panel="rotation" hidden>
+      <details class="card span-12 compact-details" id="category-trend-details" data-view-panel="rotation" data-view-when="category-selection" hidden>
         <summary><h2>업종/테마 최근 흐름 <span class="muted" id="category-trend-title"></span></h2></summary>
         <div class="scroll-panel compact">
           <table class="mobile-card-table">
@@ -28426,7 +28471,7 @@ def _render_web_view_html() -> str:
         <details class="market-reference-panel" open>
           <summary>선택 날짜 KRX 시장 참고 <span class="muted" id="market-date"></span></summary>
           <p class="brief" id="market-notice">날짜를 선택하면 같은 날짜의 시장 참고값을 표시합니다.</p>
-          <div class="market-grid">
+          <div class="market-grid" id="selected-date-market-grid">
             <div class="market-block">
               <h3>KOSPI 거래대금 상위</h3>
               <div class="scroll-panel compact"><table class="mobile-card-table"><thead><tr><th>종목</th><th>종가</th><th>등락률</th><th>거래대금</th></tr></thead><tbody id="market-kospi-rows"><tr><td colspan="4" class="muted">날짜를 선택하세요.</td></tr></tbody></table></div>
@@ -28635,6 +28680,19 @@ def _render_web_view_html() -> str:
     let activeViewTab = "main";
     let tossPriorityQuoteByCode = new Map();
 
+    function viewPanelHasRequiredData(panel) {
+      if (panel.dataset.viewWhen === "stock-selection") return Boolean(selectedStockCode);
+      if (panel.dataset.viewWhen === "category-selection") return Boolean(selectedCategoryDisplayName);
+      if (panel.dataset.viewWhen === "backtest-data") return Boolean(currentBacktestObservationData?.rows?.length);
+      return true;
+    }
+
+    function refreshViewPanels() {
+      document.querySelectorAll("[data-view-panel]").forEach((panel) => {
+        panel.hidden = panel.dataset.viewPanel !== activeViewTab || !viewPanelHasRequiredData(panel);
+      });
+    }
+
     function setViewTab(tabName) {
       activeViewTab = tabName || "main";
       document.querySelectorAll("[data-view-tab]").forEach((button) => {
@@ -28643,9 +28701,7 @@ def _render_web_view_html() -> str:
         button.setAttribute("aria-current", isActive ? "page" : "false");
         button.setAttribute("aria-pressed", isActive ? "true" : "false");
       });
-      document.querySelectorAll("[data-view-panel]").forEach((panel) => {
-        panel.hidden = panel.dataset.viewPanel !== activeViewTab;
-      });
+      refreshViewPanels();
       if (activeViewTab === "rotation") {
         document.getElementById("rotation-details").open = true;
       }
@@ -28702,6 +28758,7 @@ def _render_web_view_html() -> str:
         row.classList.toggle("active-selection", Boolean(stockCode) && row.dataset.stockCode === stockCode);
       });
       updateSelectionStatus();
+      refreshViewPanels();
     }
 
     function setActiveCategorySelection(categoryType, publicCategoryId, displayName, label = null, source = null) {
@@ -28717,6 +28774,7 @@ def _render_web_view_html() -> str:
         );
       });
       updateSelectionStatus();
+      refreshViewPanels();
     }
 
     function focusDetailCard(id) {
@@ -28891,6 +28949,11 @@ def _render_web_view_html() -> str:
       }
       document.getElementById("calendar-title").textContent = `${year}년 ${month + 1}월`;
       document.getElementById("archive-calendar").innerHTML = cells.join("");
+      const selectedDateLabel = document.getElementById("calendar-selected-date");
+      selectedDateLabel.textContent = selectedDate ? `(${selectedDate})` : "";
+      const calendarOpenButton = document.getElementById("calendar-open");
+      calendarOpenButton.title = selectedDate ? `날짜 선택 (${selectedDate})` : "날짜 선택";
+      calendarOpenButton.setAttribute("aria-label", calendarOpenButton.title);
     }
 
     function toLocalIsoDate(date) {
@@ -29001,10 +29064,12 @@ def _render_web_view_html() -> str:
       selectedCategoryDisplayName = null;
       selectedCategoryLabel = null;
       selectedCategorySource = null;
+      currentBacktestObservationData = null;
       stockSearchResults = [];
       stockSearchRequestId += 1;
       dailyFlowExpanded = false;
       updateSelectionStatus();
+      refreshViewPanels();
       if (validDate(date)) {
         const url = new URL(window.location.href);
         url.searchParams.set("date", date);
@@ -30501,18 +30566,22 @@ def _render_web_view_html() -> str:
 
     function renderDailyStocks(data) {
       const stocks = data?.stocks || [];
-      const filteredStocks = showSingleReportStocks
+      const hasRepeatedMentions = stocks.some((item) => Number(item.mention_count || 0) > 1);
+      const includeSingleReportStocks = showSingleReportStocks || !hasRepeatedMentions;
+      document.getElementById("stock-single-toggle").checked = includeSingleReportStocks;
+      document.getElementById("stock-single-toggle").disabled = !hasRepeatedMentions;
+      const filteredStocks = includeSingleReportStocks
         ? stocks
         : stocks.filter((item) => Number(item.mention_count || 0) > 1);
       const visibleStocks = filteredStocks.slice(0, dailyStockVisibleLimit);
-      const singleHiddenCount = showSingleReportStocks
+      const singleHiddenCount = includeSingleReportStocks
         ? 0
         : Math.max(stocks.length - filteredStocks.length, 0);
       const overflowCount = Math.max(filteredStocks.length - visibleStocks.length, 0);
       const hiddenParts = [];
       if (overflowCount) hiddenParts.push(`추가 ${number(overflowCount)}종목 숨김`);
       if (singleHiddenCount) hiddenParts.push(`1건 ${number(singleHiddenCount)}종목 숨김`);
-      const filterText = showSingleReportStocks
+      const filterText = includeSingleReportStocks
         ? `1건 포함 ${number(visibleStocks.length)}종목 표시`
         : `2건 이상 ${number(visibleStocks.length)}종목 표시`;
       const marketNotice = data?.krx_context && data.krx_context.available === false
@@ -30567,22 +30636,23 @@ def _render_web_view_html() -> str:
       updateTossPriorityRefreshButton();
       maybeAutoCollectNewsObservationForPriorityRows(tossPriorityRows);
       loadTossPriorityQuotes(tossPriorityDate);
-      document.getElementById("candidate-evidence-rows").innerHTML = rows.slice(0, 8).map((item, index) => {
+      const renderCandidateCard = (item, index, offset = 0) => {
+        const candidateIndex = index + offset;
         const report = item.report_summary || {};
         const targetMetrics = candidateTargetMetrics(report, item.target_price_progress);
         const market = candidateMarketInline(item.market_reference);
         const newsBadge = renderCandidateNewsBadge(item.news_observation_badge);
         const valueProfile = item.value_profile || {};
-        const decisionLine = index < 2 && valueProfile.value_label
+        const decisionLine = candidateIndex < 2 && valueProfile.value_label
           ? `<div class="candidate-priority-line"><b>근거 상태</b><span>${esc(valueProfile.value_label)}${valueProfile.value_reason ? ` · ${esc(valueProfile.value_reason)}` : ""}</span></div>`
           : "";
-        const intradayLine = index < 2
+        const intradayLine = candidateIndex < 2
           ? `<div class="candidate-intraday-line"><b>장중 참고</b><span data-intraday-reference="${esc(item.stock_code || "")}">${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span></div>`
           : "";
-        const tossCurrentLine = index < 2
+        const tossCurrentLine = candidateIndex < 2
           ? `<div class="candidate-priority-line"><b>Toss 현재가</b><span class="priority-toss-quote muted" data-toss-quote-context="watch" data-toss-quote="${esc(item.stock_code || "")}">확인 중</span></div>`
           : "";
-        const tossBaselineLine = index < 2
+        const tossBaselineLine = candidateIndex < 2
           ? `<div class="candidate-priority-line"><b>Toss 20:00</b><span>${esc(candidateTossBaselineCompactLine(item.toss_baseline_reference))}</span></div>`
           : "";
         const turnover = item.market_reference?.turnover
@@ -30624,7 +30694,13 @@ def _render_web_view_html() -> str:
           </div>
           <button class="candidate-detail-action" type="button" data-stock-code="${esc(item.stock_code || "")}"${watchDataLoading ? " disabled" : ""}>종목 상세에서 근거 이어보기</button>
         </article>`;
-      }).join("");
+      };
+      const primaryCards = rows.slice(0, 2).map(renderCandidateCard).join("");
+      const additionalRows = rows.slice(2, 8);
+      const additionalCards = additionalRows.length
+        ? `<details class="additional-candidates"><summary>추가 후보 ${number(additionalRows.length)}개</summary><div class="candidate-list">${additionalRows.map((item, index) => renderCandidateCard(item, index, 2)).join("")}</div></details>`
+        : "";
+      document.getElementById("candidate-evidence-rows").innerHTML = primaryCards + additionalCards;
     }
 
     function renderTopTwoReviewCandidates(rows) {
@@ -31144,6 +31220,7 @@ def _render_web_view_html() -> str:
       document.getElementById("backtest-observation-date").textContent = payload?.business_date ? `(${payload.business_date})` : "";
       document.getElementById("backtest-observation-notice").textContent = displayNotice(payload?.notice || "저장된 리포트와 KRX 가격/수급 기준입니다.");
       const rows = payload?.rows || [];
+      refreshViewPanels();
       if (!rows.length) {
         document.getElementById("backtest-observation-rows").innerHTML = '<tr><td colspan="5" class="muted">리포트 후 흐름 데이터가 없습니다.</td></tr>';
         document.getElementById("backtest-observation-show-more").hidden = true;
@@ -31405,6 +31482,7 @@ def _render_web_view_html() -> str:
       document.getElementById("market-date").textContent = context?.snapshot_date ? `(${context.snapshot_date})` : "";
       document.getElementById("market-notice").textContent = displayNotice(context?.notice || "선택 날짜의 시장 참고값 기준입니다.");
       const emptyRow = '<tr><td colspan="4" class="muted">선택 날짜 시장 참고값이 없습니다.</td></tr>';
+      document.getElementById("selected-date-market-grid").hidden = !context?.available;
       if (!context || !context.available) {
         document.getElementById("market-kospi-rows").innerHTML = emptyRow;
         document.getElementById("market-kosdaq-rows").innerHTML = emptyRow;
@@ -31599,6 +31677,8 @@ def _render_web_view_html() -> str:
       }
       const target = event.target.closest("[data-date]");
       if (!target) return;
+      const calendarDialog = document.getElementById("archive-calendar-dialog");
+      if (calendarDialog.open) calendarDialog.close();
       loadDaily(target.dataset.date).catch((error) => {
         document.getElementById("stock-rows").innerHTML = `<tr><td colspan="6" class="muted">오류: ${esc(error)}</td></tr>`;
       });
@@ -31656,6 +31736,8 @@ def _render_web_view_html() -> str:
       dailyFlowExpanded = !dailyFlowExpanded;
       renderStockContext(currentStockDetailData);
     });
+    document.getElementById("calendar-open").addEventListener("click", () => document.getElementById("archive-calendar-dialog").showModal());
+    document.getElementById("calendar-close").addEventListener("click", () => document.getElementById("archive-calendar-dialog").close());
     document.getElementById("calendar-prev").addEventListener("click", () => moveCalendarMonth(-1));
     document.getElementById("calendar-next").addEventListener("click", () => moveCalendarMonth(1));
     document.getElementById("stock-single-toggle").addEventListener("change", (event) => {

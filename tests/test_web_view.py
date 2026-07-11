@@ -5393,6 +5393,12 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
 
     assert "<h1>KR-Stock</h1>" in html
     assert "Daily Report" in html
+    assert 'class="hero-title-row"' in html
+    assert 'id="calendar-open" class="calendar-trigger"' in html
+    assert 'id="calendar-selected-date" class="calendar-selected-date"' in html
+    assert 'id="archive-calendar-dialog" class="calendar-dialog"' in html
+    assert 'id="calendar-close" class="dialog-close"' in html
+    assert 'selectedDate ? `(${selectedDate})` : ""' in html
     assert "KR-Stock V2 Preview" in v2_html
     assert 'id="surface-v2-app"' in v2_html
     assert 'data-v2-section="candidates"' in v2_html
@@ -5571,7 +5577,9 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "증권사 ${number(report.broker_count)}곳" not in html
     assert "<b>KRX</b>" not in html
     assert "renderTopTwoReviewCandidates(rows) + rows.map" not in html
-    assert 'document.getElementById("candidate-evidence-rows").innerHTML = rows.slice(0, 8).map' in html
+    assert 'const primaryCards = rows.slice(0, 2).map(renderCandidateCard).join("");' in html
+    assert 'const additionalRows = rows.slice(2, 8);' in html
+    assert '추가 후보 ${number(additionalRows.length)}개' in html
     assert 'document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(priorityRows);' in html
     assert "오늘의 우선순위" in html
     assert '<p class="brief" id="candidate-evidence-notice"></p>' in html
