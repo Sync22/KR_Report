@@ -1,4 +1,14 @@
-﻿# Mini PC Migration Handoff
+# Mini PC Runbook
+
+Migration, restore, scheduler handoff, and weekly main-PC sync.
+
+## Included sections
+- Mini PC Migration Handoff
+- Weekly Mini PC Sync Guide
+- Weekly Mini PC Sync Prompt
+
+<!-- Merged from: docs/codex/mini-pc-runbook.md -->
+## Mini PC Migration Handoff
 
 ## Purpose
 
@@ -19,10 +29,10 @@ The new Codex session on the mini PC should start from this project folder and r
 
 1. `AGENTS.md`
 2. `docs/codex/documentation-index.md`
-3. `docs/codex/current-work.md`
-4. `docs/codex/execution-roadmap.md`
-5. `docs/codex/surface-contract.md`
-6. `docs/codex/krx-market-data-runbook.md`
+3. `docs/codex/operating-guide.md`
+4. `docs/codex/operating-guide.md`
+5. `docs/codex/surface-guide.md`
+6. `docs/codex/market-data-runbook.md`
 7. `CHANGELOG.md`
 8. this file
 
@@ -494,7 +504,7 @@ Current DB retention/backup policy:
 | Core source data | Keep `reports` and delivery safety state. Do not cleanup yet. |
 | Derived summaries | Rebuild from `reports` when needed. |
 | KRX snapshots | Keep 6 months; use 3 months as default flow window. |
-| KRX missing backfill | Use [data-rebaseline-plan.md](/docs/codex/data-rebaseline-plan.md) before migration. Normal operation uses 5-date batches; migration rebaseline may use 10-date batches only after backup, dry-run review, and `--allow-large-batch`. |
+| KRX missing backfill | Use [data-governance.md](/docs/codex/data-governance.md) before migration. Normal operation uses 5-date batches; migration rebaseline may use 10-date batches only after backup, dry-run review, and `--allow-large-batch`. |
 | Backup cadence | Twice daily target after automation: after the early KRX retry window and around `16:35`. Manual backup before migration/backfill/cleanup. |
 | Backup pruning | Keep at least 30 recent backups initially; prune only after `--dry-run` review. |
 | Restore smoke | Use `python -m stock_monitor db-restore-smoke <backup.db>` to verify a backup copy without touching production DB. |
@@ -521,7 +531,7 @@ Paste this into the new mini PC Codex session:
 ```text
 {PROJECT_ROOT} only.
 This is the Stock Monitor project moved from the desktop to the mini PC.
-Read AGENTS.md, docs/codex/current-work.md, docs/codex/execution-roadmap.md, docs/codex/surface-contract.md, docs/codex/mini-pc-migration-handoff.md, docs/codex/data-source-policy.md, docs/codex/data-rebaseline-plan.md, and CHANGELOG.md first.
+Read AGENTS.md, docs/codex/operating-guide.md, docs/codex/operating-guide.md, docs/codex/surface-guide.md, docs/codex/mini-pc-runbook.md, docs/codex/data-governance.md, docs/codex/data-governance.md, and CHANGELOG.md first.
 
 Current operating contract:
 - Notify: 08:20 KST after KRX daily backfill, production send allowed only 08:00~08:30 unless --allow-late.
@@ -563,3 +573,253 @@ First actions:
 | Should `.env` be copied directly? | Acceptable only if the zip is treated as sensitive. |
 | Should KRX/KIS keys be added before migration? | KRX key exists locally; copy only through a sensitive `.env` handoff. KIS remains future work. |
 | Should web-view be exposed remotely? | Possible later through Cloudflare Tunnel, but only the GET-only `web-view`, not `admin-gui`. |
+
+
+<!-- Merged from: docs/codex/weekly-sync/WEEKLY_SYNC_GUIDE.md -->
+## Weekly Mini PC Sync Guide
+
+미니PC에서 생긴 코드/문서/테스트 변경을 본컴 소스 기준으로 주간 동기화하기 위한 행동지침입니다.
+
+## 목적
+
+- 미니PC는 실운영 기준이다.
+- 본컴은 소스 정리, 검토, 백업, 다음 개발 기준이다.
+- 미니PC 변경은 주 1회 또는 큰 수정 후 본컴으로 가져와 검토 반영한다.
+- 운영 데이터와 비밀값은 코드 동기화 대상이 아니다.
+- 이 채팅/작업 위치가 미니PC일 때 `handoff/mini_pc_changes/`는 본컴으로 넘길 변경 묶음을 정리하는 outbound 위치다.
+
+## 미니PC에서 매주 작성할 파일
+
+권장 파일명:
+
+```text
+mini-pc-sync-YYYY-MM-DD.md
+```
+
+권장 위치:
+
+```text
+handoff/mini_pc_changes/
+```
+
+## 작성 양식
+
+```markdown
+## Mini PC Sync - YYYY-MM-DD
+
+## 1. 요약
+
+- 이번 주 변경 목적:
+- 운영 중 발견한 문제:
+- 최종 상태:
+
+## 2. 일자별 변경 내역
+
+| 날짜 | 변경 내용 | 이유 |
+| --- | --- | --- |
+| YYYY-MM-DD |  |  |
+
+## 3. 일자별 변경 파일
+
+| 날짜 | 파일 | 변경 성격 |
+| --- | --- | --- |
+| YYYY-MM-DD | `src/...` | 코드 / 테스트 / 문서 / 스크립트 |
+
+## 4. 예상했던 조치 후 나아진 점
+
+| 조치 | 기대 효과 | 실제 확인 |
+| --- | --- | --- |
+|  |  |  |
+
+## 5. 패치 후 생길 수 있을 법한 문제
+
+| 위험 | 영향 | 확인/완화 방법 |
+| --- | --- | --- |
+|  |  |  |
+
+## 6. 검증 결과
+
+| 명령 | 결과 |
+| --- | --- |
+| `python -m pytest -q` |  |
+| `python -m stock_monitor db-verify` |  |
+| `python -m stock_monitor operator-status --json --health-exit` |  |
+| `python -m stock_monitor web-view-value-qa --recent-business-days 4 --stock-limit 20` |  |
+
+## 7. 본컴 반영 필요 파일
+
+```text
+AGENTS.md
+README.md
+CHANGELOG.md
+docs/codex/...
+src/stock_monitor/...
+tests/...
+scripts/...
+```
+
+## 8. 본컴 반영 제외
+
+```text
+.env
+data/access_code.json
+data/stock_monitor.db
+data/backups/*.db
+.venv/
+.pytest_cache/
+Stock_Moniter_migration_*.zip
+Stock_Moniter_migration_*.zip.sha256
+```
+
+## 9. 특이사항
+
+- access-code, Telegram token, KRX key, password, cookie, DB backup 원본은 기록하지 않는다.
+- DB 상태를 전달해야 하면 row count, 날짜 범위, backup 파일명, SHA256만 기록한다.
+```
+
+## 압축 파일 기준
+
+미니PC에서 본컴으로 가져올 zip은 source/code/test/docs/script 변경만 포함합니다.
+
+포함 가능:
+
+- `AGENTS.md`
+- `README.md`
+- `CHANGELOG.md`
+- `.env.example`
+- `pyproject.toml`
+- `docs/`
+- `src/`
+- `tests/`
+- `scripts/`
+- `example/Cycle.jpg`
+- `data/rotation_*.json`
+- `handoff/mini_pc_changes/mini-pc-sync-YYYY-MM-DD.md`
+
+제외:
+
+- `.env`
+- `data/access_code.json`
+- `data/stock_monitor.db`
+- `data/backups/`
+- `data/restore-smoke/`
+- `*.log`
+- `.venv/`
+- `.pytest_cache/`
+- `Stock_Moniter_migration_*.zip`
+- `Stock_Moniter_migration_*.zip.sha256`
+- Telegram/KRX/access-code/password/cookie 같은 비밀값
+
+## 본컴에서 받을 때 처리 순서
+
+1. `handoff/mini_pc_changes/`에 zip과 sync markdown을 둔다.
+2. 압축을 임시 폴더에 푼다.
+3. 파일별 diff를 확인한다.
+4. 실제 본문 파일에 선택 반영한다.
+5. focused tests를 먼저 돌린다.
+6. 전체 `python -m pytest -q`를 돌린다.
+7. canonical 문서와 `CHANGELOG.md`를 현행화한다.
+8. 필요하면 본컴에서 다시 미니PC 반영용 patch zip을 만든다.
+
+## 판단 기준
+
+- 미니PC 운영 중 수정된 내용이 항상 정답은 아니다. 본컴 반영 전 테스트와 canonical 문서 기준으로 검토한다.
+- DB/운영 데이터는 source sync가 아니라 별도 backup/restore 정책으로 다룬다.
+- 외부공유, access-code, admin-gui 노출, KRX broad ingest, public numeric 점수화, 투자등급, 매수·매도 신호, 매매 추천 관련 변경은 본컴 반영 전 별도 검토가 필요하다. `오늘의 관찰 후보`, `우선 확인`, `관찰 우선순위` 같은 관찰 후보 추천 문구는 canonical 허용 경계에 맞는지 확인한다.
+
+
+<!-- Merged from: docs/codex/weekly-sync/WEEKLY_SYNC_PROMPT.md -->
+## Weekly Mini PC Sync Prompt
+
+아래 프롬프트를 미니PC 쪽 Codex 세션에 붙여 넣어 주간 변경 묶음을 만들 때 사용한다.
+
+```text
+{PROJECT_ROOT}만 기준으로 작업해줘.
+
+AGENTS.md와 docs/codex/documentation-index.md를 먼저 읽고, 현재 canonical 문서 기준으로만 판단해줘.
+이 폴더 밖의 다른 프로젝트나 과거 문서는 참조하지 마.
+
+이번 작업 목표는 “이번 주 미니PC에서 생긴 변경점을 본컴 소스와 맞추기 위한 sync 묶음으로 정리”하는 것이다.
+
+먼저 handoff/mini_pc_changes/WEEKLY_SYNC_GUIDE.md를 읽고, 그 양식에 맞춰 아래 파일을 작성해줘.
+
+작성 파일:
+handoff/mini_pc_changes/mini-pc-sync-YYYY-MM-DD.md
+
+반드시 포함할 내용:
+1. 일자별 변경 내역
+2. 일자별 변경 파일
+3. 예상했던 조치 후 나아진 점
+4. 패치 후 생길 수 있을 법한 문제
+5. 검증 결과
+6. 본컴 반영 필요 파일
+7. 본컴 반영 제외 파일
+
+변경 파일 판단 기준:
+- source/code/test/docs/script 변경만 포함
+- 운영 DB, backup, .env, access-code, token/key/password/cookie는 제외
+- DB 상태를 설명해야 하면 row count, 날짜 범위, backup 파일명, SHA256만 기록
+
+가능하면 아래 명령으로 현재 상태를 확인해줘.
+
+python -m pytest -q
+python -m stock_monitor db-verify
+python -m stock_monitor operator-status --json --health-exit
+python -m stock_monitor web-view-value-qa --recent-business-days 4 --stock-limit 20
+
+그 다음 mini-pc-sync-YYYY-MM-DD.md의 “본컴 반영 필요 파일” 목록 기준으로 source/code/test/docs/script 파일만 zip으로 묶어줘.
+
+압축 파일명:
+handoff/mini_pc_changes/mini_pc_sync_YYYY-MM-DD.zip
+
+SHA256 파일명:
+handoff/mini_pc_changes/mini_pc_sync_YYYY-MM-DD.zip.sha256
+
+zip 포함 가능:
+- AGENTS.md
+- README.md
+- CHANGELOG.md
+- .env.example
+- pyproject.toml
+- docs/
+- src/
+- tests/
+- scripts/
+- example/Cycle.jpg
+- data/rotation_*.json
+- handoff/mini_pc_changes/mini-pc-sync-YYYY-MM-DD.md
+
+zip 제외:
+- .env
+- data/access_code.json
+- data/stock_monitor.db
+- data/backups/
+- data/restore-smoke/
+- *.log
+- .venv/
+- .pytest_cache/
+- Stock_Moniter_migration_*.zip
+- Stock_Moniter_migration_*.zip.sha256
+- Telegram token
+- KRX key
+- password
+- cookie
+- access-code material
+
+주의:
+- public numeric 점수/투자등급/매수·매도 신호/매매 추천이 섞인 변경은 별도 위험으로 표시해. `오늘의 관찰 후보`, `우선 확인`, `관찰 우선순위` 같은 관찰 후보 추천 문구는 허용 경계 안에서 검토해.
+- admin-gui 외부 노출, 0.0.0.0 바인딩, Cloudflare tunnel target 변경은 별도 위험으로 표시해.
+- KRX Data Marketplace broad ingest 관련 변경은 별도 위험으로 표시해.
+- 미니PC 운영 중 임시로 고친 내용이라도 본컴 반영 전 검토가 필요하므로 “왜 바꿨는지”를 반드시 적어.
+
+최종 보고:
+핵심 변경:
+- 작성한 sync 문서
+- 생성한 zip/sha256 경로
+
+검증:
+- 실행한 명령과 결과
+
+남은 작업:
+- 본컴에서 확인해야 할 diff/주의사항
+```

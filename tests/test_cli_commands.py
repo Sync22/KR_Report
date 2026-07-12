@@ -3281,10 +3281,16 @@ def test_mini_pc_preflight_snapshot_reports_required_project_files(tmp_path) -> 
         "scripts/verify_task_scheduler_registration.ps1",
         "stock_research_monitor_mvp.md",
         "docs/codex/documentation-index.md",
-        "docs/codex/current-work.md",
-        "docs/codex/execution-roadmap.md",
-        "docs/codex/surface-contract.md",
-        "docs/codex/data-quality-checklist.md",
+        "docs/codex/operating-guide.md",
+        "docs/codex/architecture-guide.md",
+        "docs/codex/surface-guide.md",
+        "docs/codex/data-governance.md",
+        "docs/codex/market-data-runbook.md",
+        "docs/codex/candidate-evidence.md",
+        "docs/codex/news-intelligence.md",
+        "docs/codex/decision-journal.md",
+        "docs/codex/toss-openapi-lab.md",
+        "docs/codex/mini-pc-runbook.md",
     ):
         target = tmp_path / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -13266,7 +13272,7 @@ def test_ops_sync_preview_json_reports_git_batch_schema_and_safe_commands(
             return {
                 "ok": True,
                 "returncode": 0,
-                "stdout": "src/stock_monitor/cli.py\ntests/test_cli_commands.py\ndocs/codex/work-todo-board.md\n",
+                "stdout": "src/stock_monitor/cli.py\ntests/test_cli_commands.py\ndocs/codex/operating-guide.md\n",
                 "stderr": "",
             }
         raise AssertionError(args)
@@ -13468,7 +13474,7 @@ def test_docs_hygiene_audit_redacts_sensitive_values(tmp_path) -> None:
     public_doc.write_text(
         "\n".join(
             [
-                "[doc](/C:/Users/Example/Codex/02.Stock_Moniter/docs/codex/current-work.md)",
+                "[doc](/C:/Users/Example/Codex/02.Stock_Moniter/docs/codex/operating-guide.md)",
                 "local target http://127.0.0.1:9999",
                 f"shared origin {provider_url}",
                 "STOCK_MONITOR_TELEGRAM_BOT_TOKEN=abc123",
@@ -13507,10 +13513,9 @@ def test_docs_hygiene_audit_current_public_docs_are_clean() -> None:
 def test_docs_hygiene_audit_default_paths_include_core_contracts() -> None:
     payload = cli_module._build_docs_hygiene_audit_payload(Path.cwd())
 
-    assert "docs/codex/surface-contract.md" in payload["scanned_files"]
-    assert "docs/codex/data-source-policy.md" in payload["scanned_files"]
-    assert "docs/codex/data-quality-checklist.md" in payload["scanned_files"]
-    assert "docs/codex/contracts/news-intelligence-contract.md" in payload["scanned_files"]
+    assert "docs/codex/surface-guide.md" in payload["scanned_files"]
+    assert "docs/codex/data-governance.md" in payload["scanned_files"]
+    assert "docs/codex/news-intelligence.md" in payload["scanned_files"]
 
 
 def test_next_phase_readiness_groups_latest_krx_openapi_probe_batch(tmp_path) -> None:

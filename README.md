@@ -19,7 +19,7 @@
 - `web-view`는 친구 공유 후보가 되는 GET-only/read-only 정보 화면입니다.
 - `admin-gui`는 로컬 운영자 전용 콘솔로, 공유 화면과 분리됩니다.
 
-현재 코드는 실행 가능한 MVP 상태입니다. 다만 운영 closeout 여부와 열린 blocker는 README가 아니라 [current-work.md](docs/codex/current-work.md)와 [next-phase.md](docs/codex/next-phase.md)를 기준으로 봅니다.
+현재 코드는 실행 가능한 MVP 상태입니다. 다만 운영 closeout 여부와 열린 blocker는 README가 아니라 [operating-guide.md](docs/codex/operating-guide.md)를 기준으로 봅니다.
 
 ## What It Shows
 
@@ -152,10 +152,7 @@ The current document map is [docs/codex/documentation-index.md](docs/codex/docum
 Key references:
 
 - [stock_research_monitor_mvp.md](stock_research_monitor_mvp.md): product requirements
-- [surface-contract.md](docs/codex/surface-contract.md): `admin-gui` and `web-view` boundary
-- [current-work.md](docs/codex/current-work.md): current state and open blockers
-- [next-phase.md](docs/codex/next-phase.md): next execution direction
-- [execution-roadmap.md](docs/codex/execution-roadmap.md): progress and P0/P1/P2 criteria
-- [data-quality-checklist.md](docs/codex/data-quality-checklist.md): raw, parsed, aggregate, display value rules
-- [data-source-policy.md](docs/codex/data-source-policy.md): source ownership and naming
-- [krx-market-data-runbook.md](docs/codex/krx-market-data-runbook.md): KRX, ETF, and investor-flow rules
+- [surface-guide.md](docs/codex/surface-guide.md): `admin-gui` and `web-view` boundary
+- [operating-guide.md](docs/codex/operating-guide.md): current state, open blockers, and execution criteria
+- [data-governance.md](docs/codex/data-governance.md): value rules and source ownership
+- [market-data-runbook.md](docs/codex/market-data-runbook.md): KRX, ETF, and investor-flow rules

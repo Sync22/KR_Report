@@ -19,22 +19,16 @@ REQUIRED_MIGRATION_ENTRIES = [
     "data/rotation_image_aliases.json",
     "data/rotation_etf_candidates.json",
     "docs/codex/documentation-index.md",
-    "docs/codex/current-work.md",
-    "docs/codex/next-phase.md",
-    "docs/codex/execution-roadmap.md",
-    "docs/codex/project-map.md",
-    "docs/codex/surface-contract.md",
-    "docs/codex/data-quality-checklist.md",
-    "docs/codex/data-source-policy.md",
-    "docs/codex/krx-market-data-runbook.md",
-    "docs/codex/krx-18m-backfill-analysis.md",
-    "docs/codex/data-rebaseline-plan.md",
-    "docs/codex/admin-gui-plan.md",
-    "docs/codex/agent-guide.md",
-    "docs/codex/module-ownership.md",
-    "docs/codex/agent-reassessment.md",
-    "docs/codex/rotation-overlay-plan.md",
-    "docs/codex/mini-pc-migration-handoff.md",
+    "docs/codex/operating-guide.md",
+    "docs/codex/architecture-guide.md",
+    "docs/codex/surface-guide.md",
+    "docs/codex/data-governance.md",
+    "docs/codex/market-data-runbook.md",
+    "docs/codex/candidate-evidence.md",
+    "docs/codex/news-intelligence.md",
+    "docs/codex/decision-journal.md",
+    "docs/codex/toss-openapi-lab.md",
+    "docs/codex/mini-pc-runbook.md",
     "scripts/register_task_scheduler_tasks.ps1",
     "scripts/create_migration_archive.ps1",
     "scripts/disable_source_desktop_scheduler_tasks.ps1",
@@ -149,16 +143,17 @@ def test_verify_migration_archive_checks_sha256_sidecar() -> None:
     assert "data/rotation_overlay_coordinates.json" in script
     assert "data/rotation_image_aliases.json" in script
     assert "data/rotation_etf_candidates.json" in script
-    assert "docs/codex/next-phase.md" in script
-    assert "docs/codex/execution-roadmap.md" in script
-    assert "docs/codex/project-map.md" in script
-    assert "docs/codex/surface-contract.md" in script
-    assert "docs/codex/data-quality-checklist.md" in script
-    assert "docs/codex/data-source-policy.md" in script
-    assert "docs/codex/krx-market-data-runbook.md" in script
-    assert "docs/codex/admin-gui-plan.md" in script
-    assert "docs/codex/agent-guide.md" in script
-    assert "docs/codex/rotation-overlay-plan.md" in script
+    assert "docs/codex/documentation-index.md" in script
+    assert "docs/codex/operating-guide.md" in script
+    assert "docs/codex/architecture-guide.md" in script
+    assert "docs/codex/surface-guide.md" in script
+    assert "docs/codex/data-governance.md" in script
+    assert "docs/codex/market-data-runbook.md" in script
+    assert "docs/codex/candidate-evidence.md" in script
+    assert "docs/codex/news-intelligence.md" in script
+    assert "docs/codex/decision-journal.md" in script
+    assert "docs/codex/toss-openapi-lab.md" in script
+    assert "docs/codex/mini-pc-runbook.md" in script
     assert "scripts/register_task_scheduler_tasks.ps1" in script
     assert "scripts/create_migration_archive.ps1" in script
     assert "scripts/disable_source_desktop_scheduler_tasks.ps1" in script

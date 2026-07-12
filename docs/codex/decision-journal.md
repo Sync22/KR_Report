@@ -1,4 +1,12 @@
-# Decision Journal v0 JSON Contract
+# Decision Journal
+
+Decision Journal v0 read-only JSON contract.
+
+## Included sections
+- Decision Journal v0 JSON Contract
+
+<!-- Merged from: docs/codex/decision-journal.md -->
+## Decision Journal v0 JSON Contract
 
 ## Purpose
 

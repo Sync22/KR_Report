@@ -1,4 +1,4 @@
-﻿# Stock Research Monitor Requirements
+# Stock Research Monitor Requirements
 
 ## 목적
 
@@ -287,12 +287,8 @@ Future Toss Securities Open API or another approved intraday source can make thi
 
 ## 대표 문서
 
-- `docs/codex/current-work.md`
-- `docs/codex/execution-roadmap.md`
-- `docs/codex/next-phase.md`
-- `docs/codex/surface-contract.md`
-- `docs/codex/data-source-policy.md`
-- `docs/codex/data-quality-checklist.md`
-- `docs/codex/krx-market-data-runbook.md`
-- `docs/codex/plans/backtest-observation-plan.md`
-- `docs/codex/plans/scoring-draft-plan.md` (archived/hold research note only)
+- `docs/codex/operating-guide.md`
+- `docs/codex/surface-guide.md`
+- `docs/codex/data-governance.md`
+- `docs/codex/market-data-runbook.md`
+- `docs/codex/research-notes.md`

@@ -1,4 +1,4 @@
-﻿# AGENTS.md
+# AGENTS.md
 
 ## Behavioral Priority
 
@@ -76,7 +76,7 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
 
 ## Important Working Rules
 
-- parser, summary, notification, admin-gui, web-view 변경 전에는 `docs/codex/data-quality-checklist.md`를 먼저 본다.
+- parser, summary, notification, admin-gui, web-view 변경 전에는 `docs/codex/data-governance.md`를 먼저 본다.
 - raw/source 값, parsed/storage 값, aggregate 값, display 값을 분리해서 생각한다.
 - operator memo의 "기반 구현"과 "의도 달성"을 구분한다.
 - source probe 실험 결과는 production behavior와 분리한다.

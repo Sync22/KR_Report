@@ -1,4 +1,12 @@
-﻿# News Intelligence Contract
+# News Intelligence
+
+Operator-only news intelligence and its future public-safe stored projection.
+
+## Included sections
+- News Intelligence Contract
+
+<!-- Merged from: docs/codex/news-intelligence.md -->
+## News Intelligence Contract
 
 ## Purpose
 
@@ -24,7 +32,7 @@ Blocked by default in v1:
 - SQLite writes or migrations unless the operator explicitly passes `--save-observation` for the operator-only observation tables.
 - Generic scheduler registration, unbounded unattended collection, or source-wide crawling. The bounded `scheduled-market-briefing-slot` exception is documented below.
 - Telegram send or Telegram candidate alerts.
-- Direct public `web-view` exposure of raw/operator-only payloads. A later public-safe, stored-data-only projection is allowed when this contract and `surface-contract.md` define the exact fields.
+- Direct public `web-view` exposure of raw/operator-only payloads. A later public-safe, stored-data-only projection is allowed when this contract and `surface-guide.md` define the exact fields.
 - Broker secrets, broker execution, order routing, or order suggestions.
 - Public buy/sell, one-pick, investment-grade, target-return, conviction, entry, or exit wording.
 
