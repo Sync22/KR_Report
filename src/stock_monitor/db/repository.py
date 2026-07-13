@@ -5,6 +5,7 @@ import json
 import sqlite3
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -68,9 +69,18 @@ class StockMonitorRepository:
     def __init__(self, db_path: Path, *, timezone: str = "Asia/Seoul") -> None:
         self.db_path = db_path
         self.timezone = timezone
+        self._active_read_connection: ContextVar[sqlite3.Connection | None] = ContextVar(
+            "active_read_connection",
+            default=None,
+        )
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
+        active_connection = self._active_read_connection.get()
+        if active_connection is not None:
+            yield active_connection
+            return
+
         connection = sqlite3.connect(self.db_path, timeout=30.0)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
@@ -84,6 +94,19 @@ class StockMonitorRepository:
         finally:
             record_db_elapsed(elapsed_ms(db_start))
             connection.close()
+
+    @contextmanager
+    def read_session(self) -> Iterator[None]:
+        if self._active_read_connection.get() is not None:
+            yield
+            return
+
+        with self.connect() as connection:
+            token = self._active_read_connection.set(connection)
+            try:
+                yield
+            finally:
+                self._active_read_connection.reset(token)
 
     def enable_wal_mode(self) -> str:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)

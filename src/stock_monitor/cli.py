@@ -6,6 +6,7 @@ import io
 from contextlib import redirect_stdout
 from dataclasses import asdict, dataclass, replace
 from difflib import SequenceMatcher
+from functools import wraps
 import getpass
 import hashlib
 import hmac
@@ -32281,6 +32282,16 @@ def _safe_optional_int(value: object) -> int | None:
         return None
 
 
+def _web_view_read_session(builder: Callable) -> Callable:
+    @wraps(builder)
+    def wrapped(config: RuntimeConfig, repository: StockMonitorRepository, *args: object, **kwargs: object) -> dict:
+        with repository.read_session():
+            return builder(config, repository, *args, **kwargs)
+
+    return wrapped
+
+
+@_web_view_read_session
 def build_web_view_daily_snapshot(
     config: RuntimeConfig,
     repository: StockMonitorRepository,
@@ -36288,6 +36299,7 @@ def _candidate_baseline_market_by_code(
     return baseline_by_code
 
 
+@_web_view_read_session
 def build_web_view_candidate_evidence_snapshot(
     config: RuntimeConfig,
     repository: StockMonitorRepository,

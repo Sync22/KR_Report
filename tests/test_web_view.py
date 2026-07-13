@@ -2218,7 +2218,7 @@ def test_web_view_candidate_evidence_batches_stored_context_for_multiple_stocks(
 
     assert {row["stock_code"] for row in snapshot["rows"]} == {"005930", "000660", "035420"}
     assert "candidates" not in snapshot
-    assert connect_count <= 14
+    assert connect_count <= 15
 
 
 def test_web_view_candidate_evidence_prioritizes_backtest_supported_observation_signals(tmp_path, monkeypatch) -> None:

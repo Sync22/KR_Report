@@ -143,6 +143,16 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
     }
 
 
+def test_repository_read_session_reuses_connection_for_nested_reads(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+
+    with repository.read_session():
+        with repository.connect() as first_connection:
+            with repository.connect() as second_connection:
+                assert second_connection is first_connection
+
+
 def test_repository_saves_toss_priority_quote_baselines(tmp_path) -> None:
     repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
     repository.initialize()
