@@ -52,6 +52,28 @@ def test_parse_api_item_uses_research_id_for_source_and_identity() -> None:
     assert report.identity_key == report.with_identity().identity_key
 
 
+def test_parse_api_item_supports_current_v2_company_response() -> None:
+    collected_at = datetime(2026, 7, 13, 12, 0, 0)
+    item = {
+        "nid": "94123",
+        "itemName": "CJ ENM",
+        "itemCode": "035760",
+        "title": "Earnings outlook",
+        "brokerName": "Hanwha Investment",
+        "writeDate": "2026-07-13",
+        "opinionText": "Buy",
+        "goalPrice": "60000",
+    }
+
+    report = _parse_api_item(item, collected_at, "Asia/Seoul")
+
+    assert report is not None
+    assert report.source_id == "94123"
+    assert report.source_url == "https://stock.naver.com/research/company/94123"
+    assert report.opinion_raw == "Buy"
+    assert report.opinion_normalized == "buy"
+
+
 def test_parse_api_item_canonicalizes_decorated_research_id_and_mobile_url() -> None:
     collected_at = datetime(2026, 4, 25, 8, 0, 0)
     item = {

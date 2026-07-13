@@ -188,20 +188,12 @@ async def _inspect_company_page_async(
                   let pagesFetched = 0;
                   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-                  for (let page = 1; page <= maxPages; page += 1) {
+                  for (let index = 0; index < maxPages; index += 1) {
                     const response = await fetch(
-                      `/api/domestic/research/category?category=COMPANY&page=${page}&pageSize=${pageSize}`
+                      `/api/stockSecurity/researches/v2/company?index=${index}&size=${pageSize}`
                     );
                     const payload = await response.json();
-                    const pageItems = Array.isArray(payload?.content)
-                      ? payload.content
-                      : Array.isArray(payload?.result?.itemList)
-                        ? payload.result.itemList
-                        : Array.isArray(payload?.result)
-                          ? payload.result
-                          : Array.isArray(payload)
-                            ? payload
-                            : [];
+                    const pageItems = Array.isArray(payload?.items) ? payload.items : [];
                     pagesFetched += 1;
                     if (!pageItems.length) {
                       break;
@@ -210,7 +202,7 @@ async def _inspect_company_page_async(
                     if (desiredItems && items.length >= desiredItems) {
                       return { items: items.slice(0, desiredItems), pagesFetched };
                     }
-                    if (pageItems.length < pageSize) {
+                    if (!payload?.hasNext || pageItems.length < pageSize) {
                       break;
                     }
                     if (pageDelayMs > 0) {
@@ -363,7 +355,7 @@ def _parse_api_item(
 
     goal_price = item.get("goalPrice")
     target_price_raw = str(goal_price) if goal_price not in {None, ""} else None
-    source_id = _canonical_source_id(item.get("researchId"), item.get("endUrl"))
+    source_id = _canonical_source_id(item.get("researchId") or item.get("nid"), item.get("endUrl"))
     source_url = (
         f"https://stock.naver.com/research/company/{source_id}"
         if source_id
@@ -380,8 +372,8 @@ def _parse_api_item(
         business_date=derive_business_date(published_at, holiday_overrides),
         target_price_raw=target_price_raw,
         target_price_value=parse_target_price(target_price_raw),
-        opinion_raw=item.get("opinion"),
-        opinion_normalized=normalize_opinion(item.get("opinion")),
+        opinion_raw=item.get("opinion") or item.get("opinionText"),
+        opinion_normalized=normalize_opinion(item.get("opinion") or item.get("opinionText")),
         source_url=source_url,
         source_id=source_id,
     ).with_identity()
