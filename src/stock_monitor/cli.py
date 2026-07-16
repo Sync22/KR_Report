@@ -7899,7 +7899,7 @@ def _run_toss_market_context_capture(
             )
         provider = TossPriorityQuoteProvider(config=toss_config)
 
-    market_context = provider.get_market_context(reference_date=business_date, priority_symbols=())
+    market_context = provider.get_market_ranking()
     observed_at = _parse_toss_quote_timestamp(
         market_context.get("ranked_at"), datetime.now(ZoneInfo(config.timezone))
     )

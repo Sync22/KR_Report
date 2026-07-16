@@ -239,6 +239,38 @@ class TossPriorityQuoteProvider:
                 if event is not None:
                     event.set()
 
+    def get_market_ranking(self) -> dict[str, object]:
+        if not self.configured:
+            return {
+                "surface": "toss-market-ranking",
+                "read_only": True,
+                "configured": False,
+                "live_fetch": False,
+                "ranked_at": None,
+                "rankings": [],
+                "rate_limit": None,
+                "reason": "not_configured",
+            }
+        started = time.perf_counter()
+        endpoint = resolve_toss_market_context_endpoint("ranking-kr-top20")
+        response = self._fetch_endpoint_with_token_recovery(
+            endpoint=endpoint,
+            params=dict(endpoint.fixed_params),
+        )
+        result = response.result if isinstance(response.result, dict) else {}
+        rankings = result.get("rankings") if isinstance(result.get("rankings"), list) else []
+        return {
+            "surface": "toss-market-ranking",
+            "read_only": True,
+            "configured": True,
+            "live_fetch": True,
+            "ranked_at": result.get("rankedAt"),
+            "rankings": rankings,
+            "fetched_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+            "rate_limit": response.rate_limit,
+        }
+
     def _empty_payload(self, *, priority_date: date) -> dict[str, object]:
         return {
             "surface": "web-view-toss-priority-quotes",

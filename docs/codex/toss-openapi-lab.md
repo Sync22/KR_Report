@@ -758,7 +758,8 @@ stock-level investor flow, expose account data, or produce a score.
 The projection remains memory-cached and opt-in through the existing Toss live
 configuration. Separately, the development-hold `toss-market-context-capture`
 command persists one bounded Top20 snapshot only after `--live`, token-reissue,
-and save confirmations. Its 15:00 weekday wrapper is not registered unless
+and save confirmations. This capture calls only the fixed ranking endpoint; it
+does not request aggregate investor flow. Its 15:00 weekday wrapper is not registered unless
 `-IncludeTossMarketContextCapture` is explicitly supplied. It does not route an
 order, expose tokens, alter candidate order, or send Telegram.
 

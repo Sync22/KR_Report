@@ -1694,9 +1694,7 @@ def test_toss_market_context_capture_saves_top20_snapshot_with_fake_provider(tmp
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
 
     class FakeProvider:
-        def get_market_context(self, *, reference_date: date, priority_symbols: tuple[str, ...]) -> dict[str, object]:
-            assert reference_date == date(2026, 7, 10)
-            assert priority_symbols == ()
+        def get_market_ranking(self) -> dict[str, object]:
             return {
                 "configured": True,
                 "live_fetch": True,
