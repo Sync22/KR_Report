@@ -486,6 +486,21 @@ def test_fetch_toss_readonly_endpoint_rejects_wrong_shape_and_accepts_missing_ra
     assert response.rate_limit == {}
 
 
+def test_market_investor_validation_reports_unknown_aggregate_field_name() -> None:
+    with pytest.raises(RuntimeError, match=r"institution.*netAmount"):
+        fetch_toss_readonly_endpoint(
+            base_url=TOSS_OPENAPI_BASE_URL,
+            access_token="token-value",
+            endpoint=resolve_toss_market_context_endpoint("market-investor-kospi"),
+            params={"interval": "1d", "count": "1", "until": "2026-07-16"},
+            timeout_seconds=12,
+            live_enabled=True,
+            urlopen=lambda *_args, **_kwargs: FakeResponse(
+                b'{"result":{"records":[{"date":"2026-07-16","institution":{"buyAmount":100,"sellAmount":90,"netAmount":10}}]}}'
+            ),
+        )
+
+
 def test_fetch_toss_readonly_endpoint_rejects_oversized_response() -> None:
     endpoint = resolve_toss_readonly_endpoint("prices")
 

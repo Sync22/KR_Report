@@ -491,6 +491,7 @@ def _validate_readonly_result(endpoint: TossReadonlyEndpoint, result: object) ->
                         amount,
                         allowed=_INVESTOR_TRADING_AMOUNT_FIELDS,
                         label=f"market investor trading record.{key}",
+                        report_unknown_fields=True,
                     )
                     _validate_scalar_values(
                         amount_object,
@@ -569,11 +570,15 @@ def _validate_object(
     *,
     allowed: frozenset[str],
     label: str,
+    report_unknown_fields: bool = False,
 ) -> dict[str, object]:
     if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
         raise RuntimeError(f"Toss OpenAPI {label} result had an unexpected shape.")
     unknown = set(value).difference(allowed)
     if unknown:
+        if report_unknown_fields:
+            field_names = ", ".join(sorted(unknown))
+            raise RuntimeError(f"Toss OpenAPI {label} result included unexpected fields: {field_names}.")
         raise RuntimeError(f"Toss OpenAPI {label} result included unexpected fields.")
     return value
 
