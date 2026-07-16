@@ -546,6 +546,18 @@ class TossPriorityQuoteBaseline:
 
 
 @dataclass(frozen=True)
+class TossMarketContextSnapshot:
+    business_date: date
+    observed_at: datetime
+    rank: int
+    stock_code: str
+    trading_amount: int | None
+    trading_volume: int | None
+    source: str
+    checked_at: datetime
+
+
+@dataclass(frozen=True)
 class StockResearchEntry:
     stock_name: str
     stock_code: str

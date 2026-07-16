@@ -18,13 +18,17 @@ accounts, tokens, or order permissions exist.
 Current decision:
 
 - Toss OpenAPI still has a read-only lab lane for docs, probes, and fixtures.
-- The only promoted main feature is a public-safe `web-view` current-price
-  projection for server-derived top-2 `우선 확인` candidates.
-- The promoted path may read local `.env.toss-openapi` and call only the
-  allowlisted `prices` market-data endpoint when live opt-in and credentials
-  are present.
-- No broker execution, order routing, public trading call, account data,
-  scheduler, Telegram, admin-gui, or production DB write is approved.
+- Promoted main features are the public-safe `web-view` current-price
+  projection for server-derived top-2 `우선 확인` candidates and the latest-date
+  Top20 market-attention projection.
+- The promoted paths may read local `.env.toss-openapi` after live opt-in and
+  credentials are present. They call only allowlisted `prices`, the fixed
+  `MARKET_TRADING_AMOUNT` Top20 ranking, and fixed KOSPI/KOSDAQ aggregate
+  investor-trading references.
+- No broker execution, order routing, public trading call, account data, or
+  admin-gui connection is approved. The development-hold Top20 capture has
+  schema/replay and fixture coverage, but it is not registered or run against
+  live credentials until operating validation decides whether to adopt it.
 
 Canonical project boundaries still live in:
 
@@ -142,8 +146,8 @@ Forbidden outside the explicitly promoted top-2 current-price path:
 | Market Data | `GET /api/v1/prices`, `orderbook`, `trades`, `price-limits`, `candles` | `prices` only is allowlisted for top-2 web-view current price. Other market-data endpoints remain lab candidates. |
 | Stock Info | `GET /api/v1/stocks`, `GET /api/v1/stocks/{symbol}/warnings` | Future read-only lab allowlist after token review. |
 | Market Info | `GET /api/v1/exchange-rate`, `GET /api/v1/market-calendar/KR`, `GET /api/v1/market-calendar/US` | Future read-only lab allowlist after token review. |
-| Ranking | `GET /api/v1/rankings` | Documentation only until ranking semantics and source burden are separately reviewed. |
-| Market Indicators | `GET /api/v1/market-indicators/prices`, `.../{symbol}/candles`, `.../{symbol}/investor-trading` | Documentation only. Investor trading is aggregate market context, not stock-level KRX flow. |
+| Ranking | `GET /api/v1/rankings` | Fixed `MARKET_TRADING_AMOUNT / KR / realtime / count=20` is allowlisted for the latest-date Top20 market-context projection only. Other ranking queries remain documentation only. |
+| Market Indicators | `GET /api/v1/market-indicators/prices`, `.../{symbol}/candles`, `.../{symbol}/investor-trading` | Fixed KOSPI/KOSDAQ one-day aggregate investor-trading references are allowlisted for the Top20 market-context projection. Other indicator queries remain documentation only; this is not stock-level KRX flow. |
 | Account | `GET /api/v1/accounts` | Operator-only lab candidate. Account id is sensitive operational context. |
 | Asset | `GET /api/v1/holdings` | Operator-only lab only. Never public. |
 | Order History | `GET /api/v1/orders`, `GET /api/v1/orders/{orderId}` | Execution-adjacent operator-only lab only. |
@@ -155,13 +159,13 @@ Forbidden outside the explicitly promoted top-2 current-price path:
 
 | Surface | Allowed now | Later condition |
 | --- | --- | --- |
-| Default/public `web-view` | Top-2 `우선 확인` current-price projection only. | Server-derived latest-date symbols, GET-only, no arbitrary symbol query, no account/order data, no persistence. |
+| Default/public `web-view` | Top-2 `우선 확인` current-price and latest-date Top20 market-context projections. | Server-derived latest-date symbols, GET-only, no arbitrary symbol query, and no account/order data. The hold capture replay is not exposed here. |
 | Loopback lab `web-view` preview | Superseded by the promoted top-2 projection. | New visual experiments still require separate review before broadening the main path. |
 | `admin-gui` | Nothing Toss-connected. | Coarse readiness status only after lab contract and secret redaction are implemented; no token/account display. |
 | `operator-review` | Not implemented. | Preferred future surface for raw read-only Toss probe review and response comparison. |
 | Telegram | Scheduled market-briefing slots may show up to two server-derived current prices with source and checked time. | No account/order data, arbitrary symbols, numerical score, or trading instruction. |
-| Scheduler | The three scheduled market-briefing slots may issue the bounded read-only top-2 quote call; the 20:00 baseline task may persist its separate baseline. | No broad Toss polling, no account/order endpoints, and no current-quote DB persistence. |
-| Production DB | Nothing Toss-connected. | No write until schema, source semantics, replay, retention, and privacy are reviewed. |
+| Scheduler | The three scheduled market-briefing slots may issue the bounded read-only top-2 quote call; the 20:00 baseline task may persist its separate baseline. The 15:00 Top20 capture wrapper is implemented but opt-in registration only. | No broad or repeated Toss polling, account/order endpoints, or default scheduler registration. |
+| Production DB | The development-hold `toss_market_context_snapshots` schema stores a bounded Top20 replay when the explicit live/save gates are used. | No operational row is captured until live validation reviews source semantics, replay, retention, and privacy. |
 
 If an approved future intraday reference affects `우선 확인` or
 `관찰 우선순위`, the public row must show source and freshness. It must never
@@ -558,8 +562,9 @@ This inventory was built from official documentation endpoints only:
 - The `2026-07-10` `1.2.2` recheck expanded the spec from `20` to `27` paths,
   `21` to `30` operations, and `53` to `72` schemas. Added groups are Ranking,
   Market Indicators, Conditional Order, and Conditional Order History. The
-  bounded implementation still allows only `stocks`, `market-calendar/KR`, and
-  `prices`; no new operation was promoted.
+  manual probe profile allows `stocks`, `market-calendar/KR`, and `prices`; the
+  promoted market-context projection separately allows only its fixed ranking
+  and KOSPI/KOSDAQ aggregate-investor queries.
 - The `2026-07-16` `1.2.4` recheck kept all `30` documented
   method/path/operationId entries and the `72` schema count unchanged.
 
@@ -751,9 +756,11 @@ context. It does not create candidates, change candidate order, claim
 stock-level investor flow, expose account data, or produce a score.
 
 The projection remains memory-cached and opt-in through the existing Toss live
-configuration. It does not write a database, register a scheduler, retain a
-day-after replay, route an order, or expose tokens. Persistent replay and a
-fixed-time operating snapshot remain separate schema/retention decisions.
+configuration. Separately, the development-hold `toss-market-context-capture`
+command persists one bounded Top20 snapshot only after `--live`, token-reissue,
+and save confirmations. Its 15:00 weekday wrapper is not registered unless
+`-IncludeTossMarketContextCapture` is explicitly supplied. It does not route an
+order, expose tokens, alter candidate order, or send Telegram.
 
 ## Promoted Web-View Priority Quote Projection
 

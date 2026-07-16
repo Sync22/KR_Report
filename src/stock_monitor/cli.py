@@ -120,6 +120,7 @@ from stock_monitor.models import (
     StockInvestorFlowDaily,
     StockMarketDailySnapshot,
     StockMetadata,
+    TossMarketContextSnapshot,
     TossPriorityQuoteBaseline,
     WorkerState,
 )
@@ -173,6 +174,8 @@ SCHEDULED_NOTIFY_EARLIEST_TIME = datetime_time(hour=8, minute=0)
 SCHEDULED_NOTIFY_LATEST_TIME = datetime_time(hour=8, minute=30)
 SCHEDULED_TOSS_PRIORITY_BASELINE_EARLIEST_TIME = datetime_time(hour=20, minute=0)
 SCHEDULED_TOSS_PRIORITY_BASELINE_LATEST_TIME = datetime_time(hour=20, minute=15)
+SCHEDULED_TOSS_MARKET_CONTEXT_EARLIEST_TIME = datetime_time(hour=15, minute=0)
+SCHEDULED_TOSS_MARKET_CONTEXT_LATEST_TIME = datetime_time(hour=15, minute=15)
 SCHEDULED_MARKET_BRIEFING_SLOT_TIMES = {
     "mood": datetime_time(hour=9, minute=15),
     "lunch": datetime_time(hour=12, minute=0),
@@ -1700,6 +1703,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     toss_priority_baseline_parser.add_argument("--json", action="store_true")
 
+    toss_market_context_capture_parser = subparsers.add_parser(
+        "toss-market-context-capture",
+        help="Collect and save a bounded Toss Top20 market-context snapshot.",
+    )
+    toss_market_context_capture_parser.add_argument("--date", type=date.fromisoformat, required=True)
+    toss_market_context_capture_parser.add_argument("--live", action="store_true")
+    toss_market_context_capture_parser.add_argument("--confirm-token-reissue", action="store_true")
+    toss_market_context_capture_parser.add_argument("--confirm-save", action="store_true")
+    toss_market_context_capture_parser.add_argument(
+        "--scheduled",
+        action="store_true",
+        help="Apply the business-day and 15:00~15:15 scheduler guard.",
+    )
+    toss_market_context_capture_parser.add_argument("--json", action="store_true")
+
     web_view_parser = subparsers.add_parser(
         "web-view",
         help="Run the read-only user web view for StockMonitor archive and market summaries.",
@@ -2142,6 +2160,17 @@ def main(argv: list[str] | None = None) -> int:
             repository,
             business_date=args.date,
             baseline_time=args.baseline_time,
+            live=args.live,
+            confirm_token_reissue=args.confirm_token_reissue,
+            confirm_save=args.confirm_save,
+            scheduled=args.scheduled,
+            as_json=args.json,
+        )
+    if args.command == "toss-market-context-capture":
+        return _run_toss_market_context_capture(
+            config,
+            repository,
+            business_date=args.date,
             live=args.live,
             confirm_token_reissue=args.confirm_token_reissue,
             confirm_save=args.confirm_save,
@@ -7363,10 +7392,10 @@ def _build_data_source_lane_audit_payload() -> dict[str, object]:
         {
             "key": "toss_openapi",
             "label": "Toss OpenAPI",
-            "classification": "lab",
+            "classification": "production_limited",
             "source": "toss_openapi",
-            "runtime_status": "bounded_postkey_readonly_probe_disabled_by_default",
-            "data_scope": "stocks_market_calendar_kr_prices_only",
+            "runtime_status": "bounded_opt_in_readonly_web_view_and_market_briefing_context",
+            "data_scope": "top_2_prices_and_latest_top20_market_context",
             "freshness_surface_keys": ["toss_openapi"],
             "read_only": True,
             "live_fetch": False,
@@ -7375,16 +7404,16 @@ def _build_data_source_lane_audit_payload() -> dict[str, object]:
             "sends_telegram": False,
             "registers_scheduler": False,
             "connects_admin_gui": False,
-            "connects_web_view": False,
+            "connects_web_view": True,
             "requires_live_flag": True,
             "requires_env_opt_in": True,
             "forbidden_runtime_groups": [
                 "account_or_asset_read",
                 "order_create_modify_cancel",
                 "production_db_write",
-                "telegram_scheduler_or_public_surface",
+                "broad_polling_or_scheduler_registration",
             ],
-            "notice": "Manual read-only lab probe only; no public surface, DB, scheduler, Telegram, or admin connection.",
+            "notice": "Bounded opt-in Top2 price and latest Top20 market-context projection; no DB write, broad polling, account/order access, or admin connection.",
         },
         {
             "key": "x_public_recap",
@@ -7770,6 +7799,171 @@ def _normalize_toss_priority_baseline_time(value: str) -> str:
     if hour > 23 or minute > 59:
         raise RuntimeError("Toss priority baseline time must use HH:MM.")
     return f"{hour:02d}:{minute:02d}"
+
+
+def _run_toss_market_context_capture(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    business_date: date,
+    live: bool,
+    confirm_token_reissue: bool,
+    confirm_save: bool,
+    scheduled: bool,
+    as_json: bool,
+    toss_provider: TossPriorityQuoteProvider | None = None,
+) -> int:
+    plan = {
+        "surface": "toss-market-context-capture",
+        "mode": "plan",
+        "operator_only": True,
+        "read_only": True,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "connects_admin_gui": False,
+        "connects_web_view": False,
+        "affects_ordering": False,
+        "business_date": business_date.isoformat(),
+        "source": "toss_openapi",
+        "scope": "market_trading_amount_top_20",
+        "requires_live_flag": True,
+        "requires_token_reissue_confirmation": True,
+        "requires_save_confirmation": True,
+        "scheduled": scheduled,
+    }
+    if not live:
+        _print_toss_market_context_capture_payload(plan, as_json=as_json)
+        return 0
+    if scheduled:
+        current = datetime.now(ZoneInfo(config.timezone))
+        skip_reason = _scheduled_skip_reason(config, business_date, repository)
+        if skip_reason:
+            repository.record_operation_event(
+                _operation_event(
+                    config,
+                    component="toss-market-context",
+                    event_type="run-guard",
+                    status="skipped",
+                    business_date=business_date,
+                    detail=skip_reason,
+                )
+            )
+            print(f"Skipping scheduled Toss market context capture: {skip_reason}")
+            return 0
+        current_time = current.timetz().replace(tzinfo=None)
+        if current_time < SCHEDULED_TOSS_MARKET_CONTEXT_EARLIEST_TIME:
+            detail = f"too_early; earliest={SCHEDULED_TOSS_MARKET_CONTEXT_EARLIEST_TIME.strftime('%H:%M')}"
+        elif current_time > SCHEDULED_TOSS_MARKET_CONTEXT_LATEST_TIME:
+            detail = f"late_run; latest={SCHEDULED_TOSS_MARKET_CONTEXT_LATEST_TIME.strftime('%H:%M')}"
+        else:
+            detail = None
+        if detail:
+            repository.record_operation_event(
+                _operation_event(
+                    config,
+                    component="toss-market-context",
+                    event_type="time-window",
+                    status="skipped",
+                    business_date=business_date,
+                    detail=detail,
+                )
+            )
+            print(f"Skipping scheduled Toss market context capture: {detail}")
+            return 0
+    if not confirm_token_reissue:
+        raise RuntimeError("Pass --confirm-token-reissue before using --live.")
+    if not confirm_save:
+        raise RuntimeError("Pass --confirm-save before saving Toss market-context snapshots.")
+
+    if repository.db_path.exists():
+        status = repository.get_schema_migration_status()
+        if status.current_version != status.target_version or status.pending_versions:
+            raise RuntimeError(
+                "Database schema is not current for toss-market-context-capture; "
+                "run an approved `python -m stock_monitor db-migrate` first."
+            )
+    else:
+        repository.initialize()
+
+    provider = toss_provider
+    if provider is None:
+        toss_config = TossOpenApiLabConfig.from_env(config.root_dir)
+        if not toss_config.live_enabled:
+            raise RuntimeError("Set STOCK_MONITOR_TOSS_OPENAPI_LIVE_ENABLED=true before using --live.")
+        if not toss_config.client_id or not toss_config.client_secret:
+            raise RuntimeError(
+                "Set STOCK_MONITOR_TOSS_OPENAPI_CLIENT_ID and "
+                "STOCK_MONITOR_TOSS_OPENAPI_CLIENT_SECRET before using --live."
+            )
+        provider = TossPriorityQuoteProvider(config=toss_config)
+
+    market_context = provider.get_market_context(reference_date=business_date, priority_symbols=())
+    observed_at = _parse_toss_quote_timestamp(
+        market_context.get("ranked_at"), datetime.now(ZoneInfo(config.timezone))
+    )
+    checked_at = _parse_toss_quote_timestamp(market_context.get("fetched_at"), observed_at)
+    snapshots: list[TossMarketContextSnapshot] = []
+    for position, item in enumerate(market_context.get("rankings") or [], start=1):
+        if not isinstance(item, dict):
+            continue
+        stock_code = str(item.get("symbol") or "").strip()
+        if not re.fullmatch(r"\d{6}", stock_code):
+            continue
+        rank = _safe_optional_int(item.get("rank")) or position
+        if rank < 1 or rank > 20:
+            continue
+        snapshots.append(
+            TossMarketContextSnapshot(
+                business_date=business_date,
+                observed_at=observed_at,
+                rank=rank,
+                stock_code=stock_code,
+                trading_amount=_safe_optional_int(item.get("tradingAmount")),
+                trading_volume=_safe_optional_int(item.get("tradingVolume")),
+                source="toss_openapi",
+                checked_at=checked_at,
+            )
+        )
+    repository.save_toss_market_context_snapshots(snapshots)
+    payload = {
+        **plan,
+        "mode": "live",
+        "read_only": False,
+        "live_fetch": bool(market_context.get("live_fetch")),
+        "writes_db": True,
+        "ranking_count": len(market_context.get("rankings") or []),
+        "saved_count": len(snapshots),
+        "observed_at": observed_at.isoformat(),
+        "rate_limit": market_context.get("rate_limit"),
+    }
+    if scheduled:
+        repository.record_operation_event(
+            _operation_event(
+                config,
+                component="toss-market-context",
+                event_type="capture",
+                status="completed" if snapshots else "empty",
+                business_date=business_date,
+                detail=f"ranking_count={payload['ranking_count']}; saved_count={len(snapshots)}",
+            )
+        )
+    _print_toss_market_context_capture_payload(payload, as_json=as_json)
+    return 0
+
+
+def _print_toss_market_context_capture_payload(payload: dict[str, object], *, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    print("Toss market context capture")
+    print(f"- mode: {payload['mode']}")
+    print(f"- business_date: {payload['business_date']}")
+    print(f"- live_fetch: {str(payload['live_fetch']).lower()}")
+    print(f"- writes_db: {str(payload['writes_db']).lower()}")
+    if "saved_count" in payload:
+        print(f"- saved_count: {payload['saved_count']}")
 
 
 def _parse_toss_quote_timestamp(value: object, fallback: datetime) -> datetime:

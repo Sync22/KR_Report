@@ -48,6 +48,7 @@ from stock_monitor.models import (
     StockThemeMembership,
     ReportLinkedNewsEvidenceRecord,
     ThemeDailyRollup,
+    TossMarketContextSnapshot,
     TossPriorityQuoteBaseline,
     WorkerState,
 )
@@ -392,6 +393,57 @@ class StockMonitorRepository:
             baseline = self._row_to_toss_priority_quote_baseline(row)
             latest_by_code.setdefault(baseline.stock_code, baseline)
         return [latest_by_code[code] for code in normalized_codes if code in latest_by_code]
+
+    def save_toss_market_context_snapshots(self, rows: list[TossMarketContextSnapshot]) -> None:
+        with self.connect() as connection:
+            with connection:
+                connection.executemany(
+                    """
+                    INSERT OR REPLACE INTO toss_market_context_snapshots (
+                        business_date,
+                        observed_at,
+                        rank,
+                        stock_code,
+                        trading_amount,
+                        trading_volume,
+                        source,
+                        checked_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            row.business_date.isoformat(),
+                            row.observed_at.isoformat(),
+                            row.rank,
+                            row.stock_code,
+                            row.trading_amount,
+                            row.trading_volume,
+                            row.source,
+                            row.checked_at.isoformat(),
+                        )
+                        for row in rows
+                    ],
+                )
+
+    def list_latest_toss_market_context_snapshot(
+        self, *, business_date: date
+    ) -> list[TossMarketContextSnapshot]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM toss_market_context_snapshots
+                WHERE business_date = ?
+                  AND observed_at = (
+                      SELECT MAX(observed_at)
+                      FROM toss_market_context_snapshots
+                      WHERE business_date = ?
+                  )
+                ORDER BY rank ASC, stock_code ASC
+                """,
+                (business_date.isoformat(), business_date.isoformat()),
+            ).fetchall()
+        return [self._row_to_toss_market_context_snapshot(row) for row in rows]
 
     def insert_reports(self, reports: list[Report], *, queue_intraday_alerts: bool = False) -> InsertResult:
         normalized = [report.with_identity() for report in reports]
@@ -3386,6 +3438,19 @@ class StockMonitorRepository:
             currency=row["currency"],
             source=row["source"],
             fetched_at=datetime.fromisoformat(row["fetched_at"]),
+        )
+
+    @staticmethod
+    def _row_to_toss_market_context_snapshot(row: sqlite3.Row) -> TossMarketContextSnapshot:
+        return TossMarketContextSnapshot(
+            business_date=date.fromisoformat(row["business_date"]),
+            observed_at=datetime.fromisoformat(row["observed_at"]),
+            rank=int(row["rank"]),
+            stock_code=row["stock_code"],
+            trading_amount=int(row["trading_amount"]) if row["trading_amount"] is not None else None,
+            trading_volume=int(row["trading_volume"]) if row["trading_volume"] is not None else None,
+            source=row["source"],
+            checked_at=datetime.fromisoformat(row["checked_at"]),
         )
 
     @staticmethod

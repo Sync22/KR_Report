@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 @dataclass(frozen=True)
@@ -440,6 +440,31 @@ TOSS_PRIORITY_QUOTE_BASELINE_MIGRATION = SchemaMigration(
 )
 
 
+TOSS_MARKET_CONTEXT_SNAPSHOT_MIGRATION = SchemaMigration(
+    version=9,
+    name="toss_market_context_snapshots",
+    statements=(
+        """
+        CREATE TABLE IF NOT EXISTS toss_market_context_snapshots (
+            business_date TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            rank INTEGER NOT NULL,
+            stock_code TEXT NOT NULL,
+            trading_amount INTEGER,
+            trading_volume INTEGER,
+            source TEXT NOT NULL,
+            checked_at TEXT NOT NULL,
+            PRIMARY KEY (business_date, observed_at, stock_code, source)
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_toss_market_context_snapshots_replay
+        ON toss_market_context_snapshots (business_date, observed_at DESC, rank ASC)
+        """,
+    ),
+)
+
+
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     KRX_MARKET_SNAPSHOT_MIGRATION,
     APP_SETTINGS_MIGRATION,
@@ -448,6 +473,7 @@ SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     NEWS_INTELLIGENCE_OBSERVATION_MIGRATION,
     NEWS_INTELLIGENCE_REFERENCE_DATES_MIGRATION,
     TOSS_PRIORITY_QUOTE_BASELINE_MIGRATION,
+    TOSS_MARKET_CONTEXT_SNAPSHOT_MIGRATION,
 )
 
 

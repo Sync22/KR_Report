@@ -21,6 +21,7 @@ param(
     [string]$MarketBriefingPrecloseTime = "15:15",
     [int]$MarketBriefingLimit = 5,
     [string]$TossPriorityBaselineTime = "20:00",
+    [string]$TossMarketContextCaptureTime = "15:00",
     [string]$KrxFlowReminderTime = "16:45",
     [string]$KrxFlowPlannedTime = "16:50",
     [int]$KrxFlowReminderMinutesBefore = 5,
@@ -37,6 +38,7 @@ param(
     [switch]$SkipKrxMentionedFlowBackfill,
     [switch]$SkipMarketBriefing,
     [switch]$SkipTossPriorityBaseline,
+    [switch]$IncludeTossMarketContextCapture,
     [switch]$SkipTelegramCommands,
     [switch]$SkipWebViewRestart,
     [switch]$SkipShutdown
@@ -50,6 +52,7 @@ $krxDailyBackfillScript = Join-Path $PSScriptRoot "run_scheduled_krx_daily_backf
 $krxMentionedFlowBackfillScript = Join-Path $PSScriptRoot "run_scheduled_krx_mentioned_flow_backfill.ps1"
 $marketBriefingSlotScript = Join-Path $PSScriptRoot "run_scheduled_market_briefing_slot.ps1"
 $tossPriorityBaselineScript = Join-Path $PSScriptRoot "run_scheduled_toss_priority_baseline.ps1"
+$tossMarketContextCaptureScript = Join-Path $PSScriptRoot "run_scheduled_toss_market_context_capture.ps1"
 $krxFlowReminderScript = Join-Path $PSScriptRoot "run_krx_flow_login_reminder.ps1"
 $commandsScript = Join-Path $PSScriptRoot "run_process_telegram_commands.ps1"
 $webViewRestartScript = Join-Path $PSScriptRoot "restart_web_view.ps1"
@@ -134,6 +137,7 @@ $marketBriefingMoodTaskName = "$TaskPrefix-MarketBriefingMood"
 $marketBriefingLunchTaskName = "$TaskPrefix-MarketBriefingLunch"
 $marketBriefingPrecloseTaskName = "$TaskPrefix-MarketBriefingPreclose"
 $tossPriorityBaselineTaskName = "$TaskPrefix-TossPriorityBaseline"
+$tossMarketContextCaptureTaskName = "$TaskPrefix-TossMarketContextCapture"
 $krxFlowReminderTaskName = "$TaskPrefix-KrxFlowLoginReminder"
 $commandsTaskName = "$TaskPrefix-TelegramCommands"
 $webViewRestartTaskName = "$TaskPrefix-WebViewHourlyRestart"
@@ -228,6 +232,14 @@ if (-not $SkipTossPriorityBaseline) {
         -PythonCommand $PythonExe
     $tossPriorityBaselineTriggers = @(New-WeekdayTriggerAt -AtTime $TossPriorityBaselineTime)
     Register-OrUpdateTask -TaskName $tossPriorityBaselineTaskName -Action $tossPriorityBaselineAction -Triggers $tossPriorityBaselineTriggers -StartWhenAvailable $false
+}
+
+if ($IncludeTossMarketContextCapture) {
+    $tossMarketContextCaptureAction = New-StockMonitorAction `
+        -ScriptPath $tossMarketContextCaptureScript `
+        -PythonCommand $PythonExe
+    $tossMarketContextCaptureTriggers = @(New-WeekdayTriggerAt -AtTime $TossMarketContextCaptureTime)
+    Register-OrUpdateTask -TaskName $tossMarketContextCaptureTaskName -Action $tossMarketContextCaptureAction -Triggers $tossMarketContextCaptureTriggers -StartWhenAvailable $false
 }
 
 if ($IncludeKrxFlowReminder) {

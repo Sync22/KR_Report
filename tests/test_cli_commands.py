@@ -82,6 +82,7 @@ from stock_monitor.models import (
     StockInvestorFlowDaily,
     StockMarketDailySnapshot,
     TossPriorityQuoteBaseline,
+    TossMarketContextSnapshot,
     StockMetadata,
     WorkerState,
     EtfDailySnapshot,
@@ -355,7 +356,7 @@ def test_main_db_verify_json_reports_stale_schema_without_traceback(tmp_path, mo
     assert payload["schema_status"]["current"] is False
     assert payload["schema_status"]["current_version"] == 5
     assert payload["schema_status"]["target_version"] == SCHEMA_VERSION
-    assert payload["schema_status"]["pending_versions"] == [6, 7, 8]
+    assert payload["schema_status"]["pending_versions"] == [6, 7, 8, 9]
     assert payload["blockers"][0]["code"] == "default_db_schema_not_current"
     assert "python -m stock_monitor db-migrate --dry-run" in payload["recommended_commands"]
     assert "schema migration on operating PC" in payload["requires_separate_approval"]
@@ -1661,6 +1662,113 @@ def test_toss_priority_baseline_collect_parser_accepts_live_save_gate() -> None:
     assert args.confirm_save is True
     assert args.scheduled is True
     assert args.json is True
+
+
+def test_toss_market_context_capture_parser_accepts_live_save_gate() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "toss-market-context-capture",
+            "--date",
+            "2026-07-10",
+            "--live",
+            "--confirm-token-reissue",
+            "--confirm-save",
+            "--scheduled",
+            "--json",
+        ]
+    )
+
+    assert args.command == "toss-market-context-capture"
+    assert args.date == date(2026, 7, 10)
+    assert args.live is True
+    assert args.confirm_token_reissue is True
+    assert args.confirm_save is True
+    assert args.scheduled is True
+    assert args.json is True
+
+
+def test_toss_market_context_capture_saves_top20_snapshot_with_fake_provider(tmp_path, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+
+    class FakeProvider:
+        def get_market_context(self, *, reference_date: date, priority_symbols: tuple[str, ...]) -> dict[str, object]:
+            assert reference_date == date(2026, 7, 10)
+            assert priority_symbols == ()
+            return {
+                "configured": True,
+                "live_fetch": True,
+                "ranked_at": "2026-07-10T15:00:00+09:00",
+                "fetched_at": "2026-07-10T15:00:03+09:00",
+                "rankings": [
+                    {"rank": 1, "symbol": "005930", "tradingAmount": 1000, "tradingVolume": 100},
+                    {"rank": 2, "symbol": "000660", "tradingAmount": 900, "tradingVolume": 90},
+                ],
+            }
+
+    exit_code = cli_module._run_toss_market_context_capture(
+        config,
+        repository,
+        business_date=date(2026, 7, 10),
+        live=True,
+        confirm_token_reissue=True,
+        confirm_save=True,
+        scheduled=False,
+        as_json=True,
+        toss_provider=FakeProvider(),
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["saved_count"] == 2
+    assert payload["live_fetch"] is True
+    assert repository.list_latest_toss_market_context_snapshot(business_date=date(2026, 7, 10)) == [
+        TossMarketContextSnapshot(
+            business_date=date(2026, 7, 10),
+            observed_at=datetime.fromisoformat("2026-07-10T15:00:00+09:00"),
+            rank=1,
+            stock_code="005930",
+            trading_amount=1000,
+            trading_volume=100,
+            source="toss_openapi",
+            checked_at=datetime.fromisoformat("2026-07-10T15:00:03+09:00"),
+        ),
+        TossMarketContextSnapshot(
+            business_date=date(2026, 7, 10),
+            observed_at=datetime.fromisoformat("2026-07-10T15:00:00+09:00"),
+            rank=2,
+            stock_code="000660",
+            trading_amount=900,
+            trading_volume=90,
+            source="toss_openapi",
+            checked_at=datetime.fromisoformat("2026-07-10T15:00:03+09:00"),
+        ),
+    ]
+
+
+def test_toss_market_context_capture_defaults_to_no_network_or_db_write(tmp_path, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+
+    exit_code = cli_module._run_toss_market_context_capture(
+        config,
+        repository,
+        business_date=date(2026, 7, 10),
+        live=False,
+        confirm_token_reissue=False,
+        confirm_save=False,
+        scheduled=False,
+        as_json=True,
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "plan"
+    assert payload["live_fetch"] is False
+    assert payload["writes_db"] is False
+    assert repository.db_path.exists() is False
 
 
 def test_toss_priority_baseline_collect_scheduled_late_run_skips_before_provider_access(tmp_path, monkeypatch, capsys) -> None:
@@ -7925,7 +8033,10 @@ def test_realtime_first_review_snapshot_powershell_scripts_document_safe_schedul
     assert "data\\logs" in runner
     assert "realtime-first-review-snapshot.log" in runner
     assert "StockMonitorRealtimeFirstReviewSnapshot" in registrar
-    assert "New-ScheduledTaskTrigger -Daily -At \"15:00\"" in registrar
+    assert "New-ScheduledTaskTrigger `" in registrar
+    assert "-Weekly `" in registrar
+    assert "-DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday `" in registrar
+    assert "-At \"15:00\"" in registrar
     assert "run_realtime_first_review_snapshot.ps1" in registrar
 
 
@@ -13274,9 +13385,9 @@ def test_data_source_lane_audit_json_classifies_production_lab_and_hold(capsys) 
     assert payload["ready"] is True
     assert payload["classification_counts"] == {
         "hold": 0,
-        "lab": 2,
+        "lab": 1,
         "production": 4,
-        "production_limited": 1,
+        "production_limited": 2,
     }
     assert lanes["naver_reports"]["classification"] == "production"
     assert lanes["krx_market_daily"]["classification"] == "production"
@@ -13284,15 +13395,15 @@ def test_data_source_lane_audit_json_classifies_production_lab_and_hold(capsys) 
     assert lanes["etf_daily"]["classification"] == "production"
     assert lanes["etf_daily"]["constituents_available"] is False
     assert lanes["etf_daily"]["constituent_source_status"] == "not_loaded"
-    assert lanes["toss_openapi"]["classification"] == "lab"
+    assert lanes["toss_openapi"]["classification"] == "production_limited"
     assert lanes["toss_openapi"]["live_fetch"] is False
     assert lanes["toss_openapi"]["affects_ordering"] is False
-    assert lanes["toss_openapi"]["connects_web_view"] is False
+    assert lanes["toss_openapi"]["connects_web_view"] is True
     assert lanes["toss_openapi"]["forbidden_runtime_groups"] == [
         "account_or_asset_read",
         "order_create_modify_cancel",
         "production_db_write",
-        "telegram_scheduler_or_public_surface",
+        "broad_polling_or_scheduler_registration",
     ]
     assert lanes["x_public_recap"]["classification"] == "lab"
     assert lanes["x_public_recap"]["requires_separate_lab_branch"] is True
@@ -13314,7 +13425,7 @@ def test_data_source_lane_audit_text_prints_etf_toss_and_x_boundaries(capsys) ->
     assert exit_code == 0
     assert "Data source lane audit" in output
     assert "etf_daily | production | constituents=not_loaded" in output
-    assert "toss_openapi | lab | live_fetch=false | affects_ordering=false" in output
+    assert "toss_openapi | production_limited | live_fetch=false | affects_ordering=false" in output
     assert "x_public_recap | lab | separate_lab_branch=true | login_dependency_allowed=false" in output
 
 

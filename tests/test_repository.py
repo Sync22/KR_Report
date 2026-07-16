@@ -23,6 +23,7 @@ from stock_monitor.models import (
     StockMetadata,
     StockThemeMembership,
     TossPriorityQuoteBaseline,
+    TossMarketContextSnapshot,
     WorkerState,
 )
 
@@ -105,7 +106,8 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
                       'investor_net_buy_top_daily',
                       'category_master',
                       'category_membership_snapshots',
-                      'toss_priority_quote_baselines'
+                          'toss_priority_quote_baselines',
+                          'toss_market_context_snapshots'
                   )
                 """
             ).fetchall()
@@ -126,6 +128,7 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
         (6, "news_intelligence_observation"),
         (7, "news_intelligence_reference_dates"),
         (8, "toss_priority_quote_baselines"),
+        (9, "toss_market_context_snapshots"),
     ]
     assert snapshot_tables == {
         "stock_market_daily",
@@ -140,6 +143,7 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
         "category_master",
         "category_membership_snapshots",
         "toss_priority_quote_baselines",
+        "toss_market_context_snapshots",
     }
 
 
@@ -174,6 +178,44 @@ def test_repository_saves_toss_priority_quote_baselines(tmp_path) -> None:
         business_date=business_date,
         stock_codes=["005930"],
     ) == [row]
+
+
+def test_repository_replays_latest_toss_market_context_snapshot(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+    business_date = date(2026, 7, 10)
+    earlier = datetime(2026, 7, 10, 15, 0, 0)
+    latest = datetime(2026, 7, 10, 15, 15, 0)
+    rows = [
+        TossMarketContextSnapshot(
+            business_date=business_date,
+            observed_at=latest,
+            rank=rank,
+            stock_code=stock_code,
+            trading_amount=amount,
+            trading_volume=volume,
+            source="toss_openapi",
+            checked_at=latest,
+        )
+        for rank, stock_code, amount, volume in ((1, "005930", 1000, 100), (2, "000660", 900, 90))
+    ]
+    repository.save_toss_market_context_snapshots(
+        [
+            TossMarketContextSnapshot(
+                business_date=business_date,
+                observed_at=earlier,
+                rank=1,
+                stock_code="005930",
+                trading_amount=800,
+                trading_volume=80,
+                source="toss_openapi",
+                checked_at=earlier,
+            ),
+            *rows,
+        ]
+    )
+
+    assert repository.list_latest_toss_market_context_snapshot(business_date=business_date) == rows
 
 
 def test_repository_initializes_news_intelligence_observation_tables(tmp_path) -> None:
@@ -318,7 +360,7 @@ def test_repository_migrate_schema_reports_existing_status(tmp_path) -> None:
 
     assert status.current_version == SCHEMA_VERSION
     assert status.target_version == SCHEMA_VERSION
-    assert status.applied_versions == (1, 2, 3, 4, 5, 6, 7, 8)
+    assert status.applied_versions == (1, 2, 3, 4, 5, 6, 7, 8, 9)
     assert status.pending_versions == ()
 
 
@@ -372,6 +414,8 @@ def test_repository_initialize_seeds_migration_history_for_existing_v1_database(
         (5, "category_snapshots"),
         (6, "news_intelligence_observation"),
         (7, "news_intelligence_reference_dates"),
+        (8, "toss_priority_quote_baselines"),
+        (9, "toss_market_context_snapshots"),
     ]
 
 
@@ -383,7 +427,7 @@ def test_repository_initialize_is_noop_after_migration_history_seed(tmp_path) ->
     with repository.connect() as connection:
         migration_count = connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
 
-    assert migration_count == 7
+    assert migration_count == 9
 
 
 def test_krx_snapshot_tables_enforce_daily_source_keys(tmp_path) -> None:

@@ -47,6 +47,7 @@ REQUIRED_MIGRATION_ENTRIES = [
     "scripts/run_scheduled_poll.ps1",
     "scripts/run_scheduled_krx_mentioned_flow_backfill.ps1",
     "scripts/run_scheduled_market_briefing_slot.ps1",
+    "scripts/run_scheduled_toss_market_context_capture.ps1",
     "scripts/run_scheduled_toss_priority_baseline.ps1",
     "scripts/run_process_telegram_commands.ps1",
     "scripts/run_scheduled_shutdown.ps1",
@@ -64,6 +65,15 @@ def test_register_task_scheduler_keeps_krx_flow_reminder_opt_in() -> None:
     assert "[switch]$IncludeKrxFlowReminder" in script
     assert "if ($IncludeKrxFlowReminder)" in script
     assert "[switch]$SkipKrxFlowReminder" not in script
+
+
+def test_register_task_scheduler_keeps_toss_market_context_capture_opt_in() -> None:
+    script = (PROJECT_ROOT / "scripts" / "register_task_scheduler_tasks.ps1").read_text(encoding="utf-8")
+
+    assert '[string]$TossMarketContextCaptureTime = "15:00"' in script
+    assert "[switch]$IncludeTossMarketContextCapture" in script
+    assert "if ($IncludeTossMarketContextCapture)" in script
+    assert "run_scheduled_toss_market_context_capture.ps1" in script
 
 
 def test_krx_openapi_availability_probe_is_not_registered_by_default() -> None:
@@ -165,6 +175,8 @@ def test_verify_migration_archive_checks_sha256_sidecar() -> None:
     assert "scripts/run_scheduled_krx_daily_backfill.ps1" in script
     assert "scripts/run_scheduled_krx_mentioned_flow_backfill.ps1" in script
     assert "scripts/run_scheduled_market_briefing_slot.ps1" in script
+    assert "scripts/run_scheduled_toss_market_context_capture.ps1" in script
+    assert "scripts/run_scheduled_toss_priority_baseline.ps1" in script
     assert "Missing required migration entries" in script
     assert "required_entries: ok" in script
 
