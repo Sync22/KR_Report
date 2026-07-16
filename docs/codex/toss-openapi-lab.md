@@ -50,7 +50,7 @@ Use official Toss Securities documents first:
 | <https://openapi.tossinvest.com/openapi-docs/latest/api-reference/README.md> | Markdown API reference index. |
 | <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json> | Canonical OpenAPI document for exact endpoints and schemas. |
 
-Observed official-doc facts as of `2026-07-10` (`1.2.2`, `27` paths, `30`
+Observed official-doc facts as of `2026-07-16` (`1.2.4`, `27` paths, `30`
 operations, `72` schemas):
 
 - Base server is `https://openapi.tossinvest.com`.
@@ -297,8 +297,8 @@ This is not an approval to call Toss runtime APIs. The active safety contract is
 
 | Item | Value |
 | --- | --- |
-| Snapshot date | `2026-07-10` |
-| Official spec version | `1.2.2` |
+| Snapshot date | `2026-07-16` |
+| Official spec version | `1.2.4` |
 | OpenAPI document version | `3.1.0` |
 | Base server | `https://openapi.tossinvest.com` |
 | Paths | 27 |
@@ -560,6 +560,8 @@ This inventory was built from official documentation endpoints only:
   Market Indicators, Conditional Order, and Conditional Order History. The
   bounded implementation still allows only `stocks`, `market-calendar/KR`, and
   `prices`; no new operation was promoted.
+- The `2026-07-16` `1.2.4` recheck kept all `30` documented
+  method/path/operationId entries and the `72` schema count unchanged.
 
 
 <!-- Merged from: docs/codex/toss-openapi-lab.md -->
@@ -592,7 +594,7 @@ invalidates the client's previously issued token.
 
 ## Official Basis
 
-Verified on `2026-07-10` against:
+Verified on `2026-07-16` against:
 
 - <https://developers.tossinvest.com/docs>
 - <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json>
@@ -602,7 +604,7 @@ Current official spec snapshot:
 | Item | Value |
 | --- | --- |
 | OpenAPI document version | `3.1.0` |
-| Official spec version | `1.2.2` |
+| Official spec version | `1.2.4` |
 | Paths | `27` |
 | Operations | `30` |
 | Schemas | `72` |
