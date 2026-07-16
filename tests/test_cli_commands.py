@@ -8340,6 +8340,78 @@ def test_market_briefing_uses_toss_top_two_quotes_when_provider_is_available(tmp
     assert "삼성전자 Toss 20:00 기준: 99,000원 · 저장 20:00" in message
 
 
+def test_market_briefing_adds_toss_top20_overlap_and_previous_market_flow_context(tmp_path) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 7, 10)
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="삼성전자 보고서",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 7, 10, 9, 0, 0),
+                collected_at=datetime(2026, 7, 10, 9, 1, 0),
+                source_id="toss-market-context-005930",
+                identity_key="toss-market-context-005930",
+            ),
+            Report(
+                business_date=business_date,
+                stock_name="SK하이닉스",
+                stock_code="000660",
+                title="SK하이닉스 보고서",
+                broker_name="KB증권",
+                published_at=datetime(2026, 7, 10, 9, 2, 0),
+                collected_at=datetime(2026, 7, 10, 9, 3, 0),
+                source_id="toss-market-context-000660",
+                identity_key="toss-market-context-000660",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    class FakeTossProvider:
+        configured = True
+
+        def get_quotes(self, **_kwargs) -> dict[str, object]:
+            return {"configured": True, "live_fetch": False, "quotes": [], "cache": "disabled"}
+
+        def get_market_context(self, *, reference_date: date, priority_symbols: tuple[str, ...]) -> dict[str, object]:
+            assert reference_date == date(2026, 7, 9)
+            assert priority_symbols == ("005930", "000660")
+            return {
+                "configured": True,
+                "live_fetch": True,
+                "reference_date": reference_date.isoformat(),
+                "ranked_at": "2026-07-10T09:15:00+09:00",
+                "rankings": [{"rank": 1, "symbol": "005930", "tradingAmount": 1000}],
+                "priority_overlap_symbols": ["005930"],
+                "investor_flow": {
+                    "KOSPI": {"date": "2026-07-09", "foreigner": {"buyAmount": 100, "sellAmount": 90}},
+                    "KOSDAQ": {"date": "2026-07-09", "institution": {"buyAmount": 80, "sellAmount": 120}},
+                },
+                "affects_ordering": False,
+            }
+
+    message = cli_module._build_market_briefing_message(
+        config,
+        repository,
+        business_date=business_date,
+        limit=2,
+        toss_quote_provider=FakeTossProvider(),
+    )
+
+    assert "Toss 거래대금 Top20" in message
+    assert "삼성전자" in message
+    assert "전일 시장 수급 참고" in message
+    assert "KOSPI" in message
+    assert "KOSDAQ" in message
+    assert "매수 추천" not in message
+
+
 def test_scheduled_market_briefing_message_groups_live_context_by_priority_candidate(tmp_path) -> None:
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)

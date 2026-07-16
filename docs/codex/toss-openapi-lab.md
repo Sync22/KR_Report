@@ -71,11 +71,11 @@ operations, `72` schemas):
 | Read-only quote/reference | Promoted for `web-view` and scheduled market-briefing top-2 current price | Server derives up to two `우선 확인` symbols; no arbitrary symbol query. |
 | Stock/reference metadata | Future lab candidate | May be compared with KRX/Naver identity data, but must not overwrite source facts by default. |
 | Market calendar/exchange rate | Future lab candidate | Reference only; label source/freshness if surfaced later. |
-| Ranking/market indicators | Planned bounded Top20 observation; not runtime-approved | `tradingAmount`/`tradingVolume` may provide a separate current market-attention reference. It must not replace report candidates or stock-level KRX flow. |
+| Ranking/market indicators | Promoted as an opt-in read-only market-context projection | Fixed `tradingAmount` Top20 plus previous-business-day KOSPI/KOSDAQ aggregate investor flow may provide separate current market-attention context. They must not replace report candidates or stock-level KRX flow. |
 | Account/balance read-only | Operator-only lab candidate | Never public. No production DB write. No scheduler or Telegram integration. |
 | Order history/order info | Operator-only lab candidate at most | Treat as execution-adjacent; keep away from public surfaces. |
 | Execution lab | Deferred | Requires separate order-safety, audit, permissions, failure, and rollback contract. |
-| Public `web-view` projection | Approved only for top-2 current price | Public-safe source/freshness observation support; never account/order data. |
+| Public `web-view` projection | Approved for top-2 current price and latest-date market context | Public-safe source/freshness observation support; server-derived Top2 overlap only; never account/order data. |
 
 Toss is not a replacement for the current source ownership model:
 
@@ -740,11 +740,20 @@ values during an active market session. It does not approve continuous polling,
 storage, account access, or execution. The only approved projection is the
 main `web-view` top-2 priority current-price reference described below.
 
-## Planned Top20 Market-Attention Contract
+## Promoted Top20 Market-Attention Contract
 
-`GET /api/v1/rankings` is not promoted by this document. The planned first use is a fixed 15:00 KST, read-only Top20 observation carrying only rank, stock code, trading amount, trading volume, source, and checked time. It supports report/news/Top20 overlap display, not candidate selection, scoring, stock-level investor-flow claims, account access, or broad polling.
+The latest-date, opt-in market-context projection calls only these immutable
+read-only queries: `MARKET_TRADING_AMOUNT / KR / realtime / count=20`, plus
+one `1d` record for each of KOSPI and KOSDAQ at the previous business date.
+It projects the Top20, server-derived report Top2 overlap, and aggregate market
+investor-flow reference into the existing `web-view` and market-briefing
+context. It does not create candidates, change candidate order, claim
+stock-level investor flow, expose account data, or produce a score.
 
-No database write, scheduler registration, Telegram send, or public route is approved for this contract yet. Add persistent replay only after a separate schema, retention, replay, and public-boundary review. The unmerged `codex/toss-openapi` branch is reference material, not approval to widen the runtime allowlist.
+The projection remains memory-cached and opt-in through the existing Toss live
+configuration. It does not write a database, register a scheduler, retain a
+day-after replay, route an order, or expose tokens. Persistent replay and a
+fixed-time operating snapshot remain separate schema/retention decisions.
 
 ## Promoted Web-View Priority Quote Projection
 

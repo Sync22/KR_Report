@@ -22243,7 +22243,10 @@ def _build_market_briefing_message(
         candidate_rows=candidate_rows,
     )
     market_reference_lines = _build_daily_briefing_market_reference_lines(repository, business_date)
-    turnover_reference_lines = _build_market_briefing_turnover_lines(repository, business_date)
+    turnover_reference_lines = [
+        *_build_market_briefing_turnover_lines(repository, business_date),
+        *_build_market_briefing_toss_market_context_lines(effective_toss_context),
+    ]
     flow_reference_lines = _build_daily_briefing_flow_reference_lines(
         repository,
         business_date,
@@ -22442,12 +22445,42 @@ def _build_market_briefing_toss_priority_context(
             "quotes": [],
             "reason": "upstream_unavailable",
         }
+    market_context = _build_toss_market_context(
+        provider,
+        reference_date=previous_business_day(business_date, config.holiday_overrides),
+        priority_symbols=symbols,
+    )
     return {
         "payload": payload,
+        "market_context": market_context,
         "symbols": symbols,
         "names_by_symbol": names_by_symbol,
         "source_item": _market_briefing_toss_source_freshness_item(payload, business_date=business_date),
     }
+
+
+def _build_toss_market_context(
+    provider: object,
+    *,
+    reference_date: date,
+    priority_symbols: tuple[str, ...],
+) -> dict[str, object]:
+    fetch_context = getattr(provider, "get_market_context", None)
+    fallback = {
+        "configured": bool(getattr(provider, "configured", False)),
+        "live_fetch": False,
+        "reference_date": reference_date.isoformat(),
+        "rankings": [],
+        "priority_overlap_symbols": [],
+        "investor_flow": {"KOSPI": None, "KOSDAQ": None},
+    }
+    if not callable(fetch_context):
+        return {**fallback, "reason": "provider_unavailable"}
+    try:
+        payload = fetch_context(reference_date=reference_date, priority_symbols=priority_symbols)
+    except RuntimeError:
+        return {**fallback, "reason": "upstream_unavailable"}
+    return payload if isinstance(payload, dict) else {**fallback, "reason": "invalid_provider_payload"}
 
 
 def _build_market_briefing_priority_candidate_lines(
@@ -22634,6 +22667,46 @@ def _build_market_briefing_toss_priority_quote_lines(
 def _market_briefing_toss_checked_time(value: object) -> str | None:
     raw = str(value or "").strip().replace("T", " ")
     return raw[11:16] if len(raw) >= 16 and raw[11:16].count(":") == 1 else None
+
+
+def _build_market_briefing_toss_market_context_lines(toss_context: dict[str, object]) -> list[str]:
+    payload = toss_context.get("market_context") if isinstance(toss_context.get("market_context"), dict) else {}
+    if payload.get("live_fetch") is not True:
+        return []
+    names_by_symbol = toss_context.get("names_by_symbol") if isinstance(toss_context.get("names_by_symbol"), dict) else {}
+    rankings = payload.get("rankings") if isinstance(payload.get("rankings"), list) else []
+    ranked_at = _market_briefing_toss_checked_time(payload.get("ranked_at") or payload.get("fetched_at"))
+    ranking_symbols = [
+        str(item.get("symbol") or "").strip()
+        for item in rankings
+        if isinstance(item, dict) and str(item.get("symbol") or "").strip()
+    ]
+    rank_display = ", ".join(str(names_by_symbol.get(symbol) or symbol) for symbol in ranking_symbols[:20])
+    lines = ["Toss 거래대금 Top20"]
+    lines.append(f"- {rank_display or '집계 종목 없음'}{f' · 집계 {ranked_at}' if ranked_at else ''}")
+    overlaps = [str(item) for item in payload.get("priority_overlap_symbols", []) if str(item).strip()]
+    overlap_display = ", ".join(str(names_by_symbol.get(symbol) or symbol) for symbol in overlaps)
+    lines.append(f"- 우선 확인 겹침: {overlap_display or '없음'}")
+
+    investor_flow = payload.get("investor_flow") if isinstance(payload.get("investor_flow"), dict) else {}
+    lines.append("전일 시장 수급 참고")
+    for market in ("KOSPI", "KOSDAQ"):
+        record = investor_flow.get(market)
+        if not isinstance(record, dict):
+            lines.append(f"- {market}: 기준일 데이터 없음")
+            continue
+        fragments = []
+        for key, label in (("foreigner", "외국인"), ("institution", "기관")):
+            amount = record.get(key)
+            if not isinstance(amount, dict):
+                continue
+            buy = _safe_optional_int(amount.get("buyAmount"))
+            sell = _safe_optional_int(amount.get("sellAmount"))
+            if buy is None or sell is None:
+                continue
+            fragments.append(f"{label} {_format_flow_reference_amount(buy - sell)}")
+        lines.append(f"- {market}: {' · '.join(fragments) if fragments else '집계값 확인 필요'}")
+    return lines
 
 
 def _build_market_briefing_source_freshness_summary(
@@ -24989,6 +25062,54 @@ def _make_web_view_handler(
         payload["derived_from"] = "web_view_candidate_evidence_top_2"
         return HTTPStatus.OK, payload
 
+    def build_toss_market_context_payload(business_date: date) -> tuple[HTTPStatus, dict]:
+        archive = build_web_view_archive_snapshot(config, repository, limit=1)
+        latest_business_date = archive.get("latest_business_date")
+        if latest_business_date and business_date.isoformat() != latest_business_date:
+            return HTTPStatus.CONFLICT, {
+                "surface": "web-view-toss-market-context",
+                "read_only": True,
+                "configured": getattr(toss_provider, "configured", False),
+                "live_fetch": False,
+                "writes_db": False,
+                "sends_telegram": False,
+                "registers_scheduler": False,
+                "affects_ordering": False,
+                "reference_date": None,
+                "rankings": [],
+                "priority_overlap_symbols": [],
+                "investor_flow": {"KOSPI": None, "KOSDAQ": None},
+                "latest_business_date": latest_business_date,
+                "reason": "latest_business_date_only",
+            }
+        evidence = build_web_view_candidate_evidence_snapshot(
+            config,
+            repository,
+            business_date=business_date,
+            limit=2,
+        )
+        symbols = tuple(
+            str(row.get("stock_code") or "").strip()
+            for row in evidence.get("rows", [])
+            if re.fullmatch(r"\d{6}", str(row.get("stock_code") or "").strip())
+        )[:2]
+        payload = _build_toss_market_context(
+            toss_provider,
+            reference_date=previous_business_day(business_date, config.holiday_overrides),
+            priority_symbols=symbols,
+        )
+        return HTTPStatus.OK, {
+            "surface": "web-view-toss-market-context",
+            "read_only": True,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "affects_ordering": False,
+            **payload,
+            "latest_business_date": latest_business_date,
+            "derived_from": "web_view_candidate_evidence_top_2",
+        }
+
     def write_cached_json_response(handler: BaseHTTPRequestHandler, cache_key: str, builder: Callable[[], dict]) -> None:
         total_start = time.perf_counter()
         body, cache_status, json_ms, build_ms, db_ms = cached_json_payload(cache_key, builder)
@@ -25127,6 +25248,42 @@ def _make_web_view_handler(
                         mention_threshold=mention_threshold,
                         limit=observation_limit,
                     ),
+                )
+                return
+            if path == "/api/toss-market-context":
+                query_params = url_parse.parse_qs(query)
+                raw_date = query_params.get("date", [None])[0]
+                try:
+                    if not raw_date:
+                        raise ValueError
+                    business_date = date.fromisoformat(raw_date)
+                except ValueError:
+                    _write_http_response(self, HTTPStatus.BAD_REQUEST, "invalid date", content_type="text/plain; charset=utf-8")
+                    return
+                try:
+                    status, payload = build_toss_market_context_payload(business_date)
+                except RuntimeError:
+                    status = HTTPStatus.BAD_GATEWAY
+                    payload = {
+                        "surface": "web-view-toss-market-context",
+                        "read_only": True,
+                        "configured": getattr(toss_provider, "configured", False),
+                        "live_fetch": False,
+                        "writes_db": False,
+                        "sends_telegram": False,
+                        "registers_scheduler": False,
+                        "affects_ordering": False,
+                        "reference_date": None,
+                        "rankings": [],
+                        "priority_overlap_symbols": [],
+                        "investor_flow": {"KOSPI": None, "KOSDAQ": None},
+                        "reason": "upstream_unavailable",
+                    }
+                _write_http_response(
+                    self,
+                    status,
+                    json.dumps(payload, ensure_ascii=False),
+                    content_type="application/json; charset=utf-8",
                 )
                 return
             if path == "/api/toss-priority-quotes":
@@ -28166,7 +28323,6 @@ def _render_web_view_html() -> str:
         <div class="section-header">
           <h2>오늘의 우선순위 <span class="muted" id="main-priority-date"></span></h2>
           <div class="summary-actions">
-            <span class="status-pill">우선 확인 2종</span>
             <button id="toss-priority-refresh" class="ghost-button" type="button" disabled>Toss 현재가 확인</button>
             <button id="intraday-market-top-check" class="ghost-button" type="button" disabled>장중 거래대금 확인</button>
           </div>
@@ -28186,6 +28342,7 @@ def _render_web_view_html() -> str:
           </div>
         </div>
         <div id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden></div>
+        <div id="toss-market-context" class="intraday-overlap-panel" aria-live="polite" hidden></div>
         <p class="main-priority-note">저장 리포트, KRX, [12009] 수급 참고값 기준이며 실시간 시세가 아닙니다.</p>
       </div>
 
@@ -28502,6 +28659,7 @@ def _render_web_view_html() -> str:
     let tossPriorityRequestId = 0;
     let tossPriorityRows = [];
     let tossPriorityDate = null;
+    let tossMarketContextRequestId = 0;
     let mainPriorityCohort = { date: null, codes: [] };
     let newsObservationCollectLoading = false;
     let newsObservationCollectAttemptedKey = null;
@@ -30470,6 +30628,7 @@ def _render_web_view_html() -> str:
         document.getElementById("main-priority-rows").innerHTML = '<span class="muted">우선 확인 후보 데이터가 없습니다.</span>';
         document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">눈에 띄는 종목 데이터가 없습니다.</span>';
         tossPriorityRows = [];
+        document.getElementById("toss-market-context").hidden = true;
         updateTossPriorityRefreshButton();
         return;
       }
@@ -30753,6 +30912,64 @@ def _render_web_view_html() -> str:
         if (requestId === tossPriorityRequestId) {
           tossPriorityLoading = false;
           updateTossPriorityRefreshButton();
+        }
+      }
+    }
+
+    function renderTossMarketContext(data) {
+      const panel = document.getElementById("toss-market-context");
+      if (!data || data.live_fetch !== true) {
+        panel.hidden = false;
+        panel.textContent = data?.configured === false
+          ? "Toss 시장 문맥은 연결 준비 상태입니다."
+          : "Toss 시장 문맥을 지금 확인할 수 없습니다.";
+        return;
+      }
+      const rankings = Array.isArray(data.rankings) ? data.rankings.slice(0, 20) : [];
+      const overlaps = Array.isArray(data.priority_overlap_symbols) ? data.priority_overlap_symbols : [];
+      const rankedAt = tossQuoteTimeLabel({ timestamp: data.ranked_at }, data);
+      const rankItems = rankings.length
+        ? rankings.map((item) => `<span class="status-pill">${esc(item?.rank || "")}. ${esc(item?.symbol || "-")}</span>`).join("")
+        : '<span class="muted">Top20 집계값 없음</span>';
+      const flowLabel = (record, market) => {
+        if (!record || typeof record !== "object") return `${market} 기준일 데이터 없음`;
+        const parts = [["외국인", record.foreigner], ["기관", record.institution]].flatMap(([label, amount]) => {
+          const buy = Number(amount?.buyAmount);
+          const sell = Number(amount?.sellAmount);
+          if (!Number.isFinite(buy) || !Number.isFinite(sell)) return [];
+          const net = buy - sell;
+          return [`${label} ${net >= 0 ? "순매수" : "순매도"} ${compactTurnover(Math.abs(net))}`];
+        });
+        return `${market} ${parts.join(" · ") || "집계값 확인 필요"}`;
+      };
+      const flow = data.investor_flow || {};
+      panel.hidden = false;
+      panel.innerHTML = `
+        <div class="intraday-overlap-head"><b>Toss 시장 문맥</b><span>· ${esc(rankedAt || "집계 시각 확인 필요")}</span></div>
+        <p class="intraday-overlap-summary">거래대금 Top20 · 우선 확인 겹침 ${esc(overlaps.join(", ") || "없음")}</p>
+        <div class="intraday-overlap-stocks">${rankItems}</div>
+        <p class="muted">전일 시장 수급 참고 · ${esc(flowLabel(flow.KOSPI, "KOSPI"))} · ${esc(flowLabel(flow.KOSDAQ, "KOSDAQ"))}</p>
+      `;
+    }
+
+    async function loadTossMarketContext(date) {
+      const panel = document.getElementById("toss-market-context");
+      if (!validDate(date) || !tossPriorityRows.length) {
+        panel.hidden = true;
+        return;
+      }
+      const requestId = ++tossMarketContextRequestId;
+      panel.hidden = false;
+      panel.textContent = "Toss 시장 문맥 확인 중";
+      try {
+        const response = await fetch(`/api/toss-market-context?date=${encodeURIComponent(date)}`, { cache: "no-store" });
+        const data = await response.json();
+        if (requestId !== tossMarketContextRequestId || date !== selectedDate) return;
+        if (response.status === 409 || !response.ok) throw new Error(`HTTP ${response.status}`);
+        renderTossMarketContext(data);
+      } catch (_error) {
+        if (requestId === tossMarketContextRequestId) {
+          panel.textContent = "Toss 시장 문맥을 지금 확인할 수 없습니다.";
         }
       }
     }
@@ -31542,6 +31759,7 @@ def _render_web_view_html() -> str:
     });
     document.getElementById("toss-priority-refresh").addEventListener("click", () => {
       loadTossPriorityQuotes(tossPriorityDate || selectedDate);
+      loadTossMarketContext(tossPriorityDate || selectedDate);
     });
     document.getElementById("intraday-market-top-check").addEventListener("click", () => {
       loadIntradayMarketTopForSelectedDate();
