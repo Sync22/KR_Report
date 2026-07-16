@@ -71,7 +71,7 @@ operations, `72` schemas):
 | Read-only quote/reference | Promoted for `web-view` and scheduled market-briefing top-2 current price | Server derives up to two `우선 확인` symbols; no arbitrary symbol query. |
 | Stock/reference metadata | Future lab candidate | May be compared with KRX/Naver identity data, but must not overwrite source facts by default. |
 | Market calendar/exchange rate | Future lab candidate | Reference only; label source/freshness if surfaced later. |
-| Ranking/market indicators | Documentation only | Ranking basis and index-level investor trading do not match current candidate or stock-level KRX-flow semantics. |
+| Ranking/market indicators | Planned bounded Top20 observation; not runtime-approved | `tradingAmount`/`tradingVolume` may provide a separate current market-attention reference. It must not replace report candidates or stock-level KRX flow. |
 | Account/balance read-only | Operator-only lab candidate | Never public. No production DB write. No scheduler or Telegram integration. |
 | Order history/order info | Operator-only lab candidate at most | Treat as execution-adjacent; keep away from public surfaces. |
 | Execution lab | Deferred | Requires separate order-safety, audit, permissions, failure, and rollback contract. |
@@ -737,6 +737,12 @@ This proves that the bounded `prices` probe can observe changing live market
 values during an active market session. It does not approve continuous polling,
 storage, account access, or execution. The only approved projection is the
 main `web-view` top-2 priority current-price reference described below.
+
+## Planned Top20 Market-Attention Contract
+
+`GET /api/v1/rankings` is not promoted by this document. The planned first use is a fixed 15:00 KST, read-only Top20 observation carrying only rank, stock code, trading amount, trading volume, source, and checked time. It supports report/news/Top20 overlap display, not candidate selection, scoring, stock-level investor-flow claims, account access, or broad polling.
+
+No database write, scheduler registration, Telegram send, or public route is approved for this contract yet. Add persistent replay only after a separate schema, retention, replay, and public-boundary review. The unmerged `codex/toss-openapi` branch is reference material, not approval to widen the runtime allowlist.
 
 ## Promoted Web-View Priority Quote Projection
 
