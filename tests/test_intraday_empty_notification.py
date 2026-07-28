@@ -125,6 +125,40 @@ def test_manual_poll_retries_pending_intraday_batches_before_empty_notification(
     assert not empty_calls
 
 
+def test_scheduled_manual_poll_collects_news_after_summary_with_canonical_scrapling(tmp_path, monkeypatch) -> None:
+    config, repository = _config_and_repository(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli_module, "fetch_reports", lambda *_args, **_kwargs: ([_report()], _inspection(1)))
+    canonical_scrapling = tmp_path / "scrapling.exe"
+    canonical_scrapling.touch()
+    monkeypatch.setattr(cli_module, "_resolve_web_view_scrapling_exe", lambda _config: canonical_scrapling)
+    captured: dict[str, object] = {}
+
+    def fake_collect(_config, collected_repository, **kwargs):
+        captured.update(kwargs)
+        assert collected_repository.list_daily_summaries(date(2026, 4, 24))
+        return 0
+
+    monkeypatch.setattr(cli_module, "_run_news_intelligence_collect_top_candidates", fake_collect)
+
+    result = cli_module._run_manual_poll(
+        config,
+        repository,
+        limit=50,
+        dry_run=False,
+        inspect_only=False,
+        headless=True,
+        send_intraday_alert=False,
+        collect_top_candidate_news=True,
+        scheduled_run_at=datetime(2026, 4, 24, 10, 0, tzinfo=cli_module.ZoneInfo(config.timezone)),
+    )
+
+    assert result == 0
+    assert captured["business_date"] == date(2026, 4, 24)
+    assert captured["candidate_limit"] == 2
+    assert captured["top_n"] == 2
+    assert captured["scrapling_exe"] == canonical_scrapling
+
+
 def test_process_intraday_alerts_returns_processed_batch_count(tmp_path, monkeypatch) -> None:
     config, repository = _config_and_repository(tmp_path, monkeypatch)
     repository.insert_reports([_report()], queue_intraday_alerts=True)

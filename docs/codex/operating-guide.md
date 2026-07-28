@@ -1813,3 +1813,15 @@ Use this when starting a todo item:
 - 다음에 이어갈 명령 예시
 - 한줄리뷰
 ```
+
+## Operator Market Research Note Run
+
+When the operator needs daily market context beside the existing Top2 snapshot, keep the flow local and manual:
+
+```powershell
+python -m stock_monitor market-research-note --snapshot data\reviews\realtime-first\YYYY-MM-DD_1500.json --market-flow data\reviews\market-research\YYYY-MM-DD_flow.json
+```
+
+This command reads local JSON and writes a local JSON/Markdown review note. It does not fetch a provider, write SQLite, send Telegram, register a scheduler, or connect a public surface. Treat `invalid_for_slot` as an operational timing exception, not as market evidence.
+
+`market-research-note` remains a local manual review artifact. The weekday `StockMonitor-Poll` task is the separate operating lane: every 30-minute in-window poll rebuilds report summaries and then collects bounded news observations for the same Top2 candidate codes. The shared `scheduled_run_at` and codes are recorded as a `poll-news` operation event.

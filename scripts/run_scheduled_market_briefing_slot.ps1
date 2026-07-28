@@ -34,4 +34,6 @@ if ($AllowLate) {
 }
 
 & $PythonExe @args
-exit $LASTEXITCODE
+$briefingExitCode = $LASTEXITCODE
+
+exit $briefingExitCode

@@ -30,7 +30,7 @@ Blocked by default in v1:
 
 - Automatic live news crawling or provider smoke.
 - SQLite writes or migrations unless the operator explicitly passes `--save-observation` for the operator-only observation tables.
-- Generic scheduler registration, unbounded unattended collection, or source-wide crawling. The bounded `scheduled-market-briefing-slot` exception is documented below.
+- Generic scheduler registration, unbounded unattended collection, or source-wide crawling. The bounded `scheduled-poll` Top2 collection exception is documented below.
 - Telegram send or Telegram candidate alerts.
 - Direct public `web-view` exposure of raw/operator-only payloads. A later public-safe, stored-data-only projection is allowed when this contract and `surface-guide.md` define the exact fields.
 - Broker secrets, broker execution, order routing, or order suggestions.
@@ -72,7 +72,7 @@ Scrapling executable resolution is explicit:
 
 - Prefer `--scrapling-exe "%USERPROFILE%\Codex\_tools\scrapling\.venv\Scripts\scrapling.exe"` on the operating PC when the command reports `missing Scrapling executable`.
 - Alternatively set `SCRAPLING_EXE` to the same executable path before running the command.
-- The command does not search broad tool folders by itself. Missing Scrapling is an operator environment issue, not a Daily workflow failure.
+- The manual command does not search broad tool folders by itself. The bounded `scheduled-poll` reuses the project canonical runtime at `<workspace-parent>\_tools\scrapling\.venv\Scripts\scrapling.exe` when `SCRAPLING_EXE` is not set.
 
 Saved operator observations may be reviewed with:
 
@@ -345,3 +345,17 @@ The safe first integration points are the manual/operator CLI preview, explicit 
 ## LLM Extension Point
 
 Future LLM-based analysis should implement the same analyzer protocol and return the same structured model. The deterministic analyzer remains the offline fallback and test oracle.
+
+## Operator Market Research Note
+
+`market-research-note` is a separate operator-only local-review lane. It does not alter the news-intelligence collector, candidate priority, SQLite, Telegram, scheduler, `admin-gui`, or `web-view`.
+
+It consumes an existing realtime-first snapshot JSON and may consume a manually captured `news-flow-source-probe --format json` response. The source probe remains a separately initiated live probe; the note command itself performs no fetch.
+
+```powershell
+New-Item -ItemType Directory -Force data\reviews\market-research | Out-Null
+python -m stock_monitor news-flow-source-probe --source-url <approved-naver-url> --date 2026-07-28 --format json > data\reviews\market-research\2026-07-28_flow.json
+python -m stock_monitor market-research-note --snapshot data\reviews\realtime-first\2026-07-28_1500.json --market-flow data\reviews\market-research\2026-07-28_flow.json
+```
+
+The resulting JSON/Markdown files are local operator review artifacts only. A snapshot generated more than 15 minutes after its requested KST slot is labelled `invalid_for_slot`; it remains readable but must not be compared as a normal 15:00 observation.

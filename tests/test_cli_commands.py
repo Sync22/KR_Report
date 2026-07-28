@@ -42,6 +42,7 @@ from stock_monitor.cli import (
     _run_scheduled_krx_mentioned_flow_backfill,
     _run_naver_fixture_validate,
     _run_market_briefing,
+    _run_market_research_note,
     _run_realtime_first_review_snapshot,
     _run_web_view_value_qa,
     _collect_market_briefing_message_issues,
@@ -8036,6 +8037,51 @@ def test_realtime_first_review_snapshot_powershell_scripts_document_safe_schedul
     assert "-DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday `" in registrar
     assert "-At \"15:00\"" in registrar
     assert "run_realtime_first_review_snapshot.ps1" in registrar
+
+
+def test_market_research_note_parser_uses_local_review_paths() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "market-research-note",
+            "--snapshot",
+            "data/reviews/realtime-first/2026-07-28_1500.json",
+        ]
+    )
+
+    assert args.command == "market-research-note"
+    assert args.market_flow is None
+    assert args.output_dir == Path("data/reviews/market-research")
+
+
+def test_market_research_note_writes_only_local_review_artifacts(tmp_path, capsys) -> None:
+    snapshot_path = tmp_path / "2026-07-28_1500.json"
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "date": "2026-07-28",
+                    "snapshot_time_kst": "15:00",
+                    "generated_at_kst": "2026-07-28T15:00:00+09:00",
+                },
+                "top2": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = _run_market_research_note(
+        snapshot_path=snapshot_path,
+        market_flow_path=None,
+        output_dir=tmp_path / "reviews",
+    )
+
+    payload = json.loads((tmp_path / "reviews" / "2026-07-28_1500.json").read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload["writes_db"] is False
+    assert payload["connects_web_view"] is False
+    assert "writes_db: false" in capsys.readouterr().out
 
 
 def test_scheduled_market_briefing_legacy_command_is_not_exposed() -> None:

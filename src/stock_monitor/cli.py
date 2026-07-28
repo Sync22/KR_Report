@@ -566,6 +566,13 @@ def build_parser() -> argparse.ArgumentParser:
     news_flow_probe_parser.add_argument("--scrapling-exe", type=Path)
     news_flow_probe_parser.add_argument("--format", choices=("text", "json"), default="text")
     news_flow_probe_parser.add_argument("--slot", choices=tuple(MARKET_BRIEFING_SLOT_LABELS), default="mood")
+    market_research_parser = subparsers.add_parser(
+        "market-research-note",
+        help="Write an operator-only read-only market research note from local review JSON.",
+    )
+    market_research_parser.add_argument("--snapshot", type=Path, required=True)
+    market_research_parser.add_argument("--market-flow", type=Path)
+    market_research_parser.add_argument("--output-dir", type=Path, default=Path("data/reviews/market-research"))
     news_observations_parser = subparsers.add_parser(
         "news-intelligence-observations",
         help="Read saved operator-only news intelligence observations as JSON.",
@@ -2121,6 +2128,12 @@ def main(argv: list[str] | None = None) -> int:
         return _run_news_flow_preview(args)
     if args.command == "news-flow-source-probe":
         return _run_news_flow_source_probe(args)
+    if args.command == "market-research-note":
+        return _run_market_research_note(
+            snapshot_path=args.snapshot,
+            market_flow_path=args.market_flow,
+            output_dir=args.output_dir,
+        )
     if args.command == "news-intelligence-observations":
         return _run_news_intelligence_observations(args)
     if args.command == "news-intelligence-daily-brief":
@@ -3349,6 +3362,51 @@ def _run_news_flow_source_probe(
         slot_section=slot_sections.get(slot),
     )
     return 0 if preview.article_count > 0 else 1
+
+
+def _run_market_research_note(
+    *,
+    snapshot_path: Path,
+    market_flow_path: Path | None,
+    output_dir: Path,
+) -> int:
+    from stock_monitor.market_research import build_market_research_note, format_market_research_note_markdown
+
+    try:
+        snapshot = _read_market_research_json(snapshot_path, label="snapshot")
+        market_flow = _read_market_research_json(market_flow_path, label="market flow") if market_flow_path else None
+        note = build_market_research_note(snapshot, market_flow)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"market research note error: {exc}")
+        return 1
+
+    snapshot_context = note["snapshot"]
+    if not isinstance(snapshot_context, dict):
+        print("market research note error: snapshot context is invalid")
+        return 1
+    date_text = str(snapshot_context.get("date") or "unknown-date")
+    time_text = str(snapshot_context.get("snapshot_time_kst") or "unknown-time").replace(":", "")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / f"{date_text}_{time_text}.json"
+    markdown_path = output_dir / f"{date_text}_{time_text}.md"
+    json_path.write_text(json.dumps(note, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    markdown_path.write_text(format_market_research_note_markdown(note), encoding="utf-8")
+    print("market research note: ready")
+    print(f"- wrote: {json_path}")
+    print(f"- wrote: {markdown_path}")
+    print("- live_fetch: false")
+    print("- writes_db: false")
+    print("- sends_telegram: false")
+    print("- registers_scheduler: false")
+    print("- connects_web_view: false")
+    return 0
+
+
+def _read_market_research_json(path: Path, *, label: str) -> dict[str, object]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} JSON must be an object")
+    return payload
 
 
 def _news_flow_source_probe_error_payload(
@@ -4786,6 +4844,7 @@ def _run_news_intelligence_collect_top_candidates(
     confirm_collect: bool,
     scrapling_exe: Path | None,
     as_json: bool,
+    scheduled_run_at: datetime | None = None,
 ) -> int:
     resolved_date = _resolve_news_intelligence_top_candidate_date(repository, business_date)
     warnings: list[str] = []
@@ -4831,9 +4890,17 @@ def _run_news_intelligence_collect_top_candidates(
         "errors": errors,
     }
     if errors:
+        _record_scheduled_poll_news_event(
+            config, repository, scheduled_run_at=scheduled_run_at, business_date=resolved_date,
+            targets=targets, status="failed", detail="; ".join(errors),
+        )
         _print_news_intelligence_collect_top_candidates_payload(payload, as_json=as_json)
         return 1
     if dry_run:
+        _record_scheduled_poll_news_event(
+            config, repository, scheduled_run_at=scheduled_run_at, business_date=resolved_date,
+            targets=targets, status="skipped", detail="dry_run",
+        )
         _print_news_intelligence_collect_top_candidates_payload(payload, as_json=as_json)
         return 0
     payload["read_only"] = False
@@ -4843,6 +4910,10 @@ def _run_news_intelligence_collect_top_candidates(
         return 1
     if not targets:
         payload["error"] = "no top candidate targets with stock_code"
+        _record_scheduled_poll_news_event(
+            config, repository, scheduled_run_at=scheduled_run_at, business_date=resolved_date,
+            targets=targets, status="skipped", detail=str(payload["error"]),
+        )
         _print_news_intelligence_collect_top_candidates_payload(payload, as_json=as_json)
         return 0
 
@@ -4877,6 +4948,15 @@ def _run_news_intelligence_collect_top_candidates(
     )
     if collect_payload.get("error"):
         payload["errors"] = [*errors, str(collect_payload["error"])]
+    _record_scheduled_poll_news_event(
+        config,
+        repository,
+        scheduled_run_at=scheduled_run_at,
+        business_date=resolved_date,
+        targets=targets,
+        status="success" if collect_exit_code == 0 and not payload["errors"] else "failed",
+        detail=f"saved_observations={payload['collected_count']}; saved_evidence={payload['evidence_count']}",
+    )
     _print_news_intelligence_collect_top_candidates_payload(payload, as_json=as_json)
     return 0
 
@@ -4896,6 +4976,34 @@ def _resolve_news_intelligence_top_candidate_date(
     if report_dates:
         return report_dates[0][0]
     return None
+
+
+def _record_scheduled_poll_news_event(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    scheduled_run_at: datetime | None,
+    business_date: date | None,
+    targets: Sequence[dict[str, object]],
+    status: str,
+    detail: str,
+) -> None:
+    if scheduled_run_at is None:
+        return
+    stock_codes = [str(target.get("stock_code") or "").strip() for target in targets]
+    repository.record_operation_event(
+        _operation_event(
+            config,
+            component="poll-news",
+            event_type="scheduled-collect",
+            status=status,
+            business_date=business_date,
+            detail=(
+                f"scheduled_run_at={scheduled_run_at.isoformat()}; "
+                f"target_stock_codes={','.join(code for code in stock_codes if code)}; {detail}"
+            ),
+        )
+    )
 
 
 def _unique_nonblank_stock_codes(stock_codes: Sequence[str]) -> list[str]:
@@ -9777,6 +9885,8 @@ def _run_manual_poll(
     inspect_only: bool,
     headless: bool,
     send_intraday_alert: bool,
+    collect_top_candidate_news: bool = False,
+    scheduled_run_at: datetime | None = None,
 ) -> int:
     reports, inspection = fetch_reports(config, limit=limit, headless=headless)
     print(f"API pages fetched: {inspection.api_pages_fetched}")
@@ -9813,6 +9923,11 @@ def _run_manual_poll(
             detail=(
                 f"attempted={insert_result.attempted}; inserted={insert_result.inserted}; "
                 f"intraday_batches={len(insert_result.intraday_batch_ids)}"
+                + (
+                    f"; scheduled_run_at={scheduled_run_at.isoformat()}"
+                    if scheduled_run_at is not None
+                    else ""
+                )
             ),
         )
     )
@@ -9824,6 +9939,19 @@ def _run_manual_poll(
     for business_date in unique_dates:
         summaries = repository.rebuild_daily_summaries(business_date)
         print(f"Rebuilt {len(summaries)} summaries for {business_date.isoformat()}")
+    if collect_top_candidate_news:
+        _run_news_intelligence_collect_top_candidates(
+            config,
+            repository,
+            business_date=scheduled_run_at.date() if scheduled_run_at is not None else None,
+            candidate_limit=2,
+            top_n=2,
+            dry_run=False,
+            confirm_collect=True,
+            scrapling_exe=_resolve_web_view_scrapling_exe(config),
+            as_json=False,
+            scheduled_run_at=scheduled_run_at,
+        )
     if send_intraday_alert:
         processed_batches = _run_process_intraday_alerts(
             config,
@@ -17293,6 +17421,8 @@ def _run_scheduled_poll(
         inspect_only=False,
         headless=headless,
         send_intraday_alert=send_intraday_alert,
+        collect_top_candidate_news=True,
+        scheduled_run_at=now,
     )
 
 

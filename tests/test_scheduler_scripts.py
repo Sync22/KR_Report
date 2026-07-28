@@ -573,6 +573,14 @@ def test_register_task_scheduler_tasks_registers_market_briefing_slots() -> None
     assert "-StartWhenAvailable $false" in script
 
 
+def test_market_briefing_slot_only_runs_its_requested_briefing() -> None:
+    script = (PROJECT_ROOT / "scripts" / "run_scheduled_market_briefing_slot.ps1").read_text(encoding="utf-8")
+
+    assert "scheduled-market-briefing-slot" in script
+    assert "realtime-first-review-snapshot" not in script
+    assert "market-research-note" not in script
+
+
 def test_register_task_scheduler_tasks_registers_toss_priority_baseline_at_2000() -> None:
     script = (PROJECT_ROOT / "scripts" / "register_task_scheduler_tasks.ps1").read_text(encoding="utf-8")
 

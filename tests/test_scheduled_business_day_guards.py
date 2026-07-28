@@ -149,6 +149,33 @@ def test_manual_only_profile_skips_scheduled_poll(tmp_path, monkeypatch) -> None
     assert "manual-only" in repository.list_recent_operation_events(limit=1)[0].detail
 
 
+def test_scheduled_poll_enables_same_run_top_two_news_collection(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    monkeypatch.setattr(cli_module, "datetime", _RunSuppressedDateTime)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    captured: dict[str, object] = {}
+
+    def fake_manual_poll(*_args, **kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(cli_module, "_run_manual_poll", fake_manual_poll)
+
+    result = cli_module._run_scheduled_poll(
+        config,
+        repository,
+        limit=50,
+        dry_run=False,
+        headless=True,
+        send_intraday_alert=False,
+    )
+
+    assert result == 0
+    assert captured["collect_top_candidate_news"] is True
+    assert captured["scheduled_run_at"].isoformat() == "2026-06-02T10:00:00+09:00"
+
+
 def test_scheduled_notify_skips_run_suppressed_date(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     monkeypatch.setenv("STOCK_MONITOR_RUN_SUPPRESSED_DATES", "2026-06-02")
