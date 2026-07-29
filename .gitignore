@@ -9,6 +9,7 @@
 
 # Python / test artifacts
 .pytest_cache/
+.tmp_pytest/
 .ruff_cache/
 .mypy_cache/
 .venv/

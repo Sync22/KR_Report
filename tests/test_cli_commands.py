@@ -4735,6 +4735,8 @@ def test_news_intelligence_briefing_collect_saves_observations_for_actual_surfac
     ) == 0
     briefing_payload = json.loads(capsys.readouterr().out)
     assert briefing_payload["news_observation_summary"]["available"] is True
+    assert "오늘 누적 뉴스" in briefing_payload["message"]
+    assert "마지막 수집" in briefing_payload["message"]
     assert "뉴스 관찰" in briefing_payload["message"]
     assert "저장 관찰 2종목" in briefing_payload["message"]
     assert "직접 2건" in briefing_payload["message"]

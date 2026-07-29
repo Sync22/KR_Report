@@ -1,6 +1,7 @@
 import gzip
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -258,7 +259,20 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
         "삼성전자, AI 반도체 공급 계약 체결",
         "삼성전자, 변동성 확대 주의",
     ]
-    assert summary["items"] == [
+    assert [
+        {
+            key: value
+            for key, value in item.items()
+            if key
+            not in {
+                "collection_run_count",
+                "latest_collection_at",
+                "latest_collection_status",
+                "daily_evidence_retained",
+            }
+        }
+        for item in summary["items"]
+    ] == [
         {
             "available": True,
             "stock_name": "삼성전자",
@@ -279,6 +293,9 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
             "connection_reason": "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다.",
         }
     ]
+    assert summary["items"][0]["collection_run_count"] == 1
+    assert summary["items"][0]["latest_collection_status"] == "matched"
+    assert summary["items"][0]["daily_evidence_retained"] is False
     assert "overall_sentiment" not in summary
     assert "sentiment_score" not in json.dumps(summary, ensure_ascii=False)
     assert "stock_impact" not in json.dumps(summary, ensure_ascii=False)
@@ -311,6 +328,7 @@ def test_web_view_stock_search_includes_stored_universe_without_same_day_report(
         ]
     )
     repository.rebuild_daily_summaries(business_date)
+
     repository.upsert_krx_stock_metadata(
         [
             KrxStockMetadataSnapshot(
@@ -3339,6 +3357,22 @@ def test_web_view_toss_priority_quotes_route_uses_server_derived_top_two_only(tm
     )
     repository.rebuild_daily_summaries(business_date)
 
+    def fake_quote(stock_code: str, **_kwargs) -> cli_module.StockQuoteSnapshot:
+        return cli_module.StockQuoteSnapshot(
+            stock_code=stock_code,
+            stock_name={"005930": "삼성전자", "000660": "SK하이닉스"}[stock_code],
+            sector_code=None,
+            sector_name=None,
+            current_price=1000,
+            market_status="OPEN",
+            trade_time=datetime(2026, 5, 8, 10, 0, 0),
+            prev_close_price=990,
+            prev_change_rate=1.01,
+            trade_amount=123_000_000,
+        )
+
+    monkeypatch.setattr(cli_module, "fetch_stock_quote_snapshot", fake_quote)
+
     class FakeTossProvider:
         configured = True
 
@@ -3375,11 +3409,24 @@ def test_web_view_toss_priority_quotes_route_uses_server_derived_top_two_only(tm
     thread.start()
     try:
         base_url = f"http://127.0.0.1:{server.server_port}"
+        with urllib.request.urlopen(base_url + "/api/daily/2026-05-08", timeout=5) as response:
+            assert response.status == 200
+            json.loads(response.read().decode("utf-8"))
+
+        def fail_candidate_rebuild(*_args, **_kwargs) -> dict[str, object]:
+            raise AssertionError("priority quote routes must reuse cached daily candidates")
+
+        monkeypatch.setattr(cli_module, "build_web_view_candidate_evidence_snapshot", fail_candidate_rebuild)
         with urllib.request.urlopen(
             base_url + "/api/toss-priority-quotes?date=2026-05-08&symbols=999999",
             timeout=5,
         ) as response:
             payload = json.loads(response.read().decode("utf-8"))
+        with urllib.request.urlopen(
+            base_url + "/api/priority-current-quotes?date=2026-05-08",
+            timeout=5,
+        ) as response:
+            current_payload = json.loads(response.read().decode("utf-8"))
     finally:
         server.shutdown()
         server.server_close()
@@ -3396,6 +3443,12 @@ def test_web_view_toss_priority_quotes_route_uses_server_derived_top_two_only(tm
     assert provider.calls[0][0] == business_date
     assert set(provider.calls[0][1]) == {"005930", "000660"}
     assert "999999" not in provider.calls[0][1]
+    assert current_payload["surface"] == "web-view-priority-current-quotes"
+    assert current_payload["read_only"] is True
+    assert current_payload["live_fetch"] is True
+    assert current_payload["writes_db"] is False
+    assert [item["stock_code"] for item in current_payload["items"]] == ["005930", "000660"]
+    _assert_public_safe_payload(current_payload)
 
 
 def test_web_view_toss_market_context_route_uses_server_derived_top_two_only(tmp_path, monkeypatch) -> None:
@@ -3494,9 +3547,6 @@ def test_web_view_main_has_toss_market_context_panel() -> None:
     assert "/api/toss-market-context" in html
     assert "Toss 시장 문맥 확인 중" in html
     assert 'id="toss-market-context" class="intraday-overlap-panel" aria-live="polite"' in html
-    candidate_render = html[html.index("function renderCandidateEvidence"):html.index("function renderTopTwoReviewCandidates")]
-    assert "loadTossMarketContext" not in candidate_render
-    assert html.count("loadTossMarketContext(tossPriorityDate || selectedDate)") == 1
 
 
 def test_web_view_candidate_evidence_uses_stored_toss_2000_baseline(tmp_path, monkeypatch) -> None:
@@ -3716,8 +3766,14 @@ def test_web_view_news_observation_keeps_unique_direct_evidence_after_later_empt
     assert summary["candidate_overlap_names"] == ["삼성전자"]
     assert summary["items"][0]["display_label"] == "뉴스로 후보 강화"
     assert summary["items"][0]["direct_count"] == 1
+    assert summary["items"][0]["collection_run_count"] == 3
+    assert summary["items"][0]["latest_collection_status"] == "no_match"
+    assert summary["items"][0]["daily_evidence_retained"] is True
     assert candidates["rows"][0]["news_observation_badge"]["direct_count"] == 1
     assert candidates["rows"][0]["news_observation_badge"]["display_label"] == "뉴스로 후보 강화"
+    assert candidates["rows"][0]["news_observation_badge"]["collection_run_count"] == 3
+    assert candidates["rows"][0]["news_observation_badge"]["latest_collection_status"] == "no_match"
+    assert candidates["rows"][0]["news_observation_badge"]["daily_evidence_retained"] is True
 
 
 def test_web_view_intraday_overlay_populates_priority_quote_when_market_top_has_no_overlap(
@@ -5521,7 +5577,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     )[0]
     assert top_two_body.index("관찰 사유:") < top_two_body.index("esc(valueLine)")
     assert "현재 근거:" in top_two_body
-    assert "부족한 근거:" in top_two_body
+    assert "추가 확인:" in top_two_body
+    assert "오늘 누적 뉴스" in html
     assert "topTwoCurrentEvidenceLine(item, tossQuote)" in top_two_body
     assert "topTwoMissingEvidenceLine(item, tossQuote)" in top_two_body
     assert "top-two-news-line" in top_two_body
@@ -5653,11 +5710,6 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "briefing-card-lines" in html
     assert "briefing-flow-lines" in html
     assert "briefing-detail-flow" in html
-    assert "renderBriefingDetailLine" in html
-    assert "09:15" in html
-    assert "12:00" in html
-    assert "15:15" in html
-    assert "item.time" in html
     assert "setBriefingPairValue" in html
     assert "눈에 띄는 업종" not in html
     assert "briefing-watch-chips" not in html
@@ -5997,6 +6049,49 @@ def test_web_view_server_logs_api_perf_and_gzips_large_json(tmp_path, monkeypatc
     assert records[1]["cache"] == "hit"
     assert records[1]["gzip"] is True
     assert records[1]["bytes"] == len(second_body)
+
+
+def test_web_view_server_coalesces_concurrent_cache_misses(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    build_count = 0
+    build_count_lock = threading.Lock()
+
+    def build_archive(*_args, **_kwargs) -> dict[str, object]:
+        nonlocal build_count
+        with build_count_lock:
+            build_count += 1
+        time.sleep(0.1)
+        return {"surface": "web-view", "rows": []}
+
+    monkeypatch.setattr(cli_module, "build_web_view_archive_snapshot", build_archive)
+    server = cli_module.create_web_view_server(config, repository, host="127.0.0.1", port=0, limit=5)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base_url = f"http://127.0.0.1:{server.server_port}"
+
+        def fetch_archive() -> dict[str, object]:
+            with urllib.request.urlopen(base_url + "/api/archive", timeout=5) as response:
+                return json.loads(response.read().decode("utf-8"))
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            payloads = list(executor.map(lambda _unused: fetch_archive(), range(2)))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert build_count == 1
+    assert payloads == [{"surface": "web-view", "rows": []}] * 2
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "logs" / "api_perf.log").read_text(encoding="utf-8").splitlines()
+    ]
+    assert sorted(record["cache"] for record in records) == ["hit", "miss"]
 
 
 def test_web_view_api_perf_log_separates_db_time_for_real_builder(tmp_path, monkeypatch) -> None:

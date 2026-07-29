@@ -305,6 +305,30 @@ def test_repository_news_intelligence_preserves_repeated_runs(tmp_path) -> None:
     assert {row.run_id for row in rows} == {"news-run-1", "news-run-2"}
 
 
+def test_repository_lists_news_evidence_for_runs_with_per_run_limit(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+    repository.save_news_intelligence_observation(
+        _news_intelligence_run("news-run-1"),
+        [
+            _news_evidence(run_id="news-run-1", evidence_key="run-1-a"),
+            _news_evidence(run_id="news-run-1", evidence_key="run-1-b", url="https://example.test/run-1-b"),
+        ],
+    )
+    repository.save_news_intelligence_observation(
+        _news_intelligence_run("news-run-2"),
+        [_news_evidence(run_id="news-run-2", evidence_key="run-2-a", url="https://example.test/run-2-a")],
+    )
+
+    rows = repository.list_report_linked_news_evidence_for_run_ids(
+        ("news-run-1", "news-run-2"),
+        limit_per_run=1,
+    )
+
+    assert len(rows) == 2
+    assert {row.run_id for row in rows} == {"news-run-1", "news-run-2"}
+
+
 def test_repository_news_intelligence_stores_json_fields_without_public_surface(tmp_path) -> None:
     repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
     repository.initialize()

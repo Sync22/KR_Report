@@ -23168,7 +23168,7 @@ def _build_market_briefing_news_observation_lines(
     )
     if not summary.get("available"):
         return []
-    lines = ["뉴스 관찰 / 뉴스 근거"]
+    lines = ["뉴스 관찰 / 뉴스 근거 · 오늘 누적 뉴스"]
     items = [item for item in summary.get("items", []) if isinstance(item, dict) and item.get("available")]
     if items:
         lines.append(
@@ -23188,7 +23188,11 @@ def _build_market_briefing_news_observation_lines(
             f"/시장맥락 {int(item.get('market_context_count') or 0)}"
         )
         suffix = f" | {title}" if title else ""
-        lines.append(f"- {stock}: {label} ({count_text}){suffix}")
+        latest_collection_at = str(item.get("latest_collection_at") or "")
+        collection_suffix = f" · 마지막 수집 {latest_collection_at[11:16]}" if len(latest_collection_at) >= 16 else ""
+        if item.get("daily_evidence_retained"):
+            collection_suffix += " · 최근 수집 매칭 없음, 이전 근거 유지"
+        lines.append(f"- {stock}: {label} ({count_text}){collection_suffix}{suffix}")
     if len(lines) == 1:
         label = summary.get("display_label") or "뉴스 근거 있음"
         titles = [str(title) for title in summary.get("top_titles", []) if title]
@@ -25279,6 +25283,7 @@ def _make_web_view_handler(
 ) -> type[BaseHTTPRequestHandler]:
     response_cache: dict[str, tuple[float, bytes]] = {}
     response_cache_lock = threading.Lock()
+    response_cache_build_locks: dict[str, threading.Lock] = {}
     response_cache_ttl_seconds = 30.0
     api_perf_logger = ApiPerfLogger(config.root_dir / "logs")
     toss_provider = toss_quote_provider or TossPriorityQuoteProvider(
@@ -25305,17 +25310,44 @@ def _make_web_view_handler(
             cached = response_cache.get(cache_key)
             if cached and now_monotonic - cached[0] <= response_cache_ttl_seconds:
                 return cached[1], "hit", 0.0, 0.0, 0.0
-        metrics = RequestMetrics()
-        build_start = time.perf_counter()
-        with request_metrics_context(metrics):
-            payload = _compact_web_view_json_payload(cache_key, builder())
-        build_ms = elapsed_ms(build_start)
-        json_start = time.perf_counter()
-        body = json_dumps_bytes(payload)
-        json_ms = elapsed_ms(json_start)
-        with response_cache_lock:
-            response_cache[cache_key] = (time.monotonic(), body)
-        return body, "miss", json_ms, build_ms, metrics.db_ms
+            build_lock = response_cache_build_locks.setdefault(cache_key, threading.Lock())
+        with build_lock:
+            now_monotonic = time.monotonic()
+            with response_cache_lock:
+                cached = response_cache.get(cache_key)
+                if cached and now_monotonic - cached[0] <= response_cache_ttl_seconds:
+                    return cached[1], "hit", 0.0, 0.0, 0.0
+            metrics = RequestMetrics()
+            build_start = time.perf_counter()
+            with request_metrics_context(metrics):
+                payload = _compact_web_view_json_payload(cache_key, builder())
+            build_ms = elapsed_ms(build_start)
+            json_start = time.perf_counter()
+            body = json_dumps_bytes(payload)
+            json_ms = elapsed_ms(json_start)
+            with response_cache_lock:
+                response_cache[cache_key] = (time.monotonic(), body)
+            return body, "miss", json_ms, build_ms, metrics.db_ms
+
+    def priority_candidate_codes(business_date: date) -> tuple[str, ...]:
+        daily_payload = read_cached_json_payload(f"daily:{business_date.isoformat()}")
+        priority_rows = (
+            daily_payload.get("priority_candidate_evidence", {}).get("rows", [])
+            if isinstance(daily_payload, dict)
+            else []
+        )
+        if not priority_rows:
+            priority_rows = build_web_view_candidate_evidence_snapshot(
+                config,
+                repository,
+                business_date=business_date,
+                limit=2,
+            ).get("rows", [])
+        return tuple(
+            str(row.get("stock_code") or "").strip()
+            for row in priority_rows
+            if isinstance(row, dict) and re.fullmatch(r"\d{6}", str(row.get("stock_code") or "").strip())
+        )[:2]
 
     def build_daily_payload_for_route(
         business_date: date,
@@ -25370,17 +25402,7 @@ def _make_web_view_handler(
                 "quotes": [],
                 "reason": "latest_business_date_only",
             }
-        evidence = build_web_view_candidate_evidence_snapshot(
-            config,
-            repository,
-            business_date=business_date,
-            limit=2,
-        )
-        symbols = tuple(
-            str(row.get("stock_code") or "").strip()
-            for row in evidence.get("rows", [])
-            if re.fullmatch(r"\d{6}", str(row.get("stock_code") or "").strip())
-        )[:2]
+        symbols = priority_candidate_codes(business_date)
         payload = toss_provider.get_quotes(priority_date=business_date, symbols=symbols)
         payload["latest_business_date"] = latest_business_date
         payload["derived_from"] = "web_view_candidate_evidence_top_2"
@@ -25406,17 +25428,7 @@ def _make_web_view_handler(
                 "latest_business_date": latest_business_date,
                 "reason": "latest_business_date_only",
             }
-        evidence = build_web_view_candidate_evidence_snapshot(
-            config,
-            repository,
-            business_date=business_date,
-            limit=2,
-        )
-        symbols = tuple(
-            str(row.get("stock_code") or "").strip()
-            for row in evidence.get("rows", [])
-            if re.fullmatch(r"\d{6}", str(row.get("stock_code") or "").strip())
-        )[:2]
+        symbols = priority_candidate_codes(business_date)
         payload = _build_toss_market_context(
             toss_provider,
             reference_date=previous_business_day(business_date, config.holiday_overrides),
@@ -25431,6 +25443,60 @@ def _make_web_view_handler(
             "affects_ordering": False,
             **payload,
             "latest_business_date": latest_business_date,
+            "derived_from": "web_view_candidate_evidence_top_2",
+        }
+
+    def build_priority_current_quotes_payload(business_date: date) -> tuple[HTTPStatus, dict]:
+        archive = build_web_view_archive_snapshot(config, repository, limit=1)
+        latest_business_date = archive.get("latest_business_date")
+        if latest_business_date and business_date.isoformat() != latest_business_date:
+            return HTTPStatus.CONFLICT, {
+                "surface": "web-view-priority-current-quotes",
+                "read_only": True,
+                "live_fetch": False,
+                "writes_db": False,
+                "sends_telegram": False,
+                "registers_scheduler": False,
+                "affects_ordering": False,
+                "priority_date": business_date.isoformat(),
+                "latest_business_date": latest_business_date,
+                "items": [],
+                "reason": "latest_business_date_only",
+            }
+        symbols = priority_candidate_codes(business_date)
+        checked_at = datetime.now(ZoneInfo(config.timezone))
+        items: list[dict[str, object]] = []
+        errors: list[str] = []
+        for stock_code in symbols:
+            try:
+                quote = fetch_stock_quote_snapshot(stock_code, timeout_seconds=config.telegram_timeout_seconds)
+            except RuntimeError:
+                errors.append(stock_code)
+                continue
+            items.append(
+                {
+                    "stock_code": stock_code,
+                    "stock_name": quote.stock_name,
+                    "current_price": quote.current_price,
+                    "change_percent": quote.prev_change_rate,
+                    "trade_amount": quote.trade_amount,
+                    "market_status": quote.market_status,
+                    "trade_time": quote.trade_time.isoformat() if quote.trade_time else None,
+                }
+            )
+        return HTTPStatus.OK, {
+            "surface": "web-view-priority-current-quotes",
+            "read_only": True,
+            "live_fetch": True,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "affects_ordering": False,
+            "priority_date": business_date.isoformat(),
+            "latest_business_date": latest_business_date,
+            "checked_at": checked_at.isoformat(),
+            "items": items,
+            "errors": errors,
             "derived_from": "web_view_candidate_evidence_top_2",
         }
 
@@ -25636,6 +25702,39 @@ def _make_web_view_handler(
                         "priority_date": business_date.isoformat(),
                         "symbols": [],
                         "quotes": [],
+                        "reason": "upstream_unavailable",
+                    }
+                _write_http_response(
+                    self,
+                    status,
+                    json.dumps(payload, ensure_ascii=False),
+                    content_type="application/json; charset=utf-8",
+                )
+                return
+            if path == "/api/priority-current-quotes":
+                query_params = url_parse.parse_qs(query)
+                raw_date = query_params.get("date", [None])[0]
+                try:
+                    if not raw_date:
+                        raise ValueError
+                    business_date = date.fromisoformat(raw_date)
+                except ValueError:
+                    _write_http_response(self, HTTPStatus.BAD_REQUEST, "invalid date", content_type="text/plain; charset=utf-8")
+                    return
+                try:
+                    status, payload = build_priority_current_quotes_payload(business_date)
+                except RuntimeError:
+                    status = HTTPStatus.BAD_GATEWAY
+                    payload = {
+                        "surface": "web-view-priority-current-quotes",
+                        "read_only": True,
+                        "live_fetch": False,
+                        "writes_db": False,
+                        "sends_telegram": False,
+                        "registers_scheduler": False,
+                        "affects_ordering": False,
+                        "priority_date": business_date.isoformat(),
+                        "items": [],
                         "reason": "upstream_unavailable",
                     }
                 _write_http_response(
@@ -28205,7 +28304,7 @@ def _render_web_view_html() -> str:
     .brief:empty { display: none; }
     .daily-briefing { display: grid; gap: 12px; }
     .briefing-line { margin: 0; color: var(--ink); font-size: 16px; font-weight: 900; letter-spacing: -.02em; }
-    .briefing-market-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, .9fr); gap: 12px; align-items: start; }
+    .briefing-market-row { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: start; }
     .briefing-reference-card { display: grid; gap: 0; border: 1px solid var(--line); border-radius: 8px; background: #fffaf1; overflow: hidden; }
     .briefing-reference-head { display: flex; justify-content: space-between; gap: 8px; align-items: start; padding: 12px 12px 4px; }
     .briefing-reference-head b { color: var(--ink); font-size: 15px; font-weight: 900; }
@@ -28606,17 +28705,7 @@ def _render_web_view_html() -> str:
         <p class="briefing-line" id="daily-briefing-headline">날짜를 선택하면 읽을 흐름을 압축해서 보여줍니다.</p>
         <p class="briefing-mini-label">한줄평</p>
         <ul class="briefing-check-points" id="briefing-check-points"><li>확인 포인트가 있으면 여기에 표시됩니다.</li></ul>
-        <div class="briefing-comments" id="briefing-one-line-comments"></div>
         <div class="briefing-market-row">
-          <div class="briefing-mood-card" id="briefing-mood-card">
-            <div class="briefing-mood-head">
-              <b id="briefing-mood-title">국장 시장 분위기</b>
-              <span id="briefing-mood-reference">저장 데이터 기준</span>
-            </div>
-            <p class="briefing-mood-headline" id="briefing-mood-headline">저장 데이터 기준 시장 분위기를 준비 중입니다.</p>
-            <div class="briefing-mood-sections" id="briefing-mood-sections"></div>
-            <div class="briefing-mood-gaps" id="briefing-mood-gaps"></div>
-          </div>
           <div class="briefing-reference-card">
             <div class="briefing-reference-head">
               <b id="briefing-reference-title">시장 참고</b>
@@ -28666,8 +28755,7 @@ def _render_web_view_html() -> str:
           </div>
         </div>
         <div id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden></div>
-        <div id="toss-market-context" class="intraday-overlap-panel" aria-live="polite" hidden></div>
-        <p class="main-priority-note">저장 리포트, KRX, [12009] 수급 참고값 기준이며 실시간 시세가 아닙니다.</p>
+        <p class="main-priority-note">Top2 현재가는 Naver/Toss 조회값으로 갱신하며, 리포트·KRX·[12009] 수급은 저장 기준입니다.</p>
       </div>
 
       <div class="card span-12" id="candidate-evidence-card" data-view-panel="watch" hidden>
@@ -28848,6 +28936,11 @@ def _render_web_view_html() -> str:
           </table>
           <p class="notice" id="flow-trend-notice">저장된 수급 데이터 기준입니다.</p>
         </details>
+        <details class="market-reference-panel">
+          <summary>Toss 시장 수급 참고 <span class="muted">실시간 집계</span></summary>
+          <div id="toss-market-context" class="intraday-overlap-panel" aria-live="polite" hidden></div>
+          <p class="notice">KRX 종목별 수급을 대체하지 않는 시장 단위 참고값입니다.</p>
+        </details>
       </details>
     </section>
   </main>
@@ -28981,6 +29074,7 @@ def _render_web_view_html() -> str:
     let intradayMarketTopLastLoadedDate = null;
     let tossPriorityLoading = false;
     let tossPriorityRequestId = 0;
+    let priorityCurrentQuotesRequestId = 0;
     let tossPriorityRows = [];
     let tossPriorityDate = null;
     let tossMarketContextRequestId = 0;
@@ -29366,6 +29460,7 @@ def _render_web_view_html() -> str:
           await loadFlowTrend(date);
           flowTrendLoadedDate = date;
         }
+        loadTossMarketContext(date);
       } else if (activeViewTab === "stock") {
         return;
       } else if (activeViewTab === "rotation") {
@@ -29527,7 +29622,6 @@ def _render_web_view_html() -> str:
       document.getElementById("briefing-investor-flow-title").textContent = flowPair.title || "수급 참고";
       setBriefingPairValue("briefing-investor-flow", flowPair);
       document.getElementById("briefing-investor-flow-sub").textContent = flowPair.label;
-      renderBriefingOneLineComments(data?.market_commentary);
       renderIntradayMarketTopStatus(data?.market_commentary);
       renderIntradayMarketTopOverlap(data?.market_commentary);
       const reportFlowPoint = reportCount > 0
@@ -29535,7 +29629,6 @@ def _render_web_view_html() -> str:
         : "리포트 흐름 없음";
       const multiPoint = multiCount > 0 ? `반복 언급 ${number(multiCount)}종목` : "";
       renderBriefingCheckPoints([reportFlowPoint, multiPoint, ...(briefing.check_points || [])]);
-      renderTimeSlotMoodCard(briefing.time_slot_mood_card);
     }
 
     function renderSourceFreshnessSummary(summary) {
@@ -29610,29 +29703,6 @@ def _render_web_view_html() -> str:
       } else {
         node.textContent = pair?.value || "-";
       }
-    }
-
-    function renderBriefingOneLineComments(commentary) {
-      const comments = Array.isArray(commentary?.comments) ? commentary.comments.slice(0, 3) : [];
-      document.getElementById("briefing-one-line-comments").innerHTML = comments.length
-        ? comments.map((item) => {
-            const details = Array.isArray(item.details) ? item.details.filter(Boolean).slice(0, 3) : [];
-            const detailNode = details.length
-              ? `<small>${details.map(renderBriefingDetailLine).join("")}</small>`
-              : "";
-            const comment = item.comment ? `<span>${esc(item.comment)}</span>` : "";
-            const opinion = item.opinion ? `<span class="briefing-comment-opinion">${esc(item.opinion)}</span>` : "";
-            const label = item.time ? `${item.label || "-"} / ${item.time}` : (item.label || "-");
-            return `
-            <div class="briefing-comment">
-              <b>${esc(label)}</b>
-              ${comment}
-              ${opinion}
-              ${detailNode}
-            </div>
-          `;
-          }).join("")
-        : '<span class="muted">09:15 / 12:00 / 15:15 한줄 코멘트가 없습니다.</span>';
     }
 
     function renderIntradayMarketTopStatus(commentary) {
@@ -30025,7 +30095,6 @@ def _render_web_view_html() -> str:
         });
         if (data.business_date !== selectedDate) return;
         currentDailyData = { ...(currentDailyData || data), market_commentary: data.market_commentary };
-        renderBriefingOneLineComments(data?.market_commentary);
         renderIntradayMarketTopStatus(data?.market_commentary);
         renderIntradayMarketTopOverlap(data?.market_commentary);
         applyIntradayMarketTopToPriorityRows(data?.market_commentary);
@@ -30127,62 +30196,6 @@ def _render_web_view_html() -> str:
         affects_ordering: false,
         notice: "Naver 거래대금 상위 미포함",
       };
-    }
-
-    function renderTimeSlotMoodCard(card) {
-      const titleNode = document.getElementById("briefing-mood-title");
-      const referenceNode = document.getElementById("briefing-mood-reference");
-      const headlineNode = document.getElementById("briefing-mood-headline");
-      const sectionsNode = document.getElementById("briefing-mood-sections");
-      const gapsNode = document.getElementById("briefing-mood-gaps");
-      if (!titleNode || !referenceNode || !headlineNode || !sectionsNode || !gapsNode) return;
-      titleNode.textContent = card?.title || "국장 시장 분위기";
-      referenceNode.textContent = card?.reference_note || "저장 데이터 기준";
-      headlineNode.textContent = card?.headline || "저장된 시장 분위기 카드가 없습니다.";
-      const sections = Array.isArray(card?.sections) ? card.sections : [];
-      sectionsNode.innerHTML = sections.length
-        ? sections.map((section) => {
-            const items = Array.isArray(section.items) ? section.items.filter(Boolean).slice(0, 3) : [];
-            const extra = Array.isArray(section.turnover_reference_items)
-              ? section.turnover_reference_items.filter(Boolean).slice(0, 2)
-              : [];
-            const flow = Array.isArray(section.flow_reference_items)
-              ? section.flow_reference_items.filter(Boolean).slice(0, 2)
-              : [];
-            const allItems = [...items, ...extra, ...flow].slice(0, 4);
-            const body = allItems.length
-              ? allItems.map((item) => `<span>${esc(item)}</span>`).join("")
-              : `<span class="muted">${section.available ? "표시할 항목 없음" : "저장 참고값 없음"}</span>`;
-            return `<div class="briefing-mood-section"><b>${esc(section.label || "-")}</b>${body}</div>`;
-          }).join("")
-        : '<div class="briefing-mood-section"><b>확인</b><span class="muted">저장 참고값 없음</span></div>';
-      const gaps = Array.isArray(card?.source_gaps) ? card.source_gaps.slice(0, 3) : [];
-      gapsNode.innerHTML = gaps.length
-        ? gaps.map((item) => `<span class="briefing-mood-gap">${esc(item.message || item.code || "확인 필요")}</span>`).join("")
-        : "";
-    }
-
-    function renderBriefingDetailLine(line) {
-      const text = String(line || "");
-      const separatorIndex = text.indexOf(":");
-      if (separatorIndex > 0 && separatorIndex <= 8) {
-        const label = text.slice(0, separatorIndex).trim();
-        const value = text.slice(separatorIndex + 1).trim();
-        return `<span class="briefing-detail-row"><em>${esc(label)}</em><span>${esc(value)}</span></span>`;
-      }
-      const flowRow = parseBriefingStockFlowLine(text);
-      if (flowRow && (flowRow.flows.length || flowRow.turns.length)) {
-        return renderBriefingDetailFlowRow(flowRow);
-      }
-      return `<span class="briefing-detail-row"><em>참고</em><span>${esc(text)}</span></span>`;
-    }
-
-    function renderBriefingDetailFlowRow(row) {
-      return `<span class="briefing-detail-flow">
-        <b>${esc(row.stockName || "-")}</b>
-        ${row.flows.map((line) => `<span>${esc(line)}</span>`).join("")}
-        ${row.turns.map((line) => `<span>${esc(line)}</span>`).join("")}
-      </span>`;
     }
 
     function renderObservationSummary(summary) {
@@ -30964,6 +30977,8 @@ def _render_web_view_html() -> str:
       updateTossPriorityRefreshButton();
       maybeAutoCollectNewsObservationForPriorityRows(tossPriorityRows);
       loadTossPriorityQuotes(tossPriorityDate);
+      loadPriorityCurrentQuotes(tossPriorityDate);
+      if (activeViewTab === "market") loadTossMarketContext(tossPriorityDate);
       const renderCandidateCard = (item, index, offset = 0) => {
         const candidateIndex = index + offset;
         const report = item.report_summary || {};
@@ -31051,11 +31066,12 @@ def _render_web_view_html() -> str:
         const valueContextLine = candidateValueContextLine(item.value_context);
         const currentEvidenceLine = topTwoCurrentEvidenceLine(item, tossQuote);
         const missingEvidenceLine = topTwoMissingEvidenceLine(item, tossQuote);
+        const missingEvidenceLabel = "추가 확인:";
         return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote-context="main" data-toss-quote="${esc(item.stock_code || "")}">${esc(tossQuote || "Toss 현재가 확인 중")}</span></b>
           <span class="muted">관찰 사유: ${esc(why)}</span>
           <span class="top-two-evidence-line"><strong>현재 근거:</strong><span class="top-two-evidence-text">${esc(currentEvidenceLine)}</span></span>
-          <span class="top-two-evidence-line"><strong>부족한 근거:</strong><span class="top-two-evidence-text">${esc(missingEvidenceLine)}</span></span>
+          <span class="top-two-evidence-line"><strong>${esc(missingEvidenceLabel)}</strong><span class="top-two-evidence-text">${esc(missingEvidenceLine)}</span></span>
           <span class="top-two-news-line"><strong>뉴스</strong><span class="top-two-news-text">${esc(newsDigestLine)}</span></span>
           <span class="target-revision-line">${esc(targetRevisionLine)}</span>
           <span>${esc(valueLine)}</span>
@@ -31194,7 +31210,7 @@ def _render_web_view_html() -> str:
     }
 
     async function loadTossPriorityQuotes(date) {
-      if (!validDate(date) || !tossPriorityRows.length || tossPriorityLoading) return;
+      if (!validDate(date) || !tossPriorityRows.length) return;
       const requestId = ++tossPriorityRequestId;
       tossPriorityLoading = true;
       updateTossPriorityRefreshButton();
@@ -31236,6 +31252,40 @@ def _render_web_view_html() -> str:
         if (requestId === tossPriorityRequestId) {
           tossPriorityLoading = false;
           updateTossPriorityRefreshButton();
+        }
+      }
+    }
+
+    async function loadPriorityCurrentQuotes(date) {
+      if (!validDate(date) || !tossPriorityRows.length) return;
+      const requestId = ++priorityCurrentQuotesRequestId;
+      document.querySelectorAll("[data-intraday-reference]").forEach((node) => {
+        node.textContent = "Naver 현재가 확인 중";
+      });
+      try {
+        const response = await fetch(`/api/priority-current-quotes?date=${encodeURIComponent(date)}`, { cache: "no-store" });
+        const data = await response.json();
+        if (requestId !== priorityCurrentQuotesRequestId || date !== selectedDate) return;
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const reference = { live_fetch: data?.live_fetch === true, checked_at: data?.checked_at || null };
+        const byCode = new Map((Array.isArray(data?.items) ? data.items : []).map((item) => [String(item?.stock_code || ""), item]));
+        tossPriorityRows = tossPriorityRows.map((row) => {
+          const quote = byCode.get(String(row?.stock_code || ""));
+          return quote ? { ...row, intraday_reference: priorityQuoteIntradayReference(quote, reference) } : row;
+        });
+        document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(tossPriorityRows);
+        tossPriorityRows.forEach((row) => {
+          const code = String(row?.stock_code || "");
+          const label = candidateIntradayReferenceLabel(row?.intraday_reference);
+          document.querySelectorAll("[data-intraday-reference]").forEach((node) => {
+            if (node.dataset.intradayReference === code) node.textContent = label;
+          });
+        });
+      } catch (_error) {
+        if (requestId === priorityCurrentQuotesRequestId) {
+          document.querySelectorAll("[data-intraday-reference]").forEach((node) => {
+            node.textContent = "Naver 현재가 확인 실패";
+          });
         }
       }
     }
@@ -31316,11 +31366,11 @@ def _render_web_view_html() -> str:
     }
 
     function newsObservationTimeLabel(badge) {
-      const raw = badge?.observed_at;
+      const raw = badge?.latest_collection_at || badge?.observed_at;
       if (!raw) return "";
       const value = String(raw).replace("T", " ");
       const hhmm = value.slice(11, 16);
-      return hhmm ? `수집 ${hhmm}` : "";
+      return hhmm ? `마지막 수집 ${hhmm}` : "";
     }
 
     function candidateNewsCompactLine(badge) {
@@ -31353,7 +31403,13 @@ def _render_web_view_html() -> str:
 
     function candidateNewsDigestLine(badge) {
       if (!badge || badge.available !== true) return badge?.connection_label || badge?.display_label || "수집 전";
-      return badge.digest_label || badge.top_title || badge.connection_label || badge.display_label || "뉴스 근거 있음";
+      const parts = ["오늘 누적 뉴스"];
+      const title = badge.digest_label || badge.top_title || badge.connection_label || badge.display_label;
+      if (title) parts.push(title);
+      const observedAt = newsObservationTimeLabel(badge);
+      if (observedAt) parts.push(observedAt);
+      if (badge.daily_evidence_retained === true) parts.push("최근 수집 매칭 없음, 이전 근거 유지");
+      return parts.join(" · ");
     }
 
     function candidateNewsPrimaryLabel(badge) {
@@ -32083,7 +32139,7 @@ def _render_web_view_html() -> str:
     });
     document.getElementById("toss-priority-refresh").addEventListener("click", () => {
       loadTossPriorityQuotes(tossPriorityDate || selectedDate);
-      loadTossMarketContext(tossPriorityDate || selectedDate);
+      loadPriorityCurrentQuotes(tossPriorityDate || selectedDate);
     });
     document.getElementById("intraday-market-top-check").addEventListener("click", () => {
       loadIntradayMarketTopForSelectedDate();
@@ -34883,6 +34939,7 @@ def _build_web_view_news_observation_summary(
             run,
             evidence_rows_by_key.get(run.stock_code or run.stock_name, []),
             business_date=business_date,
+            collection_runs=runs_by_key.get(run.stock_code or run.stock_name, []),
         )
         for run in representative_runs
     ]
@@ -34942,9 +34999,12 @@ def _web_view_news_observation_summary_item(
     rows: list[ReportLinkedNewsEvidenceRecord],
     *,
     business_date: date,
+    collection_runs: list[NewsIntelligenceRun] | None = None,
 ) -> dict[str, object]:
+    collection_state = _web_view_news_collection_state(collection_runs or [run], rows)
     if not rows:
         return {
+            **collection_state,
             "available": True,
             "stock_name": run.stock_name,
             "stock_code": run.stock_code,
@@ -34978,6 +35038,7 @@ def _web_view_news_observation_summary_item(
         "top_title": badge["top_title"],
         "connection_label": badge["connection_label"],
         "connection_reason": badge["connection_reason"],
+        **collection_state,
     }
 
 
@@ -36302,6 +36363,7 @@ def _web_view_candidate_news_badges_by_code(
         if normalized_name and stock_code in stock_code_set
     }
     rows_by_code: dict[str, list[ReportLinkedNewsEvidenceRecord]] = {stock_code: [] for stock_code in stock_code_set}
+    runs_by_code: dict[str, list[NewsIntelligenceRun]] = {stock_code: [] for stock_code in stock_code_set}
     collected_without_evidence_by_code: dict[str, bool] = {stock_code: False for stock_code in stock_code_set}
     runs = repository.list_news_intelligence_runs(target_date=business_date, limit=100)
     for run in runs:
@@ -36310,28 +36372,59 @@ def _web_view_candidate_news_badges_by_code(
             target_stock_code = code_by_normalized_name.get(_web_view_normalize_news_identity(run.stock_name))
         if target_stock_code is None:
             continue
-        evidence_rows = repository.list_report_linked_news_evidence(run_id=run.run_id, limit=20)
-        if not evidence_rows:
-            collected_without_evidence_by_code[target_stock_code] = True
-        target_stock_name = normalized_names_by_code.get(target_stock_code, "")
-        rows_by_code.setdefault(target_stock_code, []).extend(
-            row
-            for row in evidence_rows
-            if row.stock_code == target_stock_code
-            or (target_stock_name and _web_view_normalize_news_identity(row.stock_name) == target_stock_name)
-        )
-    return {
-        stock_code: (
-            _web_view_candidate_news_badge(
-                rows,
-                business_date=business_date,
+        runs_by_code.setdefault(target_stock_code, []).append(run)
+    evidence_by_run_id: dict[str, list[ReportLinkedNewsEvidenceRecord]] = {}
+    for evidence_row in repository.list_report_linked_news_evidence_for_run_ids(
+        [run.run_id for runs_for_code in runs_by_code.values() for run in runs_for_code],
+        limit_per_run=20,
+    ):
+        evidence_by_run_id.setdefault(evidence_row.run_id, []).append(evidence_row)
+    for target_stock_code, runs_for_code in runs_by_code.items():
+        for run in runs_for_code:
+            evidence_rows = evidence_by_run_id.get(run.run_id, [])
+            if not evidence_rows:
+                collected_without_evidence_by_code[target_stock_code] = True
+                continue
+            target_stock_name = normalized_names_by_code.get(target_stock_code, "")
+            rows_by_code.setdefault(target_stock_code, []).extend(
+                row
+                for row in evidence_rows
+                if row.stock_code == target_stock_code
+                or (target_stock_name and _web_view_normalize_news_identity(row.stock_name) == target_stock_name)
             )
+    badges: dict[str, dict[str, object]] = {}
+    for stock_code, rows in rows_by_code.items():
+        badge = (
+            _web_view_candidate_news_badge(rows, business_date=business_date)
             if rows
             else _web_view_collected_empty_candidate_news_badge()
             if collected_without_evidence_by_code.get(stock_code)
             else _web_view_empty_candidate_news_badge()
         )
-        for stock_code, rows in rows_by_code.items()
+        if runs_by_code.get(stock_code):
+            badge.update(_web_view_news_collection_state(runs_by_code[stock_code], rows))
+        badges[stock_code] = badge
+    return badges
+
+
+def _web_view_news_collection_state(
+    runs: list[NewsIntelligenceRun],
+    rows: list[ReportLinkedNewsEvidenceRecord],
+) -> dict[str, object]:
+    if not runs:
+        return {
+            "collection_run_count": 0,
+            "latest_collection_at": None,
+            "latest_collection_status": "not_collected",
+            "daily_evidence_retained": False,
+        }
+    latest_run = max(runs, key=lambda run: (run.created_at, run.run_id))
+    latest_status = "matched" if int(latest_run.matched_count or 0) > 0 else "no_match"
+    return {
+        "collection_run_count": len(runs),
+        "latest_collection_at": latest_run.created_at.isoformat(),
+        "latest_collection_status": latest_status,
+        "daily_evidence_retained": latest_status == "no_match" and bool(rows),
     }
 
 

@@ -2,6 +2,25 @@
 
 Operator-only news intelligence and its future public-safe stored projection.
 
+## 2026-07-29 Daily Evidence Accumulation Plan
+
+### Goal
+
+Make same-day Top2 news evidence useful across the stored-data web-view and the existing 09:15, 12:00, and 15:15 market-briefing Telegram slots. A later empty collection must not hide a directly matched article collected earlier that day.
+
+### Delivery
+
+- Aggregate unique same-day evidence across all saved collection runs for each candidate.
+- Expose only public-safe counts, a compact article title, collection-run count, latest collection time/status, and whether earlier daily evidence remains after a latest no-match run.
+- Use that same stored projection in the web-view and the existing slot briefing builder; do not add a scheduler task, a send path, live fetch, or a new database write path.
+- Rename the Top2 residual-data line to `추가 확인` so the presence of a direct news item is not described as overall insufficient evidence.
+
+### Verification
+
+- A direct morning observation followed by a later empty run still renders `뉴스로 후보 강화`, `collection_run_count=3`, `latest_collection_status=no_match`, and `daily_evidence_retained=true`.
+- The market-briefing text identifies the section as daily accumulated news and carries the last collection state from the same shared summary.
+- Existing 09:15/12:00/15:15 scheduling, delivery dedupe, and public-safe message QA remain unchanged.
+
 ## Included sections
 - News Intelligence Contract
 

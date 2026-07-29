@@ -333,6 +333,38 @@ class StockMonitorRepository:
             ).fetchall()
         return [self._row_to_report_linked_news_evidence(row) for row in rows]
 
+    def list_report_linked_news_evidence_for_run_ids(
+        self,
+        run_ids: list[str] | tuple[str, ...],
+        *,
+        limit_per_run: int = 20,
+    ) -> list[ReportLinkedNewsEvidenceRecord]:
+        normalized_run_ids = tuple(run_id for run_id in run_ids if run_id)
+        if not normalized_run_ids:
+            return []
+        placeholders = ", ".join("?" for _ in normalized_run_ids)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                WITH ranked_evidence AS (
+                    SELECT
+                        *,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY run_id
+                            ORDER BY target_date DESC, created_at DESC, evidence_key
+                        ) AS row_number
+                    FROM report_linked_news_evidence
+                    WHERE run_id IN ({placeholders})
+                )
+                SELECT *
+                FROM ranked_evidence
+                WHERE row_number <= ?
+                ORDER BY target_date DESC, created_at DESC, evidence_key
+                """,
+                (*normalized_run_ids, limit_per_run),
+            ).fetchall()
+        return [self._row_to_report_linked_news_evidence(row) for row in rows]
+
     def save_toss_priority_quote_baselines(self, rows: list[TossPriorityQuoteBaseline]) -> None:
         with self.connect() as connection:
             with connection:
