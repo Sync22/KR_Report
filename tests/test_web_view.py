@@ -5715,11 +5715,14 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "briefing-watch-chips" not in html
     assert "briefing-check-points" in html
     assert "renderBriefingCheckPoints" in html
+    assert "reportFlowPoint" not in html
     assert "briefingTurnoverPair" in html
     assert "top_items" in html
     assert 'items.map((item) => `${esc(item.stock_name' not in html
     assert 'indices.map((item) => `${esc(item.index_series' not in html
     assert "renderDailyBriefing(data)" in html
+    assert "item?.data_scope" not in html
+    assert '${items.length ? "" : `<p class="news-observation-summary-connection">' in html
     assert "date-calendar-cell" in html
     assert "class=\"weekday\"" not in html
     assert "선택 날짜 KRX 시장 참고" in html

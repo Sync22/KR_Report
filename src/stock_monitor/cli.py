@@ -29624,11 +29624,8 @@ def _render_web_view_html() -> str:
       document.getElementById("briefing-investor-flow-sub").textContent = flowPair.label;
       renderIntradayMarketTopStatus(data?.market_commentary);
       renderIntradayMarketTopOverlap(data?.market_commentary);
-      const reportFlowPoint = reportCount > 0
-        ? `리포트 ${number(reportCount)}건 · ${number(stockCount)}종목`
-        : "리포트 흐름 없음";
       const multiPoint = multiCount > 0 ? `반복 언급 ${number(multiCount)}종목` : "";
-      renderBriefingCheckPoints([reportFlowPoint, multiPoint, ...(briefing.check_points || [])]);
+      renderBriefingCheckPoints([multiPoint, ...(briefing.check_points || [])]);
     }
 
     function renderSourceFreshnessSummary(summary) {
@@ -29662,12 +29659,10 @@ def _render_web_view_html() -> str:
       const coverage = item?.coverage_count !== undefined && item?.candidate_count !== undefined
         ? ` · 후보 ${number(item.coverage_count)}/${number(item.candidate_count)}`
         : "";
-      const scope = item?.data_scope ? ` · ${item.data_scope}` : "";
       return `<div class="source-freshness-item">
         <b>${esc(item?.label || item?.key || "-")}</b>
         <span class="source-freshness-status ${esc(sourceFreshnessStatusClass(status))}">${esc(sourceFreshnessStatusLabel(status))}</span>
         <span>${esc(reference)}${esc(count)}${esc(coverage)}</span>
-        <span>${esc(item?.source || "-")}${esc(scope)}</span>
       </div>`;
     }
 
@@ -29795,7 +29790,7 @@ def _render_web_view_html() -> str:
           ${observedAt ? `<span class="muted">${esc(observedAt)}</span>` : ""}
         </div>
         <p class="news-observation-summary-reason">${esc(reason)}</p>
-        <p class="news-observation-summary-connection">${esc(connection)}</p>
+        ${items.length ? "" : `<p class="news-observation-summary-connection">${esc(connection)}</p>`}
         <div class="news-observation-summary-meta">${metaChips.map((item) => `<span class="quality-chip">${esc(item)}</span>`).join("")}</div>
         ${groups.length ? `<div class="news-observation-summary-groups">${groups.map((group) => renderNewsObservationSummaryGroup(group.title, group.items)).join("")}</div>` : ""}
         ${titles.length ? `<ul class="news-observation-summary-titles">${titles.map((title) => `<li>${esc(title)}</li>`).join("")}</ul>` : ""}
