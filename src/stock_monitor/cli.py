@@ -28730,6 +28730,15 @@ def _render_web_view_html() -> str:
             <div class="source-freshness-item"><span>날짜를 선택하면 source별 저장 상태를 확인합니다.</span></div>
           </div>
         </div>
+        <div id="news-observation-summary" class="news-observation-summary" aria-live="polite">
+          <div class="news-observation-summary-head"><b>뉴스 관찰</b><span class="status-pill">저장 데이터</span></div>
+          <p class="news-observation-summary-reason">날짜를 선택하면 저장된 뉴스 관찰을 확인합니다.</p>
+          <p class="news-observation-summary-connection">우선 확인 후보와 함께 읽는 뉴스 근거입니다.</p>
+          <div class="news-observation-actions">
+            <button id="news-observation-collect" class="ghost-button" type="button" disabled>뉴스 근거 새로 확인</button>
+            <span id="news-observation-collect-status" class="muted">저장 뉴스 근거를 확인합니다.</span>
+          </div>
+        </div>
       </div>
 
       <div class="card span-12 main-priority-card" id="main-priority-card" data-view-panel="main">
@@ -28745,15 +28754,6 @@ def _render_web_view_html() -> str:
         </div>
         <p class="brief">오늘 볼 것: Top2 후보와 현재 확인 가능한 근거만 먼저 봅니다. 전일 KRX/수급/ETF는 참고 영역입니다.</p>
         <div id="main-priority-rows" class="main-priority-list"><span class="muted">날짜를 선택하세요.</span></div>
-        <div id="news-observation-summary" class="news-observation-summary" aria-live="polite">
-          <div class="news-observation-summary-head"><b>뉴스 관찰</b><span class="status-pill">저장 데이터</span></div>
-          <p class="news-observation-summary-reason">날짜를 선택하면 저장된 뉴스 관찰을 확인합니다.</p>
-          <p class="news-observation-summary-connection">우선 확인 후보와 함께 읽는 뉴스 근거입니다.</p>
-          <div class="news-observation-actions">
-            <button id="news-observation-collect" class="ghost-button" type="button" disabled>뉴스 근거 새로 확인</button>
-            <span id="news-observation-collect-status" class="muted">저장 뉴스 근거를 확인합니다.</span>
-          </div>
-        </div>
         <div id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden></div>
         <p class="main-priority-note">Top2 현재가는 Naver/Toss 조회값으로 갱신하며, 리포트·KRX·[12009] 수급은 저장 기준입니다.</p>
       </div>
@@ -30217,6 +30217,16 @@ def _render_web_view_html() -> str:
         items: (summary?.report_concentration?.items || []).slice(0, 6),
         variant: "report"
       });
+      const newsItems = Array.isArray(currentDailyData?.news_observation_summary?.items)
+        ? currentDailyData.news_observation_summary.items.slice(0, 4)
+        : [];
+      if (newsItems.length) {
+        blocks.push({
+          label: "당일 뉴스 근거",
+          items: newsItems,
+          variant: "news"
+        });
+      }
       blocks.push({
         label: "수급 참고",
         items: (summary?.flow_reference?.items || []).slice(0, 4),
@@ -30267,6 +30277,7 @@ def _render_web_view_html() -> str:
     function renderObservationItem(item, variant) {
       if (variant === "mood" && item && typeof item === "object") return renderObservationMoodItem(item);
       if (variant === "report" && item && typeof item === "object") return renderObservationReportItem(item);
+      if (variant === "news" && item && typeof item === "object") return renderObservationNewsItem(item);
       if (variant === "flow" && item && typeof item === "object") return renderObservationFlowItem(item);
       if (variant === "price" && item && typeof item === "object") return renderObservationPriceItem(item);
       if (item && typeof item === "object") {
@@ -30280,6 +30291,18 @@ def _render_web_view_html() -> str:
         return `<li>${esc(label)}</li>`;
       }
       return `<li>${esc(item)}</li>`;
+    }
+
+    function renderObservationNewsItem(item) {
+      const counts = `직접 ${number(item.direct_count || 0)} · 주의 ${number(item.caution_count || 0)} · 시장맥락 ${number(item.market_context_count || 0)}`;
+      const title = item.top_title || item.reason || "매칭 뉴스 없음";
+      return `<li>
+        <span class="observation-item-lines">
+          <span class="observation-item-title">${esc(item.stock_name || "-")} ${esc(item.stock_code || "")}</span>
+          <span class="observation-item-line">${esc(counts)}</span>
+          <span class="observation-item-line muted">${esc(title)}</span>
+        </span>
+      </li>`;
     }
 
     function renderObservationMoodItem(item) {
@@ -31051,15 +31074,8 @@ def _render_web_view_html() -> str:
           ? candidateCompactLabel(whyItems, 2)
           : "근거 보강 필요";
         const tossQuote = tossPriorityQuoteByCode.get(String(item?.stock_code || ""));
-        const valueProfile = item.value_profile || {};
-        const valueLine = valueProfile.value_label
-          ? `근거 상태: ${valueProfile.value_label}`
-          : "근거 상태: 저장 근거 확인";
-        const referenceLine = candidateCompactLabel(valueProfile.reference_notes, 4) || "근거 기준 확인 전";
         const targetRevisionLine = targetRevisionTrailLine(item);
-        const newsDigestLine = candidateNewsDigestLine(item.news_observation_badge);
-        const valueContextLine = candidateValueContextLine(item.value_context);
-        const currentEvidenceLine = topTwoCurrentEvidenceLine(item, tossQuote);
+        const currentEvidenceLine = topTwoCurrentEvidenceLine(item);
         const missingEvidenceLine = topTwoMissingEvidenceLine(item, tossQuote);
         const missingEvidenceLabel = "추가 확인:";
         return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
@@ -31067,26 +31083,18 @@ def _render_web_view_html() -> str:
           <span class="muted">관찰 사유: ${esc(why)}</span>
           <span class="top-two-evidence-line"><strong>현재 근거:</strong><span class="top-two-evidence-text">${esc(currentEvidenceLine)}</span></span>
           <span class="top-two-evidence-line"><strong>${esc(missingEvidenceLabel)}</strong><span class="top-two-evidence-text">${esc(missingEvidenceLine)}</span></span>
-          <span class="top-two-news-line"><strong>뉴스</strong><span class="top-two-news-text">${esc(newsDigestLine)}</span></span>
           <span class="target-revision-line">${esc(targetRevisionLine)}</span>
-          <span>${esc(valueLine)}</span>
-          <span>근거 기준: ${esc(referenceLine)}</span>
-          <span class="top-two-value-context"><strong>데이터 기준</strong><span>${esc(valueContextLine)}</span></span>
-          <span>장중 참고: ${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span>
         </button>`;
       }).join("")}</section>`;
     }
 
-    function topTwoCurrentEvidenceLine(item, tossQuote) {
+    function topTwoCurrentEvidenceLine(item) {
       const parts = [];
       if (item?.news_observation_badge?.available === true) {
         parts.push(candidateNewsDigestLine(item.news_observation_badge));
       }
       if (item?.intraday_reference?.available === true) {
         parts.push(`장중 ${candidateIntradayReferenceLabel(item.intraday_reference)}`);
-      }
-      if (topTwoTossQuoteIsCurrent(tossQuote)) {
-        parts.push(tossQuote);
       }
       return parts.length ? parts.join(" · ") : "현재 근거 부족";
     }
@@ -31246,6 +31254,7 @@ def _render_web_view_html() -> str:
       } finally {
         if (requestId === tossPriorityRequestId) {
           tossPriorityLoading = false;
+          document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(tossPriorityRows);
           updateTossPriorityRefreshButton();
         }
       }

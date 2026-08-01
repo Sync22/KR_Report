@@ -4331,7 +4331,7 @@ def test_web_view_html_renders_target_journey_in_stock_detail_only() -> None:
     assert "target_journey" not in top_two_body
 
 
-def test_web_view_html_renders_value_context_in_top_two_and_stock_detail() -> None:
+def test_web_view_html_renders_value_context_in_stock_detail_only() -> None:
     html = cli_module._render_web_view_html()
     stock_context_body = html.split("function renderStockContext(data)", 1)[1].split(
         "function renderStockValueContext(context)", 1
@@ -4340,8 +4340,8 @@ def test_web_view_html_renders_value_context_in_top_two_and_stock_detail() -> No
         "function updateTossPriorityRefreshButton()", 1
     )[0]
 
-    assert "candidateValueContextLine(item.value_context)" in top_two_body
-    assert "top-two-value-context" in top_two_body
+    assert "candidateValueContextLine(item.value_context)" not in top_two_body
+    assert "top-two-value-context" not in top_two_body
     assert "renderStockValueContext(data.value_context)" in stock_context_body
     assert "value-context-grid" in html
 
@@ -5561,7 +5561,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "function candidateNewsCompactLine(badge)" in html
     assert "function candidateNewsDigestLine(badge)" in html
     assert "item.value_profile || {}" in html
-    assert "근거 상태:" in html
+    assert "근거 상태:" not in html
     assert "판단 상태:" not in html
     assert "topTwoIntradayReferenceForRow(row, reference, firstMarketStatus)" in html
     assert "Naver 상위 미포함" in html
@@ -5575,21 +5575,24 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     top_two_body = html.split("function renderTopTwoReviewCandidates(rows)", 1)[1].split(
         "function updateTossPriorityRefreshButton", 1
     )[0]
-    assert top_two_body.index("관찰 사유:") < top_two_body.index("esc(valueLine)")
+    assert "esc(valueLine)" not in top_two_body
     assert "현재 근거:" in top_two_body
     assert "추가 확인:" in top_two_body
     assert "오늘 누적 뉴스" in html
-    assert "topTwoCurrentEvidenceLine(item, tossQuote)" in top_two_body
+    assert "topTwoCurrentEvidenceLine(item)" in top_two_body
     assert "topTwoMissingEvidenceLine(item, tossQuote)" in top_two_body
-    assert "top-two-news-line" in top_two_body
-    assert "candidateNewsDigestLine(item.news_observation_badge)" in top_two_body
-    assert top_two_body.index("esc(valueLine)") < top_two_body.index("근거 기준:")
-    assert top_two_body.index("근거 기준:") < top_two_body.index("candidateIntradayReferenceLabel")
-    assert "candidateCompactLabel(valueProfile.reference_notes, 4)" in top_two_body
+    assert "top-two-news-line" not in top_two_body
+    assert "top-two-value-context" not in top_two_body
+    assert "근거 기준:" not in top_two_body
+    assert "candidateCompactLabel(valueProfile.reference_notes, 4)" not in top_two_body
     assert "valueProfile.value_reason" not in top_two_body
     assert "esc(newsLine)" not in top_two_body
     assert "esc(tossBaselineLine)" not in top_two_body
     assert "candidate-news-badge" in html
+    toss_quote_body = html.split("async function loadTossPriorityQuotes(date)", 1)[1].split(
+        "async function loadPriorityCurrentQuotes", 1
+    )[0]
+    assert 'document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(tossPriorityRows);' in toss_quote_body
     assert ".candidate-news-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; border: 1px solid #e7d8bf;" in html
     assert "candidate-intraday-line" in html
     assert "확인 전" in html
@@ -5721,6 +5724,9 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert 'items.map((item) => `${esc(item.stock_name' not in html
     assert 'indices.map((item) => `${esc(item.index_series' not in html
     assert "renderDailyBriefing(data)" in html
+    assert html.index('id="news-observation-summary"') < html.index('id="main-priority-card"')
+    assert 'label: "당일 뉴스 근거"' in html
+    assert "renderObservationNewsItem" in html
     assert "item?.data_scope" not in html
     assert '${items.length ? "" : `<p class="news-observation-summary-connection">' in html
     assert "date-calendar-cell" in html

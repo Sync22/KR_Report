@@ -138,6 +138,12 @@ Disallowed examples:
 
 ## Web-View Data Semantics
 
+## Current Main And Watch Hierarchy
+
+- Main uses one brief for report flow, stored market reference, and saved news context; the Top2 cards show only the observation reason, current evidence, missing information, and target-price revision.
+- Watch keeps the wider candidate list, then combines each selected-date report concentration with the already stored direct/caution/market-context news counts. It does not perform a new source fetch.
+- Stock detail remains the place for the full date-basis and target-progress context, so the main cards do not repeat it.
+
 The user page is an archive/review surface, not a delivery mirror.
 
 Detailed data-quality rules are maintained in [data-governance.md](data-governance.md).
