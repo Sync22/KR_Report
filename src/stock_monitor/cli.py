@@ -30995,7 +30995,6 @@ def _render_web_view_html() -> str:
       updateTossPriorityRefreshButton();
       maybeAutoCollectNewsObservationForPriorityRows(tossPriorityRows);
       loadTossPriorityQuotes(tossPriorityDate);
-      loadPriorityCurrentQuotes(tossPriorityDate);
       if (activeViewTab === "market") loadTossMarketContext(tossPriorityDate);
       const renderCandidateCard = (item, index, offset = 0) => {
         const candidateIndex = index + offset;
@@ -31230,14 +31229,17 @@ def _render_web_view_html() -> str:
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         if (data.configured === false) {
           setTossQuoteNodes("Toss 현재가 설정 대기", "muted");
+          await loadPriorityCurrentQuotes(date);
           return;
         }
         const quotes = Array.isArray(data.quotes) ? data.quotes : [];
         const quoteBySymbol = new Map(quotes.map((item) => [String(item?.symbol || ""), item]));
+        let hasMissingTossQuote = false;
         tossPriorityRows.forEach((item) => {
           const code = String(item?.stock_code || "");
           const quote = quoteBySymbol.get(code);
           if (!quote) {
+            hasMissingTossQuote = true;
             setTossQuoteNode(code, "Toss 현재가 없음", "muted");
             return;
           }
@@ -31247,9 +31249,11 @@ def _render_web_view_html() -> str:
             : "Toss 현재가 확인";
           setTossQuoteNode(code, label, data.cache === "stale" ? "stale" : "");
         });
+        if (hasMissingTossQuote) await loadPriorityCurrentQuotes(date);
       } catch (error) {
         if (requestId === tossPriorityRequestId) {
           setTossQuoteNodes("Toss 현재가 확인 실패", "muted");
+          await loadPriorityCurrentQuotes(date);
         }
       } finally {
         if (requestId === tossPriorityRequestId) {
@@ -32143,7 +32147,6 @@ def _render_web_view_html() -> str:
     });
     document.getElementById("toss-priority-refresh").addEventListener("click", () => {
       loadTossPriorityQuotes(tossPriorityDate || selectedDate);
-      loadPriorityCurrentQuotes(tossPriorityDate || selectedDate);
     });
     document.getElementById("intraday-market-top-check").addEventListener("click", () => {
       loadIntradayMarketTopForSelectedDate();

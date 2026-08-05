@@ -5593,6 +5593,12 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
         "async function loadPriorityCurrentQuotes", 1
     )[0]
     assert 'document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(tossPriorityRows);' in toss_quote_body
+    assert "await loadPriorityCurrentQuotes(date);" in toss_quote_body
+    priority_load_body = html.split("tossPriorityRows = priorityRows.slice(0, 2);", 1)[1].split(
+        "const renderCandidateCard", 1
+    )[0]
+    assert "loadTossPriorityQuotes(tossPriorityDate);" in priority_load_body
+    assert "loadPriorityCurrentQuotes(tossPriorityDate);" not in priority_load_body
     assert ".candidate-news-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; border: 1px solid #e7d8bf;" in html
     assert "candidate-intraday-line" in html
     assert "확인 전" in html
