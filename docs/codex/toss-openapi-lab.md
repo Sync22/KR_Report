@@ -54,7 +54,7 @@ Use official Toss Securities documents first:
 | <https://openapi.tossinvest.com/openapi-docs/latest/api-reference/README.md> | Markdown API reference index. |
 | <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json> | Canonical OpenAPI document for exact endpoints and schemas. |
 
-Observed official-doc facts as of `2026-07-28` (`1.2.5`, `27` paths, `30`
+Observed official-doc facts as of `2026-08-06` (`1.2.9`, `27` paths, `30`
 operations, `72` schemas):
 
 - Base server is `https://openapi.tossinvest.com`.
@@ -301,8 +301,8 @@ This is not an approval to call Toss runtime APIs. The active safety contract is
 
 | Item | Value |
 | --- | --- |
-| Snapshot date | `2026-07-28` |
-| Official spec version | `1.2.5` |
+| Snapshot date | `2026-08-06` |
+| Official spec version | `1.2.9` |
 | OpenAPI document version | `3.1.0` |
 | Base server | `https://openapi.tossinvest.com` |
 | Paths | 27 |
@@ -569,6 +569,8 @@ This inventory was built from official documentation endpoints only:
   method/path/operationId entries and the `72` schema count unchanged.
 - The `2026-07-28` `1.2.5` recheck again kept all `30` documented
   method/path/operationId entries and the `72` schema count unchanged.
+- The `2026-08-06` `1.2.9` recheck again kept all `30` documented
+  method/path/operationId entries and the `72` schema count unchanged.
 
 
 <!-- Merged from: docs/codex/toss-openapi-lab.md -->
@@ -601,7 +603,7 @@ invalidates the client's previously issued token.
 
 ## Official Basis
 
-Verified on `2026-07-28` against:
+Verified on `2026-08-06` against:
 
 - <https://developers.tossinvest.com/docs>
 - <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json>
@@ -611,7 +613,7 @@ Current official spec snapshot:
 | Item | Value |
 | --- | --- |
 | OpenAPI document version | `3.1.0` |
-| Official spec version | `1.2.5` |
+| Official spec version | `1.2.9` |
 | Paths | `27` |
 | Operations | `30` |
 | Schemas | `72` |
