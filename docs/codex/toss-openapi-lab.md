@@ -39,8 +39,9 @@ Canonical project boundaries still live in:
 
 This document supports those canonical docs. It does not override them.
 
-The full official endpoint and schema inventory is maintained in
-[toss-openapi-official-api-inventory.md]({PROJECT_ROOT}/docs/codex/toss-openapi-lab.md).
+The official `openapi.json` remains the full endpoint and schema inventory.
+This document tracks every operation identity and only the schema handling
+needed for this project's approved and denied surfaces.
 
 ## Official Source Basis
 
@@ -115,7 +116,7 @@ Allowed before key issuance:
 
 ## Pre-Key Forbidden Work
 
-Forbidden outside the explicitly promoted top-2 current-price path:
+Forbidden outside the explicitly promoted read-only projections:
 
 - Reading general `.env` or any non-dedicated secret store for Toss credentials.
 - Entering, storing, logging, or committing a real `client_id`,
@@ -123,16 +124,18 @@ Forbidden outside the explicitly promoted top-2 current-price path:
 - Calling `POST /oauth2/token` except through the promoted read-only
   in-memory token owner after `.env.toss-openapi` live opt-in.
 - Calling any Toss `/api/v1/...` runtime endpoint except allowlisted
-  market/reference endpoints, currently `prices` for the promoted `web-view`
-  top-2 path and `stocks`/`market-calendar-kr` for manual probes.
+  market/reference endpoints: `prices` for the promoted `web-view` top-2
+  path; fixed Top20 ranking and KOSPI/KOSDAQ aggregate investor-trading
+  references for the promoted market-context projection; and
+  `stocks`/`market-calendar-kr` for manual probes.
 - Capturing real account, holding, order, conditional-order, buying-power,
   sellable-quantity, or commission data.
 - Writing Toss data into production SQLite.
 - Registering a standalone Toss scheduler task beyond the approved 20:00 baseline task.
 - Sending Toss-derived Telegram messages outside the approved `09:15`/`12:00`/`15:15` market-briefing slots.
 - Connecting Toss to `admin-gui` or any scheduler flow other than the approved market-briefing slots and 20:00 baseline task.
-- Connecting Toss to public `web-view` beyond the top-2 current-price
-  projection described in this contract.
+- Connecting Toss to public `web-view` beyond the bounded top-2 current-price
+  and latest-date Top20 market-context projections described in this contract.
 - Implementing order or conditional-order creation, modification,
   cancellation, automatic execution, or routing.
 - Implementing public numeric scores, investment grades, buy/sell wording,
@@ -201,16 +204,18 @@ Current post-key branch status:
 - Candidate 1, the bounded portion of Candidate 2, and the promoted
   `web-view` top-2 current-price projection are implemented.
 - `toss-openapi-readonly-probe` is no-network by default.
-- The only live allowlisted operations are `getStocks`,
-  `getKrMarketCalendar`, and `getPrices`.
+- The manual CLI probe live allowlist is `getStocks`,
+  `getKrMarketCalendar`, and `getPrices`; the separate promoted market-context
+  projection uses only its fixed ranking and aggregate investor-trading queries.
 - Live use requires local credentials, env opt-in, `--live`, and
   `--confirm-token-reissue`.
 - Account, asset, order-info/history, and order operations remain absent.
-- The only default/public `web-view` Toss route is the top-2 current-price
-  projection. It uses server-derived candidate symbols, latest stored date
-  only, in-memory token/cache, and no DB writes.
-- No Toss value is connected to `admin-gui`, Telegram, scheduler, or
-  production DB.
+- Default/public `web-view` Toss projections are the top-2 current-price
+  reference and latest-date Top20 market context. Both are server-derived,
+  bounded, latest-date only, memory-cached, and do not write the DB.
+- No Toss value is connected to `admin-gui`. Telegram and scheduler use remain
+  limited to the approved market-briefing slots; Top20 capture remains opt-in,
+  development-hold, and unregistered by default.
 - See
   [toss-openapi-postkey-readonly-lab-runbook.md]({PROJECT_ROOT}/docs/codex/toss-openapi-lab.md).
 
@@ -279,8 +284,9 @@ Pre-key preparation is complete when:
   read-only profile.
 - No secret values are read, written, logged, or committed.
 - No production DB, scheduler, Telegram, or `admin-gui` connection exists.
-- The only public `web-view` connection is the approved top-2 current-price
-  projection with no account/order data and no arbitrary symbol query.
+- Public `web-view` connections are limited to the approved top-2
+  current-price and latest-date Top20 market-context projections, with no
+  account/order data, candidate reordering, or arbitrary symbol query.
 
 
 <!-- Merged from: docs/codex/toss-openapi-lab.md -->
@@ -329,7 +335,7 @@ Official sources:
 | Refresh token | Not provided. Reissue through the token endpoint. | Token lifecycle must be designed post-key. |
 | Active token count | One valid access token per client; reissue invalidates previous token. | Avoid background token refresh by default. |
 | Account header | `X-Tossinvest-Account` uses `accountSeq` from `GET /api/v1/accounts` | Sensitive operational identifier. Operator-only. |
-| Public surface | Auth/account/order values may not reach `web-view`; only bounded top-2 market price projection is approved. | Enforce through tests before any surface connection. |
+| Public surface | Auth/account/order values may not reach `web-view`; only bounded top-2 market-price and latest-date Top20 market-context projections are approved. | Enforce through tests before any surface connection. |
 
 ## Rate Limits
 
@@ -378,7 +384,7 @@ Default retry policy for any future lab client:
 | Group | Method | Path | Operation | Required account header | Main params/body | Rate group | Default project stance |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Auth | `POST` | `/oauth2/token` | `issueOAuth2Token` | No | form: `grant_type`, `client_id`, `client_secret` | `AUTH` | Document-only before keys. |
-| Market Data | `GET` | `/api/v1/prices` | `getPrices` | No | `symbols`, max 200 comma-separated | `MARKET_DATA` | Future read-only lab allowlist. |
+| Market Data | `GET` | `/api/v1/prices` | `getPrices` | No | `symbols`, max 200 comma-separated | `MARKET_DATA` | Promoted only for bounded top-2 `web-view` current-price reference. |
 | Market Data | `GET` | `/api/v1/orderbook` | `getOrderbook` | No | `symbol` | `MARKET_DATA` | Future read-only lab allowlist, top-2 only. |
 | Market Data | `GET` | `/api/v1/trades` | `getTrades` | No | `symbol`, optional `count` max 50 | `MARKET_DATA` | Future read-only lab allowlist, top-2 only. |
 | Market Data | `GET` | `/api/v1/price-limits` | `getPriceLimit` | No | `symbol` | `MARKET_DATA` | Future read-only lab allowlist. |
@@ -388,10 +394,10 @@ Default retry policy for any future lab client:
 | Market Info | `GET` | `/api/v1/exchange-rate` | `getExchangeRate` | No | `baseCurrency`, `quoteCurrency`, optional `dateTime` | `MARKET_INFO` | Future reference only; not order FX. |
 | Market Info | `GET` | `/api/v1/market-calendar/KR` | `getKrMarketCalendar` | No | optional `date` | `MARKET_INFO` | Future calendar comparison candidate. |
 | Market Info | `GET` | `/api/v1/market-calendar/US` | `getUsMarketCalendar` | No | optional `date` | `MARKET_INFO` | Future only if US scope is approved. |
-| Ranking | `GET` | `/api/v1/rankings` | `getRankings` | No | `type`, `marketCountry`, `duration`, optional caution exclusion/count | `RANKING` | Documentation only. Ranking basis must not overwrite candidate priority. |
+| Ranking | `GET` | `/api/v1/rankings` | `getRankings` | No | `type`, `marketCountry`, `duration`, optional caution exclusion/count | `RANKING` | Promoted only as fixed `MARKET_TRADING_AMOUNT / KR / realtime / count=20` market context; never changes candidate priority. |
 | Market Indicators | `GET` | `/api/v1/market-indicators/prices` | `getMarketIndicatorPrices` | No | `symbols` | `MARKET_INDICATOR` | Future market-context lab only. |
 | Market Indicators | `GET` | `/api/v1/market-indicators/{symbol}/candles` | `getMarketIndicatorCandles` | No | path `symbol`, `interval`, `count`, optional `before` | `MARKET_INDICATOR_CHART` | Future market-context lab only; no broad backfill. |
-| Market Indicators | `GET` | `/api/v1/market-indicators/{symbol}/investor-trading` | `getMarketIndicatorInvestorTrading` | No | path `symbol`, `interval`, `count`, optional `until` | `MARKET_INDICATOR` | Future aggregate KOSPI/KOSDAQ context only; not a replacement for stock-level KRX flow. |
+| Market Indicators | `GET` | `/api/v1/market-indicators/{symbol}/investor-trading` | `getMarketIndicatorInvestorTrading` | No | path `symbol`, `interval`, `count`, optional `until` | `MARKET_INDICATOR` | Promoted only as fixed previous-business-day KOSPI/KOSDAQ aggregate context; never replaces stock-level KRX flow. |
 | Account | `GET` | `/api/v1/accounts` | `getAccounts` | No | none | `ACCOUNT` | Operator-only lab candidate; never public. |
 | Asset | `GET` | `/api/v1/holdings` | `getHoldings` | Yes | optional `symbol` | `ASSET` | Operator-only lab; never public. |
 | Order History | `GET` | `/api/v1/orders` | `getOrders` | Yes | required `status`, optional `symbol/from/to/cursor/limit` | `ORDER_HISTORY` | Execution-adjacent, operator-only lab at most. |
@@ -530,11 +536,11 @@ narrow. Future patches should choose one profile explicitly.
 
 | Profile | Includes | Excludes | Default state |
 | --- | --- | --- | --- |
-| `docs_only` | Full endpoint and schema inventory | All runtime calls | Current default. |
+| `docs_only` | Full operation identity inventory and canonical schema reference | All runtime calls | Current default. |
 | `market_reference_lab` | `prices`, `stocks`, `stock warnings`, `market-calendar/KR`, maybe `trades` for freshness | Account, holdings, order info/history, order POST | Candidate after keys and approval. |
 | `operator_account_lab` | `accounts`, maybe `holdings` with redaction | Public surfaces, DB write, Telegram, scheduler, order POST | Not approved now. |
 | `execution_review_lab` | Order docs, order fixture schemas, safety tests | Real order create/modify/cancel | Separate contract required. |
-| `public_projection` | Source/freshness labels and current prices for server-derived top-2 observation candidates | Account, holdings, orders, buying power, sellable quantity, commissions, score/trading call, arbitrary public symbols | Approved only for bounded `web-view` top-2 current-price projection. |
+| `public_projection` | Source/freshness labels and current prices for server-derived top-2 observation candidates, plus bounded latest-date Top20 market context | Account, holdings, orders, buying power, sellable quantity, commissions, score/trading call, arbitrary public symbols | Approved only for bounded `web-view` top-2 current-price and market-context projections. |
 
 ## Cut-Down Rules
 
@@ -571,6 +577,10 @@ This inventory was built from official documentation endpoints only:
   method/path/operationId entries and the `72` schema count unchanged.
 - The `2026-08-06` `1.2.9` recheck again kept all `30` documented
   method/path/operationId entries and the `72` schema count unchanged.
+- The detailed `2026-08-06` audit also confirmed the 13 official tags,
+  OAuth2 client-credentials scheme, and all documented operation identities;
+  it corrected stale wording so the promoted Top20 market-context projection
+  is not misdescribed as an unapproved public route.
 
 
 <!-- Merged from: docs/codex/toss-openapi-lab.md -->
@@ -801,7 +811,8 @@ python -m stock_monitor web-view --host 127.0.0.1 --port 8792 --no-open
 - Labels the value as `Toss ?꾩옱媛`; it is not the selected historical date's price.
 - Reuses the existing `?곗씠??湲곗?` section to show `ready/current/disabled` and cache
   state after a successful quote response; it does not add a separate Toss screen.
-- The normal `web-view` command exposes only the bounded top-2 quote reference route.
+- This projection exposes only the bounded top-2 quote reference route; the
+  separate Top20 market-context projection remains subject to its own contract.
 - Exposes no account, order, DB write, scheduler, Telegram, or admin control.
 - It is public-safe only as current-price reference beside server-derived priority candidates.
 
