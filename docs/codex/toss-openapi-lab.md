@@ -55,8 +55,8 @@ Use official Toss Securities documents first:
 | <https://openapi.tossinvest.com/openapi-docs/latest/api-reference/README.md> | Markdown API reference index. |
 | <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json> | Canonical OpenAPI document for exact endpoints and schemas. |
 
-Observed official-doc facts as of `2026-08-06` (`1.2.9`, `27` paths, `30`
-operations, `72` schemas):
+Observed official-doc facts as of `2026-08-08` (`1.2.13`, `32` paths, `35`
+operations, `89` schemas):
 
 - Base server is `https://openapi.tossinvest.com`.
 - Authentication uses OAuth 2.0 Client Credentials Grant.
@@ -147,7 +147,7 @@ Forbidden outside the explicitly promoted read-only projections:
 | --- | --- | --- |
 | Auth | `POST /oauth2/token` | Document only. No call before keys and explicit approval. |
 | Market Data | `GET /api/v1/prices`, `orderbook`, `trades`, `price-limits`, `candles` | `prices` only is allowlisted for top-2 web-view current price. Other market-data endpoints remain lab candidates. |
-| Stock Info | `GET /api/v1/stocks`, `GET /api/v1/stocks/{symbol}/warnings` | Future read-only lab allowlist after token review. |
+| Stock Info | `GET /api/v1/stocks`, `GET /api/v1/stocks/{symbol}/warnings`, and five daily trading-trend endpoints | Document only for the new trading-trend endpoints; source-semantics review is required before any lab allowlist. |
 | Market Info | `GET /api/v1/exchange-rate`, `GET /api/v1/market-calendar/KR`, `GET /api/v1/market-calendar/US` | Future read-only lab allowlist after token review. |
 | Ranking | `GET /api/v1/rankings` | Fixed `MARKET_TRADING_AMOUNT / KR / realtime / count=20` is allowlisted for the latest-date Top20 market-context projection only. Other ranking queries remain documentation only. |
 | Market Indicators | `GET /api/v1/market-indicators/prices`, `.../{symbol}/candles`, `.../{symbol}/investor-trading` | Fixed KOSPI/KOSDAQ one-day aggregate investor-trading references are allowlisted for the Top20 market-context projection. Other indicator queries remain documentation only; this is not stock-level KRX flow. |
@@ -307,13 +307,13 @@ This is not an approval to call Toss runtime APIs. The active safety contract is
 
 | Item | Value |
 | --- | --- |
-| Snapshot date | `2026-08-06` |
-| Official spec version | `1.2.9` |
+| Snapshot date | `2026-08-08` |
+| Official spec version | `1.2.13` |
 | OpenAPI document version | `3.1.0` |
 | Base server | `https://openapi.tossinvest.com` |
-| Paths | 27 |
-| Operations | 30 |
-| Schema count | 72 |
+| Paths | 32 |
+| Operations | 35 |
+| Schema count | 89 |
 | Auth model | OAuth 2.0 Client Credentials |
 | Runtime calls made during inventory | None |
 | Keys/accounts/tokens used | None |
@@ -391,6 +391,11 @@ Default retry policy for any future lab client:
 | Market Data | `GET` | `/api/v1/candles` | `getCandles` | No | `symbol`, `interval=1m|1d`, `count` max 200, `before`, `adjusted` | `MARKET_DATA_CHART` | Future lab only; no broad backfill. |
 | Stock Info | `GET` | `/api/v1/stocks` | `getStocks` | No | `symbols`, max 200 comma-separated | `STOCK` | Future reference allowlist. |
 | Stock Info | `GET` | `/api/v1/stocks/{symbol}/warnings` | `getStockWarnings` | No | path `symbol` | `STOCK` | Future caution/reference allowlist. |
+| Stock Info | `GET` | `/api/v1/stocks/{symbol}/investor-trading` | `getStockInvestorTrading` | No | path KR `symbol`, optional `count` max 100/`until` | `STOCK_TRADING_TREND` | Document only. Daily stock-level trend; source semantics must be reviewed before any lab use. |
+| Stock Info | `GET` | `/api/v1/stocks/{symbol}/program-trades` | `getStockProgramTrades` | No | path KR `symbol`, optional `count` max 100/`until` | `STOCK_TRADING_TREND` | Document only. Daily stock-level trend; source semantics must be reviewed before any lab use. |
+| Stock Info | `GET` | `/api/v1/stocks/{symbol}/short-selling` | `getStockShortSelling` | No | path KR `symbol`, optional `count` max 100/`until` | `STOCK_TRADING_TREND` | Document only. Daily stock-level trend; source semantics must be reviewed before any lab use. |
+| Stock Info | `GET` | `/api/v1/stocks/{symbol}/credit-trades` | `getStockCreditTrades` | No | path KR `symbol`, optional `count` max 100/`until` | `STOCK_TRADING_TREND` | Document only. Daily stock-level trend; source semantics must be reviewed before any lab use. |
+| Stock Info | `GET` | `/api/v1/stocks/{symbol}/securities-lending` | `getStockSecuritiesLending` | No | path KR `symbol`, optional `count` max 100/`until` | `STOCK_TRADING_TREND` | Document only. Daily stock-level trend; source semantics must be reviewed before any lab use. |
 | Market Info | `GET` | `/api/v1/exchange-rate` | `getExchangeRate` | No | `baseCurrency`, `quoteCurrency`, optional `dateTime` | `MARKET_INFO` | Future reference only; not order FX. |
 | Market Info | `GET` | `/api/v1/market-calendar/KR` | `getKrMarketCalendar` | No | optional `date` | `MARKET_INFO` | Future calendar comparison candidate. |
 | Market Info | `GET` | `/api/v1/market-calendar/US` | `getUsMarketCalendar` | No | optional `date` | `MARKET_INFO` | Future only if US scope is approved. |
@@ -581,6 +586,11 @@ This inventory was built from official documentation endpoints only:
   OAuth2 client-credentials scheme, and all documented operation identities;
   it corrected stale wording so the promoted Top20 market-context projection
   is not misdescribed as an unapproved public route.
+- The `2026-08-08` `1.2.13` recheck expanded the spec to `32` paths, `35`
+  operations, and `89` schemas. It added five KR stock-level daily trading-trend
+  reads: investor trading, program trades, short selling, credit trades, and
+  securities lending. They remain documentation-only pending a dedicated
+  source-semantics review; no runtime call or surface expansion is approved.
 
 
 <!-- Merged from: docs/codex/toss-openapi-lab.md -->
@@ -613,7 +623,7 @@ invalidates the client's previously issued token.
 
 ## Official Basis
 
-Verified on `2026-08-06` against:
+Verified on `2026-08-08` against:
 
 - <https://developers.tossinvest.com/docs>
 - <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json>
@@ -623,10 +633,10 @@ Current official spec snapshot:
 | Item | Value |
 | --- | --- |
 | OpenAPI document version | `3.1.0` |
-| Official spec version | `1.2.9` |
-| Paths | `27` |
-| Operations | `30` |
-| Schemas | `72` |
+| Official spec version | `1.2.13` |
+| Paths | `32` |
+| Operations | `35` |
+| Schemas | `89` |
 
 ## Local Key Input
 
