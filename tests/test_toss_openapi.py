@@ -99,13 +99,115 @@ def test_toss_market_context_endpoints_are_fixed_and_not_probe_selectors() -> No
     ranking = resolve_toss_market_context_endpoint("ranking-kr-top20")
     kospi_flow = resolve_toss_market_context_endpoint("market-investor-kospi")
     kosdaq_flow = resolve_toss_market_context_endpoint("market-investor-kosdaq")
+    priority_investor = resolve_toss_market_context_endpoint("priority-investor-trading")
 
     assert ranking.path == "/api/v1/rankings"
     assert ranking.rate_group == "RANKING"
     assert kospi_flow.path == "/api/v1/market-indicators/KOSPI/investor-trading"
     assert kosdaq_flow.path == "/api/v1/market-indicators/KOSDAQ/investor-trading"
+    assert priority_investor.path == "/api/v1/stocks/{symbol}/investor-trading"
+    assert priority_investor.rate_group == "STOCK_TRADING_TREND"
     with pytest.raises(TossOpenApiSafetyError, match="not allowed"):
         resolve_toss_readonly_endpoint("ranking-kr-top20")
+
+
+def test_toss_priority_quote_provider_adds_same_day_investor_trading_context() -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    def fetch(**kwargs):
+        endpoint = kwargs["endpoint"]
+        params = kwargs["params"]
+        calls.append((endpoint.key, params))
+        if endpoint.key == "prices":
+            return SimpleNamespace(
+                result=[{"symbol": "005930", "lastPrice": "72000", "currency": "KRW"}],
+                rate_limit={"limit": "10"},
+            )
+        return SimpleNamespace(
+            result={
+                "nextUntil": "2026-07-09",
+                "records": [
+                    {
+                        "date": "2026-07-10",
+                        "updatedAt": "2026-07-10T10:15:00+09:00",
+                        "foreigner": {"buyVolume": "100", "sellVolume": "40", "netBuyVolume": "60"},
+                        "institution": {"buyVolume": "30", "sellVolume": "50", "netBuyVolume": "-20"},
+                    }
+                ],
+            },
+            rate_limit={"limit": "10"},
+        )
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        endpoint=resolve_toss_readonly_endpoint("prices"),
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch,
+    )
+
+    payload = provider.get_quotes(
+        priority_date=date(2026, 7, 10),
+        symbols=("005930",),
+        include_investor_trading=True,
+    )
+
+    assert calls == [
+        ("prices", {"symbols": "005930"}),
+        ("priority-investor-trading", {"symbol": "005930", "count": "1", "until": "2026-07-10"}),
+    ]
+    assert payload["investor_trading"] == {
+        "reference_date": "2026-07-10",
+        "available": True,
+        "items": [
+            {
+                "symbol": "005930",
+                "business_date": "2026-07-10",
+                "updated_at": "2026-07-10T10:15:00+09:00",
+                "foreigner_net_buy_volume": 60,
+                "institution_net_buy_volume": -20,
+            }
+        ],
+    }
+
+
+def test_toss_priority_quote_provider_keeps_investor_trading_off_outside_web_view() -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    calls: list[str] = []
+
+    def fetch(**kwargs):
+        calls.append(kwargs["endpoint"].key)
+        if kwargs["endpoint"].key != "prices":
+            raise AssertionError("investor trading must stay off outside the web-view route")
+        return SimpleNamespace(result=[], rate_limit={})
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        endpoint=resolve_toss_readonly_endpoint("prices"),
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch,
+    )
+
+    payload = provider.get_quotes(priority_date=date(2026, 7, 10), symbols=("005930",))
+
+    assert calls == ["prices"]
+    assert payload["investor_trading"] == {
+        "reference_date": "2026-07-10",
+        "available": False,
+        "items": [],
+    }
 
 
 def test_toss_market_context_provider_uses_fixed_queries_and_keeps_top_two_ordering_unchanged() -> None:
@@ -381,6 +483,38 @@ def test_fetch_toss_readonly_endpoint_uses_bearer_without_account_header() -> No
     assert response.rate_limit == {"limit": "10", "remaining": "9", "reset": "1"}
 
 
+def test_fetch_toss_priority_investor_trading_uses_fixed_symbol_path_and_query() -> None:
+    seen: dict[str, object] = {}
+
+    def fake_urlopen(http_request, timeout: float):  # noqa: ANN001
+        seen["url"] = http_request.full_url
+        seen["method"] = http_request.get_method()
+        seen["headers"] = dict(http_request.header_items())
+        return FakeResponse(
+            b'{"result":{"nextUntil":"2026-07-09","records":[{"date":"2026-07-10",'
+            b'"updatedAt":"2026-07-10T10:15:00+09:00","foreigner":{"buyVolume":"100",'
+            b'"sellVolume":"40","netBuyVolume":"60"},"institution":{"buyVolume":"30",'
+            b'"sellVolume":"50","netBuyVolume":"-20"}}]}}'
+        )
+
+    response = fetch_toss_readonly_endpoint(
+        base_url=TOSS_OPENAPI_BASE_URL,
+        access_token="token-value",
+        endpoint=resolve_toss_market_context_endpoint("priority-investor-trading"),
+        params={"symbol": "005930", "count": "1", "until": "2026-07-10"},
+        timeout_seconds=12,
+        live_enabled=True,
+        urlopen=fake_urlopen,
+    )
+
+    assert seen["url"] == (
+        "https://openapi.tossinvest.com/api/v1/stocks/005930/investor-trading?count=1&until=2026-07-10"
+    )
+    assert seen["method"] == "GET"
+    assert "x-tossinvest-account" not in {str(key).lower() for key in seen["headers"]}
+    assert response.result["records"][0]["foreigner"]["netBuyVolume"] == "60"
+
+
 def test_fetch_toss_readonly_endpoint_preserves_safe_http_error_metadata() -> None:
     def failing_urlopen(*_args, **_kwargs):
         raise error.HTTPError(
@@ -644,6 +778,8 @@ def test_toss_priority_quote_provider_concurrent_401s_reuse_the_single_reissued_
         return SimpleNamespace(access_token=token)
 
     def fetch_quotes(**kwargs):
+        if kwargs["endpoint"].key != "prices":
+            return SimpleNamespace(result={"records": []}, rate_limit={})
         token = kwargs["access_token"]
         symbols = kwargs["params"]["symbols"]
         fetch_calls.append((token, symbols))
@@ -687,6 +823,8 @@ def test_toss_priority_quote_provider_waiter_does_not_receive_expired_stale_cach
     calls = {"count": 0}
 
     def fetch_quotes(**_kwargs):
+        if _kwargs["endpoint"].key != "prices":
+            return SimpleNamespace(result={"records": []}, rate_limit={})
         calls["count"] += 1
         if calls["count"] == 1:
             return SimpleNamespace(result=[], rate_limit={})

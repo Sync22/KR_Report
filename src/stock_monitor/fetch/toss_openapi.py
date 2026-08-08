@@ -52,6 +52,11 @@ _INVESTOR_TRADING_RECORD_FIELDS = frozenset(
     {"date", "updatedAt", "individual", "foreigner", "institution", "otherCorporation"}
 )
 _INVESTOR_TRADING_AMOUNT_FIELDS = frozenset({"buyAmount", "sellAmount"})
+_STOCK_INVESTOR_TRADING_RECORD_FIELDS = frozenset(
+    {"date", "updatedAt", "individual", "foreigner", "institution", "otherCorporation", "foreignerHolding", "cfd"}
+)
+_INVESTOR_TRADING_VOLUME_FIELDS = frozenset({"buyVolume", "sellVolume", "netBuyVolume"})
+_STOCK_INSTITUTION_TRADING_VOLUME_FIELDS = _INVESTOR_TRADING_VOLUME_FIELDS | frozenset({"breakdown"})
 
 
 class TossOpenApiSafetyError(RuntimeError):
@@ -84,6 +89,7 @@ class TossReadonlyEndpoint:
     requires_symbols: bool = False
     accepts_date: bool = False
     fixed_params: tuple[tuple[str, str], ...] = ()
+    path_symbol: bool = False
 
 
 @dataclass(frozen=True)
@@ -158,6 +164,14 @@ _MARKET_CONTEXT_ENDPOINTS = (
         "/api/v1/market-indicators/KOSDAQ/investor-trading",
         "MARKET_INDICATOR",
         fixed_params=(("interval", "1d"), ("count", "1")),
+    ),
+    TossReadonlyEndpoint(
+        "priority-investor-trading",
+        "getStockInvestorTrading",
+        "/api/v1/stocks/{symbol}/investor-trading",
+        "STOCK_TRADING_TREND",
+        fixed_params=(("count", "1"),),
+        path_symbol=True,
     ),
 )
 _FIXED_READONLY_ENDPOINTS = _PROBE_READONLY_ENDPOINTS + _MARKET_CONTEXT_ENDPOINTS
@@ -300,9 +314,15 @@ def fetch_toss_readonly_endpoint(
     _validate_fetch_params(endpoint, params)
     if not access_token:
         raise TossOpenApiSafetyError("A Toss OpenAPI access token is required for a live probe.")
-    url = f"{TOSS_OPENAPI_BASE_URL}{endpoint.path}"
-    if params:
-        url = f"{url}?{parse.urlencode(params)}"
+    path = endpoint.path
+    query_params = params
+    if endpoint.path_symbol:
+        symbol = params["symbol"]
+        path = path.replace("{symbol}", parse.quote(symbol, safe=""))
+        query_params = {key: value for key, value in params.items() if key != "symbol"}
+    url = f"{TOSS_OPENAPI_BASE_URL}{path}"
+    if query_params:
+        url = f"{url}?{parse.urlencode(query_params)}"
     http_request = request.Request(
         url,
         method="GET",
@@ -326,6 +346,7 @@ def fetch_toss_readonly_endpoint(
         "ranking-kr-top20",
         "market-investor-kospi",
         "market-investor-kosdaq",
+        "priority-investor-trading",
     } else list
     if not isinstance(result, expected_type):
         raise RuntimeError(f"Toss OpenAPI {endpoint.key} response had an unexpected shape.")
@@ -428,6 +449,15 @@ def _validate_fetch_params(endpoint: TossReadonlyEndpoint, params: dict[str, str
                 date.fromisoformat(expected["until"])
             except ValueError:
                 raise TossOpenApiSafetyError("Toss market investor context requires an ISO reference date.") from None
+        if endpoint.key == "priority-investor-trading":
+            expected["symbol"] = params.get("symbol", "")
+            expected["until"] = params.get("until", "")
+            if not _SYMBOL_PATTERN.fullmatch(expected["symbol"]):
+                raise TossOpenApiSafetyError("Toss priority investor context requires a six-digit Korean stock code.")
+            try:
+                date.fromisoformat(expected["until"])
+            except ValueError:
+                raise TossOpenApiSafetyError("Toss priority investor context requires an ISO reference date.") from None
         if params != expected:
             raise TossOpenApiSafetyError(f"Toss endpoint '{endpoint.key}' received a noncanonical fixed query.")
         return
@@ -497,6 +527,36 @@ def _validate_readonly_result(endpoint: TossReadonlyEndpoint, result: object) ->
                         amount_object,
                         nested_fields=frozenset(),
                         label=f"market investor trading record.{key}",
+                    )
+        return
+    if endpoint.key == "priority-investor-trading":
+        investor = _validate_object(result, allowed=_INVESTOR_TRADING_RESPONSE_FIELDS, label="priority investor trading")
+        records = _validate_object_list(
+            investor.get("records"),
+            allowed=_STOCK_INVESTOR_TRADING_RECORD_FIELDS,
+            label="priority investor trading records",
+        )
+        if len(records) > 1:
+            raise RuntimeError("Toss OpenAPI priority investor context exceeded the fixed one-record limit.")
+        for record in records:
+            _validate_scalar_values(
+                record,
+                nested_fields=frozenset(
+                    {"individual", "foreigner", "institution", "otherCorporation", "foreignerHolding", "cfd"}
+                ),
+                label="priority investor trading record",
+            )
+            for key, allowed in (
+                ("foreigner", _INVESTOR_TRADING_VOLUME_FIELDS),
+                ("institution", _STOCK_INSTITUTION_TRADING_VOLUME_FIELDS),
+            ):
+                value = record.get(key)
+                if value is not None:
+                    item = _validate_object(value, allowed=allowed, label=f"priority investor trading record.{key}")
+                    _validate_scalar_values(
+                        item,
+                        nested_fields=frozenset({"breakdown"}),
+                        label=f"priority investor trading record.{key}",
                     )
         return
     if endpoint.key == "stocks":

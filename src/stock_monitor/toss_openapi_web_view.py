@@ -42,22 +42,28 @@ class TossPriorityQuoteProvider:
         self._token: TossAccessToken | None = None
         self._automatic_reissue_used = False
         self._token_lock = threading.Lock()
-        self._cache: dict[tuple[str, tuple[str, ...]], tuple[float, dict[str, object]]] = {}
-        self._inflight: dict[tuple[str, tuple[str, ...]], threading.Event] = {}
+        self._cache: dict[tuple[str, tuple[str, ...], bool], tuple[float, dict[str, object]]] = {}
+        self._inflight: dict[tuple[str, tuple[str, ...], bool], threading.Event] = {}
         self._cache_lock = threading.Lock()
 
     @property
     def configured(self) -> bool:
         return bool(self._config.live_enabled and self._config.client_id and self._config.client_secret)
 
-    def get_quotes(self, *, priority_date: date, symbols: tuple[str, ...]) -> dict[str, object]:
+    def get_quotes(
+        self,
+        *,
+        priority_date: date,
+        symbols: tuple[str, ...],
+        include_investor_trading: bool = False,
+    ) -> dict[str, object]:
         normalized_symbols = tuple(symbol.strip() for symbol in symbols if symbol.strip())
         if not self.configured:
             return self._disabled_payload(priority_date=priority_date, symbols=normalized_symbols)
         if not normalized_symbols:
             return self._empty_payload(priority_date=priority_date)
 
-        cache_key = (priority_date.isoformat(), normalized_symbols)
+        cache_key = (priority_date.isoformat(), normalized_symbols, include_investor_trading)
         now_monotonic = self._clock()
         with self._cache_lock:
             cached = self._cache.get(cache_key)
@@ -86,6 +92,19 @@ class TossPriorityQuoteProvider:
         started = time.perf_counter()
         try:
             response = self._fetch_with_token_recovery(normalized_symbols)
+            investor_trading = {
+                "reference_date": priority_date.isoformat(),
+                "available": False,
+                "items": [],
+            }
+            if include_investor_trading:
+                try:
+                    investor_trading = self._fetch_priority_investor_trading(
+                        priority_date=priority_date,
+                        symbols=normalized_symbols,
+                    )
+                except RuntimeError:
+                    pass
             payload: dict[str, object] = {
                 "surface": "web-view-toss-priority-quotes",
                 "read_only": True,
@@ -101,6 +120,7 @@ class TossPriorityQuoteProvider:
                 "latency_ms": round((time.perf_counter() - started) * 1000, 1),
                 "rate_limit": response.rate_limit,
                 "quotes": response.result,
+                "investor_trading": investor_trading,
                 "cache": "miss",
             }
             with self._cache_lock:
@@ -131,6 +151,11 @@ class TossPriorityQuoteProvider:
             "priority_date": priority_date.isoformat(),
             "symbols": list(symbols),
             "quotes": [],
+            "investor_trading": {
+                "reference_date": priority_date.isoformat(),
+                "available": False,
+                "items": [],
+            },
             "cache": "disabled",
             "reason": "not_configured",
         }
@@ -284,6 +309,11 @@ class TossPriorityQuoteProvider:
             "priority_date": priority_date.isoformat(),
             "symbols": [],
             "quotes": [],
+            "investor_trading": {
+                "reference_date": priority_date.isoformat(),
+                "available": False,
+                "items": [],
+            },
             "cache": "empty",
             "reason": "no_priority_symbols",
         }
@@ -318,6 +348,48 @@ class TossPriorityQuoteProvider:
             endpoint=self._endpoint,
             params={"symbols": ",".join(symbols)},
         )
+
+    def _fetch_priority_investor_trading(
+        self,
+        *,
+        priority_date: date,
+        symbols: tuple[str, ...],
+    ) -> dict[str, object]:
+        endpoint = resolve_toss_market_context_endpoint("priority-investor-trading")
+        items: list[dict[str, object]] = []
+        for symbol in symbols:
+            response = self._fetch_endpoint_with_token_recovery(
+                endpoint=endpoint,
+                params={"symbol": symbol, "count": "1", "until": priority_date.isoformat()},
+            )
+            result = response.result if isinstance(response.result, dict) else {}
+            records = result.get("records") if isinstance(result.get("records"), list) else []
+            record = next(
+                (
+                    item
+                    for item in records
+                    if isinstance(item, dict)
+                    and item.get("date") == priority_date.isoformat()
+                    and isinstance(item.get("updatedAt"), str)
+                ),
+                None,
+            )
+            if record is None:
+                continue
+            items.append(
+                {
+                    "symbol": symbol,
+                    "business_date": priority_date.isoformat(),
+                    "updated_at": record["updatedAt"],
+                    "foreigner_net_buy_volume": _nested_int(record.get("foreigner"), "netBuyVolume"),
+                    "institution_net_buy_volume": _nested_int(record.get("institution"), "netBuyVolume"),
+                }
+            )
+        return {
+            "reference_date": priority_date.isoformat(),
+            "available": bool(items),
+            "items": items,
+        }
 
     def _fetch_endpoint_with_token_recovery(
         self,
@@ -381,3 +453,12 @@ class TossPriorityQuoteProvider:
             timeout_seconds=self._config.timeout_seconds,
             live_enabled=True,
         )
+
+
+def _nested_int(value: object, key: str) -> int | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        return int(str(value.get(key)))
+    except (TypeError, ValueError):
+        return None

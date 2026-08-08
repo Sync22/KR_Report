@@ -25400,10 +25400,19 @@ def _make_web_view_handler(
                 "latest_business_date": latest_business_date,
                 "symbols": [],
                 "quotes": [],
+                "investor_trading": {
+                    "reference_date": business_date.isoformat(),
+                    "available": False,
+                    "items": [],
+                },
                 "reason": "latest_business_date_only",
             }
         symbols = priority_candidate_codes(business_date)
-        payload = toss_provider.get_quotes(priority_date=business_date, symbols=symbols)
+        payload = toss_provider.get_quotes(
+            priority_date=business_date,
+            symbols=symbols,
+            include_investor_trading=True,
+        )
         payload["latest_business_date"] = latest_business_date
         payload["derived_from"] = "web_view_candidate_evidence_top_2"
         return HTTPStatus.OK, payload
@@ -28745,7 +28754,7 @@ def _render_web_view_html() -> str:
         <div class="section-header">
           <h2>오늘의 우선순위 <span class="muted" id="main-priority-date"></span></h2>
           <div class="summary-actions">
-            <button id="toss-priority-refresh" class="ghost-button" type="button" disabled>Toss 현재가 확인</button>
+            <button id="toss-priority-refresh" class="ghost-button" type="button" disabled>Toss 장중 정보 확인</button>
             <button id="intraday-market-top-check" class="ghost-button" type="button" disabled>장중 거래대금 확인</button>
           </div>
         </div>
@@ -29101,6 +29110,7 @@ def _render_web_view_html() -> str:
     let stockSearchRequestId = 0;
     let activeViewTab = "main";
     let tossPriorityQuoteByCode = new Map();
+    let tossPriorityInvestorTradingByCode = new Map();
 
     function viewPanelHasRequiredData(panel) {
       if (panel.dataset.viewWhen === "stock-selection") return Boolean(selectedStockCode);
@@ -30991,6 +31001,7 @@ def _render_web_view_html() -> str:
       document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(priorityRows);
       tossPriorityRows = priorityRows.slice(0, 2);
       tossPriorityQuoteByCode = new Map();
+      tossPriorityInvestorTradingByCode = new Map();
       tossPriorityDate = evidence?.business_date || selectedDate;
       updateTossPriorityRefreshButton();
       maybeAutoCollectNewsObservationForPriorityRows(tossPriorityRows);
@@ -31073,6 +31084,7 @@ def _render_web_view_html() -> str:
           ? candidateCompactLabel(whyItems, 2)
           : "근거 보강 필요";
         const tossQuote = tossPriorityQuoteByCode.get(String(item?.stock_code || ""));
+        const tossInvestorTrading = tossPriorityInvestorTradingByCode.get(String(item?.stock_code || ""));
         const targetRevisionLine = targetRevisionTrailLine(item);
         const currentEvidenceLine = topTwoCurrentEvidenceLine(item);
         const missingEvidenceLine = topTwoMissingEvidenceLine(item, tossQuote);
@@ -31081,6 +31093,7 @@ def _render_web_view_html() -> str:
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote-context="main" data-toss-quote="${esc(item.stock_code || "")}">${esc(tossQuote || "Toss 현재가 확인 중")}</span></b>
           <span class="muted">관찰 사유: ${esc(why)}</span>
           <span class="top-two-evidence-line"><strong>현재 근거:</strong><span class="top-two-evidence-text">${esc(currentEvidenceLine)}</span></span>
+          <span class="top-two-evidence-line"><strong>Toss 당일 수급:</strong><span class="top-two-evidence-text priority-toss-investor-trading muted" data-toss-investor-trading="${esc(item.stock_code || "")}">${esc(tossInvestorTrading || "확인 중")}</span></span>
           <span class="top-two-evidence-line"><strong>${esc(missingEvidenceLabel)}</strong><span class="top-two-evidence-text">${esc(missingEvidenceLine)}</span></span>
           <span class="target-revision-line">${esc(targetRevisionLine)}</span>
         </button>`;
@@ -31190,6 +31203,30 @@ def _render_web_view_html() -> str:
       if (currentStockDetailData?.stock_code === stockCode) renderStockContext(currentStockDetailData);
     }
 
+    function setTossInvestorTradingNode(stockCode, label, className = "") {
+      tossPriorityInvestorTradingByCode.set(String(stockCode || ""), label);
+      document.querySelectorAll("[data-toss-investor-trading]").forEach((node) => {
+        if (node.dataset.tossInvestorTrading !== String(stockCode || "")) return;
+        node.textContent = label;
+        node.className = `top-two-evidence-text priority-toss-investor-trading ${className}`.trim();
+      });
+    }
+
+    function tossInvestorTradingLabel(item) {
+      const part = (label, value) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return "";
+        return `${label} ${numeric >= 0 ? "순매수" : "순매도"} ${number(Math.abs(numeric))}주`;
+      };
+      const parts = [
+        part("외국인", item?.foreigner_net_buy_volume),
+        part("기관", item?.institution_net_buy_volume)
+      ].filter(Boolean);
+      if (!parts.length) return "Toss 당일 수급 없음";
+      const checkedAt = tossQuoteTimeLabel({ timestamp: item?.updated_at }, {});
+      return `${parts.join(" · ")}${checkedAt ? ` · ${checkedAt}` : ""}`;
+    }
+
     function updateTossSourceFreshness(data) {
       const summary = currentDailyData?.source_freshness_summary;
       const items = Array.isArray(summary?.items) ? summary.items : [];
@@ -31217,6 +31254,7 @@ def _render_web_view_html() -> str:
       tossPriorityLoading = true;
       updateTossPriorityRefreshButton();
       setTossQuoteNodes("Toss 현재가 확인 중", "muted");
+      tossPriorityRows.forEach((item) => setTossInvestorTradingNode(item?.stock_code, "Toss 당일 수급 확인 중", "muted"));
       try {
         const response = await fetch(`/api/toss-priority-quotes?date=${encodeURIComponent(date)}`, { cache: "no-store" });
         const data = await response.json();
@@ -31224,20 +31262,30 @@ def _render_web_view_html() -> str:
         updateTossSourceFreshness(data);
         if (response.status === 409) {
           setTossQuoteNodes("Toss 현재가 최신일만", "muted");
+          tossPriorityRows.forEach((item) => setTossInvestorTradingNode(item?.stock_code, "Toss 당일 수급 최신일만", "muted"));
           return;
         }
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         if (data.configured === false) {
           setTossQuoteNodes("Toss 현재가 설정 대기", "muted");
+          tossPriorityRows.forEach((item) => setTossInvestorTradingNode(item?.stock_code, "Toss 당일 수급 설정 대기", "muted"));
           await loadPriorityCurrentQuotes(date);
           return;
         }
         const quotes = Array.isArray(data.quotes) ? data.quotes : [];
         const quoteBySymbol = new Map(quotes.map((item) => [String(item?.symbol || ""), item]));
+        const investorItems = Array.isArray(data?.investor_trading?.items) ? data.investor_trading.items : [];
+        const investorBySymbol = new Map(investorItems.map((item) => [String(item?.symbol || ""), item]));
         let hasMissingTossQuote = false;
         tossPriorityRows.forEach((item) => {
           const code = String(item?.stock_code || "");
           const quote = quoteBySymbol.get(code);
+          const investorTrading = investorBySymbol.get(code);
+          setTossInvestorTradingNode(
+            code,
+            investorTrading ? tossInvestorTradingLabel(investorTrading) : "Toss 당일 수급 없음",
+            data.cache === "stale" ? "stale" : "",
+          );
           if (!quote) {
             hasMissingTossQuote = true;
             setTossQuoteNode(code, "Toss 현재가 없음", "muted");
@@ -31253,6 +31301,7 @@ def _render_web_view_html() -> str:
       } catch (error) {
         if (requestId === tossPriorityRequestId) {
           setTossQuoteNodes("Toss 현재가 확인 실패", "muted");
+          tossPriorityRows.forEach((item) => setTossInvestorTradingNode(item?.stock_code, "Toss 당일 수급 확인 실패", "muted"));
           await loadPriorityCurrentQuotes(date);
         }
       } finally {

@@ -3377,10 +3377,16 @@ def test_web_view_toss_priority_quotes_route_uses_server_derived_top_two_only(tm
         configured = True
 
         def __init__(self) -> None:
-            self.calls: list[tuple[date, tuple[str, ...]]] = []
+            self.calls: list[tuple[date, tuple[str, ...], bool]] = []
 
-        def get_quotes(self, *, priority_date: date, symbols: tuple[str, ...]) -> dict[str, object]:
-            self.calls.append((priority_date, symbols))
+        def get_quotes(
+            self,
+            *,
+            priority_date: date,
+            symbols: tuple[str, ...],
+            include_investor_trading: bool = False,
+        ) -> dict[str, object]:
+            self.calls.append((priority_date, symbols, include_investor_trading))
             return {
                 "surface": "web-view-toss-priority-quotes",
                 "read_only": True,
@@ -3393,6 +3399,20 @@ def test_web_view_toss_priority_quotes_route_uses_server_derived_top_two_only(tm
                 "priority_date": priority_date.isoformat(),
                 "symbols": list(symbols),
                 "quotes": [{"symbol": symbol, "lastPrice": 1000, "currency": "KRW"} for symbol in symbols],
+                "investor_trading": {
+                    "reference_date": priority_date.isoformat(),
+                    "available": True,
+                    "items": [
+                        {
+                            "symbol": symbol,
+                            "business_date": priority_date.isoformat(),
+                            "updated_at": "2026-05-08T10:15:00+09:00",
+                            "foreigner_net_buy_volume": 60,
+                            "institution_net_buy_volume": -20,
+                        }
+                        for symbol in symbols
+                    ],
+                },
                 "cache": "miss",
             }
 
@@ -3442,7 +3462,28 @@ def test_web_view_toss_priority_quotes_route_uses_server_derived_top_two_only(tm
     assert provider.calls
     assert provider.calls[0][0] == business_date
     assert set(provider.calls[0][1]) == {"005930", "000660"}
+    assert provider.calls[0][2] is True
     assert "999999" not in provider.calls[0][1]
+    assert payload["investor_trading"] == {
+        "reference_date": "2026-05-08",
+        "available": True,
+        "items": [
+            {
+                "symbol": "005930",
+                "business_date": "2026-05-08",
+                "updated_at": "2026-05-08T10:15:00+09:00",
+                "foreigner_net_buy_volume": 60,
+                "institution_net_buy_volume": -20,
+            },
+            {
+                "symbol": "000660",
+                "business_date": "2026-05-08",
+                "updated_at": "2026-05-08T10:15:00+09:00",
+                "foreigner_net_buy_volume": 60,
+                "institution_net_buy_volume": -20,
+            },
+        ],
+    }
     assert current_payload["surface"] == "web-view-priority-current-quotes"
     assert current_payload["read_only"] is True
     assert current_payload["live_fetch"] is True
@@ -3547,6 +3588,17 @@ def test_web_view_main_has_toss_market_context_panel() -> None:
     assert "/api/toss-market-context" in html
     assert "Toss 시장 문맥 확인 중" in html
     assert 'id="toss-market-context" class="intraday-overlap-panel" aria-live="polite"' in html
+
+
+def test_web_view_html_renders_toss_same_day_investor_trading_for_top_two_only() -> None:
+    html = cli_module._render_web_view_html()
+    top_two_body = html.split("function renderTopTwoReviewCandidates(rows)", 1)[1].split(
+        "function updateTossPriorityRefreshButton()", 1
+    )[0]
+
+    assert "Toss 당일 수급" in top_two_body
+    assert "data-toss-investor-trading" in top_two_body
+    assert "loadTossPriorityQuotes(tossPriorityDate)" in html
 
 
 def test_web_view_candidate_evidence_uses_stored_toss_2000_baseline(tmp_path, monkeypatch) -> None:

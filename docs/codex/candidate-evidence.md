@@ -53,6 +53,7 @@ Future intraday boundary:
 - A future real-time or broker-origin probe must start outside this DTO as a lab/staging read-only lane.
 - The first candidate scope is only the top-2 `우선 확인` candidates, at a coarse cadence such as 5 minutes only after source burden is reviewed.
 - Read-only means no production DB writes, no Telegram/scheduler automation, no `admin-gui` control path, no broker secrets, and no order routing. It does not mean the signal is display-only forever.
+- Current approved exception: Toss `getStockInvestorTrading` supplies only same-day provisional foreigner/institution net-volume beside the server-derived Top2, with provider update time. It remains context-only: it is not stored and cannot change candidate ordering or Top2 composition.
 - After a source is approved, verified intraday price/turnover/index references are allowed to affect observation priority, top-2 `우선 확인` ordering, and main-card emphasis as observation-candidate recommendation signals.
 - Those signals must still stay below trading advice: no public numeric score, investment grade, buy/sell instruction, entry/exit, target return, conviction, broker execution, or order-routing wording.
 - This restriction is for the public CE-1/web-view contract. It does not reject a future operator-only decision-support or execution-lab lane after real-time source stability and safety gates are proven.
