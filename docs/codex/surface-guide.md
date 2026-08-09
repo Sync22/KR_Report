@@ -141,8 +141,10 @@ Disallowed examples:
 ## Current Main And Watch Hierarchy
 
 - Main uses one brief for report flow, stored market reference, and saved news context; the Top2 cards show only the observation reason, current evidence, missing information, and target-price revision.
-- Watch keeps the wider candidate list, then combines each selected-date report concentration with the already stored direct/caution/market-context news counts. It does not perform a new source fetch.
-- Stock detail remains the place for the full date-basis and target-progress context, so the main cards do not repeat it.
+- Watch is a compact candidate selector. Each row uses the existing candidate DTO only for rank, name/code, observation label, and one visible evidence line; selecting a row opens the same stock-detail route used by search and Top2.
+- Stock detail is the single detailed evidence surface. It owns report rows, target-history/progress, stored news detail, KRX reference, and stock-level `[12009]` context.
+- Watch must not repeat the stock-detail evidence grids or render pending-only D+ windows, `계산 불가`, or `수급 없음` as if they were useful observations. Those values remain available only when a selected stock has stored detail to show.
+- Watch summary blocks remain candidate-linked and read-only. They may link to stock detail, but they do not perform a new source fetch.
 
 The user page is an archive/review surface, not a delivery mirror.
 

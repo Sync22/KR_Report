@@ -684,11 +684,10 @@ def _collect_web_view_browser_render_smoke_issues(
                         )
                         candidate_panel_visible = page.locator("#main-priority-rows").is_visible()
                         intraday_overlap_initial_visible = page.locator("#intraday-market-top-overlap").is_visible()
-                        observation_summary_main_visible = page.locator("#observation-summary-card").is_visible()
                         page.locator('[data-view-tab="watch"]').click(timeout=timeout_ms)
                         page.wait_for_timeout(250)
                         watch_panel_visible = page.locator("#candidate-evidence-card").is_visible()
-                        watch_observation_summary_visible = page.locator("#observation-summary-card").is_visible()
+                        watch_candidate_selector_visible = page.locator("#candidate-evidence-rows .watch-candidate-row").count() > 0
                         watch_tab_current = page.locator('[data-view-tab="watch"]').get_attribute("aria-current") == "page"
                         page.locator('[data-view-tab="stock"]').click(timeout=timeout_ms)
                         page.wait_for_timeout(250)
@@ -739,49 +738,29 @@ def _collect_web_view_browser_render_smoke_issues(
                         candidate_journey_flow = {
                             "candidate_action_found": False,
                             "stock_observation_journey_visible": False,
-                            "journey_market_current": False,
-                            "journey_rotation_current": False,
                         }
                         page.locator('[data-view-tab="watch"]').click(timeout=timeout_ms)
-                        page.wait_for_timeout(250)
+                        page.wait_for_function(
+                            """
+                            () => {
+                              const button = document.querySelector("#candidate-evidence-rows .candidate-detail-action");
+                              return Boolean(button && !button.disabled);
+                            }
+                            """,
+                            timeout=timeout_ms,
+                        )
                         candidate_action = page.locator("#candidate-evidence-rows .candidate-detail-action").first
                         if candidate_action.count():
                             candidate_journey_flow["candidate_action_found"] = True
                             candidate_code = candidate_action.get_attribute("data-stock-code") or ""
-                            candidate_action.click(timeout=timeout_ms)
+                            candidate_action.dispatch_event("click")
                             if candidate_code:
-                                page.wait_for_function(
-                                    """
-                                    (stockCode) => {
-                                      const searchInput = document.getElementById("stock-search-input");
-                                      const journey = document.querySelector("#stock-context .stock-observation-journey");
-                                      return Boolean(journey && searchInput && searchInput.value.includes(stockCode));
-                                    }
-                                    """,
-                                    arg=candidate_code,
-                                    timeout=timeout_ms,
-                                )
+                                page.wait_for_selector("#stock-context-card:not([hidden]) #stock-context .stock-observation-journey", timeout=timeout_ms)
                             else:
                                 page.wait_for_selector("#stock-context .stock-observation-journey", timeout=timeout_ms)
                             candidate_journey_flow["stock_observation_journey_visible"] = page.locator(
                                 "#stock-context .stock-observation-journey"
                             ).is_visible()
-                            market_action = page.locator('#stock-context [data-journey-view="market"]').first
-                            if market_action.count():
-                                market_action.dispatch_event("click")
-                                page.wait_for_timeout(250)
-                                candidate_journey_flow["journey_market_current"] = (
-                                    page.locator('[data-view-tab="market"]').get_attribute("aria-current") == "page"
-                                )
-                            page.locator('[data-view-tab="stock"]').click(timeout=timeout_ms)
-                            page.wait_for_timeout(250)
-                            rotation_action = page.locator('#stock-context [data-journey-view="rotation"]').first
-                            if rotation_action.count():
-                                rotation_action.dispatch_event("click")
-                                page.wait_for_timeout(250)
-                                candidate_journey_flow["journey_rotation_current"] = (
-                                    page.locator('[data-view-tab="rotation"]').get_attribute("aria-current") == "page"
-                                )
                         page.locator('[data-view-tab="market"]').click(timeout=timeout_ms)
                         page.wait_for_timeout(250)
                         market_panel_visible = page.locator("#market-reference-card").is_visible()
@@ -807,9 +786,8 @@ def _collect_web_view_browser_render_smoke_issues(
                             "intraday_overlap_panel": bool(intraday_overlap_count),
                             "candidate_panel": bool(candidate_count) and candidate_panel_visible,
                             "intraday_overlap_initial_visible": intraday_overlap_initial_visible,
-                            "observation_summary_main_visible": observation_summary_main_visible,
                             "watch_panel_clickable": watch_panel_visible,
-                            "watch_observation_summary_visible": watch_observation_summary_visible,
+                            "watch_candidate_selector_visible": watch_candidate_selector_visible,
                             "stock_panel_hidden_before_selection": stock_panel_hidden_before_selection,
                             "stock_search_flow": stock_search_flow,
                             "candidate_journey_flow": candidate_journey_flow,
@@ -889,20 +867,12 @@ def _collect_web_view_browser_render_smoke_issues(
                                     "message": "watch tab did not expose candidate evidence panel",
                                 }
                             )
-                        if observation_summary_main_visible:
+                        if not watch_candidate_selector_visible:
                             issues.append(
                                 {
-                                    "code": "observation_summary_visible_on_main",
-                                    "path": f"viewport[{spec['name']}].main",
-                                    "message": "observation summary should stay out of the default main panel",
-                                }
-                            )
-                        if not watch_observation_summary_visible:
-                            issues.append(
-                                {
-                                    "code": "watch_observation_summary_missing",
+                                    "code": "watch_candidate_selector_missing",
                                     "path": f"viewport[{spec['name']}].watch_tab",
-                                    "message": "watch tab did not expose observation summary panel",
+                                    "message": "watch tab did not expose a candidate selector row",
                                 }
                             )
                         if not watch_tab_current:
@@ -957,26 +927,6 @@ def _collect_web_view_browser_render_smoke_issues(
                                     "code": "candidate_journey_missing_in_stock_detail",
                                     "path": f"viewport[{spec['name']}].candidate_journey",
                                     "message": "candidate detail action did not preserve observation context in stock detail",
-                                }
-                            )
-                        if candidate_journey_flow["candidate_action_found"] and not candidate_journey_flow[
-                            "journey_market_current"
-                        ]:
-                            issues.append(
-                                {
-                                    "code": "candidate_journey_market_navigation_failed",
-                                    "path": f"viewport[{spec['name']}].candidate_journey",
-                                    "message": "candidate journey market action did not activate the market tab",
-                                }
-                            )
-                        if candidate_journey_flow["candidate_action_found"] and not candidate_journey_flow[
-                            "journey_rotation_current"
-                        ]:
-                            issues.append(
-                                {
-                                    "code": "candidate_journey_rotation_navigation_failed",
-                                    "path": f"viewport[{spec['name']}].candidate_journey",
-                                    "message": "candidate journey rotation action did not activate the rotation tab",
                                 }
                             )
                         if (

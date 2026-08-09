@@ -17720,6 +17720,7 @@ def _build_stock_flow_source_freshness_item(
     return {
         "key": "investor_flow",
         "label": "Investor flow",
+        "display_label": "후보 수급 [12009]",
         "source": "krx_data_market",
         "status": status,
         "reference_date": latest_reference_date.isoformat(),
@@ -25622,6 +25623,16 @@ def _make_web_view_handler(
                         sectors=repository.list_category_rollups_by_display_name_for_business_date(business_date, "sector"),
                         themes=repository.list_category_rollups_by_display_name_for_business_date(business_date, "theme"),
                         holiday_overrides=config.holiday_overrides,
+                        priority_stock_codes=[
+                            str(row.get("stock_code") or "")
+                            for row in build_web_view_candidate_evidence_snapshot(
+                                config,
+                                repository,
+                                business_date=business_date,
+                                limit=2,
+                            ).get("rows", [])
+                            if isinstance(row, dict) and str(row.get("stock_code") or "")
+                        ],
                     ),
                 )
                 return
@@ -28450,6 +28461,12 @@ def _render_web_view_html() -> str:
     .market-block { min-width: 0; border: 1px solid var(--line); border-radius: 16px; padding: 14px; background: #fffaf1; }
     .market-block h3 { margin: 0 0 10px; font-size: 15px; }
     .candidate-list { display: grid; gap: 10px; }
+    .watch-candidate-row { display: grid; width: 100%; gap: 6px; border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: #fffaf1; color: var(--ink); cursor: pointer; font: inherit; text-align: left; }
+    .watch-candidate-row:hover, .watch-candidate-row:focus { border-color: var(--accent); outline: 3px solid rgba(40,92,77,.14); }
+    .watch-candidate-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+    .watch-candidate-head b { min-width: 0; overflow-wrap: anywhere; }
+    .watch-candidate-line { color: var(--ink); font-size: 13px; overflow-wrap: anywhere; }
+    .watch-candidate-meta { color: var(--muted); font-size: 12px; }
     .additional-candidates { margin-top: 10px; }
     .additional-candidates > summary { cursor: pointer; color: var(--accent); font-size: 13px; font-weight: 800; }
     .additional-candidates > summary::marker { color: var(--accent); }
@@ -28714,25 +28731,6 @@ def _render_web_view_html() -> str:
         <p class="briefing-line" id="daily-briefing-headline">날짜를 선택하면 읽을 흐름을 압축해서 보여줍니다.</p>
         <p class="briefing-mini-label">한줄평</p>
         <ul class="briefing-check-points" id="briefing-check-points"><li>확인 포인트가 있으면 여기에 표시됩니다.</li></ul>
-        <div class="briefing-market-row">
-          <div class="briefing-reference-card">
-            <div class="briefing-reference-head">
-              <b id="briefing-reference-title">시장 참고</b>
-              <span>저장 데이터 기준</span>
-            </div>
-            <div class="briefing-box briefing-reference-section">
-              <b id="briefing-turnover-title">거래대금 참고</b>
-              <strong id="briefing-turnover">-</strong>
-              <span id="briefing-turnover-sub"></span>
-            </div>
-            <div class="briefing-reference-divider" aria-hidden="true"></div>
-            <div class="briefing-box briefing-reference-section">
-              <b id="briefing-investor-flow-title">수급 참고</b>
-              <strong id="briefing-investor-flow">-</strong>
-              <span id="briefing-investor-flow-sub"></span>
-            </div>
-          </div>
-        </div>
         <div id="source-freshness-summary" class="source-freshness-summary" aria-live="polite">
           <div class="source-freshness-head"><b>데이터 기준</b><span class="status-pill">저장 상태</span></div>
           <div class="source-freshness-items">
@@ -28746,6 +28744,25 @@ def _render_web_view_html() -> str:
           <div class="news-observation-actions">
             <button id="news-observation-collect" class="ghost-button" type="button" disabled>뉴스 근거 새로 확인</button>
             <span id="news-observation-collect-status" class="muted">저장 뉴스 근거를 확인합니다.</span>
+          </div>
+        </div>
+        <div class="briefing-market-row">
+          <div class="briefing-reference-card">
+            <div class="briefing-reference-head">
+              <b id="briefing-reference-title">시장 참고</b>
+              <span>저장 데이터 기준</span>
+            </div>
+            <div class="briefing-box briefing-reference-section">
+              <b id="briefing-turnover-title">거래대금 참고</b>
+              <strong id="briefing-turnover">-</strong>
+              <span id="briefing-turnover-sub"></span>
+            </div>
+            <div class="briefing-reference-divider" aria-hidden="true"></div>
+            <div class="briefing-box briefing-reference-section">
+              <b id="briefing-investor-flow-title">시장 수급 참고</b>
+              <strong id="briefing-investor-flow">-</strong>
+              <span id="briefing-investor-flow-sub"></span>
+            </div>
           </div>
         </div>
       </div>
@@ -28772,21 +28789,9 @@ def _render_web_view_html() -> str:
           <h2>오늘의 관찰 후보 <span class="muted" id="candidate-evidence-date"></span></h2>
           <span class="status-pill">우선 확인</span>
         </div>
-        <p class="brief">관찰 탭은 전체 후보 근거와 리포트 후 흐름을 함께 확인하는 화면입니다.</p>
-        <p class="brief" id="candidate-evidence-notice"></p>
+        <p class="brief">후보를 고르면 종목 탭에서 리포트, 뉴스 근거, 가격·수급 기준을 한 번에 확인합니다.</p>
         <div class="scroll-panel stock-summary-panel candidate-evidence-panel">
           <div id="candidate-evidence-rows" class="candidate-list"><span class="muted">날짜를 선택하세요.</span></div>
-        </div>
-      </div>
-
-      <div class="card span-12" id="observation-summary-card" data-view-panel="watch" hidden>
-        <div class="section-header">
-          <h2>국장 관찰 요약 <span class="muted" id="observation-summary-date"></span></h2>
-          <span class="status-pill">수급 참고</span>
-        </div>
-        <p class="brief" id="observation-summary-notice">날짜를 선택하면 저장 데이터 기준 관찰 요약을 보여줍니다.</p>
-        <div id="observation-summary-rows" class="observation-summary-grid">
-          <span class="muted">날짜를 선택하세요.</span>
         </div>
       </div>
 
@@ -28806,24 +28811,6 @@ def _render_web_view_html() -> str:
         </div>
         <p class="brief" id="report-filter-status">종목 행을 선택하세요.</p>
         <div id="stock-detail" class="detail-list scroll-panel stock-report-panel"><span class="muted">종목 행을 선택하세요.</span></div>
-      </div>
-
-      <div class="card span-12" id="backtest-observation-card" data-view-panel="watch" data-view-when="backtest-data" hidden>
-        <div class="section-header">
-          <h2>리포트 후 흐름 <span class="muted" id="backtest-observation-date"></span></h2>
-          <div class="summary-actions">
-            <span class="status-pill">저장 기준</span>
-            <button id="backtest-observation-show-more" class="ghost-button" type="button" hidden>더 보기</button>
-          </div>
-        </div>
-        <p class="brief" id="backtest-observation-notice">리포트 이후 저장된 KRX 거래일 흐름을 불러옵니다.</p>
-        <div class="scroll-panel">
-          <table class="mobile-card-table">
-            <thead><tr><th>종목</th><th>관찰 근거</th><th>리포트 후 반응</th><th>목표가</th><th>수급/순매수</th></tr></thead>
-            <tbody id="backtest-observation-rows"><tr><td colspan="5" class="muted">날짜를 선택하세요.</td></tr></tbody>
-          </table>
-        </div>
-        <p class="notice">저장 데이터 기반 확인용입니다. 세부 리포트와 시장 참고값을 함께 확인하세요.</p>
       </div>
 
       <div class="card span-12" data-view-panel="rotation" hidden>
@@ -29058,7 +29045,6 @@ def _render_web_view_html() -> str:
     const requestedDate = () => new URLSearchParams(window.location.search).get("date");
     const requestedStockCode = () => new URLSearchParams(window.location.search).get("stock");
     const DAILY_STOCK_DEFAULT_LIMIT = 6;
-    const BACKTEST_OBSERVATION_DEFAULT_LIMIT = 6;
     let selectedDate = null;
     let archiveItems = [];
     let archiveDates = [];
@@ -29075,7 +29061,6 @@ def _render_web_view_html() -> str:
     let currentDailyData = null;
     let currentStockDetailData = null;
     let dailyFlowExpanded = false;
-    let currentBacktestObservationData = null;
     let currentCandidateEvidenceData = null;
     let intradayMarketTopLoading = false;
     const intradayMarketTopCooldownMs = 30_000;
@@ -29092,7 +29077,6 @@ def _render_web_view_html() -> str:
     let newsObservationCollectAttemptedKey = null;
     let showSingleReportStocks = false;
     let dailyStockVisibleLimit = DAILY_STOCK_DEFAULT_LIMIT;
-    let backtestObservationVisibleLimit = BACKTEST_OBSERVATION_DEFAULT_LIMIT;
     let hideNoOpinionReports = false;
     let rotationLoadedDate = null;
     let rotationLoadingDate = null;
@@ -29115,7 +29099,6 @@ def _render_web_view_html() -> str:
     function viewPanelHasRequiredData(panel) {
       if (panel.dataset.viewWhen === "stock-selection") return Boolean(selectedStockCode);
       if (panel.dataset.viewWhen === "category-selection") return Boolean(selectedCategoryDisplayName);
-      if (panel.dataset.viewWhen === "backtest-data") return Boolean(currentBacktestObservationData?.rows?.length);
       return true;
     }
 
@@ -29407,7 +29390,6 @@ def _render_web_view_html() -> str:
         document.getElementById("main-priority-rows").innerHTML = message;
       } else if (tabName === "watch") {
         document.getElementById("candidate-evidence-rows").innerHTML = message;
-        document.getElementById("backtest-observation-rows").innerHTML = `<tr><td colspan="5" class="muted">오류: ${esc(error)}</td></tr>`;
       } else if (tabName === "stock") {
         document.getElementById("stock-context").innerHTML = message;
         document.getElementById("stock-detail").innerHTML = message;
@@ -29438,13 +29420,6 @@ def _render_web_view_html() -> str:
       renderCandidateEvidence(data);
     }
 
-    async function loadObservationSummary(date) {
-      if (observationSummaryLoadedDate === date) return;
-      const data = await fetch(`/api/observation-summary?date=${encodeURIComponent(date)}`, { cache: "no-store" }).then((response) => response.json());
-      observationSummaryLoadedDate = date;
-      renderObservationSummary(data);
-    }
-
     async function loadTabDataForActiveView(date) {
       if (!date) return;
       if (activeViewTab === "main") {
@@ -29454,10 +29429,6 @@ def _render_web_view_html() -> str:
         try {
           await Promise.all([
             loadCandidateEvidence(date, { limit: 8 }),
-            loadObservationSummary(date),
-            backtestObservationLoadedDate === date
-              ? Promise.resolve()
-              : loadBacktestObservation(date).then(() => { backtestObservationLoadedDate = date; }),
           ]);
         } finally {
           watchDataLoading = false;
@@ -29497,7 +29468,6 @@ def _render_web_view_html() -> str:
       selectedCategoryDisplayName = null;
       selectedCategoryLabel = null;
       selectedCategorySource = null;
-      currentBacktestObservationData = null;
       stockSearchResults = [];
       stockSearchRequestId += 1;
       dailyFlowExpanded = false;
@@ -29521,7 +29491,6 @@ def _render_web_view_html() -> str:
       document.getElementById("daily-date").textContent = `(${data.business_date})`;
       currentDailyData = data;
       currentCandidateEvidenceData = null;
-      currentBacktestObservationData = null;
       candidateEvidenceLoadedDate = null;
       candidateEvidenceLoadedLimit = 0;
       observationSummaryLoadedDate = null;
@@ -29531,20 +29500,12 @@ def _render_web_view_html() -> str:
       etfTrendAvailable = false;
       flowTrendLoadedDate = null;
       dailyStockVisibleLimit = DAILY_STOCK_DEFAULT_LIMIT;
-      backtestObservationVisibleLimit = BACKTEST_OBSERVATION_DEFAULT_LIMIT;
       stockSearchQuery = "";
       document.getElementById("stock-search-input").value = "";
       syncStockSearchInput();
       renderDailyStocks(data);
       renderDailyBriefing(data);
       renderSourceFreshnessSummary(data.source_freshness_summary);
-      if (data.observation_summary) {
-        renderObservationSummary(data.observation_summary);
-      } else {
-        document.getElementById("observation-summary-date").textContent = `(${date})`;
-        document.getElementById("observation-summary-notice").textContent = "관찰 탭에서 저장 근거 요약을 불러옵니다.";
-        document.getElementById("observation-summary-rows").innerHTML = '<span class="muted">관찰 탭을 열면 리포트 집중과 저장 수급을 불러옵니다.</span>';
-      }
       renderNewsObservationSummary(data.news_observation_summary);
       document.getElementById("main-priority-date").textContent = `(${date})`;
       document.getElementById("main-priority-rows").innerHTML = '<span class="muted">오늘 우선순위를 불러오는 중입니다.</span>';
@@ -29553,9 +29514,6 @@ def _render_web_view_html() -> str:
       updateTossPriorityRefreshButton();
       document.getElementById("candidate-evidence-date").textContent = `(${date})`;
       document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">오늘의 관찰 후보를 불러오는 중입니다.</span>';
-      document.getElementById("backtest-observation-date").textContent = `(${date})`;
-      document.getElementById("backtest-observation-rows").innerHTML = '<tr><td colspan="5" class="muted">관찰 탭을 열면 리포트 후 흐름을 불러옵니다.</td></tr>';
-      document.getElementById("backtest-observation-show-more").hidden = true;
       renderStockSearchResults();
       const visibleSectors = data.sectors.filter((item) => isKnownCategory(item.sector_name, "sector"));
       const visibleThemes = data.themes.filter((item) => isKnownCategory(item.theme_name, "theme"));
@@ -29619,7 +29577,7 @@ def _render_web_view_html() -> str:
         ? briefingTurnoverPair(briefing.turnover_summary)
         : briefingLinePair(briefing.turnover_reference_lines, "거래대금 저장값 없음", "");
       const flowPair = briefing.flow_summary
-        ? briefingFlowPair(briefing.flow_summary, briefing.flow_reference_lines)
+        ? briefingFlowPair(briefing.flow_summary)
         : briefingLinePair(briefing.flow_reference_lines, "수급 저장값 없음", "");
       document.getElementById("daily-briefing-date").textContent = data?.business_date ? `(${data.business_date})` : "";
       document.getElementById("daily-briefing-headline").textContent = reportCount > 0
@@ -29670,7 +29628,7 @@ def _render_web_view_html() -> str:
         ? ` · 후보 ${number(item.coverage_count)}/${number(item.candidate_count)}`
         : "";
       return `<div class="source-freshness-item">
-        <b>${esc(item?.label || item?.key || "-")}</b>
+        <b>${esc(item?.display_label || item?.label || item?.key || "-")}</b>
         <span class="source-freshness-status ${esc(sourceFreshnessStatusClass(status))}">${esc(sourceFreshnessStatusLabel(status))}</span>
         <span>${esc(reference)}${esc(count)}${esc(coverage)}</span>
       </div>`;
@@ -30238,7 +30196,7 @@ def _render_web_view_html() -> str:
         });
       }
       blocks.push({
-        label: "수급 참고",
+        label: "후보 수급 참고 [12009]",
         items: (summary?.flow_reference?.items || []).slice(0, 4),
         variant: "flow"
       });
@@ -30308,7 +30266,7 @@ def _render_web_view_html() -> str:
       const title = item.top_title || item.reason || "매칭 뉴스 없음";
       return `<li>
         <span class="observation-item-lines">
-          <span class="observation-item-title">${esc(item.stock_name || "-")} ${esc(item.stock_code || "")}</span>
+          ${renderObservationStockLink(item, `${item.stock_name || "-"} ${item.stock_code || ""}`)}
           <span class="observation-item-line">${esc(counts)}</span>
           <span class="observation-item-line muted">${esc(title)}</span>
         </span>
@@ -30348,7 +30306,7 @@ def _render_web_view_html() -> str:
         : "";
       return `<li>
         <span class="observation-item-lines">
-          <span class="observation-item-title">${esc(reportLine)}</span>
+          ${renderObservationStockLink(item, reportLine)}
           ${recentLine}
           <span class="observation-item-line">${esc(targetLabel)}</span>
         </span>
@@ -30370,7 +30328,7 @@ def _render_web_view_html() -> str:
       ].filter(Boolean);
       return `<li>
         <span class="observation-item-lines">
-          <span class="observation-item-title">${esc(item.stock_name || "-")}</span>
+          ${renderObservationStockLink(item, item.stock_name || "-")}
           ${flowLines.map((line) => `<span class="observation-item-line">${esc(line)}</span>`).join("")}
           ${switchLines.length ? switchLines.map((line) => `<span class="observation-item-line muted indent">${esc(line)}</span>`).join("") : '<span class="observation-item-line muted indent">전환 지속 기준 없음</span>'}
         </span>
@@ -30385,10 +30343,16 @@ def _render_web_view_html() -> str:
       if (item.turnover_display) lines.push(`거래대금 ${item.turnover_display}`);
       return `<li>
         <span class="observation-item-lines">
-          <span class="observation-item-title">${esc(item.stock_name || "-")}</span>
+          ${renderObservationStockLink(item, item.stock_name || "-")}
           ${lines.map((line) => `<span class="observation-item-line">${esc(line)}</span>`).join("")}
         </span>
       </li>`;
+    }
+
+    function renderObservationStockLink(item, label) {
+      const stockCode = String(item?.stock_code || "");
+      if (!validStockCode(stockCode)) return `<span class="observation-item-title">${esc(label)}</span>`;
+      return `<button class="observation-link observation-item-title" type="button" data-stock-code="${esc(stockCode)}">${esc(label)}</button>`;
     }
 
     function flowAmountLabel(value) {
@@ -30510,14 +30474,20 @@ def _render_web_view_html() -> str:
       };
     }
 
-    function briefingFlowPair(summary, reserveLines) {
+    function briefingFlowPair(summary) {
       const items = Array.isArray(summary?.items) ? summary.items : [];
       const parts = items.map((item) => `${esc(item.investor_label || "-")} ${esc(item.direction_label || "-")}`).filter(Boolean);
       if (!parts.length) {
-        return { ...briefingFlowLinePair(reserveLines, "수급 저장값 없음", ""), label: "" };
+        return {
+          value: "시장 수급 저장값 없음",
+          title: "시장 수급 참고",
+          label: "후보 수급 [12009]은 관찰 후보·종목 상세에서 확인",
+          referenceDate: "",
+        };
       }
       return {
         value: parts.length ? parts.join(" / ") : "수급 저장값 없음",
+        title: "시장 수급 참고",
         label: "",
         referenceDate: summary?.reference_date || "",
       };
@@ -30987,7 +30957,6 @@ def _render_web_view_html() -> str:
     function renderCandidateEvidence(evidence) {
       document.getElementById("candidate-evidence-date").textContent = evidence?.business_date ? `(${evidence.business_date})` : "";
       document.getElementById("main-priority-date").textContent = evidence?.business_date ? `(${evidence.business_date})` : "";
-      document.getElementById("candidate-evidence-notice").textContent = "";
       const rows = evidence?.rows || [];
       if (!rows.length) {
         document.getElementById("main-priority-rows").innerHTML = '<span class="muted">우선 확인 후보 데이터가 없습니다.</span>';
@@ -30995,6 +30964,7 @@ def _render_web_view_html() -> str:
         tossPriorityRows = [];
         document.getElementById("toss-market-context").hidden = true;
         updateTossPriorityRefreshButton();
+        refreshViewPanels();
         return;
       }
       const priorityRows = selectStablePriorityRows(rows, evidence?.business_date || selectedDate);
@@ -31066,12 +31036,20 @@ def _render_web_view_html() -> str:
           <button class="candidate-detail-action" type="button" data-stock-code="${esc(item.stock_code || "")}"${watchDataLoading ? " disabled" : ""}>종목 상세에서 근거 이어보기</button>
         </article>`;
       };
-      const primaryCards = rows.slice(0, 2).map(renderCandidateCard).join("");
-      const additionalRows = rows.slice(2, 8);
-      const additionalCards = additionalRows.length
-        ? `<details class="additional-candidates"><summary>추가 후보 ${number(additionalRows.length)}개</summary><div class="candidate-list">${additionalRows.map((item, index) => renderCandidateCard(item, index, 2)).join("")}</div></details>`
-        : "";
-      document.getElementById("candidate-evidence-rows").innerHTML = primaryCards + additionalCards;
+      document.getElementById("candidate-evidence-rows").innerHTML = rows.slice(0, 8).map(renderWatchCandidateRow).join("");
+      refreshViewPanels();
+    }
+
+    function renderWatchCandidateRow(item, index) {
+      const layers = candidateEvidenceLayers(item);
+      const primary = candidateCompactLabel(candidateWhyDisplayItems(layers.primary), 2) || "저장 근거 확인";
+      const news = item?.news_observation_badge || {};
+      const newsLabel = news.connection_label || news.display_label || "저장 뉴스 없음";
+      return `<button class="watch-candidate-row candidate-detail-action" type="button" data-stock-code="${esc(item?.stock_code || "")}">
+        <span class="watch-candidate-head"><b>${number(index + 1)}. ${esc(item?.stock_name || "-")} <span class="muted">${esc(item?.stock_code || "")}</span></b><span class="status-pill">${esc(item?.observation_priority || "확인 후보")}</span></span>
+        <span class="watch-candidate-line">${esc(primary)}</span>
+        <span class="watch-candidate-meta">뉴스: ${esc(newsLabel)} · 종목 상세 보기</span>
+      </button>`;
     }
 
     function renderTopTwoReviewCandidates(rows) {
@@ -32190,10 +32168,6 @@ def _render_web_view_html() -> str:
       dailyStockVisibleLimit += DAILY_STOCK_DEFAULT_LIMIT;
       if (currentDailyData) renderDailyStocks(currentDailyData);
     });
-    document.getElementById("backtest-observation-show-more").addEventListener("click", () => {
-      backtestObservationVisibleLimit += BACKTEST_OBSERVATION_DEFAULT_LIMIT;
-      if (currentBacktestObservationData) renderBacktestObservation(currentBacktestObservationData);
-    });
     document.getElementById("toss-priority-refresh").addEventListener("click", () => {
       loadTossPriorityQuotes(tossPriorityDate || selectedDate);
     });
@@ -32980,6 +32954,7 @@ def build_web_view_daily_snapshot(
     mood = _build_market_mood_snapshot(business_date, summaries, sectors)
     watch_candidates = _build_web_view_watch_candidates(summaries)
     recent_krx_snapshot_dates = repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=3)
+    recent_market_flow_dates = repository.list_recent_market_investor_flow_dates(on_or_before=business_date, limit=1)
     recent_flow_dates = repository.list_recent_investor_flow_dates(on_or_before=business_date, limit=1)
     priority_candidate_snapshot = build_web_view_candidate_evidence_snapshot(
         config,
@@ -32997,7 +32972,7 @@ def build_web_view_daily_snapshot(
         business_date,
         summaries=summaries,
         recent_krx_snapshot_dates=recent_krx_snapshot_dates[:1],
-        recent_flow_dates=recent_flow_dates,
+        recent_flow_dates=recent_market_flow_dates,
         priority_stock_codes=priority_stock_codes,
     )
     observation_summary = (
@@ -33005,9 +32980,10 @@ def build_web_view_daily_snapshot(
             repository,
             business_date,
             summaries=summaries,
-            sectors=sectors,
-            themes=themes,
-            holiday_overrides=config.holiday_overrides,
+        sectors=sectors,
+        themes=themes,
+        holiday_overrides=config.holiday_overrides,
+        priority_stock_codes=priority_stock_codes,
         )
         if include_observation_summary
         else None
@@ -34341,7 +34317,9 @@ def _build_web_view_market_briefing_context(
         if recent_flow_dates is not None
         else repository.list_recent_investor_flow_dates(on_or_before=business_date, limit=1)
     )
-    flow_reference_date = flow_dates[0] if flow_dates else None
+    # Market briefing must not substitute an old market-wide sample for the
+    # current KRX reference date. Candidate-level [12009] remains separate.
+    flow_reference_date = flow_dates[0] if flow_dates and flow_dates[0] == reference_date else None
     flow_market_rows = (
         repository.list_market_investor_flow_daily(flow_reference_date, "STK")
         if flow_reference_date
@@ -34368,12 +34346,9 @@ def _build_web_view_market_briefing_context(
         turnover_rows_by_market=turnover_rows_by_market,
     )
     flow_reference_lines = _web_view_flow_reference_lines_from_rows(
-        repository,
         business_date,
         reference_date=flow_reference_date,
         market_rows=flow_market_rows,
-        summaries=summaries,
-        priority_stock_codes=priority_stock_codes,
     )
     check_point_lines = _web_view_market_briefing_check_point_lines_from_cached(
         business_date,
@@ -34668,22 +34643,13 @@ def _web_view_turnover_reference_lines_from_rows(
 
 
 def _web_view_flow_reference_lines_from_rows(
-    repository: StockMonitorRepository,
     business_date: date,
     *,
     reference_date: date | None,
     market_rows: list[MarketInvestorFlowDaily],
-    summaries: list[DailyStockSummary],
-    priority_stock_codes: tuple[str, ...] | list[str] | None = None,
 ) -> list[str]:
     if reference_date is None or not market_rows:
-        return _build_stock_flow_briefing_reference_lines(
-            repository,
-            business_date,
-            summaries=summaries,
-            limit=3,
-            priority_stock_codes=priority_stock_codes,
-        )
+        return []
     by_investor = {row.investor_type: row for row in market_rows}
     pieces: list[str] = []
     for label, investor_key in (("개인", "개인"), ("외국인", "외국인"), ("기관", "기관합계")):
@@ -34692,13 +34658,7 @@ def _web_view_flow_reference_lines_from_rows(
         if direction:
             pieces.append(f"{label} {direction}")
     if not pieces:
-        return _build_stock_flow_briefing_reference_lines(
-            repository,
-            business_date,
-            summaries=summaries,
-            limit=3,
-            priority_stock_codes=priority_stock_codes,
-        )
+        return []
     suffix = "" if reference_date == business_date else " / 리포트일 전 최신"
     return [
         f"수급 참고 · {reference_date.strftime('%y.%m.%d')} KOSPI 저장값{suffix}",
@@ -34807,13 +34767,19 @@ def _build_web_view_observation_summary(
     sectors: list[CategoryDailyRollup],
     themes: list[CategoryDailyRollup],
     holiday_overrides: set[date] | frozenset[date] | None = None,
+    priority_stock_codes: tuple[str, ...] | list[str] | None = None,
     limit: int = 6,
 ) -> dict:
     eligible = [summary for summary in summaries if summary.stock_code]
-    focused = sorted(
+    ordered = sorted(
         eligible,
         key=lambda item: (-item.mention_count, -_web_view_broker_count(item.broker_display), item.stock_name),
-    )[: max(limit, 0)]
+    )
+    by_code = {str(summary.stock_code): summary for summary in ordered}
+    priority_codes = [str(code).strip() for code in priority_stock_codes or () if str(code).strip()]
+    priority_items = [by_code[code] for code in priority_codes if code in by_code]
+    priority_code_set = {str(summary.stock_code) for summary in priority_items}
+    focused = [*priority_items, *(summary for summary in ordered if str(summary.stock_code) not in priority_code_set)][: max(limit, 0)]
     report_items = [
         _web_view_report_concentration_item(
             repository,
@@ -38502,7 +38468,10 @@ def build_web_view_flow_trend_snapshot(
     now: datetime | None = None,
 ) -> dict:
     current = now or datetime.now(ZoneInfo(config.timezone))
-    snapshot_dates = repository.list_recent_investor_flow_dates(on_or_before=business_date, limit=limit)
+    snapshot_dates = repository.list_recent_market_investor_flow_dates(on_or_before=business_date, limit=limit)
+    latest_expected_date = previous_business_day(business_date, config.holiday_overrides)
+    if snapshot_dates and snapshot_dates[0] < latest_expected_date:
+        snapshot_dates = []
     items = []
     for snapshot_date in snapshot_dates:
         market_rows: list[MarketInvestorFlowDaily] = []

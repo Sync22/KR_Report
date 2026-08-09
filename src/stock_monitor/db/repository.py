@@ -3071,6 +3071,27 @@ class StockMonitorRepository:
             ).fetchall()
         return [date.fromisoformat(row["business_date"]) for row in rows]
 
+    def list_recent_market_investor_flow_dates(
+        self,
+        *,
+        on_or_before: date,
+        source: str = "krx_data_market",
+        limit: int = 5,
+    ) -> list[date]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT business_date
+                FROM market_investor_flow_daily
+                WHERE business_date <= ? AND source = ?
+                GROUP BY business_date
+                ORDER BY business_date DESC
+                LIMIT ?
+                """,
+                (on_or_before.isoformat(), source, limit),
+            ).fetchall()
+        return [date.fromisoformat(row["business_date"]) for row in rows]
+
     def count_krx_snapshot_rows_for_date(self, business_date: date) -> dict[str, int]:
         target = business_date.isoformat()
         with self.connect() as connection:

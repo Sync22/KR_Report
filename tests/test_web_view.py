@@ -5067,6 +5067,70 @@ def test_web_view_flow_trend_snapshot_uses_stored_samples_only(tmp_path, monkeyp
     _assert_public_safe_payload(snapshot)
 
 
+def test_web_view_flow_trend_hides_stale_market_only_samples(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    repository.upsert_market_investor_flow_daily(
+        [
+            MarketInvestorFlowDaily(
+                business_date=date(2026, 5, 1),
+                market="STK",
+                investor_type="foreign",
+                net_buy_amount=200,
+                volume_unit="shares",
+                amount_unit="KRW",
+                fetched_at=datetime(2026, 5, 1, 20, 0, 0),
+            )
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_flow_trend_snapshot(
+        config,
+        repository,
+        business_date=date(2026, 5, 8),
+        now=datetime(2026, 5, 8, 21, 0, 0),
+    )
+
+    assert snapshot["available"] is False
+    assert snapshot["reference_date"] is None
+    assert snapshot["items"] == []
+
+
+def test_market_briefing_does_not_substitute_stale_market_flow(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    repository.upsert_market_investor_flow_daily(
+        [
+            MarketInvestorFlowDaily(
+                business_date=date(2026, 5, 1),
+                market="STK",
+                investor_type="foreign",
+                net_buy_amount=200,
+                volume_unit="shares",
+                amount_unit="KRW",
+                fetched_at=datetime(2026, 5, 1, 20, 0, 0),
+            )
+        ]
+    )
+
+    briefing = cli_module._build_web_view_market_briefing_context(
+        repository,
+        date(2026, 5, 8),
+        summaries=[],
+        recent_krx_snapshot_dates=[date(2026, 5, 7)],
+        recent_flow_dates=[date(2026, 5, 1)],
+    )
+
+    assert briefing["flow_summary"]["available"] is False
+    assert briefing["flow_reference_lines"] == []
+
+
 def test_web_view_intraday_snapshot_is_public_safe(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
@@ -5530,20 +5594,13 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert 'document.getElementById("market-reference-card").open = true' in html
     assert "눈에 띄는 종목" in html
     assert 'item.turnover_display || compactAmount(item.turnover, "원")' in html
-    assert "리포트 후 흐름" in html
-    assert "<th>리포트 후 반응</th>" in html
     assert "<th>D+1</th><th>D+5</th><th>D+10</th><th>D+20</th>" not in html
-    assert 'id="backtest-observation-rows"><tr><td colspan="5"' in html
-    assert 'backtest-observation-rows").innerHTML = `<tr><td colspan="5"' in html
-    assert 'backtest-observation-rows").innerHTML = \'<tr><td colspan="5"' in html
     assert 'colspan="8"' not in html
     assert "관찰 후보 근거" not in html
     assert "리포트 후 반응 관찰" not in html
     assert "read-only</span>" not in html
-    assert "저장 기준</span>" in html
     assert "관찰 근거" in html
     assert "candidate-evidence-rows" in html
-    assert "backtest-observation-rows" in html
     assert (
         'class="card span-12 main-priority-card" id="main-priority-card" '
         'data-view-panel="main"'
@@ -5566,16 +5623,12 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert 'id="intraday-market-top-status"' not in daily_briefing_body
     assert 'id="candidate-evidence-card" data-view-panel="watch"' in html
     assert 'id="candidate-evidence-card" data-view-panel="main"' not in html
-    assert 'id="observation-summary-card" data-view-panel="watch" hidden' in html
-    assert 'id="observation-summary-card" data-view-panel="main"' not in html
-    assert "관찰 탭은 전체 후보 근거와 리포트 후 흐름을 함께 확인하는 화면입니다." in html
+    assert 'id="observation-summary-card"' not in html
+    assert 'id="stock-quick-picks-card"' not in html
     assert "candidate-evidence-panel" in html
-    assert 'id="backtest-observation-card" data-view-panel="watch"' in html
-    assert html.index('id="main-priority-card"') < html.index('id="observation-summary-date"')
-    assert html.index('id="candidate-evidence-card"') < html.index('id="observation-summary-card"')
-    assert html.index('id="observation-summary-card"') < html.index('id="backtest-observation-card"')
-    assert html.index('id="candidate-evidence-card"') < html.index('id="backtest-observation-card"')
-    assert html.index('id="candidate-evidence-rows"') < html.index('id="backtest-observation-card"')
+    assert 'id="backtest-observation-card"' not in html
+    assert "function renderWatchCandidateRow(item, index)" in html
+    assert 'class="watch-candidate-row candidate-detail-action"' in html
     assert html.index('id="candidate-evidence-card"') < html.index('id="stock-rows"')
     assert "renderCandidateEvidence(data.candidate_evidence)" not in html
     assert "loadCandidateEvidence(date, { initialData: currentDailyData?.priority_candidate_evidence })" in html
@@ -5588,19 +5641,10 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "loadEtfTrend(date)" not in load_daily_body
     assert "loadFlowTrend(date)" not in load_daily_body
     assert "loadTabDataForActiveView(date)" in load_daily_body
-    assert "loadBacktestObservation(date)" in html
-    assert "renderBacktestObservation" in html
-    assert "renderObservationEvidenceNotes" in html
-    assert "reactionSummaryLabel(item.reaction_windows)" in html
     assert "candidateDisplayFlags(item.quality_flags)" not in html
     assert "observationEvidenceNotesForDisplay(notes)" in html
     assert 'new Set(["missing_stock_flow", "rank_not_present"])' not in html
     assert 'new Set(["당일 수급 없음", "외국인 순매수 상위 미포함"])' in html
-    assert "backtest-observation-show-more" in html
-    assert "const BACKTEST_OBSERVATION_DEFAULT_LIMIT = 6" in html
-    assert "let backtestObservationVisibleLimit = BACKTEST_OBSERVATION_DEFAULT_LIMIT" in html
-    assert "rows.slice(0, backtestObservationVisibleLimit)" in html
-    assert "/api/observation/backtest" in html
     assert "진행률 해석 주의" in html
     assert "targetValidationLabel(target)" in html
     assert "최대 진행" in html
@@ -5695,13 +5739,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "증권사 ${number(report.broker_count)}곳" not in html
     assert "<b>KRX</b>" not in html
     assert "renderTopTwoReviewCandidates(rows) + rows.map" not in html
-    assert 'const primaryCards = rows.slice(0, 2).map(renderCandidateCard).join("");' in html
-    assert 'const additionalRows = rows.slice(2, 8);' in html
-    assert '추가 후보 ${number(additionalRows.length)}개' in html
     assert 'document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(priorityRows);' in html
     assert "오늘의 우선순위" in html
-    assert '<p class="brief" id="candidate-evidence-notice"></p>' in html
-    assert 'document.getElementById("candidate-evidence-notice").textContent = "";' in html
     assert "${market} <span class=\"status-pill\"" in html
     assert '["순매수", rank || "순매수 상위 없음"]' in html
     assert '["외국인/기관", flowLine || "-"]' in html
@@ -5803,7 +5842,6 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "추천이나 점수가 아니라" not in html
     assert "추천 순위" not in html
     assert "추천이나 매수/매도" not in html
-    assert "저장 데이터 기반 확인용입니다" in html
     assert "업종 분류 데이터 정비 후 표시합니다" not in html
     assert "공유 화면 기준" not in html
     assert "관리자 제어 없음" not in html
@@ -5853,7 +5891,6 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "업종 또는 테마 행을 선택하면 상세 종목과 최근 흐름을 불러옵니다." in html
     assert "selectedCategoryLabel || selectedCategoryDisplayName" in html
     assert html.index('id="candidate-evidence-card"') < html.index('id="stock-context-card"')
-    assert html.index('id="stock-detail-card"') < html.index('id="backtest-observation-card"')
     assert 'setViewTab("stock");' in html
     assert "scrollIntoView" in html
     assert "market-notice" in html
