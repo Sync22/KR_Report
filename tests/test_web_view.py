@@ -5599,7 +5599,6 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "관찰 후보 근거" not in html
     assert "리포트 후 반응 관찰" not in html
     assert "read-only</span>" not in html
-    assert "관찰 근거" in html
     assert "candidate-evidence-rows" in html
     assert (
         'class="card span-12 main-priority-card" id="main-priority-card" '
@@ -5627,6 +5626,9 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert 'id="stock-quick-picks-card"' not in html
     assert "candidate-evidence-panel" in html
     assert 'id="backtest-observation-card"' not in html
+    assert 'id="news-observation-collect"' not in html
+    assert 'fetch("/api/news-observations/collect"' not in html
+    assert "maybeAutoCollectNewsObservation" not in html
     assert "function renderWatchCandidateRow(item, index)" in html
     assert 'class="watch-candidate-row candidate-detail-action"' in html
     assert html.index('id="candidate-evidence-card"') < html.index('id="stock-rows"')
@@ -5642,12 +5644,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "loadFlowTrend(date)" not in load_daily_body
     assert "loadTabDataForActiveView(date)" in load_daily_body
     assert "candidateDisplayFlags(item.quality_flags)" not in html
-    assert "observationEvidenceNotesForDisplay(notes)" in html
     assert 'new Set(["missing_stock_flow", "rank_not_present"])' not in html
-    assert 'new Set(["당일 수급 없음", "외국인 순매수 상위 미포함"])' in html
-    assert "진행률 해석 주의" in html
-    assert "targetValidationLabel(target)" in html
-    assert "최대 진행" in html
     assert "도달 " in html
     assert "candidateTargetMetrics(report, item.target_price_progress)" in html
     assert "candidateFlowMetrics(rank, turnover, flowLine)" in html
@@ -5685,7 +5682,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "esc(newsLine)" not in top_two_body
     assert "esc(tossBaselineLine)" not in top_two_body
     assert "candidate-news-badge" in html
-    toss_quote_body = html.split("async function loadTossPriorityQuotes(date)", 1)[1].split(
+    toss_quote_body = html.split("async function loadTossPriorityQuotes(date, options = {})", 1)[1].split(
         "async function loadPriorityCurrentQuotes", 1
     )[0]
     assert 'document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(tossPriorityRows);' in toss_quote_body
@@ -5694,7 +5691,15 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
         "const renderCandidateCard", 1
     )[0]
     assert "loadTossPriorityQuotes(tossPriorityDate);" in priority_load_body
+    assert "tossPriorityCohortKey" in priority_load_body
+    assert "force: true" in html
     assert "loadPriorityCurrentQuotes(tossPriorityDate);" not in priority_load_body
+    assert 'const hasCurrentPrice = item?.intraday_reference?.available === true || topTwoTossQuoteIsCurrent(tossQuote);' in html
+    assert 'if (!hasCurrentPrice) missing.push("현재가 확인 전");' in html
+    assert 'missing.push("Toss 현재가 확인 전")' not in top_two_body
+    assert 'function targetPriceRange(minimum, maximum)' in html
+    assert '<span>뉴스 근거: ${esc(candidateNewsCompactLine(candidate.news_observation_badge))}</span>' not in html
+    assert '<span>${esc(candidateNewsCompactLine(candidate.news_observation_badge))}</span>' in html
     assert ".candidate-news-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; border: 1px solid #e7d8bf;" in html
     assert "candidate-intraday-line" in html
     assert "확인 전" in html
@@ -5713,7 +5718,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "renderQualityChips(whyNotable, \"quality-chip--why\", 2)" in html
     assert "renderQualityChips(supportEvidence, \"quality-chip--support\", 3)" in html
     assert "renderQualityChips(missingInformation, \"quality-chip--missing\", 1)" in html
-    assert "candidateCompactLabel(whyItems, 2)" in html
+    assert "candidateCompactLabel(whyItems, 3)" in html
+    assert "candidateCompactLabel(candidateWhyDisplayItems(layers.primary), 3)" in html
     assert "candidateCompactLabel(gapItems, 1)" not in html
     assert "candidateEvidenceLayers(item)" in html
     assert "candidateWhyDisplayItems(layers.primary)" in html
@@ -5749,7 +5755,6 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert 'item.observation_priority || "우선 확인"' in html
     assert "compactTurnover(item.market_reference.turnover)" in html
     assert "목표가/지표" in html
-    assert "괴리/진행 계산 불가" in html
     assert "확인 후보" in html
     assert "추천/점수 아님" not in html
     assert "이전 날짜" not in html
@@ -5822,8 +5827,6 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert 'indices.map((item) => `${esc(item.index_series' not in html
     assert "renderDailyBriefing(data)" in html
     assert html.index('id="news-observation-summary"') < html.index('id="main-priority-card"')
-    assert 'label: "당일 뉴스 근거"' in html
-    assert "renderObservationNewsItem" in html
     assert "item?.data_scope" not in html
     assert '${items.length ? "" : `<p class="news-observation-summary-connection">' in html
     assert "date-calendar-cell" in html
@@ -5852,9 +5855,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "const price = (value) => compactAmount(value, \"원\")" in html
     assert "const compactTurnover = (value, unit = \"원\")" in html
     assert "compactTurnover(item.market_reference.turnover)" in html
-    assert "거래대금 ${compactTurnover(entry.horizon_turnover)}" in html
     assert "${esc(item.evidence_label || compactTurnover(item.turnover))}</span>" in html
-    assert html.count('labeled("거래대금", compactTurnover(item.turnover))') >= 6
+    assert html.count('labeled("거래대금", compactTurnover(item.turnover))') >= 3
     assert "market-etf-rows" not in html
     assert "ETF 거래대금 상위" not in html
     assert "ETF는 순환매 탭에서 봅니다." in html
@@ -6399,7 +6401,7 @@ def test_web_view_server_handles_short_concurrent_json_gets(tmp_path, monkeypatc
     assert statuses == [200] * 12
 
 
-def test_web_view_news_observation_collect_button_and_api_contract(tmp_path, monkeypatch) -> None:
+def test_web_view_rejects_news_observation_collect_post(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     config.ensure_runtime_dirs()
@@ -6426,15 +6428,7 @@ def test_web_view_news_observation_collect_button_and_api_contract(tmp_path, mon
 
     def fake_collect(config_arg, repository_arg, *, business_date, limit):
         calls.append((config_arg, repository_arg, business_date, limit))
-        return HTTPStatus.OK, {
-            "surface": "web-view-news-observation-collect",
-            "ok": True,
-            "live_fetch": True,
-            "writes_db": True,
-            "saved_observation_count": 1,
-            "saved_evidence_count": 2,
-            "news_observation_summary": {"available": True, "display_label": "뉴스 근거 있음"},
-        }
+        raise AssertionError("GET-only web-view must not call the news collector")
 
     monkeypatch.setattr(cli_module, "_collect_web_view_news_observations", fake_collect)
     server = cli_module.create_web_view_server(config, repository, host="127.0.0.1", port=0, limit=5)
@@ -6451,17 +6445,15 @@ def test_web_view_news_observation_collect_button_and_api_contract(tmp_path, mon
                 "X-Stock-Monitor-Web-Action": "news-observation-collect",
             },
         )
-        with urllib.request.urlopen(request, timeout=5) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(request, timeout=5)
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
 
-    assert payload["ok"] is True
-    assert payload["writes_db"] is True
-    assert payload["saved_observation_count"] == 1
-    assert calls == [(config, repository, business_date, 2)]
+    assert exc_info.value.code == HTTPStatus.METHOD_NOT_ALLOWED
+    assert calls == []
 
 
 def test_web_view_news_observation_collect_uses_candidate_priority_top_two(tmp_path, monkeypatch, capsys) -> None:

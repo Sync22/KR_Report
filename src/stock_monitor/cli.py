@@ -18860,11 +18860,6 @@ def _news_evidence_known_input_paths() -> list[dict[str, object]]:
             "writes_db": "only with --save-observation --confirm-save",
         },
         {
-            "path": "POST /api/news-observations/collect",
-            "input_universe": "build_web_view_candidate_evidence_snapshot selected-date top candidates, bounded to 1..5",
-            "writes_db": "access-gated operator action only",
-        },
-        {
             "path": "scheduled-market-briefing-slot",
             "input_universe": "same web-view candidate collector, bounded to top 2 after scheduler guards",
             "writes_db": "only during non-dry-run scheduled briefing after guards pass",
@@ -26015,68 +26010,6 @@ def _make_web_view_handler(
                     content_type="text/plain; charset=utf-8",
                 )
                 return
-            if path == "/api/news-observations/collect":
-                if not _access_http_gate(self, config, surface_label="사용자용 웹뷰", surface_key="web"):
-                    return
-                if self.headers.get("X-Stock-Monitor-Web-Action") != "news-observation-collect":
-                    _discard_http_request_body(self)
-                    _write_http_response(
-                        self,
-                        HTTPStatus.FORBIDDEN,
-                        json.dumps(
-                            {
-                                "surface": "web-view-news-observation-collect",
-                                "ok": False,
-                                "error": "missing web action header",
-                                "live_fetch": False,
-                                "writes_db": False,
-                            },
-                            ensure_ascii=False,
-                        ),
-                        content_type="application/json; charset=utf-8",
-                    )
-                    return
-                try:
-                    request = _read_json_request(self)
-                    raw_date = str(request.get("date") or "").strip()
-                    if not raw_date:
-                        raise ValueError("date is required")
-                    business_date = date.fromisoformat(raw_date)
-                    collect_limit = min(max(int(request.get("limit") or 2), 1), 5)
-                    status, payload = _collect_web_view_news_observations(
-                        config,
-                        repository,
-                        business_date=business_date,
-                        limit=collect_limit,
-                    )
-                    if status == HTTPStatus.OK:
-                        with response_cache_lock:
-                            response_cache.clear()
-                except ValueError as exc:
-                    status = HTTPStatus.BAD_REQUEST
-                    payload = {
-                        "surface": "web-view-news-observation-collect",
-                        "ok": False,
-                        "error": str(exc),
-                        "live_fetch": False,
-                        "writes_db": False,
-                    }
-                except Exception as exc:
-                    status = HTTPStatus.BAD_GATEWAY
-                    payload = {
-                        "surface": "web-view-news-observation-collect",
-                        "ok": False,
-                        "error": str(exc),
-                        "live_fetch": False,
-                        "writes_db": False,
-                    }
-                _write_http_response(
-                    self,
-                    status,
-                    json.dumps(payload, ensure_ascii=False),
-                    content_type="application/json; charset=utf-8",
-                )
-                return
             _discard_http_request_body(self)
             _write_http_response(self, HTTPStatus.METHOD_NOT_ALLOWED, "method not allowed", content_type="text/plain; charset=utf-8")
 
@@ -28417,33 +28350,6 @@ def _render_web_view_html() -> str:
     .briefing-mini-label { margin: 2px 0 -4px; color: var(--muted); font-size: 12px; font-weight: 900; }
     .briefing-check-points { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
     .briefing-check-points li { border: 1px solid rgba(222,216,204,.95); border-radius: 14px; padding: 8px 10px; background: #fbf4e6; color: var(--muted); font-size: 12px; font-weight: 800; }
-    .observation-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-    .observation-block { min-width: 0; border: 1px solid var(--line); border-radius: 16px; padding: 12px; background: #fffaf1; }
-    .observation-block-head { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-    .observation-block b { display: block; color: var(--muted); font-size: 12px; }
-    .observation-info { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--muted); cursor: help; font-size: 12px; font-weight: 900; }
-    .observation-help-card { position: absolute; z-index: 2; top: 24px; right: 0; display: none; width: min(220px, 72vw); border: 1px solid rgba(222,216,204,.95); border-radius: 10px; padding: 8px 10px; background: #fff; box-shadow: 0 12px 30px rgba(31,39,35,.12); color: var(--muted); font-size: 10px; line-height: 1.45; }
-    .observation-info-wrap:hover .observation-help-card, .observation-info-wrap:focus-within .observation-help-card { display: block; }
-    .observation-block ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
-    .observation-block li { border-top: 1px solid var(--line); padding-top: 7px; overflow-wrap: anywhere; color: var(--ink); font-size: 13px; line-height: 1.45; }
-    .observation-block li:first-child { border-top: 0; padding-top: 0; }
-    .observation-item-title { display: block; color: var(--ink); font-size: 13px; font-weight: 900; }
-    .observation-item-line { display: block; color: var(--ink); font-size: 12px; line-height: 1.45; }
-    .observation-item-line.muted { color: var(--muted); }
-    .observation-item-line.indent { padding-left: 12px; }
-    .observation-item-lines { display: grid; gap: 3px; }
-    .observation-inline-parts { display: flex; flex-wrap: wrap; gap: 4px 8px; }
-    .observation-inline-parts span { color: var(--ink); font-size: 12px; }
-    .observation-link { border: 0; background: transparent; color: var(--ink); cursor: pointer; font: inherit; padding: 0; text-align: left; }
-    .observation-link:hover { color: var(--accent); text-decoration: underline; }
-    .sector-breadth-list { display: grid; gap: 9px; }
-    .sector-breadth-row { display: grid; gap: 4px; border-top: 1px solid var(--line); padding-top: 8px; }
-    .sector-breadth-row:first-child { border-top: 0; padding-top: 0; }
-    .sector-breadth-head { display: grid; gap: 2px; color: var(--ink); font-size: 12px; }
-    .sector-breadth-label { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: keep-all; }
-    .sector-breadth-meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
-    .sector-breadth-track { height: 8px; overflow: hidden; border-radius: 999px; background: rgba(222,216,204,.8); }
-    .sector-breadth-bar { display: block; height: 100%; min-width: 6px; border-radius: 999px; background: linear-gradient(90deg, var(--accent), #83a86f); }
     .scroll-panel { max-height: 420px; overflow: auto; padding-right: 4px; scrollbar-width: thin; }
     .scroll-panel.tall { max-height: 560px; }
     .scroll-panel.stock-summary-panel { max-height: 430px; }
@@ -28639,7 +28545,6 @@ def _render_web_view_html() -> str:
       .grid { grid-template-columns: 1fr; }
       .span-12, .span-8, .span-7, .span-6, .span-5, .span-4 { grid-column: auto; }
       .market-grid { grid-template-columns: 1fr; }
-      .observation-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .top-two-candidates { grid-template-columns: 1fr; }
       .rotation-evidence { grid-template-columns: 1fr; }
       .candidate-evidence-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -28671,7 +28576,6 @@ def _render_web_view_html() -> str:
       .briefing-market-row { grid-template-columns: 1fr; }
       .briefing-mood-sections { grid-template-columns: 1fr; }
       .briefing-comments { grid-template-columns: 1fr; }
-      .observation-summary-grid { grid-template-columns: 1fr; }
       .candidate-evidence-grid { grid-template-columns: 1fr; }
       .candidate-target-grid, .candidate-flow-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .stock-news-digest-item { grid-template-columns: 74px minmax(0, 1fr); }
@@ -28741,10 +28645,6 @@ def _render_web_view_html() -> str:
           <div class="news-observation-summary-head"><b>뉴스 관찰</b><span class="status-pill">저장 데이터</span></div>
           <p class="news-observation-summary-reason">날짜를 선택하면 저장된 뉴스 관찰을 확인합니다.</p>
           <p class="news-observation-summary-connection">우선 확인 후보와 함께 읽는 뉴스 근거입니다.</p>
-          <div class="news-observation-actions">
-            <button id="news-observation-collect" class="ghost-button" type="button" disabled>뉴스 근거 새로 확인</button>
-            <span id="news-observation-collect-status" class="muted">저장 뉴스 근거를 확인합니다.</span>
-          </div>
         </div>
         <div class="briefing-market-row">
           <div class="briefing-reference-card">
@@ -29073,8 +28973,6 @@ def _render_web_view_html() -> str:
     let tossPriorityDate = null;
     let tossMarketContextRequestId = 0;
     let mainPriorityCohort = { date: null, codes: [] };
-    let newsObservationCollectLoading = false;
-    let newsObservationCollectAttemptedKey = null;
     let showSingleReportStocks = false;
     let dailyStockVisibleLimit = DAILY_STOCK_DEFAULT_LIMIT;
     let hideNoOpinionReports = false;
@@ -29082,9 +28980,7 @@ def _render_web_view_html() -> str:
     let rotationLoadingDate = null;
     let candidateEvidenceLoadedDate = null;
     let candidateEvidenceLoadedLimit = 0;
-    let observationSummaryLoadedDate = null;
     let watchDataLoading = false;
-    let backtestObservationLoadedDate = null;
     let etfTrendLoadedDate = null;
     let etfTrendAvailable = false;
     let flowTrendLoadedDate = null;
@@ -29095,6 +28991,7 @@ def _render_web_view_html() -> str:
     let activeViewTab = "main";
     let tossPriorityQuoteByCode = new Map();
     let tossPriorityInvestorTradingByCode = new Map();
+    let tossPriorityCohortKey = null;
 
     function viewPanelHasRequiredData(panel) {
       if (panel.dataset.viewWhen === "stock-selection") return Boolean(selectedStockCode);
@@ -29493,9 +29390,7 @@ def _render_web_view_html() -> str:
       currentCandidateEvidenceData = null;
       candidateEvidenceLoadedDate = null;
       candidateEvidenceLoadedLimit = 0;
-      observationSummaryLoadedDate = null;
       watchDataLoading = false;
-      backtestObservationLoadedDate = null;
       etfTrendLoadedDate = null;
       etfTrendAvailable = false;
       flowTrendLoadedDate = null;
@@ -29763,38 +29658,6 @@ def _render_web_view_html() -> str:
         ${groups.length ? `<div class="news-observation-summary-groups">${groups.map((group) => renderNewsObservationSummaryGroup(group.title, group.items)).join("")}</div>` : ""}
         ${titles.length ? `<ul class="news-observation-summary-titles">${titles.map((title) => `<li>${esc(title)}</li>`).join("")}</ul>` : ""}
       `;
-      updateNewsObservationCollectButton(summary);
-      maybeAutoCollectNewsObservation(summary);
-    }
-
-    function updateNewsObservationCollectButton(summary) {
-      const button = document.getElementById("news-observation-collect");
-      const statusNode = document.getElementById("news-observation-collect-status");
-      if (!button) return;
-      button.disabled = !selectedDate || newsObservationCollectLoading;
-      if (statusNode && !newsObservationCollectLoading) {
-        const observedAt = newsObservationTimeLabel(summary);
-        statusNode.textContent = summary?.available === true
-          ? `저장 뉴스 근거가 반영되었습니다.${observedAt ? ` ${observedAt}` : ""}`
-          : "저장 뉴스 근거가 없으면 자동으로 수집합니다.";
-      }
-    }
-
-    function maybeAutoCollectNewsObservation(summary) {
-      if (!selectedDate || summary?.available === true) return;
-      const collectKey = newsObservationCollectKey();
-      if (newsObservationCollectLoading || newsObservationCollectAttemptedKey === collectKey) return;
-      newsObservationCollectAttemptedKey = collectKey;
-      window.setTimeout(() => collectNewsObservationForSelectedDate({ automatic: true }), 0);
-    }
-
-    function newsObservationCollectKey() {
-      const codes = tossPriorityRows
-        .map((row) => String(row?.stock_code || "").trim())
-        .filter(Boolean)
-        .slice(0, 2)
-        .join(",");
-      return `${selectedDate || ""}:${codes}`;
     }
 
     function selectStablePriorityRows(rows, businessDate) {
@@ -29818,54 +29681,6 @@ def _render_web_view_html() -> str:
       if (pinnedRows.length) return pinnedRows;
       mainPriorityCohort = { date: dateKey, codes: [] };
       return availableRows.slice(0, 2);
-    }
-
-    function maybeAutoCollectNewsObservationForPriorityRows(rows) {
-      const picked = (Array.isArray(rows) ? rows : []).slice(0, 2);
-      if (!selectedDate || !picked.length) return;
-      const needsNewsCollect = picked.some((row) => row?.news_observation_badge?.available !== true);
-      if (!needsNewsCollect) return;
-      const collectKey = newsObservationCollectKey();
-      if (newsObservationCollectLoading || newsObservationCollectAttemptedKey === collectKey) return;
-      newsObservationCollectAttemptedKey = collectKey;
-      window.setTimeout(() => collectNewsObservationForSelectedDate({ automatic: true }), 0);
-    }
-
-    async function collectNewsObservationForSelectedDate(options = {}) {
-      if (!selectedDate || newsObservationCollectLoading) return;
-      const button = document.getElementById("news-observation-collect");
-      const statusNode = document.getElementById("news-observation-collect-status");
-      newsObservationCollectLoading = true;
-      if (button) button.disabled = true;
-      if (statusNode) statusNode.textContent = options.automatic ? "뉴스 근거 자동 수집 중" : "뉴스 근거 수집 중";
-      try {
-        const response = await fetch("/api/news-observations/collect", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Stock-Monitor-Web-Action": "news-observation-collect",
-          },
-          body: JSON.stringify({ date: selectedDate, limit: 2 }),
-        });
-        const payload = await response.json();
-        if (!response.ok || payload.ok === false) throw new Error(payload.error || `HTTP ${response.status}`);
-        if (payload.news_observation_summary) renderNewsObservationSummary(payload.news_observation_summary);
-        await loadCandidateEvidence(selectedDate, { force: true });
-        if (currentDailyData) {
-          currentDailyData = {
-            ...currentDailyData,
-            news_observation_summary: payload.news_observation_summary || currentDailyData.news_observation_summary,
-          };
-        }
-        if (statusNode) {
-          statusNode.textContent = `뉴스 근거 저장 ${number(payload.saved_observation_count || 0)}건`;
-        }
-      } catch (error) {
-        if (statusNode) statusNode.textContent = `뉴스 근거 수집 실패: ${String(error.message || error)}`;
-      } finally {
-        newsObservationCollectLoading = false;
-        updateNewsObservationCollectButton(currentDailyData?.news_observation_summary);
-      }
     }
 
     function newsObservationSummaryGroups(items) {
@@ -30161,224 +29976,6 @@ def _render_web_view_html() -> str:
       };
     }
 
-    function renderObservationSummary(summary) {
-      document.getElementById("observation-summary-date").textContent = summary?.business_date ? `(${summary.business_date})` : "";
-      document.getElementById("observation-summary-notice").textContent = displayNotice(summary?.notice || "저장 데이터 기준 관찰 요약입니다.");
-      const blocks = [];
-      const mood = summary?.market_mood || {};
-      const sectorItems = [
-        ...(summary?.sector_breadth?.sectors || []),
-        ...(summary?.sector_breadth?.themes || [])
-      ].slice(0, 4);
-      blocks.push({
-        label: "시장 분위기",
-        items: [{
-          display: mood.display || "저장된 리포트 요약이 없습니다.",
-          lines: Array.isArray(mood.lines) ? mood.lines : [],
-          observation_line: mood.observation_line || "",
-          breadth_items: sectorItems
-        }],
-        variant: "mood"
-      });
-      blocks.push({
-        label: "리포트 집중",
-        items: (summary?.report_concentration?.items || []).slice(0, 6),
-        variant: "report"
-      });
-      const newsItems = Array.isArray(currentDailyData?.news_observation_summary?.items)
-        ? currentDailyData.news_observation_summary.items.slice(0, 4)
-        : [];
-      if (newsItems.length) {
-        blocks.push({
-          label: "당일 뉴스 근거",
-          items: newsItems,
-          variant: "news"
-        });
-      }
-      blocks.push({
-        label: "후보 수급 참고 [12009]",
-        items: (summary?.flow_reference?.items || []).slice(0, 4),
-        variant: "flow"
-      });
-      blocks.push({
-        label: "과열 참고",
-        items: (summary?.price_volume_reference?.items || []).slice(0, 4),
-        variant: "price",
-        help: "20일/52주 위치는 저장 구간 내 현재가 위치, 5일은 등락률, 거래량은 20일 평균 대비 배율입니다."
-      });
-      document.getElementById("observation-summary-rows").innerHTML = blocks.map(renderObservationBlock).join("");
-    }
-
-    function renderObservationBlock(block) {
-      const items = Array.isArray(block.items) && block.items.length ? block.items : ["저장 데이터 없음"];
-      const helpNode = block.help
-        ? `<span class="observation-info-wrap"><button class="observation-info" type="button" aria-label="${esc(block.label)} 설명">i</button><span class="observation-help-card" role="tooltip">${esc(block.help)}</span></span>`
-        : "";
-      return `
-        <div class="observation-block">
-          <div class="observation-block-head"><b>${esc(block.label)}</b>${helpNode}</div>
-          ${block.variant === "breadth" ? renderSectorBreadthBars(items) : `<ul>${items.map((item) => renderObservationItem(item, block.variant)).join("")}</ul>`}
-        </div>
-      `;
-    }
-
-    function renderSectorBreadthBars(items) {
-      const picked = Array.isArray(items) ? items : [];
-      if (!picked.length) return '<span class="muted">업종/테마 데이터 없음</span>';
-      return `<div class="sector-breadth-list">${picked.map((item) => {
-        const label = item.display || `${item.category_label || ""} ${item.category_display_name || item.display_name || "-"}`;
-        const width = Math.max(6, Math.min(100, Number(item.bar_width_percent || 0)));
-        const meta = `비중 ${percent(item.share_percent)}`;
-        const categoryType = item.category_type || "";
-        const publicCategoryId = item.public_category_id || "";
-        const displayName = item.display_name || item.category_display_name || "";
-        const labelNode = ["sector", "theme"].includes(categoryType) && publicCategoryId && displayName
-          ? `<button class="observation-link" type="button" data-public-category-id="${esc(publicCategoryId)}" data-category-type="${esc(categoryType)}" data-category-display-name="${esc(displayName)}">${esc(label)}</button>`
-          : esc(label);
-        return `<div class="sector-breadth-row">
-          <div class="sector-breadth-head"><span class="sector-breadth-label">${labelNode}</span><span class="sector-breadth-meta">${esc(meta)}</span></div>
-          <div class="sector-breadth-track" aria-hidden="true"><span class="sector-breadth-bar" style="width: ${width}%"></span></div>
-        </div>`;
-      }).join("")}</div>`;
-    }
-
-    function renderObservationItem(item, variant) {
-      if (variant === "mood" && item && typeof item === "object") return renderObservationMoodItem(item);
-      if (variant === "report" && item && typeof item === "object") return renderObservationReportItem(item);
-      if (variant === "news" && item && typeof item === "object") return renderObservationNewsItem(item);
-      if (variant === "flow" && item && typeof item === "object") return renderObservationFlowItem(item);
-      if (variant === "price" && item && typeof item === "object") return renderObservationPriceItem(item);
-      if (item && typeof item === "object") {
-        const label = item.display || `${item.category_display_name || item.display_name || "-"} 리포트 ${number(item.report_count)}건`;
-        const categoryType = item.category_type || "";
-        const publicCategoryId = item.public_category_id || "";
-        const displayName = item.display_name || item.category_display_name || "";
-        if (["sector", "theme"].includes(categoryType) && publicCategoryId && displayName) {
-          return `<li><button class="observation-link" type="button" data-public-category-id="${esc(publicCategoryId)}" data-category-type="${esc(categoryType)}" data-category-display-name="${esc(displayName)}">${esc(label)}</button></li>`;
-        }
-        return `<li>${esc(label)}</li>`;
-      }
-      return `<li>${esc(item)}</li>`;
-    }
-
-    function renderObservationNewsItem(item) {
-      const counts = `직접 ${number(item.direct_count || 0)} · 주의 ${number(item.caution_count || 0)} · 시장맥락 ${number(item.market_context_count || 0)}`;
-      const title = item.top_title || item.reason || "매칭 뉴스 없음";
-      return `<li>
-        <span class="observation-item-lines">
-          ${renderObservationStockLink(item, `${item.stock_name || "-"} ${item.stock_code || ""}`)}
-          <span class="observation-item-line">${esc(counts)}</span>
-          <span class="observation-item-line muted">${esc(title)}</span>
-        </span>
-      </li>`;
-    }
-
-    function renderObservationMoodItem(item) {
-      const breadthItems = Array.isArray(item.breadth_items) ? item.breadth_items : [];
-      const lines = Array.isArray(item.lines) && item.lines.length
-        ? item.lines
-        : [item.display || "저장된 리포트 요약이 없습니다."];
-      const body = breadthItems.length
-        ? renderSectorBreadthBars(breadthItems)
-        : lines.map((line) => `<span class="observation-item-line">${esc(line)}</span>`).join("");
-      const observationLine = item.observation_line ? `<span class="observation-item-line">${esc(item.observation_line)}</span>` : "";
-      const breadthLabel = breadthItems.length ? `<span class="observation-item-line muted">시장 폭 상위 흐름</span>` : "";
-      return `<li>
-        <span class="observation-item-lines">
-          ${observationLine}
-          ${breadthLabel}
-          ${body}
-        </span>
-      </li>`;
-    }
-
-    function renderObservationReportItem(item) {
-      const reportLine = `${item.stock_name || "-"} / 리포트 ${number(item.mention_count)}건`;
-      const target = item.target_price_revision || {};
-      const targetLabel = target.available && target.direction_label
-        ? `목표가 저번 언급 대비 ${target.direction_label}`
-        : "목표가 변화 기준 없음";
-      const intensity = item.report_intensity || {};
-      const activeDates = Number(intensity.five_business_day_active_dates || 0);
-      const recentReports = Number(intensity.five_business_day_report_count || 0);
-      const recentLine = recentReports > Number(item.mention_count || 0) || activeDates > 1
-        ? `<span class="observation-item-line muted">5영업일 ${number(recentReports)}건 · ${number(activeDates)}일 언급</span>`
-        : "";
-      return `<li>
-        <span class="observation-item-lines">
-          ${renderObservationStockLink(item, reportLine)}
-          ${recentLine}
-          <span class="observation-item-line">${esc(targetLabel)}</span>
-        </span>
-      </li>`;
-    }
-
-    function renderObservationFlowItem(item) {
-      const firstWindow = Array.isArray(item.windows) ? item.windows.find((row) => Number(row.days) === 5) || item.windows[0] : null;
-      const flowLines = firstWindow
-        ? [
-            `외국인 ${flowAmountLabel(firstWindow.foreign_net_buy_amount)}`,
-            `기관 ${flowAmountLabel(firstWindow.institution_net_buy_amount)}`,
-          ]
-        : ["수급 저장값 없음"];
-      const persistence = item.persistence || {};
-      const switchLines = [
-        flowPersistenceLine("외국인", persistence.foreign),
-        flowPersistenceLine("기관", persistence.institution)
-      ].filter(Boolean);
-      return `<li>
-        <span class="observation-item-lines">
-          ${renderObservationStockLink(item, item.stock_name || "-")}
-          ${flowLines.map((line) => `<span class="observation-item-line">${esc(line)}</span>`).join("")}
-          ${switchLines.length ? switchLines.map((line) => `<span class="observation-item-line muted indent">${esc(line)}</span>`).join("") : '<span class="observation-item-line muted indent">전환 지속 기준 없음</span>'}
-        </span>
-      </li>`;
-    }
-
-    function renderObservationPriceItem(item) {
-      const lines = [
-        `20일 위치 ${percent(item.close_position_20d_percent)} · 52주 위치 ${percent(item.close_position_52w_percent)}`,
-        `5일 ${signedPercent(item.return_5d_percent)} · 거래량 ${multiple(item.volume_multiple_20d)}`,
-      ];
-      if (item.turnover_display) lines.push(`거래대금 ${item.turnover_display}`);
-      return `<li>
-        <span class="observation-item-lines">
-          ${renderObservationStockLink(item, item.stock_name || "-")}
-          ${lines.map((line) => `<span class="observation-item-line">${esc(line)}</span>`).join("")}
-        </span>
-      </li>`;
-    }
-
-    function renderObservationStockLink(item, label) {
-      const stockCode = String(item?.stock_code || "");
-      if (!validStockCode(stockCode)) return `<span class="observation-item-title">${esc(label)}</span>`;
-      return `<button class="observation-link observation-item-title" type="button" data-stock-code="${esc(stockCode)}">${esc(label)}</button>`;
-    }
-
-    function flowAmountLabel(value) {
-      if (value === null || value === undefined) return "-";
-      return `${Number(value) >= 0 ? "순유입" : "순유출"} ${compactTurnover(Math.abs(Number(value)), "원")}`;
-    }
-
-    function flowPersistenceLine(label, item) {
-      if (!item?.available || Number(item.streak_days || 0) < 2) return "";
-      const direction = item.direction_label || "중립";
-      const days = number(item.streak_days);
-      if (item.turn_date) return `${label} ${direction} 전환 ${String(item.turn_date).slice(5).replace("-", ".")}부터 ${days}일`;
-      return `${label} ${direction} 연속 ${days}일`;
-    }
-
-    function signedPercent(value) {
-      if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
-      const numeric = Number(value);
-      return `${numeric > 0 ? "+" : ""}${numeric.toFixed(2)}%`;
-    }
-
-    function multiple(value) {
-      if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
-      return `${Number(value).toFixed(2)}배`;
-    }
-
     function renderBriefingCheckPoints(points) {
       const picked = Array.isArray(points) ? points.filter(Boolean).slice(0, 3) : [];
       document.getElementById("briefing-check-points").innerHTML = picked.length
@@ -30658,7 +30255,7 @@ def _render_web_view_html() -> str:
     function renderStockValueContext(context) {
       if (!context) return "";
       const rows = [
-        ["현재가", valueContextPriceBasis(context)],
+        ["저장 가격 기준", valueContextPriceBasis(context)],
         ["거래대금", valueContextDate(context.turnover_reference_date)],
         ["KRX 기준일", valueContextDate(context.krx_reference_date)],
         ["수급 기준일", valueContextDate(context.investor_flow_reference_date)],
@@ -30730,7 +30327,7 @@ def _render_web_view_html() -> str:
         <b>현재 관찰 맥락</b>
         <span>관찰 상태: ${esc(candidate.observation_priority || "확인 후보")} · ${esc(value)}</span>
         <span>관찰 사유: ${esc(why)}</span>
-        <span>뉴스 근거: ${esc(candidateNewsCompactLine(candidate.news_observation_badge))}</span>
+        <span>${esc(candidateNewsCompactLine(candidate.news_observation_badge))}</span>
         <span>장중 참고: ${esc(candidateIntradayReferenceLabel(candidate.intraday_reference))}</span>
         <span>${esc(quote)} · ${esc(candidateTossBaselineCompactLine(candidate.toss_baseline_reference))}</span>
         <div class="journey-actions">
@@ -30962,20 +30559,29 @@ def _render_web_view_html() -> str:
         document.getElementById("main-priority-rows").innerHTML = '<span class="muted">우선 확인 후보 데이터가 없습니다.</span>';
         document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">눈에 띄는 종목 데이터가 없습니다.</span>';
         tossPriorityRows = [];
+        tossPriorityCohortKey = null;
+        tossPriorityQuoteByCode = new Map();
+        tossPriorityInvestorTradingByCode = new Map();
         document.getElementById("toss-market-context").hidden = true;
         updateTossPriorityRefreshButton();
         refreshViewPanels();
         return;
       }
       const priorityRows = selectStablePriorityRows(rows, evidence?.business_date || selectedDate);
-      document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(priorityRows);
       tossPriorityRows = priorityRows.slice(0, 2);
-      tossPriorityQuoteByCode = new Map();
-      tossPriorityInvestorTradingByCode = new Map();
       tossPriorityDate = evidence?.business_date || selectedDate;
+      const nextTossCohortKey = `${tossPriorityDate || ""}:${tossPriorityRows.map((row) => String(row?.stock_code || "")).join(",")}`;
+      const tossCohortChanged = nextTossCohortKey !== tossPriorityCohortKey;
+      if (tossCohortChanged) {
+        tossPriorityCohortKey = nextTossCohortKey;
+        tossPriorityQuoteByCode = new Map();
+        tossPriorityInvestorTradingByCode = new Map();
+      }
+      document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(priorityRows);
       updateTossPriorityRefreshButton();
-      maybeAutoCollectNewsObservationForPriorityRows(tossPriorityRows);
-      loadTossPriorityQuotes(tossPriorityDate);
+      if (tossCohortChanged) {
+        loadTossPriorityQuotes(tossPriorityDate);
+      }
       if (activeViewTab === "market") loadTossMarketContext(tossPriorityDate);
       const renderCandidateCard = (item, index, offset = 0) => {
         const candidateIndex = index + offset;
@@ -31042,7 +30648,7 @@ def _render_web_view_html() -> str:
 
     function renderWatchCandidateRow(item, index) {
       const layers = candidateEvidenceLayers(item);
-      const primary = candidateCompactLabel(candidateWhyDisplayItems(layers.primary), 2) || "저장 근거 확인";
+      const primary = candidateCompactLabel(candidateWhyDisplayItems(layers.primary), 3) || "저장 근거 확인";
       const news = item?.news_observation_badge || {};
       const newsLabel = news.connection_label || news.display_label || "저장 뉴스 없음";
       return `<button class="watch-candidate-row candidate-detail-action" type="button" data-stock-code="${esc(item?.stock_code || "")}">
@@ -31059,7 +30665,7 @@ def _render_web_view_html() -> str:
         const layers = candidateEvidenceLayers(item);
         const whyItems = candidateWhyDisplayItems(layers.primary);
         const why = whyItems.length
-          ? candidateCompactLabel(whyItems, 2)
+          ? candidateCompactLabel(whyItems, 3)
           : "근거 보강 필요";
         const tossQuote = tossPriorityQuoteByCode.get(String(item?.stock_code || ""));
         const tossInvestorTrading = tossPriorityInvestorTradingByCode.get(String(item?.stock_code || ""));
@@ -31093,25 +30699,18 @@ def _render_web_view_html() -> str:
       const layers = candidateEvidenceLayers(item);
       const gaps = candidateWhyDisplayItems(layers.gap);
       const missing = [];
+      const hasCurrentPrice = item?.intraday_reference?.available === true || topTwoTossQuoteIsCurrent(tossQuote);
       if (item?.news_observation_badge?.available !== true) missing.push("뉴스 근거 대기");
-      if (item?.intraday_reference?.available !== true) missing.push("현재가 확인 전");
-      if (!topTwoTossQuoteIsCurrent(tossQuote)) missing.push("Toss 현재가 확인 전");
-      return candidateCompactLabel([...missing, ...gaps], 3) || "추가 공백 없음";
+      if (!hasCurrentPrice) missing.push("현재가 확인 전");
+      const relevantGaps = hasCurrentPrice
+        ? gaps.filter((gap) => !String(gap || "").includes("현재가"))
+        : gaps;
+      return candidateCompactLabel([...missing, ...relevantGaps], 3) || "추가 공백 없음";
     }
 
     function topTwoTossQuoteIsCurrent(tossQuote) {
       const text = String(tossQuote || "");
       return Boolean(text) && !/(확인|없음|불가|대기|disabled|stale)/i.test(text);
-    }
-
-    function candidateValueContextLine(context) {
-      if (!context) return "다음 확인 필요";
-      return [
-        `리포트 ${valueContextDate(context.report_reference_date)}`,
-        `KRX ${valueContextDate(context.krx_reference_date)}`,
-        `현재가 ${valueContextPriceBasis(context)}`,
-        `수급 ${valueContextDate(context.investor_flow_reference_date)}`
-      ].join(" · ");
     }
 
     function valueContextDate(value) {
@@ -31144,13 +30743,19 @@ def _render_web_view_html() -> str:
       const currentMax = revision.current_max;
       const previousMin = revision.previous_min;
       const previousMax = revision.previous_max;
-      const current = currentMin === currentMax ? currentMin : currentMax;
-      const previous = previousMin === previousMax ? previousMin : previousMax;
+      const current = targetPriceRange(currentMin, currentMax);
+      const previous = targetPriceRange(previousMin, previousMax);
       if (!current) return "최근 조정 없음";
-      if (revision.direction === "up" && previous) return `목표가 ↑ ${price(previous)} → ${price(current)}`;
-      if (revision.direction === "down" && previous) return `목표가 ↓ ${price(previous)} → ${price(current)}`;
-      if (revision.direction === "flat") return `목표가 유지 ${price(current)}`;
+      if (revision.direction === "up" && previous) return `목표가 ↑ ${previous} → ${current}`;
+      if (revision.direction === "down" && previous) return `목표가 ↓ ${previous} → ${current}`;
+      if (revision.direction === "flat") return `목표가 유지 ${current}`;
       return "최근 조정 없음";
+    }
+
+    function targetPriceRange(minimum, maximum) {
+      if (minimum && maximum && minimum !== maximum) return `${price(minimum)}~${price(maximum)}`;
+      if (minimum || maximum) return price(minimum || maximum);
+      return "";
     }
 
     function updateTossPriorityRefreshButton() {
@@ -31226,8 +30831,11 @@ def _render_web_view_html() -> str:
       renderSourceFreshnessSummary(summary);
     }
 
-    async function loadTossPriorityQuotes(date) {
+    async function loadTossPriorityQuotes(date, options = {}) {
       if (!validDate(date) || !tossPriorityRows.length) return;
+      if (options.force === true) {
+        tossPriorityCohortKey = `${date}:${tossPriorityRows.map((row) => String(row?.stock_code || "")).join(",")}`;
+      }
       const requestId = ++tossPriorityRequestId;
       tossPriorityLoading = true;
       updateTossPriorityRefreshButton();
@@ -31618,114 +31226,6 @@ def _render_web_view_html() -> str:
       return `<span class="candidate-market-inline"><span>${esc(price(reference.close_price))}</span><span>${esc(percent(reference.change_percent))} · ${esc(market)}</span></span>`;
     }
 
-    function renderObservationEvidenceNotes(notes) {
-      const rows = observationEvidenceNotesForDisplay(notes);
-      if (!rows.length) return '<span class="muted">근거 없음</span>';
-      return `<div class="evidence-note-list">${rows.map((item) => `<span class="quality-chip">${esc(item)}</span>`).join("")}</div>`;
-    }
-
-    function observationEvidenceNotesForDisplay(notes) {
-      const hiddenNotes = new Set(["당일 수급 없음", "외국인 순매수 상위 미포함"]);
-      return (Array.isArray(notes) ? notes : []).filter((item) => item && !hiddenNotes.has(String(item)));
-    }
-
-    async function loadBacktestObservation(date) {
-      const data = await fetch(`/api/observation/backtest?date=${encodeURIComponent(date)}&limit=20&mention_threshold=2`, { cache: "no-store" }).then((response) => response.json());
-      currentBacktestObservationData = data;
-      renderBacktestObservation(data);
-    }
-
-    function renderBacktestObservation(payload) {
-      document.getElementById("backtest-observation-date").textContent = payload?.business_date ? `(${payload.business_date})` : "";
-      document.getElementById("backtest-observation-notice").textContent = displayNotice(payload?.notice || "저장된 리포트와 KRX 가격/수급 기준입니다.");
-      const rows = payload?.rows || [];
-      refreshViewPanels();
-      if (!rows.length) {
-        document.getElementById("backtest-observation-rows").innerHTML = '<tr><td colspan="5" class="muted">리포트 후 흐름 데이터가 없습니다.</td></tr>';
-        document.getElementById("backtest-observation-show-more").hidden = true;
-        return;
-      }
-      const visibleRows = rows.slice(0, backtestObservationVisibleLimit);
-      const overflowCount = Math.max(rows.length - visibleRows.length, 0);
-      const showMoreButton = document.getElementById("backtest-observation-show-more");
-      showMoreButton.hidden = overflowCount <= 0;
-      showMoreButton.textContent = overflowCount ? `더 보기 (${number(overflowCount)})` : "더 보기";
-      document.getElementById("backtest-observation-rows").innerHTML = visibleRows.map((item) => row([
-        labeled("종목", `${esc(item.stock_name || "-")}<div class="muted">${esc(item.stock_code || "")}</div>`),
-        labeled("관찰 근거", renderObservationEvidenceNotes(item.evidence_notes)),
-        labeled("리포트 후 반응", reactionSummaryLabel(item.reaction_windows)),
-        labeled("목표가", observationTargetLabel(item.target_observation)),
-        labeled("수급/순매수", observationFlowLabel(item.stock_flow_observation, item.net_buy_top_observation))
-      ])).join("");
-    }
-
-    function reactionSummaryLabel(windows) {
-      const entries = Array.isArray(windows) ? windows : [];
-      const available = entries.filter((entry) => entry?.available && entry.horizon_days !== null && entry.horizon_days !== undefined);
-      const pending = entries.filter((entry) => !entry?.available && entry?.horizon_days !== null && entry?.horizon_days !== undefined);
-      if (!available.length) {
-        const pendingText = pending.length ? `D+${pending.map((entry) => number(entry.horizon_days)).join("/D+")} 대기` : "반응 데이터 없음";
-        return `<span class="muted">${esc(pendingText)}</span>`;
-      }
-      const lines = available.slice(0, 2).map((entry) =>
-        `D+${number(entry.horizon_days)} ${metricPercent(entry.close_return_percent)}<div class="muted">${esc(entry.horizon_date || "-")} · 거래대금 ${compactTurnover(entry.horizon_turnover)}</div>`
-      );
-      if (available.length > 2) {
-        lines.push(`<div class="muted">외 ${number(available.length - 2)}개 구간</div>`);
-      } else if (pending.length) {
-        lines.push(`<div class="muted">대기 ${pending.map((entry) => `D+${number(entry.horizon_days)}`).join("/")}</div>`);
-      }
-      return lines.join("");
-    }
-
-    function observationTargetLabel(target) {
-      if (!target || !target.available) return '<span class="muted">계산 불가</span>';
-      const gap = target.gap_available ? metricRange(target.target_gap_min_percent, target.target_gap_max_percent) : "-";
-      const progress = target.progress_available
-        ? `진행 ${metricPercent(target.progress_to_min_percent)} / ${metricPercent(target.progress_to_max_percent)}`
-        : "진행 -";
-      const caution = target.progress_caution ? '<div class="muted">진행률 해석 주의</div>' : "";
-      return `괴리 ${gap}<div class="muted">${progress}</div>${targetValidationLabel(target)}${caution}`;
-    }
-
-    function targetValidationLabel(target) {
-      if (!target || !target.validation_available) return "";
-      return `<div class="muted">${targetValidationSummary(target)}</div>`;
-    }
-
-    function targetValidationSummary(target) {
-      const maxProgress = target.max_progress_to_min_percent !== null || target.max_progress_to_max_percent !== null
-        ? `최대 진행 ${metricPercent(target.max_progress_to_min_percent)} / ${metricPercent(target.max_progress_to_max_percent)}`
-        : "최대 진행 -";
-      const hits = [];
-      if (target.hit_min_horizon_days !== null && target.hit_min_horizon_days !== undefined) hits.push(`하단 도달 D+${number(target.hit_min_horizon_days)}`);
-      if (target.hit_max_horizon_days !== null && target.hit_max_horizon_days !== undefined) hits.push(`상단 도달 D+${number(target.hit_max_horizon_days)}`);
-      const hitText = hits.length ? ` · 도달 ${hits.join(" · ")}` : "";
-      return `${maxProgress}${hitText}`;
-    }
-
-    function observationFlowLabel(flow, top) {
-      const flowText = evidenceFlowLabel(flow);
-      const topText = top?.foreign_top_rank
-        ? `외국인 순매수 ${number(top.foreign_top_rank)}위`
-        : "순매수 상위 없음";
-      return `${esc(flowText)}<div class="muted">${esc(topText)}</div>`;
-    }
-
-    function targetProgressLabel(progress) {
-      if (!progress || !progress.available) {
-        return `<span class="muted">${esc(progress?.notice || "괴리/진행 계산 불가")}</span>`;
-      }
-      const gap = progress.gap_available
-        ? `괴리 ${metricRange(progress.target_gap_min_percent, progress.target_gap_max_percent)}`
-        : "괴리 -";
-      const progressText = progress.progress_available
-        ? `진행 하단 ${metricPercent(progress.progress_to_min_percent)} · 상단 ${metricPercent(progress.progress_to_max_percent)}`
-        : "진행 -";
-      const baseline = progress.baseline_date ? ` · 기준 ${esc(progress.baseline_date)}` : "";
-      return `<span class="muted">${gap} · ${progressText}${baseline}</span>`;
-    }
-
     function marketMoodSectorLabel(value) {
       const text = categoryDisplay(value, "sector");
       if (!text || text === "업종 미확인") return "분류 데이터 정비 중";
@@ -32054,29 +31554,6 @@ def _render_web_view_html() -> str:
       ])).join("");
     }
 
-    async function loadMarket() {
-      const data = await fetch("/api/market", { cache: "no-store" }).then((response) => response.json());
-      document.getElementById("market-date").textContent = data.krx_snapshot_date ? `(${data.krx_snapshot_date})` : "";
-      document.getElementById("market-kospi-rows").innerHTML = data.krx_top_kospi_stocks.length ? data.krx_top_kospi_stocks.map((item) => row([
-        labeled("종목", `${esc(item.stock_name)}<div class="muted">${esc(item.stock_code)}</div>`),
-        labeled("종가", price(item.close_price)),
-        labeled("등락률", percent(item.change_percent)),
-        labeled("거래대금", compactTurnover(item.turnover))
-      ])).join("") : empty(4);
-      document.getElementById("market-kosdaq-rows").innerHTML = data.krx_top_kosdaq_stocks.length ? data.krx_top_kosdaq_stocks.map((item) => row([
-        labeled("종목", `${esc(item.stock_name)}<div class="muted">${esc(item.stock_code)}</div>`),
-        labeled("종가", price(item.close_price)),
-        labeled("등락률", percent(item.change_percent)),
-        labeled("거래대금", compactTurnover(item.turnover))
-      ])).join("") : empty(4);
-      document.getElementById("market-index-rows").innerHTML = data.krx_market_indices.length ? data.krx_market_indices.map((item) => row([
-        labeled("지수", esc(item.index_name)),
-        labeled("종가", number(item.close_index)),
-        labeled("등락률", percent(item.change_percent)),
-        labeled("거래대금", compactTurnover(item.turnover))
-      ])).join("") : empty(4);
-    }
-
     document.addEventListener("click", (event) => {
       const tabTarget = event.target.closest("[data-view-tab]");
       if (!tabTarget) return;
@@ -32169,14 +31646,10 @@ def _render_web_view_html() -> str:
       if (currentDailyData) renderDailyStocks(currentDailyData);
     });
     document.getElementById("toss-priority-refresh").addEventListener("click", () => {
-      loadTossPriorityQuotes(tossPriorityDate || selectedDate);
+      loadTossPriorityQuotes(tossPriorityDate || selectedDate, { force: true });
     });
     document.getElementById("intraday-market-top-check").addEventListener("click", () => {
       loadIntradayMarketTopForSelectedDate();
-    });
-    document.getElementById("news-observation-collect").addEventListener("click", () => {
-      newsObservationCollectAttemptedKey = null;
-      collectNewsObservationForSelectedDate({ automatic: false });
     });
     document.getElementById("report-no-opinion-toggle").addEventListener("change", (event) => {
       hideNoOpinionReports = Boolean(event.target.checked);

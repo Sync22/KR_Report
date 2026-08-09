@@ -85,7 +85,7 @@ Scrapling is the preferred active source-probe tool for rendered Naver source in
 - `python -m stock_monitor news-intelligence-collect-top-candidates --date latest --candidate-limit 10 --top-n 5 --dry-run --json`
 - `python -m stock_monitor news-intelligence-collect-top-candidates --date latest --candidate-limit 10 --top-n 5 --confirm-collect --json`
 
-These commands are manual and operator-only. They emit JSON/text to stdout, use temporary files for Scrapling output, delete those files after reading, and must not write live fetch results into the repository, SQLite, logs, scheduler state, Telegram, or public `web-view` by default. `news-intelligence-briefing-collect` selects target stocks from stored daily summaries, or an in-memory rebuild from stored reports when summaries are absent. It may save rows only when both `--save-observation` and `--confirm-save` are present. `news-intelligence-collect-top-candidates` selects Top N rows from the stored candidate evidence snapshot and reuses the same briefing collector; `--dry-run` is read-only and `--confirm-collect` is the explicit operator write guard. The web-view may call this same batch collector only through the access-gated `POST /api/news-observations/collect` operator action, which is limited to selected-date top priority candidates and returns only the public-safe stored summary after saving. It also does not update `admin-gui` in v1; a future private `operator-review` surface is the review UI candidate, not an `admin-gui` expansion.
+These commands are manual and operator-only. They emit JSON/text to stdout, use temporary files for Scrapling output, delete those files after reading, and must not write live fetch results into the repository, SQLite, logs, scheduler state, Telegram, or public `web-view` by default. `news-intelligence-briefing-collect` selects target stocks from stored daily summaries, or an in-memory rebuild from stored reports when summaries are absent. It may save rows only when both `--save-observation` and `--confirm-save` are present. `news-intelligence-collect-top-candidates` selects Top N rows from the stored candidate evidence snapshot and reuses the same briefing collector; `--dry-run` is read-only and `--confirm-collect` is the explicit operator write guard. The enabled bounded scheduler path may reuse the same collector under its existing guards. The web-view reads only the resulting public-safe stored projection and does not invoke the collector. It also does not update `admin-gui` in v1; a future private `operator-review` surface is the review UI candidate, not an `admin-gui` expansion.
 
 Scrapling executable resolution is explicit:
 
@@ -137,7 +137,7 @@ Operator workflow:
 7. If same-date Top candidates have runs but still no digest, run `news-no-match-diagnosis --date latest --candidate-limit 10 --top-n 5 --json` to separate source coverage, date-window, alias, parser, and unknown gaps using stored rows only.
 8. Use `news-intelligence-observations --format text|json` to inspect saved run/evidence details by date, stock code, or run id.
 9. Use `news-intelligence-daily-brief --format text|json` to group saved runs by date and candidate-linkage label.
-10. Use `market-briefing` as a stored-data, public-safe visibility check after observations already exist. `web-view` may either show the stored projection or, when access-gated and operator-triggered, run `POST /api/news-observations/collect` to create the missing saved observation rows for the selected date/top candidates before re-rendering the same public-safe projection.
+10. Use `market-briefing` and `web-view` as stored-data, public-safe visibility checks after observations already exist. Missing observations are collected through the explicit CLI or enabled bounded scheduler path, not from the page.
 
 The preview command is intentionally incomplete as a day-level collector:
 
@@ -324,8 +324,7 @@ Public projection must preserve evidence direction rather than suppress it into 
 Forbidden in public projection:
 
 - `overall_sentiment`, article `sentiment_score`, numeric impact, hidden conviction score, target-return, investment-grade shorthand, broker, or order-routing wording. An attributed source opinion and a reproducible derived evidence direction are allowed; neither may conceal contrary direct evidence or become an unsupported action instruction.
-- Unbounded live Naver fetch from `web-view`. The only approved live-fetch/write path is the access-gated `POST /api/news-observations/collect` operator action, which calls the existing briefing collector with explicit save/confirm behavior for selected-date top candidates.
-- Any other `--save-observation` trigger from `web-view`.
+- Live Naver fetch or any `--save-observation` trigger from `web-view`.
 - Scheduler, Telegram, admin control, broker/account/order mutation, or arbitrary DB mutation from the public route.
 
 Placement direction:

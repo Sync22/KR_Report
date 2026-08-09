@@ -685,7 +685,17 @@ def _collect_web_view_browser_render_smoke_issues(
                         candidate_panel_visible = page.locator("#main-priority-rows").is_visible()
                         intraday_overlap_initial_visible = page.locator("#intraday-market-top-overlap").is_visible()
                         page.locator('[data-view-tab="watch"]').click(timeout=timeout_ms)
-                        page.wait_for_timeout(250)
+                        page.wait_for_function(
+                            """
+                            () => {
+                              const panel = document.querySelector('#candidate-evidence-rows');
+                              if (!panel) return false;
+                              return Boolean(panel.querySelector('.watch-candidate-row'))
+                                || panel.textContent.includes('데이터가 없습니다');
+                            }
+                            """,
+                            timeout=timeout_ms,
+                        )
                         watch_panel_visible = page.locator("#candidate-evidence-card").is_visible()
                         watch_candidate_selector_visible = page.locator("#candidate-evidence-rows .watch-candidate-row").count() > 0
                         watch_tab_current = page.locator('[data-view-tab="watch"]').get_attribute("aria-current") == "page"
