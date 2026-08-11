@@ -6,6 +6,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "resolve_project_python.ps1")
+$PythonExe = Resolve-StockMonitorPython -ProjectRoot $projectRoot -PythonExe $PythonExe
 $registerScript = Join-Path $PSScriptRoot "register_task_scheduler_tasks.ps1"
 $verifyScript = Join-Path $PSScriptRoot "verify_task_scheduler_registration.ps1"
 

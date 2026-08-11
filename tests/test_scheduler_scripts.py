@@ -30,6 +30,7 @@ REQUIRED_MIGRATION_ENTRIES = [
     "docs/codex/toss-openapi-lab.md",
     "docs/codex/mini-pc-runbook.md",
     "scripts/register_task_scheduler_tasks.ps1",
+    "scripts/resolve_project_python.ps1",
     "scripts/create_migration_archive.ps1",
     "scripts/disable_source_desktop_scheduler_tasks.ps1",
     "scripts/setup_mini_pc_environment.ps1",
@@ -54,6 +55,22 @@ REQUIRED_MIGRATION_ENTRIES = [
 ]
 
 
+SCHEDULER_PYTHON_WRAPPERS = [
+    "run_scheduled_poll.ps1",
+    "run_scheduled_notify.ps1",
+    "run_scheduled_krx_daily_backfill.ps1",
+    "run_scheduled_krx_mentioned_flow_backfill.ps1",
+    "run_scheduled_market_briefing_slot.ps1",
+    "run_scheduled_toss_priority_baseline.ps1",
+    "run_scheduled_toss_market_context_capture.ps1",
+    "run_process_telegram_commands.ps1",
+    "run_krx_flow_login_reminder.ps1",
+    "run_scheduled_shutdown.ps1",
+    "restart_web_view.ps1",
+    "run_web_view.ps1",
+]
+
+
 def _write_required_migration_entries(archive: zipfile.ZipFile) -> None:
     for entry in REQUIRED_MIGRATION_ENTRIES:
         archive.writestr(f"02.Stock_Moniter/{entry}", "required\n")
@@ -65,6 +82,30 @@ def test_register_task_scheduler_keeps_krx_flow_reminder_opt_in() -> None:
     assert "[switch]$IncludeKrxFlowReminder" in script
     assert "if ($IncludeKrxFlowReminder)" in script
     assert "[switch]$SkipKrxFlowReminder" not in script
+
+
+def test_scheduler_wrappers_require_project_venv_python() -> None:
+    resolver = (PROJECT_ROOT / "scripts" / "resolve_project_python.ps1").read_text(encoding="utf-8")
+
+    assert "function Resolve-StockMonitorPython" in resolver
+    assert ".venv\\Scripts\\python.exe" in resolver
+    assert "setup_mini_pc_environment.ps1" in resolver
+    assert "PATH fallback is disabled" in resolver
+
+    for script_name in SCHEDULER_PYTHON_WRAPPERS:
+        script = (PROJECT_ROOT / "scripts" / script_name).read_text(encoding="utf-8")
+        assert "resolve_project_python.ps1" in script
+        assert "Resolve-StockMonitorPython" in script
+
+
+def test_scheduler_registration_resolves_project_venv_before_creating_tasks() -> None:
+    for script_name in [
+        "register_task_scheduler_tasks.ps1",
+        "register_mini_pc_scheduler_tasks.ps1",
+    ]:
+        script = (PROJECT_ROOT / "scripts" / script_name).read_text(encoding="utf-8")
+        assert "resolve_project_python.ps1" in script
+        assert "Resolve-StockMonitorPython" in script
 
 
 def test_register_task_scheduler_keeps_toss_market_context_capture_opt_in() -> None:
@@ -165,6 +206,7 @@ def test_verify_migration_archive_checks_sha256_sidecar() -> None:
     assert "docs/codex/toss-openapi-lab.md" in script
     assert "docs/codex/mini-pc-runbook.md" in script
     assert "scripts/register_task_scheduler_tasks.ps1" in script
+    assert "scripts/resolve_project_python.ps1" in script
     assert "scripts/create_migration_archive.ps1" in script
     assert "scripts/disable_source_desktop_scheduler_tasks.ps1" in script
     assert "scripts/verify_external_web_view_readiness.ps1" in script
@@ -534,8 +576,8 @@ def test_restart_web_view_script_restarts_loopback_web_view_only() -> None:
     assert "netstat -ano" in script
     assert "Stop-Process" in script
     assert "Invoke-WebRequest" in script
-    assert 'Join-Path $projectRoot ".venv\\Scripts\\python.exe"' in script
-    assert '$PythonExe -eq "python"' in script
+    assert "resolve_project_python.ps1" in script
+    assert "Resolve-StockMonitorPython" in script
     assert "/health" in script
     assert "admin-gui" in script
     assert "Cloudflare" in script

@@ -7,13 +7,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "resolve_project_python.ps1")
+$PythonExe = Resolve-StockMonitorPython -ProjectRoot $projectRoot -PythonExe $PythonExe
 $runScript = Join-Path $PSScriptRoot "run_web_view.ps1"
 $healthUrl = "http://${HostAddress}:${Port}/health"
-$venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
-
-if ($PythonExe -eq "python" -and (Test-Path -LiteralPath $venvPython)) {
-    $PythonExe = $venvPython
-}
 
 Set-Location -LiteralPath $projectRoot
 $srcPath = Join-Path $projectRoot "src"

@@ -46,6 +46,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "resolve_project_python.ps1")
+$PythonExe = Resolve-StockMonitorPython -ProjectRoot $projectRoot -PythonExe $PythonExe
 $pollScript = Join-Path $PSScriptRoot "run_scheduled_poll.ps1"
 $notifyScript = Join-Path $PSScriptRoot "run_scheduled_notify.ps1"
 $krxDailyBackfillScript = Join-Path $PSScriptRoot "run_scheduled_krx_daily_backfill.ps1"

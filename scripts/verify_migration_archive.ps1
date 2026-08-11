@@ -73,6 +73,7 @@ $requiredEntries = @(
     "docs/codex/toss-openapi-lab.md",
     "docs/codex/mini-pc-runbook.md",
     "scripts/register_task_scheduler_tasks.ps1",
+    "scripts/resolve_project_python.ps1",
     "scripts/create_migration_archive.ps1",
     "scripts/disable_source_desktop_scheduler_tasks.ps1",
     "scripts/setup_mini_pc_environment.ps1",

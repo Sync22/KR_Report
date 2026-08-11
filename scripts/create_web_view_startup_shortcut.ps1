@@ -8,6 +8,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "resolve_project_python.ps1")
 $webViewScript = Join-Path $PSScriptRoot "run_web_view.ps1"
 $startupDir = [Environment]::GetFolderPath("Startup")
 $shortcutPath = Join-Path $startupDir $ShortcutName
@@ -26,6 +27,8 @@ if ($Remove) {
     }
     exit 0
 }
+
+$PythonExe = Resolve-StockMonitorPython -ProjectRoot $projectRoot -PythonExe $PythonExe
 
 if (-not (Test-Path -LiteralPath $webViewScript)) {
     throw "Missing web-view runner script: $webViewScript"

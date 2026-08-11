@@ -6,6 +6,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "resolve_project_python.ps1")
+$PythonExe = Resolve-StockMonitorPython -ProjectRoot $projectRoot -PythonExe $PythonExe
 Set-Location $projectRoot
 $srcPath = Join-Path $projectRoot "src"
 if (Test-Path -LiteralPath $srcPath) {
