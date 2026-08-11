@@ -33,6 +33,8 @@ Implementation note (`2026-06-24 KST`): the normal daily web-view route now retu
 
 Implementation note (`2026-06-30 KST`): structural refactoring is stopped at the current 82/100 level. Do not continue helper extraction, `cli.py` slicing, handler movement, snapshot-builder movement, or web-view package reshaping unless a concrete product-value blocker appears. The active product question is now whether the friend-facing daily view quickly answers what to check first, why it is first, which evidence is missing, and whether stored KRX/flow/news references are fresh enough.
 
+Implementation note (`2026-08-11 KST`): the bounded Toss read-only lane is promoted for server-derived latest-date Top2 current price and same-day provisional investor volume, plus latest-date `tradingAmount` Top20 market context and Top2 overlap. The Top20 projection is memory-cached and public-safe; the separate replay capture remains development-hold, requires explicit live/save confirmations, and is not registered by default. The approved next Telegram delivery design keeps the existing 30-minute report collection/dedupe cadence, while changing user delivery to `08:30` and then `09:30` through `15:30` KST. This is an implementation target, not evidence that the new delivery cadence is already active.
+
 Evidence Snapshot pre-implementation design (`2026-06-30 KST`): no DB schema change is approved yet. A future migration should store only the facts needed to audit exposed observation order: candidate identity (`business_date`, `stock_code`, `stock_name`, source report ids), exposure state (surface, visible order, top-candidate flag, visible labels, `why_notable`, `missing_information`), feature snapshot (target/opinion availability, KRX price/turnover/index freshness, `[12009]` flow freshness, news observation run id and collect time, missing/freshness flags), and outcome join keys for D+1/D+5/D+20 close/turnover/flow results. Do not store raw HTML, raw news bodies, secrets, operator-only diagnostics, hidden scoring values, or trading decision text. Rollback plan: introduce tables behind read-only builders first, keep web-view output sourced from existing DTOs, and drop the migration before any writes are scheduled if QA detects public-boundary drift.
 
 Minimal real-time data strategy (`2026-06-30 KST`): do not pursue all-stock real-time coverage, broker/account integration, automation, or public scoring. The highest ROI read-only lane is limited to current top candidates: current price, current turnover, KOSPI/KOSDAQ index freshness, price reaction after matched news, and top-candidate flow freshness. Until a stable source is proven, public copy must continue to say stored/reference/freshness status explicitly and treat missing intraday data as a gap rather than negative evidence.
@@ -43,7 +45,7 @@ Realtime-first 9-business-day observation decision (`2026-07-16 KST`): the compl
 
 Intersection rule: `report + independent same-day news`, `report + Top20`, and `news + Top20` are visible relationships. An all-three overlap is a prominent `우선 확인` item; a news-and-Top20 overlap without a report stays a Telegram market-attention item and does not create a new `web-view` report candidate. A Top20 miss is `상위 거래대금 미포착`, never a negative score or reason to lower a report candidate. News must be deduplicated by canonical URL, publisher, normalized title, and time window; report recaps are not independent news.
 
-Top20 retention decision: the promoted latest-date projection remains bounded and read-only. Do not persist rankings, register a new scheduler, or connect an in-progress research engine to production surfaces. Day-after `web-view` replay requires a later explicit storage decision. Its minimal contract is observation time, rank, stock code, trading amount, trading volume, source, and source checked time; it excludes account data, raw news bodies, hidden scores, and trading instructions. Treat this as a separate schema/replay/retention review, not an incidental extension of a live quote call.
+Top20 retention decision: the promoted latest-date projection remains bounded and read-only. It must not register a new scheduler or connect an in-progress research engine to production surfaces. The development-hold `toss_market_context_snapshots` replay path is limited to explicit live/token-reissue/save confirmation and bounded fields: observation time, rank, stock code, trading amount, trading volume, source, and source checked time. It excludes account data, raw news bodies, hidden scores, and trading instructions; its opt-in capture wrapper remains unregistered by default.
 
 Decision Journal status (`2026-07-01 KST`): v0 research is frozen. Do not continue tie-break research, feature validation, target-revision validation, or scoring validation as active product work. Use [decision-journal.md](decision-journal.md) for the daily operating flow and [decision-journal.md](decision-journal.md) before any `decision_journal_*` DB migration is considered.
 
@@ -61,7 +63,7 @@ As of `2026-05-15`, the product direction is reset around practical daily use ra
 | User surface is compressed | The friend-facing `web-view` should show daily briefing, notable categories/stocks, market reference, and evidence drilldown. Raw tables, repeated defensive disclaimers, operating explanations, and debugging context belong in `admin-gui` or docs. |
 | Observation curation is allowed | This project can recommend observation targets through `오늘의 관찰 후보`, `우선 확인`, `관찰 우선순위`, `관심도 높은 흐름`, and `왜 눈에 띄는지`. Keep public numeric scores, investment grades, and trading-call wording such as `매수 추천`, `매도 추천`, `진입가`, `청산가`, `익절가`, `목표 수익률`, and `확신도` blocked. |
 | Public limit is not the final ambition | The current public `web-view` blocks trading-decision wording because the source and execution safety gates are not ready. The long-term product direction may add an operator-only decision-support or execution-lab lane after stable real-time data, source freshness, failure behavior, permissions, and order-safety boundaries are proven. |
-| Broker/API work is separated | Do not force KIS or any other broker integration to fill intraday gaps. The active future broker direction is Toss Securities Open API, but until usable local docs/permissions/keys are verified it belongs only in a separate lab/staging lane such as `broker-lab`, `execution-lab`, or `toss-openapi-lab`. |
+| Broker/API work is separated | Do not force KIS or any other broker integration to fill intraday gaps. Toss Securities Open API is promoted only for bounded read-only Top2 current-price/same-day provisional investor-volume and latest-date Top20 market-context projections. Account, asset, order, execution, broad polling, and any unapproved surface remain lab/hold lanes. |
 | Iterate from daily collection | Show rough observations from stored data first, then decide what is mature enough to refine after several market days. |
 | Add closing-market context | A separate `16:00`-around `오늘의 시장 분위기` Telegram briefing is now a valid next product direction, using stored same-day reports, KRX market reference, and available investor-flow context. |
 
@@ -1006,6 +1008,7 @@ Why this matters: older docs and early notes still contain historical times such
 
 Work items:
 
+- Approved Telegram delivery target: retain the `StockMonitor-Poll` 30-minute collection/dedupe trigger, but emit the compact intraday market-context briefing only at `08:30`, then `09:30` through `15:30` KST. The `08:30` briefing is report-first and does not require Toss data; later briefings may add available bounded Toss context. Do not register a new scheduler task for this change.
 - Reconcile old operating-time references in docs, scripts, README, and GUI labels.
 - Confirm scheduler triggers match the documented contract. Current elevated mini-PC verification should confirm the six default tasks are registered/enabled, including the `08:10` KRX Open API daily fill and hourly web-view restart.
 - Define catch-up policy for missed daily summary delivery.
@@ -1129,6 +1132,8 @@ Current API shape is read-only:
 - `GET /api/daily/YYYY-MM-DD`
 - `GET /api/daily/YYYY-MM-DD/stocks/STOCK_CODE`
 - `GET /api/intraday?date=YYYY-MM-DD`
+- `GET /api/toss-priority-quotes?date=YYYY-MM-DD`
+- `GET /api/toss-market-context?date=YYYY-MM-DD`
 - `GET /api/category?date=YYYY-MM-DD&type=sector|theme&name=...`
 - `GET /api/category-trend?type=sector|theme&name=...`
 - `GET /api/etf-trend?date=YYYY-MM-DD&limit=5`
@@ -1422,7 +1427,7 @@ KRX/ETF/flow/Toss/X 같은 외부 데이터 축을 실제 동작 가능한 sourc
 - KRX Open API daily stock/ETF/index baseline과 next-business-day `08:00` publication rule.
 - KRX Data Marketplace `[12009]` report-mentioned stock flow lane.
 - ETF rotation evidence와 구성종목/source 가능성 검토.
-- Toss OpenAPI read-only lab: 공식 문서, 권한, rate limit, quote/account/order boundary.
+- Toss OpenAPI: promoted bounded Top2 current-price/same-day provisional investor-volume and latest-date Top20 market-context projections; keep account/order, broad polling, and unapproved source expansion in the read-only lab/hold boundary.
 - X/no-login recap lab: 로그인 없이 접근 가능한 공개 글/링크 요약 가능성.
 
 **Done When:**
@@ -1430,7 +1435,7 @@ KRX/ETF/flow/Toss/X 같은 외부 데이터 축을 실제 동작 가능한 sourc
 - 각 source lane이 production/lab/hold로 분리된다.
 - 실제 동작 가능한 read-only probe와 불가능/보류 범위가 문서화된다.
 - web-view/Telegram에 붙일 때 freshness 표시가 모호하지 않다.
-- Toss/X는 별도 lab branch에서 검증하고, dev에는 합의된 결과만 병합한다.
+- Toss promoted projections stay bounded, source-labelled, and score-free; X and unapproved Toss capabilities remain separate lab work.
 
 **Start By Reading:**
 
@@ -1703,7 +1708,7 @@ Validate source freshness behavior on recent operating-like dates so KRX, ETF, i
 - Re-run `data-source-lane-audit --json` and compare with web-view/Telegram freshness output.
 - Check KRX latest-date logic and next-business-day publication assumptions.
 - Verify ETF/index data presence and keep ETF constituents marked clearly when not loaded.
-- Keep Toss as hold and X as lab unless separate source decisions are made.
+- Treat the promoted bounded Toss Top2/Top20 projection as `production_limited`; keep account/order, broad polling, and other Toss endpoints on hold, and keep X as lab.
 - Document source-specific stale/missing cases with commands and observed dates.
 
 **Done When:**
@@ -1712,7 +1717,7 @@ Validate source freshness behavior on recent operating-like dates so KRX, ETF, i
 - Freshness output is consistent across CLI, web-view, and Telegram preview.
 - Stale or previous-day KRX/flow/ETF states are labelled as fallback/detail and do not lead the first-read path when current evidence exists.
 - ETF constituent absence is explicit and not presented as loaded coverage.
-- Toss/X are not connected to production DB writes, Telegram, scheduler, admin-gui, or public web-view runtime paths.
+- Promoted Toss projections may serve the bounded public GET-only `web-view` route and approved market-briefing context only; they do not connect to `admin-gui`, account/order endpoints, broad polling, or unapproved DB writes. X remains disconnected from production runtime paths.
 - Any source gap has a dated evidence note and next action.
 
 **Start By Reading:**

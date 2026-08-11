@@ -3370,6 +3370,36 @@ class StockMonitorRepository:
                     ),
                 )
 
+    def mark_intraday_alert_batches_sent(
+        self,
+        batch_ids: tuple[str, ...],
+        *,
+        sent_at: datetime,
+        message_id: str,
+    ) -> None:
+        if not batch_ids:
+            return
+        placeholders = ", ".join("?" for _ in batch_ids)
+        with self.connect() as connection:
+            with connection:
+                connection.execute(
+                    f"""
+                    UPDATE intraday_alert_batches
+                    SET status = 'sent',
+                        last_attempt_at = ?,
+                        sent_at = ?,
+                        message_id = ?,
+                        error_detail = NULL
+                    WHERE batch_id IN ({placeholders})
+                    """,
+                    (
+                        sent_at.isoformat(),
+                        sent_at.isoformat(),
+                        message_id,
+                        *batch_ids,
+                    ),
+                )
+
     def mark_intraday_alert_batch_failed(
         self,
         batch_id: str,

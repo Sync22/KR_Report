@@ -44,8 +44,8 @@ This is a permission and API boundary, not just a visual layout boundary.
 - `web-view` data and control routes are GET-only. `/auth/login` is the entry-code exception; rendering or interacting with the page must not fetch news and write observation rows.
 - `web-view` must be implemented with a separate handler/router and a separate read-only DTO contract.
 - Shared DB/repository code is allowed. Shared HTTP control handlers are not allowed.
-- Broker or execution API work, including Toss Securities OpenAPI beyond the approved top-2 current-price projection, must not be connected to `admin-gui`, production DB writes, broker secrets, or order routing by default. It belongs in a separate lab/staging lane until docs, permissions, sandbox/test keys, and read-only probes are verified.
-- Toss OpenAPI is approved for server-derived latest-date top-2 `우선 확인` symbols in two bounded read-only consumers: the `web-view` current-price reference and the scheduled `09:15`/`12:00`/`15:15` market-briefing Telegram slots. It must not accept arbitrary symbols, expose account/order data, persist current quotes, affect ordering, or send a standalone trading instruction.
+- Broker or execution API work, including all Toss Securities OpenAPI capabilities outside the approved bounded projections, must not be connected to `admin-gui`, unapproved production DB writes, broker secrets, or order routing. Account, asset, order, broad polling, and execution capabilities remain separate lab/hold lanes.
+- Toss OpenAPI is approved only for server-derived latest-date Top2 current-price and same-day provisional investor-volume references, plus the fixed latest-date `tradingAmount` Top20 market-context projection with Top2 overlap. The public `web-view` routes remain GET-only and accept no arbitrary symbols. The approved Telegram delivery target is `08:30`, then `09:30` through `15:30` KST through the existing poll trigger; `08:30` is report-first and later slots may include available bounded context. This target does not add a scheduler task, persist current quotes, affect report ordering, or send a standalone trading instruction.
 - The current public `web-view` trading-wording ban is not a permanent denial of the product's long-term direction. Trading-decision support belongs in a future operator-only decision-support lane after stable real-time data, permissions, failure handling, and execution safety are proven.
 - External sharing candidates are limited to Tailscale for owner-only remote operation and Cloudflare Tunnel for a future friend-facing read-only `web-view` URL.
 - Direct router port forwarding is not a preferred exposure model for this project.
@@ -107,7 +107,7 @@ This surface is not implemented yet. Before implementation, define its route, ac
 - stored-sample investor-flow trend views
 - stored ETF trend views
 - stored news-observation summary labels, archive counts, candidate badges, and stock-detail news context when they are public-safe and score-free
-- future approved read-only intraday reference for top-2 observation candidates
+- bounded read-only Toss Top2 current-price/same-day provisional investor-volume reference and latest-date Top20 market-context overlap, each with source and freshness labels
 
 `web-view` should not show raw operational internals unless they are intentionally converted into simple public freshness labels.
 
@@ -183,7 +183,7 @@ Source ownership and Korean display naming are fixed in [data-governance.md](dat
 
 The first `web-view` should prefer clarity over trading interpretation. It can say what was observed, identify what is still missing, and recommend what to check first, but should avoid unsupported scoring.
 
-Broker-origin data is currently allowed only for the bounded Toss top-2 current-price and same-day provisional investor-volume reference. It must be labeled with its source and checked time; KRX/report/flow values remain dated stored references, and the live reference must not imply a trading decision.
+Broker-origin data is currently allowed only for the bounded Toss Top2 current-price and same-day provisional investor-volume reference, plus fixed latest-date Top20 market context. Each projection must be labeled with source and checked time; KRX/report/flow values remain dated stored references, and neither projection may imply a trading decision or reorder report candidates.
 
 When that future lane is approved, `read-only` still means no DB write, no Telegram/scheduler automation, no admin control path, no broker secret exposure, and no order routing. It does not mean the intraday reference is forbidden from changing `우선 확인`, `관찰 우선순위`, or main-card emphasis.
 
@@ -191,7 +191,7 @@ If a later phase evaluates trading decisions, keep it out of the public `web-vie
 
 Operator-only news intelligence may produce sentiment scores, event impact labels, and recommendation-draft summaries for the operator lane. The v1 contract is [news-intelligence.md](news-intelligence.md): the default preview writes no DB rows, and only explicit `--save-observation` operator paths may write to operator-only observation tables. The batch `news-intelligence-briefing-collect` path also requires `--confirm-save` before writing. Those command surfaces still connect to no scheduler, Telegram, broker, admin-gui, or public route by default.
 
-The production exception is narrow and explicit: enabled `scheduled-market-briefing-slot` runs at `09:15`, `12:00`, and `15:15` may, after their existing business-date, delivery-dedupe, phone-review, and slot-window guards pass, reuse the collector for the server-derived top two candidates of that date. They save only the two observation/evidence records needed by the briefing and then emit a compact Telegram projection for the same two candidates. The two codes are pinned for that run after collection starts, so a newly collected direct-news result cannot reorder the message and replace one collected candidate with an uncollected one. Naver candidate quote reads and Toss current-price reads remain read-only and carry their checked time; they are not persisted. A collection failure records a non-secret operation event and leaves the briefing send path available with the saved-data projection. This is not a broad news crawler, a generic news scheduler, a raw-payload Telegram feed, or a trading-alert path.
+The production exception is narrow and explicit: the approved hourly Telegram implementation must retain the existing 30-minute collection/dedupe trigger and deliver only at `08:30`, then `09:30` through `15:30` KST after existing business-day and delivery-window guards pass. `08:30` is report-first; later deliveries may add independent saved news, Top20 overlap, and the server-derived Top2 Toss current-price/same-day provisional investor-volume context when available. The report remains the candidate seed and order. Missing Toss data is neutral, never a reason to suppress a report briefing, lower a candidate, create a candidate, or make a score or trading instruction. Current-price reads remain read-only and are not persisted. This is not a broad news crawler, a generic news scheduler, a raw-payload Telegram feed, or a trading-alert path.
 
 `news-flow-preview` is also operator-only, but it is source-flow oriented rather than stock/candidate oriented. It accepts only operator-provided source URLs through a fixture contract, emits text/JSON preview plus a Telegram draft, may run an explicitly approved `news-flow-source-probe` for supported Naver source URLs, and may feed a preview-only `market-briefing` source-flow section. It must remain disconnected from DB writes, Telegram real sends, scheduler tasks, `admin-gui`, and public `web-view` until a separate contract explicitly changes that boundary.
 
@@ -211,6 +211,7 @@ The current data endpoint contract is GET-only:
 | `GET /api/flow-trend?date={date}` | Investor-flow trend | Stored KRX Data Marketplace samples only; no live fetch, no public numeric scoring, no trading recommendation. |
 | `GET /api/etf-trend?date={date}` | ETF trend | Stored KRX ETF snapshots only; no live fetch, no public numeric scoring, no trading recommendation. |
 | `GET /api/toss-priority-quotes?date={date}` | Toss top-2 current-price and same-day provisional investor-volume reference | Latest stored business date only; server-derived top-2 candidate symbols only. The route returns only foreigner/institution net volume with provider update time; no arbitrary symbol query, account/order data, DB write, scheduler, Telegram, scoring, candidate reordering, or trading recommendation. |
+| `GET /api/toss-market-context?date={date}` | Toss latest-date Top20 market-attention reference | Fixed `tradingAmount` Top20, Top2 overlap, and bounded KOSPI/KOSDAQ aggregate context only. No arbitrary ranking query, account/order data, candidate creation/reordering, score, trading recommendation, or hidden write side effect. |
 | `GET /api/category?date={date}&type=sector|theme&name=...` | Category detail | Same-date category stock list with KRX stock references when available. |
 | `GET /api/category-trend?type=sector|theme&name=...` | Category trend | Recent category report/stock counts, descriptive only; dated snapshot per date when available, latest stored category classification otherwise. |
 | `GET /api/market` | Latest KRX market reference | Kept for compatibility; the main user page should prefer selected-date `krx_context` from daily DTO. |
@@ -568,7 +569,7 @@ The opt-in Toss `tradingAmount` Top20 reference is a latest-date, read-only mark
 
 For Telegram, the compact order is: market and stock news scan, concise Top20 highlights, then report/news/Top20 overlaps. An all-three overlap is prominent. A news-and-Top20 overlap without a report stays a market-attention item and does not create a new report candidate. The in-progress research engine stays lab-only until its duplicate and source-quality rules are approved; a report recap is not independent news.
 
-Day-after replay is not available from the live-only Top20 call. Persisting observation time, rank, stock code, trading amount, trading volume, source, and checked time remains a separate schema/replay decision; the current projection does not add scheduler or database writes.
+Day-after replay is unavailable from the live-only projection itself. A separate development-hold capture/replay path already stores only observation time, rank, stock code, trading amount, trading volume, source, and checked time after explicit live/token-reissue/save confirmation. Its opt-in wrapper is unregistered by default; the public route has no database-write side effect.
 
 ## Evidence Classification
 

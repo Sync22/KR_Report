@@ -9876,6 +9876,11 @@ def _run_naver_fixture_validate(fixture_path: Path, *, as_json: bool) -> int:
     return 0 if reports else 1
 
 
+def _is_scheduled_intraday_briefing_time(scheduled_run_at: datetime) -> bool:
+    scheduled_time = scheduled_run_at.timetz().replace(tzinfo=None)
+    return scheduled_time.minute == 30 and 8 <= scheduled_time.hour <= 15
+
+
 def _run_manual_poll(
     config: RuntimeConfig,
     repository: StockMonitorRepository,
@@ -9952,7 +9957,21 @@ def _run_manual_poll(
             as_json=False,
             scheduled_run_at=scheduled_run_at,
         )
-    if send_intraday_alert:
+    should_deliver_intraday_alert = (
+        send_intraday_alert
+        and (
+            scheduled_run_at is None
+            or _is_scheduled_intraday_briefing_time(scheduled_run_at)
+        )
+    )
+    if should_deliver_intraday_alert and scheduled_run_at is not None:
+        _run_scheduled_intraday_briefing(
+            config,
+            repository,
+            scheduled_run_at=scheduled_run_at,
+            dry_run=dry_run,
+        )
+    elif should_deliver_intraday_alert:
         processed_batches = _run_process_intraday_alerts(
             config,
             repository,
@@ -22734,6 +22753,7 @@ def _build_market_briefing_toss_priority_context(
     business_date: date,
     toss_quote_provider: object | None = None,
     candidate_rows: list[dict[str, object]] | None = None,
+    include_investor_trading: bool = False,
 ) -> dict[str, object]:
     if candidate_rows is None:
         evidence = build_web_view_candidate_evidence_snapshot(
@@ -22756,7 +22776,13 @@ def _build_market_briefing_toss_priority_context(
         config=TossOpenApiLabConfig.from_env(config.root_dir)
     )
     try:
-        payload = provider.get_quotes(priority_date=business_date, symbols=symbols)
+        quote_kwargs: dict[str, object] = {
+            "priority_date": business_date,
+            "symbols": symbols,
+        }
+        if include_investor_trading:
+            quote_kwargs["include_investor_trading"] = True
+        payload = provider.get_quotes(**quote_kwargs)
     except RuntimeError:
         payload = {
             "configured": bool(getattr(provider, "configured", False)),
@@ -22982,6 +23008,36 @@ def _build_market_briefing_toss_priority_quote_lines(
             lines.append("Toss 우선확인 기준")
         lines.extend(baseline_lines)
     return lines
+
+
+def _build_market_briefing_toss_priority_investor_trading_lines(
+    toss_context: dict[str, object],
+) -> list[str]:
+    payload = toss_context.get("payload") if isinstance(toss_context.get("payload"), dict) else {}
+    investor_trading = payload.get("investor_trading") if isinstance(payload.get("investor_trading"), dict) else {}
+    if investor_trading.get("available") is not True:
+        return []
+    names_by_symbol = toss_context.get("names_by_symbol") if isinstance(toss_context.get("names_by_symbol"), dict) else {}
+    lines = ["Toss 우선확인 당일 수급"]
+    for item in investor_trading.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        symbol = str(item.get("symbol") or "").strip()
+        fragments: list[str] = []
+        for key, label in (("foreigner_net_buy_volume", "외국인"), ("institution_net_buy_volume", "기관")):
+            volume = _safe_optional_int(item.get(key))
+            if volume is None:
+                continue
+            direction = "순매수" if volume >= 0 else "순매도"
+            fragments.append(f"{label} {direction} {abs(volume):,}주")
+        if not fragments:
+            continue
+        checked_at = _market_briefing_toss_checked_time(item.get("updated_at"))
+        line = f"- {names_by_symbol.get(symbol) or symbol}: {' · '.join(fragments)}"
+        if checked_at:
+            line += f" · 조회 {checked_at}"
+        lines.append(line)
+    return lines if len(lines) > 1 else []
 
 
 def _market_briefing_toss_checked_time(value: object) -> str | None:
@@ -41431,6 +41487,137 @@ def _run_process_intraday_alerts(
     save_control_state(config.telegram_control_state_path, state)
     print(f"Processed {processed} intraday alert batch(es).")
     return processed
+
+
+def _run_scheduled_intraday_briefing(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    scheduled_run_at: datetime,
+    dry_run: bool,
+) -> int:
+    pending_batches = repository.list_pending_intraday_alert_batches()
+    batches = [
+        batch
+        for batch in pending_batches
+        if batch.business_date == scheduled_run_at.date()
+    ]
+    if not batches:
+        if pending_batches:
+            print("No current-day intraday batches; prior-day pending batches require operator recovery.")
+            return 0
+        return _send_intraday_empty_notification(
+            config,
+            repository,
+            polled_at=scheduled_run_at,
+            dry_run=dry_run,
+        )
+
+    reports_by_identity: dict[str, Report] = {}
+    for batch in batches:
+        for report in repository.list_reports_for_intraday_batch(batch.batch_id):
+            reports_by_identity.setdefault(report.identity_key, report)
+    reports = list(reports_by_identity.values())
+    if not reports:
+        attempted_at = datetime.now(ZoneInfo(config.timezone))
+        for batch in batches:
+            repository.mark_intraday_alert_batch_failed(
+                batch.batch_id,
+                attempted_at=attempted_at,
+                error_detail="No reports found for queued intraday batch.",
+            )
+        return 0
+
+    quotes_by_stock_code = _fetch_intraday_quotes_by_stock_code(config, reports, repository=repository)
+    default_limit = _effective_int_setting(config, repository, "notification_default_limit")
+    message = format_intraday_batch_message(
+        scheduled_run_at,
+        reports,
+        quotes_by_stock_code=quotes_by_stock_code,
+        offset=0,
+        limit=default_limit,
+    )
+    message = message.replace("\n다음, 전부, 처음", "")
+    if scheduled_run_at.hour >= 9:
+        toss_context = _build_market_briefing_toss_priority_context(
+            config,
+            repository,
+            business_date=scheduled_run_at.date(),
+            include_investor_trading=True,
+        )
+        toss_lines = [
+            *_build_market_briefing_toss_priority_quote_lines(toss_context, candidate_rows=[]),
+            *_build_market_briefing_toss_priority_investor_trading_lines(toss_context),
+            *_build_market_briefing_toss_market_context_lines(toss_context),
+        ]
+        if toss_lines:
+            message = "\n\n".join((message, "\n".join(toss_lines)))
+    if dry_run:
+        print(message)
+        return len(batches)
+    if not config.telegram_bot_token or not config.telegram_chat_id:
+        raise RuntimeError(
+            "Telegram configuration is missing. Set STOCK_MONITOR_TELEGRAM_BOT_TOKEN and "
+            "STOCK_MONITOR_TELEGRAM_CHAT_ID."
+        )
+
+    attempted_at = datetime.now(ZoneInfo(config.timezone))
+    batch_ids = tuple(batch.batch_id for batch in batches)
+    try:
+        message_id = send_telegram_message(
+            config.telegram_bot_token,
+            config.telegram_chat_id,
+            message,
+            timeout_seconds=config.telegram_timeout_seconds,
+            max_retries=config.telegram_max_retries,
+            retry_delay_seconds=config.telegram_retry_delay_seconds,
+        )
+    except Exception as exc:
+        for batch in batches:
+            repository.mark_intraday_alert_batch_failed(
+                batch.batch_id,
+                attempted_at=attempted_at,
+                error_detail=str(exc),
+            )
+        repository.record_operation_event(
+            _operation_event(
+                config,
+                component="intraday",
+                event_type="hourly-send",
+                status="failed",
+                business_date=scheduled_run_at.date(),
+                detail=str(exc),
+            )
+        )
+        return 0
+
+    repository.mark_intraday_alert_batches_sent(
+        batch_ids,
+        sent_at=attempted_at,
+        message_id=message_id,
+    )
+    repository.record_delivery(
+        DeliveryLog(
+            business_date=scheduled_run_at.date(),
+            channel="telegram_intraday",
+            status="sent_batch",
+            delivered_at=attempted_at,
+            message_id=message_id,
+            detail=f"hourly intraday briefing ({len(reports)} reports; {len(batch_ids)} batches)",
+        )
+    )
+    repository.record_operation_event(
+        _operation_event(
+            config,
+            component="intraday",
+            event_type="hourly-send",
+            status="sent",
+            business_date=scheduled_run_at.date(),
+            detail=f"batches={len(batch_ids)}; reports={len(reports)}",
+        )
+    )
+    print(f"Sent hourly intraday briefing for {len(batch_ids)} batch(es).")
+    return len(batches)
 
 
 def _send_intraday_empty_notification(

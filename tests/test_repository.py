@@ -1005,6 +1005,30 @@ def test_insert_reports_can_queue_intraday_batches_by_business_date(tmp_path) ->
     assert queued_reports[0].identity_key == "identity-a"
 
 
+def test_repository_marks_multiple_intraday_batches_sent_together(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+    first = _report(identity_key="identity-a", source_id="91999")
+    second = _report(
+        identity_key="identity-b",
+        source_id="92000",
+        title="memory rebound",
+        published_at=datetime(2026, 4, 24, 1, 0, 0),
+    )
+    result = repository.insert_reports([first], queue_intraday_alerts=True)
+    result = repository.insert_reports([second], queue_intraday_alerts=True)
+    batch_ids = tuple(batch.batch_id for batch in repository.list_pending_intraday_alert_batches())
+
+    repository.mark_intraday_alert_batches_sent(
+        batch_ids,
+        sent_at=datetime(2026, 4, 24, 9, 30, 0),
+        message_id="message-1",
+    )
+
+    assert len(batch_ids) == 2
+    assert repository.count_pending_intraday_alert_batches() == 0
+
+
 def test_insert_reports_skips_source_id_duplicates_before_intraday_queueing(tmp_path) -> None:
     repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
     repository.initialize()
