@@ -8497,7 +8497,7 @@ def test_market_briefing_uses_toss_top_two_quotes_when_provider_is_available(tmp
     assert "삼성전자 Toss 20:00 기준: 99,000원 · 저장 20:00" in message
 
 
-def test_market_briefing_adds_toss_top20_overlap_and_previous_market_flow_context(tmp_path) -> None:
+def test_market_briefing_adds_toss_top20_overlap_and_same_day_market_flow_context(tmp_path) -> None:
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
     repository.initialize()
@@ -8537,7 +8537,7 @@ def test_market_briefing_adds_toss_top20_overlap_and_previous_market_flow_contex
             return {"configured": True, "live_fetch": False, "quotes": [], "cache": "disabled"}
 
         def get_market_context(self, *, reference_date: date, priority_symbols: tuple[str, ...]) -> dict[str, object]:
-            assert reference_date == date(2026, 7, 9)
+            assert reference_date == date(2026, 7, 10)
             assert priority_symbols == ("005930", "000660")
             return {
                 "configured": True,
@@ -8545,10 +8545,11 @@ def test_market_briefing_adds_toss_top20_overlap_and_previous_market_flow_contex
                 "reference_date": reference_date.isoformat(),
                 "ranked_at": "2026-07-10T09:15:00+09:00",
                 "rankings": [{"rank": 1, "symbol": "005930", "tradingAmount": 1000}],
+                "market_prices": [{"symbol": "KOSPI", "lastPrice": "3120.45"}],
                 "priority_overlap_symbols": ["005930"],
                 "investor_flow": {
-                    "KOSPI": {"date": "2026-07-09", "foreigner": {"buyAmount": 100, "sellAmount": 90}},
-                    "KOSDAQ": {"date": "2026-07-09", "institution": {"buyAmount": 80, "sellAmount": 120}},
+                    "KOSPI": {"date": "2026-07-10", "updatedAt": "2026-07-10T09:15:00+09:00", "foreigner": {"buyAmount": 100, "sellAmount": 90}},
+                    "KOSDAQ": {"date": "2026-07-10", "updatedAt": "2026-07-10T09:15:00+09:00", "institution": {"buyAmount": 80, "sellAmount": 120}},
                 },
                 "affects_ordering": False,
             }
@@ -8563,7 +8564,8 @@ def test_market_briefing_adds_toss_top20_overlap_and_previous_market_flow_contex
 
     assert "Toss 거래대금 Top20" in message
     assert "삼성전자" in message
-    assert "전일 시장 수급 참고" in message
+    assert "당일 지수: KOSPI 3120.45" in message
+    assert "당일 시장 수급 잠정" in message
     assert "KOSPI" in message
     assert "KOSDAQ" in message
     assert "매수 추천" not in message

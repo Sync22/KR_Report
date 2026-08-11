@@ -59,7 +59,7 @@ Do not describe the current public wording limits as a permanent product ceiling
 | Source type | Rule | Example |
 | --- | --- | --- |
 | Official/approved API | Prefer this path when the needed field is available. | KRX Open API daily stock/ETF/index snapshots. |
-| Approved real-time reference | Keep in a separate read-only lane until source burden, permissions, freshness, and failure behavior are verified. | Future Toss Securities Open API quote/turnover reference for top-2 `우선 확인`. |
+| Approved real-time reference | Use a bounded read-only projection with source and freshness labels; retain stored history separately. | Toss Securities Open API top-2 quote, KOSPI/KOSDAQ current price, provisional market flow, and Top20 market attention. |
 | Screen-backed source | Use only when the approved API does not expose the needed data. | KRX Data Marketplace `[12009]` investor flow. |
 | Screen condition | Preserve and store source conditions that change output values. | Query type, date range, stock code, share unit, money unit. |
 | Source label | Store source identity separately from product display labels. | `krx_open_api` vs `krx_data_market`. |
@@ -189,11 +189,11 @@ Do not mix report collection semantics with market-data semantics.
 | Report title, broker, target price, opinion | Naver Research | `reports`, summary/detail DTOs | Keep source facts from Naver; parse for aggregation, preserve detail. |
 | Intraday new-report detection | Naver Research | `intraday_alert_batches`, `intraday_alert_batch_reports` | Keep Naver as the detection source. |
 | Stock code search / name candidates | Current Naver search flow; KRX migration candidate | Telegram stock lookup DTOs | Can migrate to KRX stock master later, but not urgent. |
-| Stock price, close, change, volume, turnover, market cap | KRX Open API | `stock_market_daily`, `krx_context`, stock detail DTOs | KRX is the preferred source. Do not replace with Naver quotes unless explicitly marked as temporary. |
+| Stock price, close, change, volume, turnover, market cap | KRX Open API | `stock_market_daily`, `krx_context`, stock detail DTOs | KRX is the confirmed daily-history source. Bounded Toss current prices may lead the current top-two display but do not overwrite KRX history. |
 | Stock master, market, listed shares, listing metadata | KRX Open API | `krx_stock_metadata` | KRX should become the canonical stock master. |
 | ETF daily reference | KRX Open API | `etf_daily_snapshots`, `etf-trend` DTO | KRX only. Keep separate from company-report summaries. |
-| Market index reference | KRX Open API | `market_index_daily` | KRX only. |
-| Investor flow | KRX Data Marketplace | `stock_investor_flow_daily`, `market_investor_flow_daily`, `investor_net_buy_top_daily` | KRX Data Marketplace is the validation source. Scheduled ingest remains disabled until separate approval. |
+| Market index reference | Toss Securities OpenAPI current indicator price; KRX Open API fallback/history | `web-view` Toss market context; `market_index_daily` | Toss KOSPI/KOSDAQ values lead same-day market display. KRX remains the confirmed daily archive/fallback. |
+| Investor flow | Toss aggregate market flow for current context; KRX Data Marketplace for stock history/validation | Toss market context; `stock_investor_flow_daily`, `market_investor_flow_daily`, `investor_net_buy_top_daily` | Toss same-day KOSPI/KOSDAQ amounts are provisional and show `updatedAt`. KRX `[12009]` remains stock-level history; `[12010]` is internal/history only and has no public projection. |
 | Intraday quote/turnover reference | Toss Securities OpenAPI current-price reference, Naver market-top overlap, and Naver top-two fallback quote | `web-view` top-2 priority DTOs and Toss baseline table when saved | Toss is the primary current-price reference for the server-derived top-two `우선 확인`; Naver top-two quotes run only when Toss is unavailable or incomplete. Naver market-top overlap remains a separate user-triggered turnover reference. None may affect trading-decision support, broker execution, or public trading calls. |
 | Industry / theme labels | Naver industry/theme pages plus operator-managed snapshots | `stock_metadata`, `stock_theme_memberships`, `category_master`, `category_membership_snapshots` | Keep as taxonomy data, not market reference data. Do not call it KRX-owned until a verified KRX taxonomy source exists. |
 
@@ -217,8 +217,8 @@ Use these names in user-facing Korean copy:
 | `업종` | `sector` | One representative industry-style grouping for a stock. | Prefer this over `섹터` in user-facing UI. |
 | `테마` | `theme` | A many-to-many theme grouping. | A stock can belong to multiple themes. |
 | `카테고리` | `category` | Generic umbrella for 업종 + 테마. | Use only when one UI/API handles both. |
-| `시장 참고` | KRX market reference | Price, volume, turnover, ETF, index, investor-flow reference. | Must be labeled as stored KRX data. |
-| `장중 참고` | approved intraday source | Naver market-top overlap, bounded server-derived top-two Naver quote, and future quote/turnover/index references. | Must show source/freshness. Market-top non-overlap is a scope result, not an absent-price result. It may affect observation priority only as observation support. |
+| `시장 참고` | Toss current context + KRX confirmed history | Toss current index/market flow/Top20 leads the market tab; KRX price, volume, turnover, ETF, and historical flow are fallback/reference. | Must show source/freshness and label same-day Toss aggregate flow as provisional. |
+| `장중 참고` | approved intraday source | Bounded Toss top-two quote, market index/flow/Top20, and Naver market-top overlap. | Must show source/freshness. Market-top non-overlap is a scope result, not an absent-price result. It may affect observation priority only as observation support. |
 | `리포트 요약` | Naver report summary | Report count, broker, target price, opinion summary. | Must not imply KRX ownership. |
 
 Avoid these in user-facing copy unless explaining internals:

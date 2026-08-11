@@ -22793,7 +22793,7 @@ def _build_market_briefing_toss_priority_context(
         }
     market_context = _build_toss_market_context(
         provider,
-        reference_date=previous_business_day(business_date, config.holiday_overrides),
+        reference_date=business_date,
         priority_symbols=symbols,
     )
     return {
@@ -22817,6 +22817,7 @@ def _build_toss_market_context(
         "live_fetch": False,
         "reference_date": reference_date.isoformat(),
         "rankings": [],
+        "market_prices": [],
         "priority_overlap_symbols": [],
         "investor_flow": {"KOSPI": None, "KOSDAQ": None},
     }
@@ -23051,6 +23052,7 @@ def _build_market_briefing_toss_market_context_lines(toss_context: dict[str, obj
         return []
     names_by_symbol = toss_context.get("names_by_symbol") if isinstance(toss_context.get("names_by_symbol"), dict) else {}
     rankings = payload.get("rankings") if isinstance(payload.get("rankings"), list) else []
+    market_prices = payload.get("market_prices") if isinstance(payload.get("market_prices"), list) else []
     ranked_at = _market_briefing_toss_checked_time(payload.get("ranked_at") or payload.get("fetched_at"))
     ranking_symbols = [
         str(item.get("symbol") or "").strip()
@@ -23064,8 +23066,16 @@ def _build_market_briefing_toss_market_context_lines(toss_context: dict[str, obj
     overlap_display = ", ".join(str(names_by_symbol.get(symbol) or symbol) for symbol in overlaps)
     lines.append(f"- 우선 확인 겹침: {overlap_display or '없음'}")
 
+    index_display = ", ".join(
+        f"{str(item.get('symbol') or '').strip()} {str(item.get('lastPrice') or '').strip()}"
+        for item in market_prices
+        if isinstance(item, dict) and str(item.get("symbol") or "").strip() and item.get("lastPrice") is not None
+    )
+    if index_display:
+        lines.append(f"- 당일 지수: {index_display}")
+
     investor_flow = payload.get("investor_flow") if isinstance(payload.get("investor_flow"), dict) else {}
-    lines.append("전일 시장 수급 참고")
+    lines.append("당일 시장 수급 잠정")
     for market in ("KOSPI", "KOSDAQ"):
         record = investor_flow.get(market)
         if not isinstance(record, dict):
@@ -23081,7 +23091,9 @@ def _build_market_briefing_toss_market_context_lines(toss_context: dict[str, obj
             if buy is None or sell is None:
                 continue
             fragments.append(f"{label} {_format_flow_reference_amount(buy - sell)}")
-        lines.append(f"- {market}: {' · '.join(fragments) if fragments else '집계값 확인 필요'}")
+        checked_at = _market_briefing_toss_checked_time(record.get("updatedAt"))
+        suffix = f" · 갱신 {checked_at}" if checked_at else ""
+        lines.append(f"- {market}: {' · '.join(fragments) if fragments else '집계값 확인 필요'}{suffix}")
     return lines
 
 
@@ -25484,6 +25496,7 @@ def _make_web_view_handler(
                 "affects_ordering": False,
                 "reference_date": None,
                 "rankings": [],
+                "market_prices": [],
                 "priority_overlap_symbols": [],
                 "investor_flow": {"KOSPI": None, "KOSDAQ": None},
                 "latest_business_date": latest_business_date,
@@ -25492,7 +25505,7 @@ def _make_web_view_handler(
         symbols = priority_candidate_codes(business_date)
         payload = _build_toss_market_context(
             toss_provider,
-            reference_date=previous_business_day(business_date, config.holiday_overrides),
+            reference_date=business_date,
             priority_symbols=symbols,
         )
         return HTTPStatus.OK, {
@@ -25736,6 +25749,7 @@ def _make_web_view_handler(
                         "affects_ordering": False,
                         "reference_date": None,
                         "rankings": [],
+                        "market_prices": [],
                         "priority_overlap_symbols": [],
                         "investor_flow": {"KOSPI": None, "KOSDAQ": None},
                         "reason": "upstream_unavailable",
@@ -28831,13 +28845,19 @@ def _render_web_view_html() -> str:
 
       <details class="card span-12 market-reference-card" id="market-reference-card" data-view-panel="market" hidden open>
         <summary>
-          <h2>시장 참고 <span class="muted">당일 마감 기준</span></h2>
-          <span class="muted">시장 흐름 보조 지표</span>
+          <h2>시장 문맥 <span class="muted">Toss 당일 · KRX 확정 이력</span></h2>
+          <span class="muted">현재값 우선 참고</span>
         </summary>
         <p class="brief">시장 탭은 해석 문장이 아니라 선택 날짜의 저장 KRX/수급 근거를 확인하는 화면입니다.</p>
 
         <details class="market-reference-panel" open>
-          <summary>선택 날짜 KRX 시장 참고 <span class="muted" id="market-date"></span></summary>
+          <summary>Toss 당일 시장 <span class="muted">실시간 집계</span></summary>
+          <div id="toss-market-context" class="intraday-overlap-panel" aria-live="polite" hidden></div>
+          <p class="notice">당일 지수·시장 수급·거래대금 Top20을 우선 표시합니다. KRX 확정 이력은 아래 참고용입니다.</p>
+        </details>
+
+        <details class="market-reference-panel">
+          <summary>선택 날짜 KRX 확정 이력 <span class="muted" id="market-date"></span></summary>
           <p class="brief" id="market-notice">날짜를 선택하면 같은 날짜의 시장 참고값을 표시합니다.</p>
           <div class="market-grid" id="selected-date-market-grid">
             <div class="market-block">
@@ -28867,15 +28887,9 @@ def _render_web_view_html() -> str:
 
         <details class="market-reference-panel">
           <summary>투자자 수급 참고 <span class="muted" id="investor-flow-title"></span></summary>
-          <div class="market-grid">
-            <div class="market-block">
-              <h3>시장 수급</h3>
-              <table class="mobile-card-table"><thead><tr><th>시장</th><th>투자자</th><th>순매수량</th><th>순매수금액</th></tr></thead><tbody id="investor-market-rows"><tr><td colspan="4" class="muted">수급 데이터가 없습니다.</td></tr></tbody></table>
-            </div>
-            <div class="market-block">
-              <h3>외국인 순매수 상위</h3>
-              <table class="mobile-card-table"><thead><tr><th>순위</th><th>종목</th><th>순매수량</th><th>순매수금액</th></tr></thead><tbody id="investor-top-rows"><tr><td colspan="4" class="muted">수급 데이터가 없습니다.</td></tr></tbody></table>
-            </div>
+          <div class="market-block">
+            <h3>전일 확정 시장 수급</h3>
+            <table class="mobile-card-table"><thead><tr><th>시장</th><th>투자자</th><th>순매수량</th><th>순매수금액</th></tr></thead><tbody id="investor-market-rows"><tr><td colspan="4" class="muted">수급 데이터가 없습니다.</td></tr></tbody></table>
           </div>
           <p class="notice" id="investor-flow-notice">저장된 수급 데이터 기준입니다.</p>
         </details>
@@ -28883,15 +28897,10 @@ def _render_web_view_html() -> str:
         <details class="market-reference-panel">
           <summary>수급 흐름 <span class="muted" id="flow-trend-title"></span></summary>
           <table class="mobile-card-table">
-            <thead><tr><th>날짜</th><th>시장 수급</th><th>외국인 순매수 상위</th></tr></thead>
-            <tbody id="flow-trend-rows"><tr><td colspan="3" class="muted">날짜를 선택하세요.</td></tr></tbody>
+            <thead><tr><th>날짜</th><th>시장 수급</th></tr></thead>
+            <tbody id="flow-trend-rows"><tr><td colspan="2" class="muted">날짜를 선택하세요.</td></tr></tbody>
           </table>
           <p class="notice" id="flow-trend-notice">저장된 수급 데이터 기준입니다.</p>
-        </details>
-        <details class="market-reference-panel">
-          <summary>Toss 시장 수급 참고 <span class="muted">실시간 집계</span></summary>
-          <div id="toss-market-context" class="intraday-overlap-panel" aria-live="polite" hidden></div>
-          <p class="notice">KRX 종목별 수급을 대체하지 않는 시장 단위 참고값입니다.</p>
         </details>
       </details>
     </section>
@@ -29347,7 +29356,7 @@ def _render_web_view_html() -> str:
         document.getElementById("stock-context").innerHTML = message;
         document.getElementById("stock-detail").innerHTML = message;
       } else if (tabName === "market") {
-        document.getElementById("flow-trend-rows").innerHTML = `<tr><td colspan="3" class="muted">오류: ${esc(error)}</td></tr>`;
+        document.getElementById("flow-trend-rows").innerHTML = `<tr><td colspan="2" class="muted">오류: ${esc(error)}</td></tr>`;
       } else if (tabName === "rotation") {
         document.getElementById("rotation-overlay").innerHTML = message;
         document.getElementById("etf-tab-rows").innerHTML = `<tr><td colspan="2" class="muted">오류: ${esc(error)}</td></tr>`;
@@ -29474,7 +29483,7 @@ def _render_web_view_html() -> str:
       document.getElementById("etf-tab-title").textContent = `(${date})`;
       document.getElementById("etf-tab-rows").innerHTML = '<tr><td colspan="2" class="muted">순환매 탭을 열면 최근 ETF 흐름을 불러옵니다.</td></tr>';
       document.getElementById("flow-trend-title").textContent = `(${date})`;
-      document.getElementById("flow-trend-rows").innerHTML = '<tr><td colspan="3" class="muted">시장 탭을 열면 최근 수급 흐름을 불러옵니다.</td></tr>';
+      document.getElementById("flow-trend-rows").innerHTML = '<tr><td colspan="2" class="muted">시장 탭을 열면 최근 수급 흐름을 불러옵니다.</td></tr>';
       rotationLoadedDate = null;
       document.getElementById("rotation-title").textContent = `(${date})`;
       document.getElementById("rotation-overlay").innerHTML = '<span class="muted">펼치면 순환매 참고 이미지를 불러옵니다.</span>';
@@ -30661,9 +30670,6 @@ def _render_web_view_html() -> str:
         const turnover = item.market_reference?.turnover
           ? compactTurnover(item.market_reference.turnover)
           : "";
-        const rank = item.rank_reference?.foreign_top_rank
-          ? `외국인 순매수 ${number(item.rank_reference.foreign_top_rank)}위`
-          : "순매수 상위 없음";
         const flowLine = evidenceFlowLabel(item.stock_flow_reference);
         const layers = candidateEvidenceLayers(item);
         const whyNotable = candidateWhyDisplayItems(layers.primary);
@@ -30693,7 +30699,7 @@ def _render_web_view_html() -> str:
           <div class="candidate-evidence-grid">
             <span><b>리포트</b>${number(report.report_count)}건</span>
             <span><b>목표가/지표</b>${targetMetrics}</span>
-            <span><b>수급/순위</b>${candidateFlowMetrics(rank, turnover, flowLine)}</span>
+            <span><b>수급/거래대금</b>${candidateFlowMetrics(turnover, flowLine)}</span>
           </div>
           <button class="candidate-detail-action" type="button" data-stock-code="${esc(item.stock_code || "")}"${watchDataLoading ? " disabled" : ""}>종목 상세에서 근거 이어보기</button>
         </article>`;
@@ -30999,8 +31005,13 @@ def _render_web_view_html() -> str:
         return;
       }
       const rankings = Array.isArray(data.rankings) ? data.rankings.slice(0, 20) : [];
+      const marketPrices = Array.isArray(data.market_prices) ? data.market_prices : [];
       const overlaps = Array.isArray(data.priority_overlap_symbols) ? data.priority_overlap_symbols : [];
       const rankedAt = tossQuoteTimeLabel({ timestamp: data.ranked_at }, data);
+      const marketPriceLabel = marketPrices
+        .filter((item) => item && item.symbol && item.lastPrice !== null && item.lastPrice !== undefined)
+        .map((item) => `${esc(item.symbol)} ${number(item.lastPrice)}`)
+        .join(" · ");
       const rankItems = rankings.length
         ? rankings.map((item) => `<span class="status-pill">${esc(item?.rank || "")}. ${esc(item?.symbol || "-")}</span>`).join("")
         : '<span class="muted">Top20 집계값 없음</span>';
@@ -31013,7 +31024,8 @@ def _render_web_view_html() -> str:
           const net = buy - sell;
           return [`${label} ${net >= 0 ? "순매수" : "순매도"} ${compactTurnover(Math.abs(net))}`];
         });
-        return `${market} ${parts.join(" · ") || "집계값 확인 필요"}`;
+        const updatedAt = tossQuoteTimeLabel({ timestamp: record.updatedAt }, data);
+        return `${market} ${parts.join(" · ") || "집계값 확인 필요"}${updatedAt ? ` · ${updatedAt}` : ""}`;
       };
       const flow = data.investor_flow || {};
       panel.hidden = false;
@@ -31021,7 +31033,8 @@ def _render_web_view_html() -> str:
         <div class="intraday-overlap-head"><b>Toss 시장 문맥</b><span>· ${esc(rankedAt || "집계 시각 확인 필요")}</span></div>
         <p class="intraday-overlap-summary">거래대금 Top20 · 우선 확인 겹침 ${esc(overlaps.join(", ") || "없음")}</p>
         <div class="intraday-overlap-stocks">${rankItems}</div>
-        <p class="muted">전일 시장 수급 참고 · ${esc(flowLabel(flow.KOSPI, "KOSPI"))} · ${esc(flowLabel(flow.KOSDAQ, "KOSDAQ"))}</p>
+        <p class="muted">당일 지수 · ${marketPriceLabel || "지수값 확인 필요"}</p>
+        <p class="muted">당일 시장 수급 잠정 · ${esc(flowLabel(flow.KOSPI, "KOSPI"))} · ${esc(flowLabel(flow.KOSDAQ, "KOSDAQ"))}</p>
       `;
     }
 
@@ -31258,11 +31271,10 @@ def _render_web_view_html() -> str:
       return chips.join("");
     }
 
-    function candidateFlowMetrics(rank, turnover, flowLine) {
+    function candidateFlowMetrics(turnover, flowLine) {
       const pieces = [
         ["외국인/기관", flowLine || "-"],
-        ["거래대금", turnover || "-"],
-        ["순매수", rank || "순매수 상위 없음"]
+        ["거래대금", turnover || "-"]
       ];
       return `<span class="candidate-info-grid candidate-flow-grid">${pieces.map(([label, value]) => {
         const displayValue = label === "외국인/기관" ? flowValue(value) : esc(value);
@@ -31516,7 +31528,6 @@ def _render_web_view_html() -> str:
       document.getElementById("investor-flow-notice").textContent = displayNotice(flow?.notice || "저장된 수급 데이터 기준입니다.");
       if (!flow || !flow.available) {
         document.getElementById("investor-market-rows").innerHTML = '<tr><td colspan="4" class="muted">선택 날짜 수급 데이터가 없습니다.</td></tr>';
-        document.getElementById("investor-top-rows").innerHTML = '<tr><td colspan="4" class="muted">선택 날짜 수급 데이터가 없습니다.</td></tr>';
         return;
       }
       document.getElementById("investor-market-rows").innerHTML = flow.market_flows.length ? flow.market_flows.map((item) => row([
@@ -31525,12 +31536,6 @@ def _render_web_view_html() -> str:
         labeled("순매수량", quantity(item.net_buy_volume, item.volume_unit || "주")),
         labeled("순매수금액", compactAmount(item.net_buy_amount, item.amount_unit || "원"))
       ])).join("") : '<tr><td colspan="4" class="muted">시장 수급 데이터가 없습니다.</td></tr>';
-      document.getElementById("investor-top-rows").innerHTML = flow.net_buy_top.length ? flow.net_buy_top.map((item) => row([
-        labeled("순위", `${number(item.rank)}<div class="muted">${esc(item.market_label || item.market)}</div>`),
-        labeled("종목", `${esc(item.stock_name)}<div class="muted">${esc(item.stock_code)} · ${esc(item.investor_label || item.investor_type)}</div>`),
-        labeled("순매수량", quantity(item.net_buy_volume, item.volume_unit || "주")),
-        labeled("순매수금액", compactAmount(item.net_buy_amount, item.amount_unit || "원"))
-      ])).join("") : '<tr><td colspan="4" class="muted">순매수 상위 샘플이 없습니다.</td></tr>';
     }
 
     async function loadFlowTrend(date) {
@@ -31582,12 +31587,6 @@ def _render_web_view_html() -> str:
       return picked.map((item) => `${esc(item.market_label || item.market)} ${esc(item.investor_label || item.investor_type)} ${compactAmount(item.net_buy_amount, item.amount_unit || "원")}`).join("<br>");
     }
 
-    function compactTopFlow(items) {
-      const picked = (items || []).slice(0, 4);
-      if (!picked.length) return '<span class="muted">-</span>';
-      return picked.map((item) => `${esc(item.market_label || item.market)} ${number(item.rank)}위 ${esc(item.stock_name)}<span class="muted"> ${esc(item.stock_code)}</span>`).join("<br>");
-    }
-
     function renderFlowTrend(flow) {
       const referenceDate = flow?.reference_date || "";
       const selectedDateText = flow?.business_date || "";
@@ -31600,13 +31599,12 @@ def _render_web_view_html() -> str:
         ? `선택 날짜의 수급 저장값이 없어 ${referenceDate || "최근 저장일"} 기준 흐름만 표시합니다.`
         : displayNotice(flow?.notice || "저장된 수급 데이터 기준입니다.");
       if (!flow || !flow.available || !flow.items.length) {
-        document.getElementById("flow-trend-rows").innerHTML = '<tr><td colspan="3" class="muted">최근 수급 흐름 데이터가 없습니다.</td></tr>';
+        document.getElementById("flow-trend-rows").innerHTML = '<tr><td colspan="2" class="muted">최근 수급 흐름 데이터가 없습니다.</td></tr>';
         return;
       }
       document.getElementById("flow-trend-rows").innerHTML = flow.items.map((item) => row([
         labeled("날짜", esc(item.business_date)),
-        labeled("시장 수급", compactMarketFlow(item.market_flows)),
-        labeled("외국인 순매수 상위", compactTopFlow(item.foreign_net_buy_top))
+        labeled("시장 수급", compactMarketFlow(item.market_flows))
       ])).join("");
     }
 
@@ -36513,7 +36511,8 @@ def build_web_view_candidate_evidence_snapshot(
     rank_rows: list[InvestorNetBuyTopDaily] = []
     for market in ("STK", "KSQ", "ALL"):
         market_flow_rows.extend(repository.list_market_investor_flow_daily(business_date, market))
-        rank_rows.extend(repository.list_investor_net_buy_top_daily(business_date, market, "foreign", limit=20))
+        if include_internal:
+            rank_rows.extend(repository.list_investor_net_buy_top_daily(business_date, market, "foreign", limit=20))
     foreign_rank_by_code = {
         item.stock_code: item
         for item in sorted(rank_rows, key=lambda row: (_web_view_market_sort_key(row.market), row.rank))
@@ -36636,7 +36635,7 @@ def build_web_view_candidate_evidence_snapshot(
             support=_web_view_candidate_support_evidence(
                 market_reference=market_reference,
                 price_volume_reference=price_volume_reference,
-                rank_reference=rank_reference,
+                rank_reference=rank_reference if include_internal else None,
             ),
             gap=candidate_profile["missing_information"],
         )
@@ -36733,6 +36732,7 @@ def build_web_view_candidate_evidence_snapshot(
                 "stock_code": str(row.get("stock_code") or ""),
             }
         else:
+            item.pop("rank_reference", None)
             report_summary = dict(item.get("report_summary") or {})
             item["report_summary"] = {
                 "report_count": report_summary.get("report_count"),
@@ -36748,6 +36748,9 @@ def build_web_view_candidate_evidence_snapshot(
             target_price_revision = dict(item.get("target_price_revision") or {})
             target_price_revision.pop("previous_broker_count", None)
             item["target_price_revision"] = target_price_revision
+            value_profile = dict(item.get("value_profile") or {})
+            value_profile.pop("rank_reference_available", None)
+            item["value_profile"] = value_profile
         picked_rows.append(item)
     return {
         "now": current.isoformat(),
@@ -37961,16 +37964,13 @@ def _build_web_view_krx_investor_flow_context(
     business_date: date,
 ) -> dict:
     market_rows: list[MarketInvestorFlowDaily] = []
-    top_rows: list[InvestorNetBuyTopDaily] = []
     for market in ("STK", "KSQ", "ALL"):
         market_rows.extend(repository.list_market_investor_flow_daily(business_date, market))
-        top_rows.extend(repository.list_investor_net_buy_top_daily(business_date, market, "foreign", limit=10))
     market_rows = sorted(
         market_rows,
         key=lambda item: (_web_view_market_sort_key(item.market), _web_view_investor_sort_key(item.investor_type)),
     )
-    top_rows = sorted(top_rows, key=lambda item: (_web_view_market_sort_key(item.market), item.rank))
-    available = bool(market_rows or top_rows)
+    available = bool(market_rows)
     return {
         "available": available,
         "source": "krx_data_market" if available else None,
@@ -37984,7 +37984,6 @@ def _build_web_view_krx_investor_flow_context(
             else "선택 날짜의 KRX 수급 데이터가 없습니다."
         ),
         "market_flows": [_web_view_market_investor_flow_item(item) for item in market_rows],
-        "net_buy_top": [_web_view_investor_net_buy_top_item(item) for item in top_rows],
     }
 
 
@@ -38004,20 +38003,16 @@ def build_web_view_flow_trend_snapshot(
     items = []
     for snapshot_date in snapshot_dates:
         market_rows: list[MarketInvestorFlowDaily] = []
-        top_rows: list[InvestorNetBuyTopDaily] = []
         for market in ("STK", "KSQ"):
             market_rows.extend(repository.list_market_investor_flow_daily(snapshot_date, market))
-            top_rows.extend(repository.list_investor_net_buy_top_daily(snapshot_date, market, "foreign", limit=3))
         market_rows = sorted(
             market_rows,
             key=lambda item: (_web_view_market_sort_key(item.market), _web_view_investor_sort_key(item.investor_type)),
         )
-        top_rows = sorted(top_rows, key=lambda item: (_web_view_market_sort_key(item.market), item.rank))
         items.append(
             {
                 "business_date": snapshot_date.isoformat(),
                 "market_flows": [_web_view_market_investor_flow_item(item) for item in market_rows],
-                "foreign_net_buy_top": [_web_view_investor_net_buy_top_item(item) for item in top_rows],
             }
         )
     return {

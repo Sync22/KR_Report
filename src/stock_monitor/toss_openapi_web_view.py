@@ -203,8 +203,16 @@ class TossPriorityQuoteProvider:
                 endpoint=ranking_endpoint,
                 params=dict(ranking_endpoint.fixed_params),
             )
+            price_endpoint = resolve_toss_market_context_endpoint("market-indicator-prices")
+            price_response = self._fetch_endpoint_with_token_recovery(
+                endpoint=price_endpoint,
+                params=dict(price_endpoint.fixed_params),
+            )
             investor_flow: dict[str, object] = {}
-            rate_limit = {ranking_endpoint.key: ranking_response.rate_limit}
+            rate_limit = {
+                ranking_endpoint.key: ranking_response.rate_limit,
+                price_endpoint.key: price_response.rate_limit,
+            }
             for market, endpoint_key in (("KOSPI", "market-investor-kospi"), ("KOSDAQ", "market-investor-kosdaq")):
                 endpoint = resolve_toss_market_context_endpoint(endpoint_key)
                 response = self._fetch_endpoint_with_token_recovery(
@@ -225,6 +233,7 @@ class TossPriorityQuoteProvider:
 
             ranking_result = ranking_response.result if isinstance(ranking_response.result, dict) else {}
             rankings = ranking_result.get("rankings") if isinstance(ranking_result.get("rankings"), list) else []
+            market_prices = price_response.result if isinstance(price_response.result, list) else []
             ranked_symbols = {
                 str(item.get("symbol") or "").strip()
                 for item in rankings
@@ -242,6 +251,7 @@ class TossPriorityQuoteProvider:
                 "reference_date": reference_date.isoformat(),
                 "ranked_at": ranking_result.get("rankedAt"),
                 "rankings": rankings,
+                "market_prices": market_prices,
                 "priority_overlap_symbols": [symbol for symbol in normalized_symbols if symbol in ranked_symbols],
                 "investor_flow": investor_flow,
                 "fetched_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -336,6 +346,7 @@ class TossPriorityQuoteProvider:
             "reference_date": reference_date.isoformat(),
             "ranked_at": None,
             "rankings": [],
+            "market_prices": [],
             "priority_overlap_symbols": [],
             "investor_flow": {"KOSPI": None, "KOSDAQ": None},
             "priority_symbols": list(priority_symbols),

@@ -20,7 +20,8 @@ Current decision:
 - Toss OpenAPI still has a read-only lab lane for docs, probes, and fixtures.
 - Promoted main features are the public-safe `web-view` current-price and same-day
   provisional investor-trading-volume projection for server-derived top-2 `우선 확인`
-  candidates, plus the latest-date Top20 market-attention projection.
+  candidates, plus same-day KOSPI/KOSDAQ indicator prices, provisional aggregate
+  investor flow, and the latest-date Top20 market-attention projection.
 - The promoted paths may read local `.env.toss-openapi` after live opt-in and
   credentials are present. They call only allowlisted `prices`, the fixed
   `MARKET_TRADING_AMOUNT` Top20 ranking, fixed KOSPI/KOSDAQ aggregate
@@ -77,20 +78,20 @@ operations, `90` schemas):
 | Read-only quote/reference | Promoted for `web-view` and scheduled market-briefing top-2 current price | Server derives up to two `우선 확인` symbols; no arbitrary symbol query. |
 | Stock/reference metadata | Future lab candidate | May be compared with KRX/Naver identity data, but must not overwrite source facts by default. |
 | Market calendar/exchange rate | Future lab candidate | Reference only; label source/freshness if surfaced later. |
-| Ranking/market indicators | Promoted as an opt-in read-only market-context projection | Fixed `tradingAmount` Top20 plus previous-business-day KOSPI/KOSDAQ aggregate investor flow may provide separate current market-attention context. They must not replace report candidates or stock-level KRX flow. |
+| Ranking/market indicators | Promoted as an opt-in read-only market-context projection | Fixed `tradingAmount` Top20, KOSPI/KOSDAQ current indicator prices, and same-day provisional aggregate investor flow provide the primary current market context. They must not replace report candidates or stock-level KRX flow. |
 | Account/balance read-only | Operator-only lab candidate | Never public. No production DB write. No scheduler or Telegram integration. |
 | Order history/order info | Operator-only lab candidate at most | Treat as execution-adjacent; keep away from public surfaces. |
 | Execution lab | Deferred | Requires separate order-safety, audit, permissions, failure, and rollback contract. |
-| Public `web-view` projection | Approved for top-2 current price, same-day investor volume, and latest-date market context | Public-safe source/freshness observation support; server-derived Top2 overlap only; never account/order data. |
+| Public `web-view` projection | Approved for top-2 current price, same-day investor volume, and latest-date market context | Current market context is Toss-first; stored KRX daily rows are collapsed confirmed-history/fallback reference. Server-derived Top2 overlap only; never account/order data. |
 
 Toss is not a replacement for the current source ownership model:
 
 - Naver remains the report source of truth.
-- KRX remains the stored daily market reference source of truth.
-- KRX Data Marketplace remains the investor-flow source.
-- Toss may become a separate broker-origin intraday/reference lane only after
-  post-key evidence proves permission, freshness, rate-limit behavior, and
-  failure behavior.
+- KRX remains the stored daily market-history and confirmed fallback source.
+- KRX Data Marketplace remains the historical stock-flow and `[12010]` source;
+  `[12010]` has no public candidate or market projection.
+- Toss is the primary read-only intraday/reference lane for the bounded current
+  market context; it does not replace the KRX archive or stock-flow history.
 
 ## Pre-Key Allowed Work
 
@@ -153,7 +154,7 @@ Forbidden outside the explicitly promoted read-only projections:
 | Stock Info | `GET /api/v1/stocks`, `GET /api/v1/stocks/all`, `GET /api/v1/stocks/{symbol}/warnings`, and five daily trading-trend endpoints | Only stock `investor-trading` is allowlisted as fixed current-day Top2 provisional volume reference; the bulk universe endpoint and other four daily trading-trend endpoints remain document only. |
 | Market Info | `GET /api/v1/exchange-rate`, `GET /api/v1/market-calendar/KR`, `GET /api/v1/market-calendar/US` | Future read-only lab allowlist after token review. |
 | Ranking | `GET /api/v1/rankings` | Fixed `MARKET_TRADING_AMOUNT / KR / realtime / count=20` is allowlisted for the latest-date Top20 market-context projection only. Other ranking queries remain documentation only. |
-| Market Indicators | `GET /api/v1/market-indicators/prices`, `.../{symbol}/candles`, `.../{symbol}/investor-trading` | Fixed KOSPI/KOSDAQ one-day aggregate investor-trading references are allowlisted for the Top20 market-context projection. Other indicator queries remain documentation only; this is not stock-level KRX flow. |
+| Market Indicators | `GET /api/v1/market-indicators/prices`, `.../{symbol}/candles`, `.../{symbol}/investor-trading` | Fixed KOSPI/KOSDAQ current prices and same-day aggregate investor-trading references are allowlisted for the market-context projection. Other indicator queries remain documentation only; this is not stock-level KRX flow. |
 | Account | `GET /api/v1/accounts` | Operator-only lab candidate. Account id is sensitive operational context. |
 | Asset | `GET /api/v1/holdings` | Operator-only lab only. Never public. |
 | Order History | `GET /api/v1/orders`, `GET /api/v1/orders/{orderId}` | Execution-adjacent operator-only lab only. |
@@ -165,12 +166,12 @@ Forbidden outside the explicitly promoted read-only projections:
 
 | Surface | Allowed now | Later condition |
 | --- | --- | --- |
-| Default/public `web-view` | Top-2 `우선 확인` current-price, same-day provisional investor-volume, and latest-date Top20 market-context projections. | Server-derived latest-date symbols, GET-only, no arbitrary symbol query, and no account/order data. The hold capture replay is not exposed here. |
+| Default/public `web-view` | Top-2 `우선 확인` current-price, same-day provisional investor-volume, current KOSPI/KOSDAQ prices, provisional aggregate investor flow, and latest-date Top20 market-context projections. | Toss values lead the market tab; stored KRX daily rows stay collapsed as confirmed-history/fallback. GET-only, no arbitrary symbol query, and no account/order data. The hold capture replay is not exposed here. |
 | Loopback lab `web-view` preview | Superseded by the promoted top-2 projection. | New visual experiments still require separate review before broadening the main path. |
 | `admin-gui` | Nothing Toss-connected. | Coarse readiness status only after lab contract and secret redaction are implemented; no token/account display. |
 | `operator-review` | Not implemented. | Preferred future surface for raw read-only Toss probe review and response comparison. |
-| Telegram | Scheduled market-briefing slots may show up to two server-derived current prices with source and checked time. | Same-day investor volume remains web-view only; no account/order data, arbitrary symbols, numerical score, or trading instruction. |
-| Scheduler | The three scheduled market-briefing slots may issue the bounded read-only top-2 price call; the 20:00 baseline task may persist its separate baseline. The 15:00 Top20 capture wrapper is implemented but opt-in registration only. | Same-day investor volume is not fetched here. No broad or repeated Toss polling, account/order endpoints, or default scheduler registration. |
+| Telegram | Scheduled market-briefing slots may show up to two server-derived current prices and the bounded Toss market context with source and checked time. | No account/order data, arbitrary symbols, numerical score, or trading instruction. |
+| Scheduler | The three scheduled market-briefing slots may issue the bounded read-only top-2 price and market-context calls; the 20:00 baseline task may persist its separate baseline. The 15:00 Top20 capture wrapper is implemented but opt-in registration only. | No broad or repeated Toss polling, account/order endpoints, or default scheduler registration. |
 | Production DB | The development-hold `toss_market_context_snapshots` schema stores a bounded Top20 replay when the explicit live/save gates are used. | No operational row is captured until live validation reviews source semantics, replay, retention, and privacy. |
 
 If an approved future intraday reference affects `우선 확인` or
@@ -214,7 +215,8 @@ Current post-key branch status:
   `--confirm-token-reissue`.
 - Account, asset, order-info/history, and order operations remain absent.
 - Default/public `web-view` Toss projections are the top-2 current-price and
-  same-day provisional investor-volume references, plus latest-date Top20 market
+  same-day provisional investor-volume references, plus KOSPI/KOSDAQ current
+  prices, provisional aggregate investor flow, and latest-date Top20 market
   context. All are server-derived, bounded, latest-date only, memory-cached, and
   do not write the DB.
 - No Toss value is connected to `admin-gui`. Telegram and scheduler use remain
@@ -289,8 +291,10 @@ Pre-key preparation is complete when:
 - No secret values are read, written, logged, or committed.
 - No production DB, scheduler, Telegram, or `admin-gui` connection exists.
 - Public `web-view` connections are limited to the approved top-2
-  current-price and latest-date Top20 market-context projections, with no
-  account/order data, candidate reordering, or arbitrary symbol query.
+  current-price, same-day provisional investor volume, KOSPI/KOSDAQ current
+  prices, aggregate investor flow, and latest-date Top20 market-context
+  projections, with no account/order data, candidate reordering, or arbitrary
+  symbol query.
 
 
 <!-- Merged from: docs/codex/toss-openapi-lab.md -->
@@ -339,7 +343,7 @@ Official sources:
 | Refresh token | Not provided. Reissue through the token endpoint. | Token lifecycle must be designed post-key. |
 | Active token count | One valid access token per client; reissue invalidates previous token. | Avoid background token refresh by default. |
 | Account header | `X-Tossinvest-Account` uses `accountSeq` from `GET /api/v1/accounts` | Sensitive operational identifier. Operator-only. |
-| Public surface | Auth/account/order values may not reach `web-view`; only bounded top-2 market-price and latest-date Top20 market-context projections are approved. | Enforce through tests before any surface connection. |
+| Public surface | Auth/account/order values may not reach `web-view`; only bounded top-2 market-price, KOSPI/KOSDAQ current price/aggregate-flow, and latest-date Top20 market-context projections are approved. | Enforce through tests before any surface connection. |
 
 ## Rate Limits
 

@@ -235,6 +235,14 @@ def test_toss_market_context_provider_uses_fixed_queries_and_keeps_top_two_order
                 },
                 rate_limit={"limit": "5"},
             )
+        if endpoint.key == "market-indicator-prices":
+            return SimpleNamespace(
+                result=[
+                    {"symbol": "KOSPI", "timestamp": "2026-07-10T09:15:00+09:00", "lastPrice": "3120.45"},
+                    {"symbol": "KOSDAQ", "timestamp": "2026-07-10T09:15:00+09:00", "lastPrice": "812.34"},
+                ],
+                rate_limit={"limit": "10"},
+            )
         return SimpleNamespace(
             result={
                 "records": [
@@ -265,10 +273,15 @@ def test_toss_market_context_provider_uses_fixed_queries_and_keeps_top_two_order
             "ranking-kr-top20",
             {"type": "MARKET_TRADING_AMOUNT", "marketCountry": "KR", "duration": "realtime", "count": "20"},
         ),
+        ("market-indicator-prices", {"symbols": "KOSPI,KOSDAQ"}),
         ("market-investor-kospi", {"interval": "1d", "count": "1", "until": "2026-07-09"}),
         ("market-investor-kosdaq", {"interval": "1d", "count": "1", "until": "2026-07-09"}),
     ]
     assert payload["priority_overlap_symbols"] == ["005930"]
+    assert payload["market_prices"] == [
+        {"symbol": "KOSPI", "timestamp": "2026-07-10T09:15:00+09:00", "lastPrice": "3120.45"},
+        {"symbol": "KOSDAQ", "timestamp": "2026-07-10T09:15:00+09:00", "lastPrice": "812.34"},
+    ]
     assert payload["reference_date"] == "2026-07-09"
     assert payload["affects_ordering"] is False
     assert payload["writes_db"] is False

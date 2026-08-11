@@ -1620,10 +1620,7 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
     assert snapshot["krx_investor_flow"]["market_flows"][0]["market_label"] == "KOSPI"
     assert snapshot["krx_investor_flow"]["market_flows"][0]["net_buy_amount"] == 200
     assert snapshot["krx_investor_flow"]["market_flows"][1]["investor_type"] == "개인"
-    assert snapshot["krx_investor_flow"]["net_buy_top"][0]["stock_code"] == "005930"
-    assert snapshot["krx_investor_flow"]["net_buy_top"][0]["investor_label"] == "외국인"
-    assert snapshot["krx_investor_flow"]["net_buy_top"][0]["market_label"] == "KOSPI"
-    assert snapshot["krx_investor_flow"]["net_buy_top"][0]["net_buy_amount"] == 300
+    assert "net_buy_top" not in snapshot["krx_investor_flow"]
     assert snapshot["market_reference_notice"] == "KRX 저장 스냅샷 기준입니다."
     assert snapshot["market_briefing"]["index_summary"]["available"] is False
     assert snapshot["market_briefing"]["turnover_summary"]["available"] is True
@@ -2355,7 +2352,7 @@ def test_web_view_candidate_evidence_prioritizes_backtest_supported_observation_
     assert [row["stock_code"] for row in snapshot["rows"]] == ["000004", "000002"]
     assert snapshot["rows"][0]["why_notable"] == ["리포트 집중", "수급 전환 지속"]
     assert snapshot["rows"][1]["why_notable"] == ["리포트 집중"]
-    assert "외국인 순매수 상위 참고" in snapshot["rows"][1]["evidence_layers"]["support"]
+    assert "외국인 순매수 상위 참고" not in snapshot["rows"][1]["evidence_layers"]["support"]
     assert snapshot["rows"][0]["intraday_reference"] == {
         "available": False,
         "source_configured": False,
@@ -2531,8 +2528,8 @@ def test_web_view_candidate_evidence_rank_reason_stays_reference_when_stock_flow
         "KRX 가격 참고",
         "거래대금 참고",
         "거래량 위치 참고",
-        "외국인 순매수 상위 참고",
     ]
+    assert "rank_reference" not in row
     assert row["evidence_layers"]["gap"] == row["missing_information"]
     assert "외국인 순매수 상위" in internal_snapshot["rows"][0]["internal_candidate_signals"]
 
@@ -2603,7 +2600,7 @@ def test_web_view_candidate_evidence_rank_reference_does_not_drive_public_order(
 
     assert [row["stock_code"] for row in snapshot["rows"]] == ["000999", "000001"]
     assert snapshot["rows"][1]["why_notable"] == []
-    assert "외국인 순매수 상위 참고" in snapshot["rows"][1]["evidence_layers"]["support"]
+    assert "외국인 순매수 상위 참고" not in snapshot["rows"][1]["evidence_layers"]["support"]
 
 
 def test_web_view_candidate_evidence_prefers_composite_flow_over_rank_without_stock_flow(
@@ -2719,7 +2716,7 @@ def test_web_view_candidate_evidence_prefers_composite_flow_over_rank_without_st
     assert [row["stock_code"] for row in snapshot["rows"]] == ["000202", "000101"]
     assert snapshot["rows"][0]["why_notable"] == ["리포트 집중", "수급 전환 지속"]
     assert snapshot["rows"][1]["why_notable"] == ["리포트 집중"]
-    assert "외국인 순매수 상위 참고" in snapshot["rows"][1]["evidence_layers"]["support"]
+    assert "외국인 순매수 상위 참고" not in snapshot["rows"][1]["evidence_layers"]["support"]
     assert snapshot["rows"][1]["missing_information"] == ["종목 수급 저장값 없음"]
     assert internal_snapshot["rows"][1]["internal_candidate_signals"][-1] == "외국인 순매수 상위"
 
@@ -2828,7 +2825,7 @@ def test_web_view_candidate_evidence_prefers_exact_flow_composite_over_rank_only
     assert snapshot["rows"][0]["why_notable"] == ["리포트 집중", "목표가 상향"]
     assert snapshot["rows"][0]["missing_information"] == []
     assert snapshot["rows"][1]["why_notable"] == ["리포트 집중", "목표가 상향"]
-    assert "외국인 순매수 상위 참고" in snapshot["rows"][1]["evidence_layers"]["support"]
+    assert "외국인 순매수 상위 참고" not in snapshot["rows"][1]["evidence_layers"]["support"]
     assert snapshot["rows"][1]["missing_information"] == ["종목 수급 저장값 없음"]
 
 
@@ -3534,7 +3531,7 @@ def test_web_view_toss_market_context_route_uses_server_derived_top_two_only(tmp
             return {"configured": True, "live_fetch": False, "quotes": [], "cache": "disabled"}
 
         def get_market_context(self, *, reference_date: date, priority_symbols: tuple[str, ...]) -> dict[str, object]:
-            assert reference_date == date(2026, 7, 9)
+            assert reference_date == date(2026, 7, 10)
             self.symbols = priority_symbols
             return {
                 "surface": "web-view-toss-market-context",
@@ -3548,8 +3545,9 @@ def test_web_view_toss_market_context_route_uses_server_derived_top_two_only(tmp
                 "reference_date": reference_date.isoformat(),
                 "ranked_at": "2026-07-10T09:15:00+09:00",
                 "rankings": [{"rank": 1, "symbol": "005930", "tradingAmount": 1000}],
+                "market_prices": [{"symbol": "KOSPI", "lastPrice": "3120.45"}],
                 "priority_overlap_symbols": ["005930"],
-                "investor_flow": {"KOSPI": {"date": "2026-07-09"}, "KOSDAQ": {"date": "2026-07-09"}},
+                "investor_flow": {"KOSPI": {"date": "2026-07-10"}, "KOSDAQ": {"date": "2026-07-10"}},
             }
 
     provider = FakeTossProvider()
@@ -3587,6 +3585,7 @@ def test_web_view_main_has_toss_market_context_panel() -> None:
     assert 'id="toss-market-context"' in html
     assert "/api/toss-market-context" in html
     assert "Toss 시장 문맥 확인 중" in html
+    assert "당일 지수" in html
     assert 'id="toss-market-context" class="intraday-overlap-panel" aria-live="polite"' in html
 
 
@@ -5061,7 +5060,7 @@ def test_web_view_flow_trend_snapshot_uses_stored_samples_only(tmp_path, monkeyp
     assert [item["business_date"] for item in snapshot["items"]] == ["2026-05-08", "2026-05-07"]
     assert snapshot["items"][0]["market_flows"][0]["market_label"] == "KOSPI"
     assert snapshot["items"][0]["market_flows"][0]["investor_label"] == "외국인"
-    assert snapshot["items"][0]["foreign_net_buy_top"][0]["stock_code"] == "005930"
+    assert "foreign_net_buy_top" not in snapshot["items"][0]
     assert "scheduler_tasks" not in snapshot
     assert "worker_states" not in snapshot
     _assert_public_safe_payload(snapshot)
@@ -5647,7 +5646,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert 'new Set(["missing_stock_flow", "rank_not_present"])' not in html
     assert "도달 " in html
     assert "candidateTargetMetrics(report, item.target_price_progress)" in html
-    assert "candidateFlowMetrics(rank, turnover, flowLine)" in html
+    assert "candidateFlowMetrics(turnover, flowLine)" in html
+    assert "candidateFlowMetrics(rank, turnover, flowLine)" not in html
     assert "candidateMarketInline(item.market_reference)" in html
     assert "candidateIntradayReferenceLabel(item.intraday_reference)" in html
     assert "renderCandidateNewsBadge(item.news_observation_badge)" in html
@@ -5748,7 +5748,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert 'document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(priorityRows);' in html
     assert "오늘의 우선순위" in html
     assert "${market} <span class=\"status-pill\"" in html
-    assert '["순매수", rank || "순매수 상위 없음"]' in html
+    assert '["순매수", rank || "순매수 상위 없음"]' not in html
     assert '["외국인/기관", flowLine || "-"]' in html
     assert '["거래대금", turnover || "-"]' in html
     assert 'replace(/\\s*·\\s*/g, "<br>")' in html
@@ -5831,7 +5831,9 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert '${items.length ? "" : `<p class="news-observation-summary-connection">' in html
     assert "date-calendar-cell" in html
     assert "class=\"weekday\"" not in html
-    assert "선택 날짜 KRX 시장 참고" in html
+    assert "Toss 당일 시장" in html
+    assert "선택 날짜 KRX 확정 이력" in html
+    assert html.index("Toss 당일 시장") < html.index("선택 날짜 KRX 확정 이력")
     assert "현재 선택" not in html
     assert "선택 상태" not in html
     assert "stock-single-toggle" in html
@@ -5958,7 +5960,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "item.title_display || item.title" in html
     assert "<b>${esc(data.stock_name || \"-\")} ${esc(data.stock_code || \"\")} | ${market}</b>" in html
     assert "brokerDisplay(item.broker_display)" in html
-    assert "KRX 시장 참고" in html
+    assert "시장 문맥" in html
     assert "시장 탭은 해석 문장이 아니라 선택 날짜의 저장 KRX/수급 근거를 확인하는 화면입니다." in html
     assert "KRX 최근 흐름" in html
     assert "주기 데이터 점검" not in html
@@ -5988,7 +5990,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "/api/flow-trend" in html
     assert "investor-flow-title" in html
     assert "investor-market-rows" in html
-    assert "investor-top-rows" in html
+    assert "investor-top-rows" not in html
     assert "/api/status" not in html
     assert "/api/scheduler" not in html
     assert "/api/settings" not in html

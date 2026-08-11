@@ -565,6 +565,18 @@ The existing implementation already has the right separation primitives:
 
 ## Toss Top20 Market-Attention Overlay
 
+### Current Market Source Order
+
+The `시장` tab leads with the bounded Toss market-context panel: KOSPI/KOSDAQ
+current indicator prices, same-day provisional aggregate investor flow with its
+source update time, and realtime trading-amount Top20. This is market context,
+not a candidate seed, score, or trading instruction.
+
+Selected-date KRX index, turnover, and `[12008]` rows remain collapsed as
+confirmed history/fallback. KRX `[12010]` net-buy ranks remain available only
+for internal/history review: they have no public candidate or market projection
+and must not be substituted with Toss Top20 because the semantics differ.
+
 The opt-in Toss `tradingAmount` Top20 reference is a latest-date, read-only market-attention overlay. It is not a candidate seed, a KRX stock-level flow replacement, or a score. Show a report Top2 overlap with source and checked time; show a non-overlap as `상위 거래대금 미포착`, never as negative evidence.
 
 For Telegram, the compact order is: market and stock news scan, concise Top20 highlights, then report/news/Top20 overlaps. An all-three overlap is prominent. A news-and-Top20 overlap without a report stays a market-attention item and does not create a new report candidate. The in-progress research engine stays lab-only until its duplicate and source-quality rules are approved; a report recap is not independent news.

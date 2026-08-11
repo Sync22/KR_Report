@@ -47,6 +47,7 @@ _MARKET_SESSION_FIELDS = frozenset(
 _RANKING_RESPONSE_FIELDS = frozenset({"rankedAt", "rankings"})
 _RANKING_ITEM_FIELDS = frozenset({"rank", "symbol", "currency", "price", "tradingVolume", "tradingAmount"})
 _RANKING_PRICE_FIELDS = frozenset({"lastPrice", "basePrice", "changeRate"})
+_MARKET_INDICATOR_PRICE_FIELDS = frozenset({"symbol", "timestamp", "lastPrice"})
 _INVESTOR_TRADING_RESPONSE_FIELDS = frozenset({"nextUntil", "records"})
 _INVESTOR_TRADING_RECORD_FIELDS = frozenset(
     {"date", "updatedAt", "individual", "foreigner", "institution", "otherCorporation"}
@@ -150,6 +151,13 @@ _MARKET_CONTEXT_ENDPOINTS = (
             ("duration", "realtime"),
             ("count", "20"),
         ),
+    ),
+    TossReadonlyEndpoint(
+        "market-indicator-prices",
+        "getMarketIndicatorPrices",
+        "/api/v1/market-indicators/prices",
+        "MARKET_INDICATOR",
+        fixed_params=(("symbols", "KOSPI,KOSDAQ"),),
     ),
     TossReadonlyEndpoint(
         "market-investor-kospi",
@@ -528,6 +536,13 @@ def _validate_readonly_result(endpoint: TossReadonlyEndpoint, result: object) ->
                         nested_fields=frozenset(),
                         label=f"market investor trading record.{key}",
                     )
+        return
+    if endpoint.key == "market-indicator-prices":
+        rows = _validate_object_list(result, allowed=_MARKET_INDICATOR_PRICE_FIELDS, label="market indicator prices")
+        if len(rows) > 2:
+            raise RuntimeError("Toss OpenAPI market indicator context exceeded the fixed two-symbol limit.")
+        for row in rows:
+            _validate_scalar_values(row, nested_fields=frozenset(), label="market indicator price")
         return
     if endpoint.key == "priority-investor-trading":
         investor = _validate_object(result, allowed=_INVESTOR_TRADING_RESPONSE_FIELDS, label="priority investor trading")
