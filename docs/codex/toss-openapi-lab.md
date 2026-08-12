@@ -57,7 +57,7 @@ Use official Toss Securities documents first:
 | <https://openapi.tossinvest.com/openapi-docs/latest/api-reference/README.md> | Markdown API reference index. |
 | <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json> | Canonical OpenAPI document for exact endpoints and schemas. |
 
-Observed official-doc facts as of `2026-08-11` (`1.2.13`, `33` paths, `36`
+Observed official-doc facts as of `2026-08-12` (`1.2.14`, `33` paths, `36`
 operations, `90` schemas):
 
 - Base server is `https://openapi.tossinvest.com`.
@@ -315,8 +315,8 @@ This is not an approval to call Toss runtime APIs. The active safety contract is
 
 | Item | Value |
 | --- | --- |
-| Snapshot date | `2026-08-11` |
-| Official spec version | `1.2.13` |
+| Snapshot date | `2026-08-12` |
+| Official spec version | `1.2.14` |
 | OpenAPI document version | `3.1.0` |
 | Base server | `https://openapi.tossinvest.com` |
 | Paths | 33 |
@@ -605,6 +605,9 @@ This inventory was built from official documentation endpoints only:
   (`listStocks`). It is a bulk market-universe endpoint with a dedicated
   `STOCK_ALL` rate group and remains document only: no runtime allowlist,
   broad ingest, or public-surface use is approved.
+- The `2026-08-12` `1.2.14` recheck kept all `33` paths, `36` operations,
+  `90` schemas, and every documented method/path/operationId unchanged. No
+  runtime allowlist or surface decision changed.
 
 
 <!-- Merged from: docs/codex/toss-openapi-lab.md -->
@@ -647,7 +650,7 @@ Current official spec snapshot:
 | Item | Value |
 | --- | --- |
 | OpenAPI document version | `3.1.0` |
-| Official spec version | `1.2.13` |
+| Official spec version | `1.2.14` |
 | Paths | `33` |
 | Operations | `36` |
 | Schemas | `90` |
