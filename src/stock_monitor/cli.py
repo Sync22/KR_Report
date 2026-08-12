@@ -23041,6 +23041,71 @@ def _build_market_briefing_toss_priority_investor_trading_lines(
     return lines if len(lines) > 1 else []
 
 
+def _build_intraday_toss_priority_snapshot_lines(toss_context: dict[str, object]) -> list[str]:
+    payload = toss_context.get("payload") if isinstance(toss_context.get("payload"), dict) else {}
+    names_by_symbol = toss_context.get("names_by_symbol") if isinstance(toss_context.get("names_by_symbol"), dict) else {}
+    quote_rows = payload.get("quotes") if isinstance(payload.get("quotes"), list) else []
+    investor_trading = payload.get("investor_trading") if isinstance(payload.get("investor_trading"), dict) else {}
+    investor_rows = investor_trading.get("items") if isinstance(investor_trading.get("items"), list) else []
+    quotes_by_symbol = {
+        str(row.get("symbol") or "").strip(): row
+        for row in quote_rows
+        if isinstance(row, dict) and str(row.get("symbol") or "").strip()
+    }
+    investor_by_symbol = {
+        str(row.get("symbol") or "").strip(): row
+        for row in investor_rows
+        if isinstance(row, dict) and str(row.get("symbol") or "").strip()
+    }
+    symbols = [
+        str(symbol).strip()
+        for symbol in payload.get("symbols", [])
+        if str(symbol).strip()
+    ]
+    if not symbols:
+        symbols = list(quotes_by_symbol)
+        symbols.extend(symbol for symbol in investor_by_symbol if symbol not in quotes_by_symbol)
+
+    lines: list[str] = []
+    checked_times: list[str] = []
+    for symbol in symbols:
+        quote = quotes_by_symbol.get(symbol)
+        investor = investor_by_symbol.get(symbol)
+        fragments: list[str] = []
+        if quote is not None:
+            last_price = _safe_optional_int(quote.get("lastPrice"))
+            if last_price is not None:
+                fragment = f"현재가 {last_price:,}원"
+                checked_at = _market_briefing_toss_checked_time(quote.get("timestamp") or payload.get("fetched_at"))
+                if checked_at:
+                    fragment += f" · 조회 {checked_at}"
+                    checked_times.append(checked_at)
+                fragments.append(fragment)
+        if investor is not None:
+            flow_fragments: list[str] = []
+            for key, label in (("foreigner_net_buy_volume", "외국인"), ("institution_net_buy_volume", "기관")):
+                volume = _safe_optional_int(investor.get(key))
+                if volume is not None:
+                    direction = "순매수" if volume >= 0 else "순매도"
+                    flow_fragments.append(f"{label} {direction} {abs(volume):,}주")
+            if flow_fragments:
+                fragment = " · ".join(flow_fragments)
+                checked_at = _market_briefing_toss_checked_time(investor.get("updated_at"))
+                if checked_at:
+                    fragment += f" · 수급 {checked_at}"
+                    checked_times.append(checked_at)
+                fragments.append(fragment)
+        elif quote is not None:
+            fragments.append("수급 확인 없음")
+        if fragments:
+            stock_name = str(names_by_symbol.get(symbol) or symbol)
+            lines.append(f"- {stock_name} | {' | '.join(fragments)}")
+    header = "우선 확인 · Toss"
+    if checked_times:
+        header += f" · 기준 {max(checked_times)}"
+    return [header, *lines] if lines else []
+
+
 def _market_briefing_toss_checked_time(value: object) -> str | None:
     raw = str(value or "").strip().replace("T", " ")
     return raw[11:16] if len(raw) >= 16 and raw[11:16].count(":") == 1 else None
@@ -41540,13 +41605,10 @@ def _run_scheduled_intraday_briefing(
             business_date=scheduled_run_at.date(),
             include_investor_trading=True,
         )
-        toss_lines = [
-            *_build_market_briefing_toss_priority_quote_lines(toss_context, candidate_rows=[]),
-            *_build_market_briefing_toss_priority_investor_trading_lines(toss_context),
-            *_build_market_briefing_toss_market_context_lines(toss_context),
-        ]
-        if toss_lines:
-            message = "\n\n".join((message, "\n".join(toss_lines)))
+        priority_lines = _build_intraday_toss_priority_snapshot_lines(toss_context)
+        market_context_lines = _build_market_briefing_toss_market_context_lines(toss_context)
+        message_parts = ["\n".join(priority_lines), message, "\n".join(market_context_lines)]
+        message = "\n\n".join(part for part in message_parts if part)
     if dry_run:
         print(message)
         return len(batches)

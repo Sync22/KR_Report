@@ -325,12 +325,13 @@ def test_scheduled_intraday_briefing_adds_available_toss_context_after_0930(tmp_
 
     assert result == 1
     assert captured["include_investor_trading"] is True
-    assert "Toss 우선확인 현재가" in sent_messages[0]
-    assert "72,000원" in sent_messages[0]
+    assert "우선 확인 · Toss · 기준 09:29" in sent_messages[0]
+    assert "- Samsung Electronics | 현재가 72,000원 · 조회 09:29 | 외국인 순매수 60주 · 기관 순매도 20주 · 수급 09:28" in sent_messages[0]
+    assert sent_messages[0].index("우선 확인 · Toss · 기준 09:29") < sent_messages[0].index("장중 신규 리포트")
+    assert sent_messages[0].index("장중 신규 리포트") < sent_messages[0].index("Toss 거래대금 Top20")
+    assert "Toss 우선확인 현재가" not in sent_messages[0]
+    assert "Toss 우선확인 당일 수급" not in sent_messages[0]
     assert "Toss 거래대금 Top20" in sent_messages[0]
-    assert "Toss 우선확인 당일 수급" in sent_messages[0]
-    assert "외국인 순매수 60주" in sent_messages[0]
-    assert "기관 순매도 20주" in sent_messages[0]
 
 
 def test_scheduled_intraday_briefing_does_not_send_empty_when_prior_day_batch_is_pending(tmp_path, monkeypatch) -> None:
