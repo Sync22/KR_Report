@@ -53,6 +53,18 @@ _INVESTOR_TRADING_RECORD_FIELDS = frozenset(
     {"date", "updatedAt", "individual", "foreigner", "institution", "otherCorporation"}
 )
 _INVESTOR_TRADING_AMOUNT_FIELDS = frozenset({"buyAmount", "sellAmount"})
+_MARKET_INSTITUTION_TRADING_AMOUNT_FIELDS = _INVESTOR_TRADING_AMOUNT_FIELDS | frozenset({"breakdown"})
+_MARKET_INSTITUTION_BREAKDOWN_FIELDS = frozenset(
+    {
+        "financialInvestment",
+        "insurance",
+        "trust",
+        "privateEquityFund",
+        "bank",
+        "otherFinancialInstitution",
+        "pensionFund",
+    }
+)
 _STOCK_INVESTOR_TRADING_RECORD_FIELDS = frozenset(
     {"date", "updatedAt", "individual", "foreigner", "institution", "otherCorporation", "foreignerHolding", "cfd"}
 )
@@ -527,15 +539,39 @@ def _validate_readonly_result(endpoint: TossReadonlyEndpoint, result: object) ->
                 if amount is not None:
                     amount_object = _validate_object(
                         amount,
-                        allowed=_INVESTOR_TRADING_AMOUNT_FIELDS,
+                        allowed=(
+                            _MARKET_INSTITUTION_TRADING_AMOUNT_FIELDS
+                            if key == "institution"
+                            else _INVESTOR_TRADING_AMOUNT_FIELDS
+                        ),
                         label=f"market investor trading record.{key}",
                         report_unknown_fields=True,
                     )
                     _validate_scalar_values(
                         amount_object,
-                        nested_fields=frozenset(),
+                        nested_fields=frozenset({"breakdown"}) if key == "institution" else frozenset(),
                         label=f"market investor trading record.{key}",
                     )
+                    breakdown = amount_object.get("breakdown")
+                    if breakdown is not None:
+                        breakdown_object = _validate_object(
+                            breakdown,
+                            allowed=_MARKET_INSTITUTION_BREAKDOWN_FIELDS,
+                            label="market investor trading record.institution.breakdown",
+                            report_unknown_fields=True,
+                        )
+                        for category, category_amount in breakdown_object.items():
+                            category_object = _validate_object(
+                                category_amount,
+                                allowed=_INVESTOR_TRADING_AMOUNT_FIELDS,
+                                label=f"market investor trading record.institution.breakdown.{category}",
+                                report_unknown_fields=True,
+                            )
+                            _validate_scalar_values(
+                                category_object,
+                                nested_fields=frozenset(),
+                                label=f"market investor trading record.institution.breakdown.{category}",
+                            )
         return
     if endpoint.key == "market-indicator-prices":
         rows = _validate_object_list(result, allowed=_MARKET_INDICATOR_PRICE_FIELDS, label="market indicator prices")

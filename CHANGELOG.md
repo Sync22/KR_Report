@@ -3,6 +3,12 @@
 > 개인용 네이버 증권 리포트 모니터 `Stock Monitor`의 주요 변경 기록입니다.  
 > 초기 일부 항목은 대화 흐름과 실제 반영 시점을 기준으로 정리했습니다.
 
+## 2026-08-12
+
+- Toss OpenAPI 시장 수급 응답의 기관 세부 분해(`institution.breakdown`)를 검증 가능한 중첩 구조로 수용했다. 웹뷰와 Telegram에 전달하는 시장 문맥은 기존처럼 기관·외국인 등의 매수/매도 합계만 투영하므로, 새 세부 분해값은 저장·노출되지 않는다.
+- KRX 확정 이력과 Toss 당일 문맥의 역할을 다시 확인했다. Toss 현재가·KOSPI/KOSDAQ·당일 잠정 수급·거래대금 Top20은 실시간 보완으로, KRX 일별 가격/거래대금/ETF/이력 수급은 확정 참고로 분리한다.
+- `data-governance.md`의 이전 장중 브리핑 슬롯 설명을 현재 Poll 기반 계약(30분 수집/중복제거, 08:30 및 09:30~15:30 전달)에 맞췄다.
+
 ## 2026-05-20
 
 - 메인 PC 기준으로 `시황 예시` 사진을 실제 stored-data 운영 후보로 반영했다. `web-view` daily `market_briefing`에 `time_slot_mood_card`를 추가해 `국장 시장 분위기`, headline, `지수`, `주요 종목`, `핵심 포인트`, `확인 포인트`, source gap을 노출하고, `market-briefing-readiness` JSON에서도 같은 preview contract와 source gap count를 확인할 수 있게 했다. 이 카드는 read-only/manual-review 후보이며 live fetch, public scoring, recommendation, production integration, scheduler registration은 모두 false로 고정된다.

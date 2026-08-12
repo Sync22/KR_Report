@@ -18,6 +18,25 @@ from stock_monitor.fetch.toss_openapi import (
 )
 
 
+def _project_market_investor_flow_record(record: object) -> dict[str, object] | None:
+    if not isinstance(record, dict):
+        return None
+    projected: dict[str, object] = {
+        key: record[key]
+        for key in ("date", "updatedAt")
+        if key in record
+    }
+    for investor in ("individual", "foreigner", "institution", "otherCorporation"):
+        amount = record.get(investor)
+        if isinstance(amount, dict):
+            projected[investor] = {
+                key: amount[key]
+                for key in ("buyAmount", "sellAmount")
+                if key in amount
+            }
+    return projected
+
+
 class TossPriorityQuoteProvider:
     """Read-only Toss quote cache for web-view priority candidates."""
 
@@ -221,7 +240,7 @@ class TossPriorityQuoteProvider:
                 )
                 result = response.result if isinstance(response.result, dict) else {}
                 records = result.get("records") if isinstance(result.get("records"), list) else []
-                investor_flow[market] = next(
+                record = next(
                     (
                         item
                         for item in records
@@ -229,6 +248,7 @@ class TossPriorityQuoteProvider:
                     ),
                     None,
                 )
+                investor_flow[market] = _project_market_investor_flow_record(record)
                 rate_limit[endpoint.key] = response.rate_limit
 
             ranking_result = ranking_response.result if isinstance(ranking_response.result, dict) else {}

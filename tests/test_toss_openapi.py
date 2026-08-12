@@ -250,7 +250,11 @@ def test_toss_market_context_provider_uses_fixed_queries_and_keeps_top_two_order
                         "date": "2026-07-09",
                         "updatedAt": "2026-07-09T18:00:00+09:00",
                         "foreigner": {"buyAmount": 100, "sellAmount": 90},
-                        "institution": {"buyAmount": 80, "sellAmount": 120},
+                        "institution": {
+                            "buyAmount": 80,
+                            "sellAmount": 120,
+                            "breakdown": {"financialInvestment": {"buyAmount": 60, "sellAmount": 70}},
+                        },
                     }
                 ]
             },
@@ -283,6 +287,8 @@ def test_toss_market_context_provider_uses_fixed_queries_and_keeps_top_two_order
         {"symbol": "KOSDAQ", "timestamp": "2026-07-10T09:15:00+09:00", "lastPrice": "812.34"},
     ]
     assert payload["reference_date"] == "2026-07-09"
+    assert payload["investor_flow"]["KOSPI"]["institution"] == {"buyAmount": 80, "sellAmount": 120}
+    assert "breakdown" not in payload["investor_flow"]["KOSPI"]["institution"]
     assert payload["affects_ordering"] is False
     assert payload["writes_db"] is False
     assert payload["sends_telegram"] is False
@@ -644,6 +650,43 @@ def test_market_investor_validation_reports_unknown_aggregate_field_name() -> No
             live_enabled=True,
             urlopen=lambda *_args, **_kwargs: FakeResponse(
                 b'{"result":{"records":[{"date":"2026-07-16","institution":{"buyAmount":100,"sellAmount":90,"netAmount":10}}]}}'
+            ),
+        )
+
+
+def test_market_investor_validation_accepts_institution_breakdown() -> None:
+    response = fetch_toss_readonly_endpoint(
+        base_url=TOSS_OPENAPI_BASE_URL,
+        access_token="token-value",
+        endpoint=resolve_toss_market_context_endpoint("market-investor-kospi"),
+        params={"interval": "1d", "count": "1", "until": "2026-08-12"},
+        timeout_seconds=12,
+        live_enabled=True,
+        urlopen=lambda *_args, **_kwargs: FakeResponse(
+            b'{"result":{"records":[{"date":"2026-08-12","institution":'
+            b'{"buyAmount":"100","sellAmount":"90","breakdown":'
+            b'{"financialInvestment":{"buyAmount":"50","sellAmount":"40"}}}}]}}'
+        ),
+    )
+
+    assert response.result["records"][0]["institution"]["breakdown"] == {
+        "financialInvestment": {"buyAmount": "50", "sellAmount": "40"}
+    }
+
+
+def test_market_investor_validation_rejects_unknown_institution_breakdown_field() -> None:
+    with pytest.raises(RuntimeError, match=r"institution\.breakdown.*unexpected fields: mystery"):
+        fetch_toss_readonly_endpoint(
+            base_url=TOSS_OPENAPI_BASE_URL,
+            access_token="token-value",
+            endpoint=resolve_toss_market_context_endpoint("market-investor-kospi"),
+            params={"interval": "1d", "count": "1", "until": "2026-08-12"},
+            timeout_seconds=12,
+            live_enabled=True,
+            urlopen=lambda *_args, **_kwargs: FakeResponse(
+                b'{"result":{"records":[{"date":"2026-08-12","institution":'
+                b'{"buyAmount":"100","sellAmount":"90","breakdown":'
+                b'{"mystery":{"buyAmount":"50","sellAmount":"40"}}}}]}}'
             ),
         )
 
