@@ -303,7 +303,10 @@ def test_scheduled_intraday_briefing_adds_available_toss_context_after_0930(tmp_
             "market_context": {
                 "live_fetch": True,
                 "ranked_at": "2026-04-24T09:30:00+09:00",
-                "rankings": [{"symbol": "005930"}, {"symbol": "000660"}],
+                "rankings": [
+                    {"symbol": "005930", "price": {"lastPrice": "72000", "changeRate": "0.01"}},
+                    {"symbol": "000660", "price": {"lastPrice": "100000", "changeRate": "0.02"}},
+                ],
                 "etf_symbols": ["000660"],
                 "priority_overlap_symbols": ["005930"],
                 "market_prices": [{"symbol": "KOSPI", "lastPrice": "6913.85"}],
@@ -333,22 +336,26 @@ def test_scheduled_intraday_briefing_adds_available_toss_context_after_0930(tmp_
 
     assert result == 1
     assert captured["include_investor_trading"] is True
-    assert "우선 확인 · Toss · 기준 09:29" in sent_messages[0]
+    assert "Toss 기준 09:30" in sent_messages[0]
+    assert "우선 확인 · Toss" in sent_messages[0]
     assert "- Samsung Electronics | 현재가 72,000원 | 외국인 순매수 60주 · 기관 순매도 20주" in sent_messages[0]
-    assert "Toss 거래대금 상위 개별종목 10 · 집계 09:30" in sent_messages[0]
+    assert "Toss 거래대금 상위 Top10" in sent_messages[0]
     assert "- Samsung Electronics" in sent_messages[0]
-    assert "- SK hynix" in sent_messages[0]
+    assert "- SK hynix (100,000원, +2.00%)" in sent_messages[0]
     assert "· 조회 09:29" not in sent_messages[0]
     assert "· 수급 09:28" not in sent_messages[0]
-    assert "\n- 당일 시장 수급 잠정\n" in sent_messages[0]
-    assert sent_messages[0].index("KOSPI 6913.85") < sent_messages[0].index("우선 확인 · Toss · 기준 09:29")
-    assert sent_messages[0].index("우선 확인 · Toss · 기준 09:29") < sent_messages[0].index("- 우선 확인 겹침: Samsung Electronics")
-    assert sent_messages[0].index("- 우선 확인 겹침: Samsung Electronics") < sent_messages[0].index("Toss 거래대금 상위 개별종목 10")
-    assert sent_messages[0].index("Toss 거래대금 ETF 5") < sent_messages[0].index("장중 신규 리포트")
+    assert "· 집계 09:30" not in sent_messages[0]
+    assert "· 갱신 09:30" not in sent_messages[0]
+    assert sent_messages[0].index("Toss 기준 09:30") < sent_messages[0].index("KOSPI 6913.85")
+    assert sent_messages[0].index("- KOSDAQ: 기준일 데이터 없음") < sent_messages[0].index("- 당일 시장 수급 잠정")
+    assert sent_messages[0].index("- 당일 시장 수급 잠정") < sent_messages[0].index("우선 확인 · Toss")
+    assert sent_messages[0].index("우선 확인 · Toss") < sent_messages[0].index("- 우선 확인 겹침: Samsung Electronics")
+    assert sent_messages[0].index("- 우선 확인 겹침: Samsung Electronics") < sent_messages[0].index("Toss 거래대금 상위 Top10")
+    assert sent_messages[0].index("Toss 거래대금 상위 ETF Top5") < sent_messages[0].index("장중 신규 리포트")
     assert "Toss 우선확인 현재가" not in sent_messages[0]
     assert "Toss 우선확인 당일 수급" not in sent_messages[0]
-    assert "Toss 거래대금 상위 개별종목 10" in sent_messages[0]
-    assert "Toss 거래대금 ETF 5" in sent_messages[0]
+    assert "Toss 거래대금 상위 Top10" in sent_messages[0]
+    assert "Toss 거래대금 상위 ETF Top5" in sent_messages[0]
 
 
 def test_market_briefing_toss_context_resolves_ranked_stock_names_from_metadata(tmp_path, monkeypatch) -> None:
