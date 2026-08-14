@@ -23173,8 +23173,11 @@ def _build_market_briefing_toss_market_context_sections(
     overlap_lines = [f"- 우선 확인 겹침: {overlap_display or '없음'}"]
 
     market_lines: list[str] = []
+    market_price_changes = (
+        payload.get("market_price_changes") if isinstance(payload.get("market_price_changes"), dict) else {}
+    )
     index_display = ", ".join(
-        f"{str(item.get('symbol') or '').strip()} {str(item.get('lastPrice') or '').strip()}"
+        _format_market_index_price(item, market_price_changes)
         for item in market_prices
         if isinstance(item, dict) and str(item.get("symbol") or "").strip() and item.get("lastPrice") is not None
     )
@@ -23188,7 +23191,7 @@ def _build_market_briefing_toss_market_context_sections(
             market_lines.append(f"- {market}: 기준일 데이터 없음")
             continue
         fragments = []
-        for key, label in (("foreigner", "외국인"), ("institution", "기관")):
+        for key, label in (("individual", "개인"), ("foreigner", "외국인"), ("institution", "기관")):
             amount = record.get(key)
             if not isinstance(amount, dict):
                 continue
@@ -23200,6 +23203,18 @@ def _build_market_briefing_toss_market_context_sections(
         market_lines.append(f"- {market}: {' · '.join(fragments) if fragments else '집계값 확인 필요'}")
     market_lines.append("- 당일 시장 수급 잠정")
     return market_lines, overlap_lines, ranking_lines
+
+
+def _format_market_index_price(item: dict[str, object], changes: dict[str, object]) -> str:
+    symbol = str(item.get("symbol") or "").strip()
+    label = f"{symbol} {str(item.get('lastPrice') or '').strip()}"
+    change = changes.get(symbol)
+    if not isinstance(change, dict):
+        return label
+    try:
+        return f"{label} ({float(change.get('change_rate')) * 100:+.2f}%)"
+    except (TypeError, ValueError):
+        return label
 
 
 def _build_market_briefing_toss_market_context_lines(toss_context: dict[str, object]) -> list[str]:

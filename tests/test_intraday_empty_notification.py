@@ -310,10 +310,12 @@ def test_scheduled_intraday_briefing_adds_available_toss_context_after_0930(tmp_
                 "etf_symbols": ["000660"],
                 "priority_overlap_symbols": ["005930"],
                 "market_prices": [{"symbol": "KOSPI", "lastPrice": "6913.85"}],
+                "market_price_changes": {"KOSPI": {"change_rate": "0.0125"}},
                 "investor_flow": {
-                    "KOSPI": {
-                        "updatedAt": "2026-04-24T09:30:00+09:00",
-                        "foreigner": {"buyAmount": "100", "sellAmount": "40"},
+                        "KOSPI": {
+                            "updatedAt": "2026-04-24T09:30:00+09:00",
+                            "individual": {"buyAmount": "200", "sellAmount": "150"},
+                            "foreigner": {"buyAmount": "100", "sellAmount": "40"},
                         "institution": {"buyAmount": "30", "sellAmount": "50"},
                     }
                 },
@@ -346,6 +348,8 @@ def test_scheduled_intraday_briefing_adds_available_toss_context_after_0930(tmp_
     assert "· 수급 09:28" not in sent_messages[0]
     assert "· 집계 09:30" not in sent_messages[0]
     assert "· 갱신 09:30" not in sent_messages[0]
+    assert "개인 순유입 50원 · 외국인 순유입 60원 · 기관 순유출 20원" in sent_messages[0]
+    assert "KOSPI 6913.85 (+1.25%)" in sent_messages[0]
     assert sent_messages[0].index("Toss 기준 09:30") < sent_messages[0].index("KOSPI 6913.85")
     assert sent_messages[0].index("- KOSDAQ: 기준일 데이터 없음") < sent_messages[0].index("- 당일 시장 수급 잠정")
     assert sent_messages[0].index("- 당일 시장 수급 잠정") < sent_messages[0].index("우선 확인 · Toss")

@@ -37,6 +37,49 @@ def _project_market_investor_flow_record(record: object) -> dict[str, object] | 
     return projected
 
 
+def _project_market_price_changes(
+    *,
+    market_prices: object,
+    candle_results: dict[str, object],
+    reference_date: date,
+) -> dict[str, dict[str, object]]:
+    prices = {
+        str(item.get("symbol") or "").strip(): item.get("lastPrice")
+        for item in market_prices
+        if isinstance(item, dict) and str(item.get("symbol") or "").strip()
+    } if isinstance(market_prices, list) else {}
+    changes: dict[str, dict[str, object]] = {}
+    for symbol, result in candle_results.items():
+        page = result if isinstance(result, dict) else {}
+        candles = page.get("candles") if isinstance(page.get("candles"), list) else []
+        prior = max(
+            (
+                item
+                for item in candles
+                if isinstance(item, dict)
+                and isinstance(item.get("timestamp"), str)
+                and item["timestamp"][:10] < reference_date.isoformat()
+            ),
+            key=lambda item: str(item["timestamp"]),
+            default=None,
+        )
+        if prior is None:
+            continue
+        try:
+            base_close = float(str(prior.get("closePrice")))
+            current_price = float(str(prices.get(symbol)))
+        except (TypeError, ValueError):
+            continue
+        if base_close <= 0:
+            continue
+        changes[symbol] = {
+            "base_date": str(prior["timestamp"])[:10],
+            "base_close": str(prior.get("closePrice")),
+            "change_rate": (current_price - base_close) / base_close,
+        }
+    return changes
+
+
 class TossPriorityQuoteProvider:
     """Read-only Toss quote cache for web-view priority candidates."""
 
@@ -227,11 +270,23 @@ class TossPriorityQuoteProvider:
                 endpoint=price_endpoint,
                 params=dict(price_endpoint.fixed_params),
             )
+            candle_results: dict[str, object] = {}
             investor_flow: dict[str, object] = {}
             rate_limit = {
                 ranking_endpoint.key: ranking_response.rate_limit,
                 price_endpoint.key: price_response.rate_limit,
             }
+            for market, endpoint_key in (
+                ("KOSPI", "market-indicator-kospi-daily-candles"),
+                ("KOSDAQ", "market-indicator-kosdaq-daily-candles"),
+            ):
+                endpoint = resolve_toss_market_context_endpoint(endpoint_key)
+                response = self._fetch_endpoint_with_token_recovery(
+                    endpoint=endpoint,
+                    params=dict(endpoint.fixed_params),
+                )
+                candle_results[market] = response.result
+                rate_limit[endpoint.key] = response.rate_limit
             for market, endpoint_key in (("KOSPI", "market-investor-kospi"), ("KOSDAQ", "market-investor-kosdaq")):
                 endpoint = resolve_toss_market_context_endpoint(endpoint_key)
                 response = self._fetch_endpoint_with_token_recovery(
@@ -305,6 +360,11 @@ class TossPriorityQuoteProvider:
                 "stock_names": stock_names,
                 "etf_symbols": etf_symbols,
                 "market_prices": market_prices,
+                "market_price_changes": _project_market_price_changes(
+                    market_prices=market_prices,
+                    candle_results=candle_results,
+                    reference_date=reference_date,
+                ),
                 "priority_overlap_symbols": [symbol for symbol in normalized_symbols if symbol in ranked_symbols],
                 "investor_flow": investor_flow,
                 "fetched_at": datetime.now().astimezone().isoformat(timespec="seconds"),

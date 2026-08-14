@@ -48,6 +48,10 @@ _RANKING_RESPONSE_FIELDS = frozenset({"rankedAt", "rankings"})
 _RANKING_ITEM_FIELDS = frozenset({"rank", "symbol", "currency", "price", "tradingVolume", "tradingAmount"})
 _RANKING_PRICE_FIELDS = frozenset({"lastPrice", "basePrice", "changeRate"})
 _MARKET_INDICATOR_PRICE_FIELDS = frozenset({"symbol", "timestamp", "lastPrice"})
+_MARKET_INDICATOR_CANDLE_PAGE_FIELDS = frozenset({"candles", "nextBefore"})
+_MARKET_INDICATOR_CANDLE_FIELDS = frozenset(
+    {"timestamp", "openPrice", "highPrice", "lowPrice", "closePrice", "volume"}
+)
 _INVESTOR_TRADING_RESPONSE_FIELDS = frozenset({"nextUntil", "records"})
 _INVESTOR_TRADING_RECORD_FIELDS = frozenset(
     {"date", "updatedAt", "individual", "foreigner", "institution", "otherCorporation"}
@@ -177,6 +181,20 @@ _MARKET_CONTEXT_ENDPOINTS = (
         "/api/v1/market-indicators/prices",
         "MARKET_INDICATOR",
         fixed_params=(("symbols", "KOSPI,KOSDAQ"),),
+    ),
+    TossReadonlyEndpoint(
+        "market-indicator-kospi-daily-candles",
+        "getMarketIndicatorCandles",
+        "/api/v1/market-indicators/KOSPI/candles",
+        "MARKET_INDICATOR_CHART",
+        fixed_params=(("interval", "1d"), ("count", "2")),
+    ),
+    TossReadonlyEndpoint(
+        "market-indicator-kosdaq-daily-candles",
+        "getMarketIndicatorCandles",
+        "/api/v1/market-indicators/KOSDAQ/candles",
+        "MARKET_INDICATOR_CHART",
+        fixed_params=(("interval", "1d"), ("count", "2")),
     ),
     TossReadonlyEndpoint(
         "market-investor-kospi",
@@ -373,6 +391,8 @@ def fetch_toss_readonly_endpoint(
         "ranking-kr-top20",
         "market-investor-kospi",
         "market-investor-kosdaq",
+        "market-indicator-kospi-daily-candles",
+        "market-indicator-kosdaq-daily-candles",
         "priority-investor-trading",
     } else list
     if not isinstance(result, expected_type):
@@ -587,6 +607,18 @@ def _validate_readonly_result(endpoint: TossReadonlyEndpoint, result: object) ->
             raise RuntimeError("Toss OpenAPI market indicator context exceeded the fixed two-symbol limit.")
         for row in rows:
             _validate_scalar_values(row, nested_fields=frozenset(), label="market indicator price")
+        return
+    if endpoint.key.endswith("-daily-candles"):
+        page = _validate_object(result, allowed=_MARKET_INDICATOR_CANDLE_PAGE_FIELDS, label="market indicator candles")
+        candles = _validate_object_list(
+            page.get("candles"),
+            allowed=_MARKET_INDICATOR_CANDLE_FIELDS,
+            label="market indicator candles",
+        )
+        if len(candles) > 2:
+            raise RuntimeError("Toss OpenAPI market indicator context exceeded the fixed two-candle limit.")
+        for candle in candles:
+            _validate_scalar_values(candle, nested_fields=frozenset(), label="market indicator candle")
         return
     if endpoint.key == "priority-investor-trading":
         investor = _validate_object(result, allowed=_INVESTOR_TRADING_RESPONSE_FIELDS, label="priority investor trading")

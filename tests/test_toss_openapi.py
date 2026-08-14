@@ -251,6 +251,16 @@ def test_toss_market_context_provider_uses_fixed_queries_and_keeps_top_two_order
                 ],
                 rate_limit={"limit": "10"},
             )
+        if endpoint.key == "market-indicator-kospi-daily-candles":
+            return SimpleNamespace(
+                result={"candles": [{"timestamp": "2026-07-08T09:00:00+09:00", "openPrice": "3090", "highPrice": "3110", "lowPrice": "3080", "closePrice": "3100", "volume": "1"}]},
+                rate_limit={"limit": "10"},
+            )
+        if endpoint.key == "market-indicator-kosdaq-daily-candles":
+            return SimpleNamespace(
+                result={"candles": [{"timestamp": "2026-07-08T09:00:00+09:00", "openPrice": "790", "highPrice": "810", "lowPrice": "780", "closePrice": "800", "volume": "1"}]},
+                rate_limit={"limit": "10"},
+            )
         return SimpleNamespace(
             result={
                 "records": [
@@ -286,6 +296,8 @@ def test_toss_market_context_provider_uses_fixed_queries_and_keeps_top_two_order
             {"type": "MARKET_TRADING_AMOUNT", "marketCountry": "KR", "duration": "realtime", "count": "20"},
         ),
         ("market-indicator-prices", {"symbols": "KOSPI,KOSDAQ"}),
+        ("market-indicator-kospi-daily-candles", {"interval": "1d", "count": "2"}),
+        ("market-indicator-kosdaq-daily-candles", {"interval": "1d", "count": "2"}),
         ("market-investor-kospi", {"interval": "1d", "count": "1", "until": "2026-07-09"}),
         ("market-investor-kosdaq", {"interval": "1d", "count": "1", "until": "2026-07-09"}),
         ("market-ranking-stocks", {"symbols": "005930,035420"}),
@@ -295,6 +307,10 @@ def test_toss_market_context_provider_uses_fixed_queries_and_keeps_top_two_order
         {"symbol": "KOSPI", "timestamp": "2026-07-10T09:15:00+09:00", "lastPrice": "3120.45"},
         {"symbol": "KOSDAQ", "timestamp": "2026-07-10T09:15:00+09:00", "lastPrice": "812.34"},
     ]
+    assert payload["market_price_changes"] == {
+        "KOSPI": {"base_date": "2026-07-08", "base_close": "3100", "change_rate": pytest.approx(0.006596774)},
+        "KOSDAQ": {"base_date": "2026-07-08", "base_close": "800", "change_rate": pytest.approx(0.015425)},
+    }
     assert payload["reference_date"] == "2026-07-09"
     assert payload["stock_names"] == {"005930": "Samsung Electronics", "035420": "NAVER"}
     assert payload["etf_symbols"] == ["035420"]
