@@ -165,6 +165,13 @@ _MARKET_CONTEXT_ENDPOINTS = (
         ),
     ),
     TossReadonlyEndpoint(
+        "market-ranking-stocks",
+        "getStocks",
+        "/api/v1/stocks",
+        "STOCK",
+        requires_symbols=True,
+    ),
+    TossReadonlyEndpoint(
         "market-indicator-prices",
         "getMarketIndicatorPrices",
         "/api/v1/market-indicators/prices",
@@ -442,8 +449,9 @@ def _build_readonly_params(
             raise TossOpenApiSafetyError(f"Toss endpoint '{endpoint.key}' accepts only its fixed market-context query.")
         return dict(endpoint.fixed_params)
     normalized_symbols = tuple(symbol.strip() for symbol in symbols if symbol.strip())
-    if len(normalized_symbols) > 2:
-        raise TossOpenApiSafetyError("The Toss read-only lab probe accepts at most 2 symbols.")
+    max_symbols = 20 if endpoint.key == "market-ranking-stocks" else 2
+    if len(normalized_symbols) > max_symbols:
+        raise TossOpenApiSafetyError(f"Toss endpoint '{endpoint.key}' accepts at most {max_symbols} symbols.")
     if any(not _SYMBOL_PATTERN.fullmatch(symbol) for symbol in normalized_symbols):
         raise TossOpenApiSafetyError("The main Toss lab profile accepts only six-digit Korean stock codes.")
     if endpoint.requires_symbols and not normalized_symbols:
@@ -610,7 +618,7 @@ def _validate_readonly_result(endpoint: TossReadonlyEndpoint, result: object) ->
                         label=f"priority investor trading record.{key}",
                     )
         return
-    if endpoint.key == "stocks":
+    if endpoint.key in {"stocks", "market-ranking-stocks"}:
         rows = _validate_object_list(result, allowed=_STOCK_FIELDS, label="stocks")
         for row in rows:
             _validate_scalar_values(

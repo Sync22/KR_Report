@@ -235,6 +235,14 @@ def test_toss_market_context_provider_uses_fixed_queries_and_keeps_top_two_order
                 },
                 rate_limit={"limit": "5"},
             )
+        if endpoint.key == "market-ranking-stocks":
+            return SimpleNamespace(
+                result=[
+                    {"symbol": "005930", "name": "Samsung Electronics"},
+                    {"symbol": "035420", "name": "NAVER", "securityType": "ETF"},
+                ],
+                rate_limit={"limit": "5"},
+            )
         if endpoint.key == "market-indicator-prices":
             return SimpleNamespace(
                 result=[
@@ -280,6 +288,7 @@ def test_toss_market_context_provider_uses_fixed_queries_and_keeps_top_two_order
         ("market-indicator-prices", {"symbols": "KOSPI,KOSDAQ"}),
         ("market-investor-kospi", {"interval": "1d", "count": "1", "until": "2026-07-09"}),
         ("market-investor-kosdaq", {"interval": "1d", "count": "1", "until": "2026-07-09"}),
+        ("market-ranking-stocks", {"symbols": "005930,035420"}),
     ]
     assert payload["priority_overlap_symbols"] == ["005930"]
     assert payload["market_prices"] == [
@@ -287,6 +296,8 @@ def test_toss_market_context_provider_uses_fixed_queries_and_keeps_top_two_order
         {"symbol": "KOSDAQ", "timestamp": "2026-07-10T09:15:00+09:00", "lastPrice": "812.34"},
     ]
     assert payload["reference_date"] == "2026-07-09"
+    assert payload["stock_names"] == {"005930": "Samsung Electronics", "035420": "NAVER"}
+    assert payload["etf_symbols"] == ["035420"]
     assert payload["investor_flow"]["KOSPI"]["institution"] == {"buyAmount": 80, "sellAmount": 120}
     assert "breakdown" not in payload["investor_flow"]["KOSPI"]["institution"]
     assert payload["affects_ordering"] is False
@@ -500,6 +511,26 @@ def test_fetch_toss_readonly_endpoint_uses_bearer_without_account_header() -> No
     assert response.row_count == 1
     assert response.result[0]["symbol"] == "005930"
     assert response.rate_limit == {"limit": "10", "remaining": "9", "reset": "1"}
+
+
+def test_market_ranking_stocks_validates_stock_names() -> None:
+    response = fetch_toss_readonly_endpoint(
+        base_url=TOSS_OPENAPI_BASE_URL,
+        access_token="token-value",
+        endpoint=resolve_toss_market_context_endpoint("market-ranking-stocks"),
+        params={"symbols": "005930,035420"},
+        timeout_seconds=12,
+        live_enabled=True,
+        urlopen=lambda *_args, **_kwargs: FakeResponse(
+            b'{"result":[{"symbol":"005930","name":"Samsung Electronics"},'
+            b'{"symbol":"035420","name":"NAVER"}]}'
+        ),
+    )
+
+    assert response.result == [
+        {"symbol": "005930", "name": "Samsung Electronics"},
+        {"symbol": "035420", "name": "NAVER"},
+    ]
 
 
 def test_fetch_toss_priority_investor_trading_uses_fixed_symbol_path_and_query() -> None:

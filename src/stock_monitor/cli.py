@@ -22796,6 +22796,24 @@ def _build_market_briefing_toss_priority_context(
         reference_date=business_date,
         priority_symbols=symbols,
     )
+    stock_names = market_context.get("stock_names")
+    if isinstance(stock_names, dict):
+        names_by_symbol.update(
+            {
+                str(symbol).strip(): str(name).strip()
+                for symbol, name in stock_names.items()
+                if str(symbol).strip() and str(name).strip()
+            }
+        )
+    for item in market_context.get("rankings", []):
+        if not isinstance(item, dict):
+            continue
+        symbol = str(item.get("symbol") or "").strip()
+        if not symbol or symbol in names_by_symbol:
+            continue
+        metadata = repository.get_stock_metadata(symbol)
+        if metadata is not None and metadata.stock_name:
+            names_by_symbol[symbol] = metadata.stock_name
     return {
         "payload": payload,
         "market_context": market_context,
@@ -23078,7 +23096,6 @@ def _build_intraday_toss_priority_snapshot_lines(toss_context: dict[str, object]
                 fragment = f"현재가 {last_price:,}원"
                 checked_at = _market_briefing_toss_checked_time(quote.get("timestamp") or payload.get("fetched_at"))
                 if checked_at:
-                    fragment += f" · 조회 {checked_at}"
                     checked_times.append(checked_at)
                 fragments.append(fragment)
         if investor is not None:
@@ -23092,7 +23109,6 @@ def _build_intraday_toss_priority_snapshot_lines(toss_context: dict[str, object]
                 fragment = " · ".join(flow_fragments)
                 checked_at = _market_briefing_toss_checked_time(investor.get("updated_at"))
                 if checked_at:
-                    fragment += f" · 수급 {checked_at}"
                     checked_times.append(checked_at)
                 fragments.append(fragment)
         elif quote is not None:
@@ -23111,10 +23127,12 @@ def _market_briefing_toss_checked_time(value: object) -> str | None:
     return raw[11:16] if len(raw) >= 16 and raw[11:16].count(":") == 1 else None
 
 
-def _build_market_briefing_toss_market_context_lines(toss_context: dict[str, object]) -> list[str]:
+def _build_market_briefing_toss_market_context_sections(
+    toss_context: dict[str, object],
+) -> tuple[list[str], list[str], list[str]]:
     payload = toss_context.get("market_context") if isinstance(toss_context.get("market_context"), dict) else {}
     if payload.get("live_fetch") is not True:
-        return []
+        return [], [], []
     names_by_symbol = toss_context.get("names_by_symbol") if isinstance(toss_context.get("names_by_symbol"), dict) else {}
     rankings = payload.get("rankings") if isinstance(payload.get("rankings"), list) else []
     market_prices = payload.get("market_prices") if isinstance(payload.get("market_prices"), list) else []
@@ -23124,27 +23142,38 @@ def _build_market_briefing_toss_market_context_lines(toss_context: dict[str, obj
         for item in rankings
         if isinstance(item, dict) and str(item.get("symbol") or "").strip()
     ]
-    rank_display = ", ".join(str(names_by_symbol.get(symbol) or symbol) for symbol in ranking_symbols[:20])
-    lines = ["Toss 거래대금 Top20"]
-    lines.append(f"- {rank_display or '집계 종목 없음'}{f' · 집계 {ranked_at}' if ranked_at else ''}")
+    etf_symbols = {
+        str(symbol).strip()
+        for symbol in payload.get("etf_symbols", [])
+        if str(symbol).strip()
+    }
+    individual_symbols = [symbol for symbol in ranking_symbols if symbol not in etf_symbols][:10]
+    ranked_etf_symbols = [symbol for symbol in ranking_symbols if symbol in etf_symbols][:5]
+    rank_display = ", ".join(str(names_by_symbol.get(symbol) or symbol) for symbol in individual_symbols)
+    ranking_lines = [f"Toss 거래대금 상위 개별종목 10{f' · 집계 {ranked_at}' if ranked_at else ''}"]
+    ranking_lines.append(f"- {rank_display or '집계 종목 없음'}")
+    if ranked_etf_symbols:
+        ranking_lines.append("Toss 거래대금 ETF 5")
+        ranking_lines.extend(f"- {str(names_by_symbol.get(symbol) or symbol)}" for symbol in ranked_etf_symbols)
     overlaps = [str(item) for item in payload.get("priority_overlap_symbols", []) if str(item).strip()]
     overlap_display = ", ".join(str(names_by_symbol.get(symbol) or symbol) for symbol in overlaps)
-    lines.append(f"- 우선 확인 겹침: {overlap_display or '없음'}")
+    overlap_lines = [f"- 우선 확인 겹침: {overlap_display or '없음'}"]
 
+    market_lines: list[str] = []
     index_display = ", ".join(
         f"{str(item.get('symbol') or '').strip()} {str(item.get('lastPrice') or '').strip()}"
         for item in market_prices
         if isinstance(item, dict) and str(item.get("symbol") or "").strip() and item.get("lastPrice") is not None
     )
     if index_display:
-        lines.append(f"- 당일 지수: {index_display}")
+        market_lines.append(f"- 당일 지수: {index_display}")
 
     investor_flow = payload.get("investor_flow") if isinstance(payload.get("investor_flow"), dict) else {}
-    lines.append("당일 시장 수급 잠정")
+    market_lines.append("- 당일 시장 수급 잠정")
     for market in ("KOSPI", "KOSDAQ"):
         record = investor_flow.get(market)
         if not isinstance(record, dict):
-            lines.append(f"- {market}: 기준일 데이터 없음")
+            market_lines.append(f"- {market}: 기준일 데이터 없음")
             continue
         fragments = []
         for key, label in (("foreigner", "외국인"), ("institution", "기관")):
@@ -23158,8 +23187,13 @@ def _build_market_briefing_toss_market_context_lines(toss_context: dict[str, obj
             fragments.append(f"{label} {_format_flow_reference_amount(buy - sell)}")
         checked_at = _market_briefing_toss_checked_time(record.get("updatedAt"))
         suffix = f" · 갱신 {checked_at}" if checked_at else ""
-        lines.append(f"- {market}: {' · '.join(fragments) if fragments else '집계값 확인 필요'}{suffix}")
-    return lines
+        market_lines.append(f"- {market}: {' · '.join(fragments) if fragments else '집계값 확인 필요'}{suffix}")
+    return market_lines, overlap_lines, ranking_lines
+
+
+def _build_market_briefing_toss_market_context_lines(toss_context: dict[str, object]) -> list[str]:
+    market_lines, overlap_lines, ranking_lines = _build_market_briefing_toss_market_context_sections(toss_context)
+    return [*ranking_lines, *overlap_lines, *market_lines]
 
 
 def _build_market_briefing_source_freshness_summary(
@@ -41606,8 +41640,14 @@ def _run_scheduled_intraday_briefing(
             include_investor_trading=True,
         )
         priority_lines = _build_intraday_toss_priority_snapshot_lines(toss_context)
-        market_context_lines = _build_market_briefing_toss_market_context_lines(toss_context)
-        message_parts = ["\n".join(priority_lines), message, "\n".join(market_context_lines)]
+        market_summary_lines, overlap_lines, ranking_lines = _build_market_briefing_toss_market_context_sections(toss_context)
+        message_parts = [
+            "\n".join(market_summary_lines),
+            "\n".join(priority_lines),
+            "\n".join(overlap_lines),
+            "\n".join(ranking_lines),
+            message,
+        ]
         message = "\n\n".join(part for part in message_parts if part)
     if dry_run:
         print(message)

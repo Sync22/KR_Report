@@ -253,6 +253,37 @@ class TossPriorityQuoteProvider:
 
             ranking_result = ranking_response.result if isinstance(ranking_response.result, dict) else {}
             rankings = ranking_result.get("rankings") if isinstance(ranking_result.get("rankings"), list) else []
+            ranking_symbols = tuple(
+                str(item.get("symbol") or "").strip()
+                for item in rankings
+                if isinstance(item, dict) and str(item.get("symbol") or "").strip()
+            )
+            stock_names: dict[str, str] = {}
+            etf_symbols: list[str] = []
+            if ranking_symbols:
+                try:
+                    stock_endpoint = resolve_toss_market_context_endpoint("market-ranking-stocks")
+                    stock_response = self._fetch_endpoint_with_token_recovery(
+                        endpoint=stock_endpoint,
+                        params={"symbols": ",".join(ranking_symbols)},
+                    )
+                    rate_limit[stock_endpoint.key] = stock_response.rate_limit
+                    stock_names = {
+                        str(item.get("symbol") or "").strip(): str(item.get("name") or "").strip()
+                        for item in stock_response.result
+                        if isinstance(item, dict)
+                        and str(item.get("symbol") or "").strip()
+                        and str(item.get("name") or "").strip()
+                    }
+                    etf_symbols = [
+                        str(item.get("symbol") or "").strip()
+                        for item in stock_response.result
+                        if isinstance(item, dict)
+                        and str(item.get("symbol") or "").strip()
+                        and str(item.get("securityType") or "").upper() == "ETF"
+                    ]
+                except RuntimeError:
+                    pass
             market_prices = price_response.result if isinstance(price_response.result, list) else []
             ranked_symbols = {
                 str(item.get("symbol") or "").strip()
@@ -271,6 +302,8 @@ class TossPriorityQuoteProvider:
                 "reference_date": reference_date.isoformat(),
                 "ranked_at": ranking_result.get("rankedAt"),
                 "rankings": rankings,
+                "stock_names": stock_names,
+                "etf_symbols": etf_symbols,
                 "market_prices": market_prices,
                 "priority_overlap_symbols": [symbol for symbol in normalized_symbols if symbol in ranked_symbols],
                 "investor_flow": investor_flow,

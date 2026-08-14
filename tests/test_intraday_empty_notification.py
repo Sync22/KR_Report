@@ -6,7 +6,7 @@ import pytest
 import stock_monitor.cli as cli_module
 from stock_monitor.config import RuntimeConfig
 from stock_monitor.db.repository import StockMonitorRepository
-from stock_monitor.models import Opinion, Report
+from stock_monitor.models import Opinion, Report, StockMetadata
 
 
 def _report(
@@ -283,7 +283,7 @@ def test_scheduled_intraday_briefing_adds_available_toss_context_after_0930(tmp_
     def fake_toss_context(*_args, **kwargs):
         captured.update(kwargs)
         return {
-            "names_by_symbol": {"005930": "Samsung Electronics"},
+            "names_by_symbol": {"005930": "Samsung Electronics", "000660": "SK hynix"},
             "payload": {
                 "live_fetch": True,
                 "fetched_at": "2026-04-24T09:30:00+09:00",
@@ -303,9 +303,17 @@ def test_scheduled_intraday_briefing_adds_available_toss_context_after_0930(tmp_
             "market_context": {
                 "live_fetch": True,
                 "ranked_at": "2026-04-24T09:30:00+09:00",
-                "rankings": [{"symbol": "005930"}],
+                "rankings": [{"symbol": "005930"}, {"symbol": "000660"}],
+                "etf_symbols": ["000660"],
                 "priority_overlap_symbols": ["005930"],
-                "investor_flow": {},
+                "market_prices": [{"symbol": "KOSPI", "lastPrice": "6913.85"}],
+                "investor_flow": {
+                    "KOSPI": {
+                        "updatedAt": "2026-04-24T09:30:00+09:00",
+                        "foreigner": {"buyAmount": "100", "sellAmount": "40"},
+                        "institution": {"buyAmount": "30", "sellAmount": "50"},
+                    }
+                },
             },
         }
 
@@ -326,12 +334,53 @@ def test_scheduled_intraday_briefing_adds_available_toss_context_after_0930(tmp_
     assert result == 1
     assert captured["include_investor_trading"] is True
     assert "우선 확인 · Toss · 기준 09:29" in sent_messages[0]
-    assert "- Samsung Electronics | 현재가 72,000원 · 조회 09:29 | 외국인 순매수 60주 · 기관 순매도 20주 · 수급 09:28" in sent_messages[0]
-    assert sent_messages[0].index("우선 확인 · Toss · 기준 09:29") < sent_messages[0].index("장중 신규 리포트")
-    assert sent_messages[0].index("장중 신규 리포트") < sent_messages[0].index("Toss 거래대금 Top20")
+    assert "- Samsung Electronics | 현재가 72,000원 | 외국인 순매수 60주 · 기관 순매도 20주" in sent_messages[0]
+    assert "Toss 거래대금 상위 개별종목 10 · 집계 09:30" in sent_messages[0]
+    assert "- Samsung Electronics" in sent_messages[0]
+    assert "- SK hynix" in sent_messages[0]
+    assert "· 조회 09:29" not in sent_messages[0]
+    assert "· 수급 09:28" not in sent_messages[0]
+    assert "\n- 당일 시장 수급 잠정\n" in sent_messages[0]
+    assert sent_messages[0].index("KOSPI 6913.85") < sent_messages[0].index("우선 확인 · Toss · 기준 09:29")
+    assert sent_messages[0].index("우선 확인 · Toss · 기준 09:29") < sent_messages[0].index("- 우선 확인 겹침: Samsung Electronics")
+    assert sent_messages[0].index("- 우선 확인 겹침: Samsung Electronics") < sent_messages[0].index("Toss 거래대금 상위 개별종목 10")
+    assert sent_messages[0].index("Toss 거래대금 ETF 5") < sent_messages[0].index("장중 신규 리포트")
     assert "Toss 우선확인 현재가" not in sent_messages[0]
     assert "Toss 우선확인 당일 수급" not in sent_messages[0]
-    assert "Toss 거래대금 Top20" in sent_messages[0]
+    assert "Toss 거래대금 상위 개별종목 10" in sent_messages[0]
+    assert "Toss 거래대금 ETF 5" in sent_messages[0]
+
+
+def test_market_briefing_toss_context_resolves_ranked_stock_names_from_metadata(tmp_path, monkeypatch) -> None:
+    config, repository = _config_and_repository(tmp_path, monkeypatch)
+    repository.upsert_stock_metadata(
+        StockMetadata(
+            stock_code="000660",
+            stock_name="SK hynix",
+            sector_code=None,
+            sector_name=None,
+            updated_at=datetime(2026, 4, 24, 9, 30, 0),
+        )
+    )
+
+    class FakeTossProvider:
+        configured = True
+
+        def get_quotes(self, **_kwargs) -> dict[str, object]:
+            return {"configured": True, "live_fetch": True, "quotes": []}
+
+        def get_market_context(self, **_kwargs) -> dict[str, object]:
+            return {"live_fetch": True, "rankings": [{"symbol": "000660"}]}
+
+    context = cli_module._build_market_briefing_toss_priority_context(
+        config,
+        repository,
+        business_date=date(2026, 4, 24),
+        candidate_rows=[{"stock_code": "005930", "stock_name": "Samsung Electronics"}],
+        toss_quote_provider=FakeTossProvider(),
+    )
+
+    assert context["names_by_symbol"] == {"005930": "Samsung Electronics", "000660": "SK hynix"}
 
 
 def test_scheduled_intraday_briefing_does_not_send_empty_when_prior_day_batch_is_pending(tmp_path, monkeypatch) -> None:
