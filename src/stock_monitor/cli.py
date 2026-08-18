@@ -174,8 +174,8 @@ SCHEDULED_NOTIFY_EARLIEST_TIME = datetime_time(hour=8, minute=0)
 SCHEDULED_NOTIFY_LATEST_TIME = datetime_time(hour=8, minute=30)
 SCHEDULED_TOSS_PRIORITY_BASELINE_EARLIEST_TIME = datetime_time(hour=20, minute=0)
 SCHEDULED_TOSS_PRIORITY_BASELINE_LATEST_TIME = datetime_time(hour=20, minute=15)
-SCHEDULED_TOSS_MARKET_CONTEXT_EARLIEST_TIME = datetime_time(hour=15, minute=0)
-SCHEDULED_TOSS_MARKET_CONTEXT_LATEST_TIME = datetime_time(hour=15, minute=15)
+SCHEDULED_TOSS_MARKET_CONTEXT_EARLIEST_TIME = datetime_time(hour=20, minute=0)
+SCHEDULED_TOSS_MARKET_CONTEXT_LATEST_TIME = datetime_time(hour=20, minute=15)
 SCHEDULED_MARKET_BRIEFING_SLOT_TIMES = {
     "mood": datetime_time(hour=9, minute=15),
     "lunch": datetime_time(hour=12, minute=0),
@@ -7935,7 +7935,7 @@ def _run_toss_market_context_capture(
         "affects_ordering": False,
         "business_date": business_date.isoformat(),
         "source": "toss_openapi",
-        "scope": "market_trading_amount_top_20",
+        "scope": "market_close_snapshot_top20_indices_flow_and_priority_top2",
         "requires_live_flag": True,
         "requires_token_reissue_confirmation": True,
         "requires_save_confirmation": True,
@@ -8007,7 +8007,21 @@ def _run_toss_market_context_capture(
             )
         provider = TossPriorityQuoteProvider(config=toss_config)
 
-    market_context = provider.get_market_ranking()
+    evidence = build_web_view_candidate_evidence_snapshot(config, repository, business_date=business_date, limit=2)
+    priority_rows = list(evidence.get("rows") or [])[:2]
+    priority_symbols = tuple(
+        str(row.get("stock_code") or "").strip()
+        for row in priority_rows
+        if re.fullmatch(r"\d{6}", str(row.get("stock_code") or "").strip())
+    )
+    priority_names = {
+        str(row.get("stock_code") or "").strip(): str(row.get("stock_name") or "").strip() or None
+        for row in priority_rows
+    }
+    market_context = provider.get_market_context(
+        reference_date=business_date,
+        priority_symbols=priority_symbols,
+    )
     observed_at = _parse_toss_quote_timestamp(
         market_context.get("ranked_at"), datetime.now(ZoneInfo(config.timezone))
     )
@@ -8035,6 +8049,146 @@ def _run_toss_market_context_capture(
             )
         )
     repository.save_toss_market_context_snapshots(snapshots)
+    stock_names = market_context.get("stock_names") if isinstance(market_context.get("stock_names"), dict) else {}
+    stock_markets = market_context.get("stock_markets") if isinstance(market_context.get("stock_markets"), dict) else {}
+    etf_symbols = {str(value) for value in market_context.get("etf_symbols") or []}
+    metadata_rows: list[StockMetadata] = []
+    stock_rows: list[StockMarketDailySnapshot] = []
+    etf_rows: list[EtfDailySnapshot] = []
+    for item in market_context.get("rankings") or []:
+        if not isinstance(item, dict):
+            continue
+        stock_code = str(item.get("symbol") or "").strip()
+        if not re.fullmatch(r"\d{6}", stock_code):
+            continue
+        stock_name = str(stock_names.get(stock_code) or "").strip() or stock_code
+        market = str(stock_markets.get(stock_code) or "").strip() or "KR"
+        price = item.get("price") if isinstance(item.get("price"), dict) else {}
+        last_price = _safe_optional_int(price.get("lastPrice"))
+        base_price = _safe_optional_int(price.get("basePrice"))
+        change_rate = price.get("changeRate")
+        try:
+            change_percent = float(change_rate) * 100 if change_rate is not None else None
+        except (TypeError, ValueError):
+            change_percent = None
+        change_amount = last_price - base_price if last_price is not None and base_price is not None else None
+        metadata_rows.append(
+            StockMetadata(stock_code, stock_name, None, None, checked_at, source="toss_openapi")
+        )
+        if stock_code in etf_symbols:
+            etf_rows.append(
+                EtfDailySnapshot(
+                    business_date, stock_code, stock_name, checked_at, source="toss_openapi",
+                    close_price=last_price, change_amount=change_amount, change_percent=change_percent,
+                    volume=_safe_optional_int(item.get("tradingVolume")),
+                    turnover=_safe_optional_int(item.get("tradingAmount")),
+                )
+            )
+        else:
+            stock_rows.append(
+                StockMarketDailySnapshot(
+                    business_date, stock_code, stock_name, market, checked_at, source="toss_openapi",
+                    close_price=last_price, change_amount=change_amount, change_percent=change_percent,
+                    volume=_safe_optional_int(item.get("tradingVolume")),
+                    turnover=_safe_optional_int(item.get("tradingAmount")),
+                )
+            )
+    repository.upsert_stock_metadata_many(metadata_rows)
+    repository.upsert_stock_market_daily(stock_rows)
+    repository.upsert_etf_daily_snapshots(etf_rows)
+
+    index_rows: list[MarketIndexDailySnapshot] = []
+    price_changes = market_context.get("market_price_changes") if isinstance(market_context.get("market_price_changes"), dict) else {}
+    for item in market_context.get("market_prices") or []:
+        if not isinstance(item, dict):
+            continue
+        symbol = str(item.get("symbol") or "").strip()
+        if symbol not in {"KOSPI", "KOSDAQ"}:
+            continue
+        current_price = item.get("lastPrice")
+        try:
+            close_index = float(current_price)
+        except (TypeError, ValueError):
+            continue
+        change = price_changes.get(symbol) if isinstance(price_changes.get(symbol), dict) else {}
+        try:
+            change_percent = float(change.get("change_rate")) * 100 if change.get("change_rate") is not None else None
+        except (TypeError, ValueError):
+            change_percent = None
+        index_rows.append(
+            MarketIndexDailySnapshot(
+                business_date, symbol, "toss", "코스피" if symbol == "KOSPI" else "코스닥", checked_at,
+                source="toss_openapi", close_index=close_index, change_percent=change_percent,
+            )
+        )
+    repository.upsert_market_index_daily(index_rows)
+
+    market_flow_rows: list[MarketInvestorFlowDaily] = []
+    for market, record in (market_context.get("investor_flow") or {}).items():
+        if not isinstance(record, dict):
+            continue
+        for label, item in (("개인", record.get("individual")), ("외국인", record.get("foreigner")), ("기관", record.get("institution"))):
+            if not isinstance(item, dict):
+                continue
+            buy_amount = _safe_optional_int(item.get("buyAmount"))
+            sell_amount = _safe_optional_int(item.get("sellAmount"))
+            market_flow_rows.append(
+                MarketInvestorFlowDaily(
+                    business_date, str(market), label, checked_at,
+                    buy_amount=buy_amount, sell_amount=sell_amount,
+                    net_buy_amount=(buy_amount - sell_amount) if buy_amount is not None and sell_amount is not None else None,
+                    amount_unit="원", source="toss_openapi",
+                )
+            )
+    repository.upsert_market_investor_flow_daily(market_flow_rows)
+
+    quote_payload = provider.get_quotes(
+        priority_date=business_date,
+        symbols=priority_symbols,
+        include_investor_trading=True,
+    ) if priority_symbols else {}
+    baseline_rows = [
+        TossPriorityQuoteBaseline(
+            business_date=business_date,
+            stock_code=str(item.get("symbol") or "").strip(),
+            stock_name=priority_names.get(str(item.get("symbol") or "").strip()),
+            baseline_time="20:00",
+            last_price=_safe_optional_int(item.get("lastPrice")),
+            currency=str(item.get("currency") or "").strip() or None,
+            source="toss_openapi",
+            fetched_at=_parse_toss_quote_timestamp(item.get("timestamp"), checked_at),
+        )
+        for item in quote_payload.get("quotes") or []
+        if isinstance(item, dict) and str(item.get("symbol") or "").strip() in priority_symbols
+    ]
+    repository.save_toss_priority_quote_baselines(baseline_rows)
+    priority_flow_rows: list[StockInvestorFlowDaily] = []
+    investor_items = (
+        quote_payload.get("investor_trading", {}).get("items", [])
+        if isinstance(quote_payload.get("investor_trading"), dict)
+        else []
+    )
+    for item in investor_items:
+        if not isinstance(item, dict):
+            continue
+        stock_code = str(item.get("symbol") or "").strip()
+        if stock_code not in priority_symbols:
+            continue
+        fetched_at = _parse_toss_quote_timestamp(item.get("updated_at"), checked_at)
+        for label, field_name in (("외국인", "foreigner_net_buy_volume"), ("기관", "institution_net_buy_volume")):
+            priority_flow_rows.append(
+                StockInvestorFlowDaily(
+                    business_date=business_date,
+                    stock_code=stock_code,
+                    stock_name=priority_names.get(stock_code),
+                    investor_type=label,
+                    fetched_at=fetched_at,
+                    net_buy_volume=_safe_optional_int(item.get(field_name)),
+                    volume_unit="주",
+                    source="toss_openapi",
+                )
+            )
+    repository.upsert_stock_investor_flow_daily(priority_flow_rows)
     payload = {
         **plan,
         "mode": "live",
@@ -8043,6 +8197,12 @@ def _run_toss_market_context_capture(
         "writes_db": True,
         "ranking_count": len(market_context.get("rankings") or []),
         "saved_count": len(snapshots),
+        "stock_snapshot_count": len(stock_rows),
+        "etf_snapshot_count": len(etf_rows),
+        "market_index_count": len(index_rows),
+        "market_flow_count": len(market_flow_rows),
+        "priority_baseline_count": len(baseline_rows),
+        "priority_investor_flow_count": len(priority_flow_rows),
         "observed_at": observed_at.isoformat(),
         "rate_limit": market_context.get("rate_limit"),
     }
@@ -10397,7 +10557,9 @@ def _build_observation_summary_audit_row(
     stock_codes = [summary.stock_code or "" for summary in eligible]
     market_codes = {
         item.stock_code
-        for item in repository.list_stock_market_daily_for_codes(business_date, stock_codes)
+        for item in repository.list_stock_market_daily_for_codes(
+            business_date, stock_codes, source="toss_openapi"
+        )
         if item.close_price is not None or item.volume is not None or item.turnover is not None
     }
     report_items = [
@@ -16126,12 +16288,14 @@ def _build_krx_flow_leadership_candidates(
     stock_codes = [summary.stock_code for summary in summaries if summary.stock_code]
     market_refs = {
         item.stock_code: item
-        for item in repository.list_stock_market_daily_for_codes(business_date, [code for code in stock_codes if code])
+        for item in repository.list_stock_market_daily_for_codes(
+            business_date, [code for code in stock_codes if code], source="toss_openapi"
+        )
     }
     top_turnover_rank = {
         item.stock_code: rank
         for rank, item in enumerate(
-            repository.list_stock_market_daily_by_turnover(business_date, limit=30),
+            repository.list_stock_market_daily_by_turnover(business_date, limit=30, source="toss_openapi"),
             start=1,
         )
     }
@@ -17501,11 +17665,11 @@ def _build_daily_briefing_market_reference_lines(
     repository: StockMonitorRepository,
     business_date: date,
 ) -> list[str]:
-    snapshot_dates = repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=1)
+    snapshot_dates = repository.list_recent_toss_market_snapshot_dates(on_or_before=business_date, limit=1)
     if not snapshot_dates:
         return []
     snapshot_date = snapshot_dates[0]
-    indices = repository.list_market_index_daily(snapshot_date, limit=200)
+    indices = repository.list_market_index_daily(snapshot_date, limit=200, source="toss_openapi")
     kospi = _find_named_market_index(indices, series="KOSPI", name="코스피")
     kosdaq = _find_named_market_index(indices, series="KOSDAQ", name="코스닥")
     if kospi is None and kosdaq is None:
@@ -17517,7 +17681,7 @@ def _build_daily_briefing_market_reference_lines(
         fragments.append(f"KOSDAQ {_format_index_level(kosdaq.close_index)} {_format_index_percent(kosdaq.change_percent)}")
     suffix = "" if snapshot_date == business_date else " / 리포트일 전 최신"
     return [
-        f"지수 참고 · {snapshot_date.strftime('%y.%m.%d')} KRX 저장값{suffix}",
+        f"지수 참고 · {snapshot_date.strftime('%y.%m.%d')} Toss 저장값{suffix}",
         "- " + " / ".join(fragments),
     ]
 
@@ -17674,10 +17838,10 @@ def _build_stock_flow_briefing_reference_lines(
     uniform_reference_date = unique_reference_dates[0] if len(unique_reference_dates) == 1 else None
     if uniform_reference_date is not None:
         suffix = "" if uniform_reference_date == business_date else " / 리포트일 전 최신"
-        header = f"수급 참고 · {uniform_reference_date.strftime('%y.%m.%d')} 종목별 [12009] 저장값{suffix}"
+        header = f"수급 참고 · {uniform_reference_date.strftime('%y.%m.%d')} Toss 우선 후보 저장값{suffix}"
         lines = [f"- {item['display']}" for item in items]
     else:
-        header = "수급 참고 · 종목별 [12009] 저장값 / 기준일 혼합"
+        header = "수급 참고 · Toss 우선 후보 저장값 / 기준일 혼합"
         lines = [
             f"- [{str(item.get('reference_date') or '')[2:].replace('-', '.')}] {item['display']}"
             for item in items
@@ -17739,18 +17903,18 @@ def _build_stock_flow_source_freshness_item(
     return {
         "key": "investor_flow",
         "label": "Investor flow",
-        "display_label": "후보 수급 [12009]",
-        "source": "krx_data_market",
+        "display_label": "후보 수급",
+        "source": "toss_openapi",
         "status": status,
         "reference_date": latest_reference_date.isoformat(),
         "reference_dates": sorted({reference_date.isoformat() for reference_date in reference_dates}, reverse=True),
         "exact_date_available": status == "exact",
         "available": True,
-        "data_scope": "stored_stock_level_12009_selected_candidates",
+        "data_scope": "stored_toss_close_priority_flow",
         "coverage_count": len(available_items),
         "candidate_count": expected_count,
         "live_fetch": False,
-        "notice": "Selected candidate stock-level [12009] references; market-wide flow is not substituted.",
+        "notice": "Selected candidates with stored Toss close investor-flow references.",
     }
 
 
@@ -17760,7 +17924,7 @@ def _build_market_briefing_turnover_lines(
     *,
     limit_per_market: int = 2,
 ) -> list[str]:
-    snapshot_dates = repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=1)
+    snapshot_dates = repository.list_recent_toss_market_snapshot_dates(on_or_before=business_date, limit=1)
     if not snapshot_dates:
         return []
     snapshot_date = snapshot_dates[0]
@@ -17768,7 +17932,9 @@ def _build_market_briefing_turnover_lines(
     for label, market in (("KOSPI", "KOSPI"), ("KOSDAQ", "KOSDAQ")):
         rows = [
             item
-            for item in repository.list_stock_market_daily_by_turnover(snapshot_date, market=market, limit=limit_per_market)
+            for item in repository.list_stock_market_daily_by_turnover(
+                snapshot_date, market=market, limit=limit_per_market, source="toss_openapi"
+            )
             if item.turnover is not None
         ]
         if not rows:
@@ -17778,7 +17944,7 @@ def _build_market_briefing_turnover_lines(
     if not lines:
         return []
     suffix = "" if snapshot_date == business_date else " / 리포트일 전 최신"
-    return [f"거래대금 참고 · {snapshot_date.strftime('%y.%m.%d')} KRX 저장값{suffix}", *lines]
+    return [f"거래대금 참고 · {snapshot_date.strftime('%y.%m.%d')} Toss 저장값{suffix}", *lines]
 
 
 def _build_market_briefing_notable_lines(
@@ -19881,7 +20047,7 @@ def _build_realtime_first_review_snapshot_payload(
         "web_view_first_10_seconds": {
             "summary": (
                 "오늘 볼 것: Top2 후보와 현재 확인 가능한 근거만 먼저 봅니다. "
-                "전일 KRX/수급/ETF는 참고 영역입니다."
+                "전일 Toss 저장값/수급/ETF는 참고 영역입니다."
             ),
             "warnings": warnings,
         },
@@ -26601,6 +26767,7 @@ def _build_rotation_candidate_stocks(
         for item in repository.list_stock_market_daily_for_codes(
             business_date,
             [summary.stock_code or "" for summary in summaries],
+            source="toss_openapi",
         )
     }
     ordered = sorted(
@@ -28087,7 +28254,7 @@ def _render_web_view_v2_html() -> str:
           <div class="v2-evidence-grid" id="v2-evidence-grid">
             <div class="v2-evidence-row"><b>리포트</b><span class="v2-muted">대기 중</span></div>
             <div class="v2-evidence-row"><b>뉴스</b><span class="v2-muted">대기 중</span></div>
-            <div class="v2-evidence-row"><b>KRX/수급</b><span class="v2-muted">대기 중</span></div>
+            <div class="v2-evidence-row"><b>Toss/수급</b><span class="v2-muted">대기 중</span></div>
             <div class="v2-evidence-row"><b>순환매/ETF</b><span class="v2-muted">대기 중</span></div>
           </div>
         </section>
@@ -28231,14 +28398,14 @@ def _render_web_view_v2_html() -> str:
         : esc(summary.empty_state || "뉴스 근거 수집 전");
       const krxLine = daily?.market_briefing?.index_summary?.reference_date
         ? `지수 기준 ${esc(daily.market_briefing.index_summary.reference_date)}`
-        : "저장 KRX 기준 확인 필요";
+        : "저장 Toss 기준 확인 필요";
       const etfLine = firstEtf
         ? `${esc(firstEtf.etf_name || firstEtf.etf_code || "ETF")} · ${esc(firstEtf.evidence_label || "순환매 참고")}`
         : "저장 ETF 순환매 근거 없음";
       $("v2-evidence-grid").innerHTML = [
         ["리포트", reportLine],
         ["뉴스", newsLine],
-        ["KRX/수급", krxLine],
+        ["Toss/수급", krxLine],
         ["순환매/ETF", etfLine],
       ].map(([title, body]) => `<div class="v2-evidence-row"><b>${esc(title)}</b><span>${body}</span></div>`).join("");
     }
@@ -28873,7 +29040,7 @@ def _render_web_view_html() -> str:
         <div class="briefing-live-tools">
           <p class="briefing-live-status" id="intraday-market-top-status">날짜를 선택하면 우선 확인 종목과 장중 거래대금 교집합을 확인할 수 있습니다.</p>
         </div>
-        <p class="brief">오늘 볼 것: Top2 후보와 현재 확인 가능한 근거만 먼저 봅니다. 전일 KRX/수급/ETF는 참고 영역입니다.</p>
+        <p class="brief">오늘 볼 것: Top2 후보와 현재 확인 가능한 근거만 먼저 봅니다. 전일 Toss 저장값/수급/ETF는 참고 영역입니다.</p>
         <div id="main-priority-rows" class="main-priority-list"><span class="muted">날짜를 선택하세요.</span></div>
         <div id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden></div>
         <p class="main-priority-note">Top2 현재가는 Naver/Toss 조회값으로 갱신하며, 리포트·KRX·[12009] 수급은 저장 기준입니다.</p>
@@ -28896,7 +29063,7 @@ def _render_web_view_html() -> str:
           <div class="selection-strip" id="stock-selection-status"><span class="muted">선택된 종목이 없습니다.</span></div>
         </div>
         <p class="brief">검색, 우선순위, 관찰 후보, 일일 종목 요약에서 선택한 종목의 저장 근거를 확인합니다.</p>
-        <div id="stock-context" class="detail-list scroll-panel stock-context-panel"><span class="muted">종목 행을 선택하면 KRX 참고와 수급 정보를 불러옵니다.</span></div>
+        <div id="stock-context" class="detail-list scroll-panel stock-context-panel"><span class="muted">종목 행을 선택하면 Toss 저장 참고와 수급 정보를 불러옵니다.</span></div>
       </div>
 
       <div class="card span-5 focus-card stock-focus-card" id="stock-detail-card" data-view-panel="stock" data-view-when="stock-selection" tabindex="-1" hidden>
@@ -28939,7 +29106,7 @@ def _render_web_view_html() -> str:
         <p class="brief" id="stock-filter-status">기본은 2건 이상 종목만 표시합니다.</p>
         <div class="scroll-panel stock-summary-panel">
           <table class="mobile-card-table">
-            <thead><tr><th>종목</th><th>건수</th><th>증권사</th><th>목표가</th><th>원문 의견</th><th>KRX 참고</th></tr></thead>
+            <thead><tr><th>종목</th><th>건수</th><th>증권사</th><th>목표가</th><th>원문 의견</th><th>Toss 참고</th></tr></thead>
             <tbody id="stock-rows"><tr><td colspan="6" class="muted">날짜를 선택하세요.</td></tr></tbody>
           </table>
         </div>
@@ -28950,7 +29117,7 @@ def _render_web_view_html() -> str:
         <p class="brief" id="category-selection-status">업종 또는 테마 행을 선택하면 상세 종목과 최근 흐름을 불러옵니다.</p>
         <div class="scroll-panel">
           <table class="mobile-card-table">
-            <thead><tr><th>종목</th><th>건수</th><th>증권사</th><th>목표가</th><th>원문 의견</th><th>KRX 참고</th></tr></thead>
+            <thead><tr><th>종목</th><th>건수</th><th>증권사</th><th>목표가</th><th>원문 의견</th><th>Toss 참고</th></tr></thead>
             <tbody id="category-rows"><tr><td colspan="6" class="muted">업종 또는 테마 행을 선택하세요.</td></tr></tbody>
           </table>
         </div>
@@ -28973,7 +29140,7 @@ def _render_web_view_html() -> str:
           <h2>시장 문맥 <span class="muted">Toss 당일 · KRX 확정 이력</span></h2>
           <span class="muted">현재값 우선 참고</span>
         </summary>
-        <p class="brief">시장 탭은 해석 문장이 아니라 선택 날짜의 저장 KRX/수급 근거를 확인하는 화면입니다.</p>
+        <p class="brief">시장 탭은 해석 문장이 아니라 선택 날짜의 Toss 저장/수급 근거를 확인하는 화면입니다.</p>
 
         <details class="market-reference-panel" open>
           <summary>Toss 당일 시장 <span class="muted">실시간 집계</span></summary>
@@ -29602,9 +29769,9 @@ def _render_web_view_html() -> str:
       renderStockSearchResults();
       const visibleSectors = data.sectors.filter((item) => isKnownCategory(item.sector_name, "sector"));
       const visibleThemes = data.themes.filter((item) => isKnownCategory(item.theme_name, "theme"));
-      renderKrxContext(data.krx_context);
-      renderKrxRecentFlow(data.krx_recent_flow);
-      renderInvestorFlow(data.krx_investor_flow);
+      renderKrxContext(data.toss_context);
+      renderKrxRecentFlow(data.toss_recent_flow);
+      renderInvestorFlow(data.toss_investor_flow);
       document.getElementById("etf-tab-title").textContent = `(${date})`;
       document.getElementById("etf-tab-rows").innerHTML = '<tr><td colspan="2" class="muted">순환매 탭을 열면 최근 ETF 흐름을 불러옵니다.</td></tr>';
       document.getElementById("flow-trend-title").textContent = `(${date})`;
@@ -29620,7 +29787,7 @@ def _render_web_view_html() -> str:
       }
       document.getElementById("detail-title").textContent = "";
       document.getElementById("stock-context").innerHTML = data.stocks.length
-        ? '<span class="muted">종목 행을 선택하면 KRX 참고와 수급 정보를 불러옵니다.</span>'
+        ? '<span class="muted">종목 행을 선택하면 Toss 저장 참고와 수급 정보를 불러옵니다.</span>'
         : '<span class="muted">선택 날짜에 종목 요약이 없습니다.</span>';
       document.getElementById("stock-detail").innerHTML = data.stocks.length
         ? '<span class="muted">종목 행을 선택하면 리포트를 불러옵니다.</span>'
@@ -30641,7 +30808,7 @@ def _render_web_view_html() -> str:
         labeled("증권사", brokerDisplay(item.broker_display)),
         labeled("목표가", moneyRange(item.target_price_min, item.target_price_max)),
         labeled("원문 의견", esc(opinion(item.dominant_opinion))),
-        labeled("KRX 참고", marketReference(item.market_reference))
+        labeled("Toss 참고", marketReference(item.market_reference))
       ])).join("") : empty(6);
       setActiveCategorySelection(
         categoryType,
@@ -30710,10 +30877,10 @@ def _render_web_view_html() -> str:
       const filterText = includeSingleReportStocks
         ? `1건 포함 ${number(visibleStocks.length)}종목 표시`
         : `2건 이상 ${number(visibleStocks.length)}종목 표시`;
-      const marketNotice = data?.krx_context && data.krx_context.available === false
-        ? " · 선택 날짜 KRX 마감 대기"
+      const marketNotice = data?.toss_context && data.toss_context.available === false
+        ? " · 선택 날짜 Toss 20:00 저장 대기"
         : "";
-      const krxSnapshotMissing = data?.krx_context && data.krx_context.available === false;
+      const krxSnapshotMissing = data?.toss_context && data.toss_context.available === false;
       document.getElementById("stock-filter-status").textContent = `${filterText}${hiddenParts.length ? ` · ${hiddenParts.join(" · ")}` : ""}${marketNotice}`;
       const showMoreButton = document.getElementById("stock-show-more");
       showMoreButton.hidden = overflowCount <= 0;
@@ -30724,7 +30891,7 @@ def _render_web_view_html() -> str:
         labeled("증권사", brokerDisplay(item.broker_display)),
         labeled("목표가", moneyRange(item.target_price_min, item.target_price_max)),
         labeled("원문 의견", esc(opinion(item.dominant_opinion))),
-        labeled("KRX 참고", marketReference(item.market_reference, krxSnapshotMissing))
+        labeled("Toss 참고", marketReference(item.market_reference, krxSnapshotMissing))
       ], dailyStockCategoryAttrs(item))).join("") : `<tr><td colspan="6" class="muted">${stocks.length ? "1건 종목만 있습니다. 우측 상단의 1건 포함을 켜면 표시됩니다." : "선택 날짜에 종목 요약이 없습니다."}</td></tr>`;
       if (selectedStockCode) setActiveStockSelection(selectedStockCode, selectedStockLabel, selectedStockSource);
     }
@@ -31638,7 +31805,7 @@ def _render_web_view_html() -> str:
         : "";
       document.getElementById("krx-flow-notice").textContent = `${displayNotice(flow?.notice || "선택 날짜를 포함한 최근 저장 데이터 기준입니다.")} ETF는 순환매 탭에서 봅니다.`;
       if (!flow || !flow.available || !flow.items.length) {
-        document.getElementById("krx-flow-rows").innerHTML = '<tr><td colspan="3" class="muted">최근 KRX 흐름 데이터가 없습니다.</td></tr>';
+        document.getElementById("krx-flow-rows").innerHTML = '<tr><td colspan="3" class="muted">최근 Toss 저장 흐름 데이터가 없습니다.</td></tr>';
         return;
       }
       document.getElementById("krx-flow-rows").innerHTML = flow.items.map((item) => row([
@@ -32423,19 +32590,21 @@ def build_web_view_stock_search_snapshot(
                 (business_date.isoformat(), *stock_codes) if stock_codes else (),
             ).fetchall()
         }
-    krx_codes = {
+    toss_codes = {
         item.stock_code
-        for item in repository.list_stock_market_daily_for_codes(business_date, stock_codes)
+        for item in repository.list_stock_market_daily_for_codes(
+            business_date, stock_codes, source="toss_openapi"
+        )
     }
     items = []
     for row in rows:
         stock_code = str(row["stock_code"] or "")
         has_report = stock_code in report_codes
-        has_krx = stock_code in krx_codes
+        has_toss = stock_code in toss_codes
         has_news = stock_code in news_codes
         status_parts = [
             "당일 리포트 있음" if has_report else "당일 리포트 없음",
-            "저장 KRX 있음" if has_krx else "저장 KRX 없음",
+            "저장 Toss 있음" if has_toss else "저장 Toss 없음",
             "뉴스 근거 있음" if has_news else "뉴스 근거 없음",
         ]
         items.append(
@@ -32444,7 +32613,7 @@ def build_web_view_stock_search_snapshot(
                 "stock_name": str(row["stock_name"] or stock_code),
                 "market": row["market"],
                 "has_selected_date_report": has_report,
-                "has_selected_date_krx": has_krx,
+                "has_selected_date_toss": has_toss,
                 "has_news_observation": has_news,
                 "display_status": " · ".join(status_parts),
             }
@@ -32593,6 +32762,7 @@ def build_web_view_daily_snapshot(
         for item in repository.list_stock_market_daily_for_codes(
             business_date,
             [summary.stock_code for summary in summaries if summary.stock_code],
+            source="toss_openapi",
         )
     }
     primary_categories = _web_view_primary_categories_by_stock(
@@ -32605,9 +32775,13 @@ def build_web_view_daily_snapshot(
     category_contract = _web_view_category_contract(sectors + themes, category_mapping=category_mapping)
     mood = _build_market_mood_snapshot(business_date, summaries, sectors)
     watch_candidates = _build_web_view_watch_candidates(summaries)
-    recent_krx_snapshot_dates = repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=3)
-    recent_market_flow_dates = repository.list_recent_market_investor_flow_dates(on_or_before=business_date, limit=1)
-    recent_flow_dates = repository.list_recent_investor_flow_dates(on_or_before=business_date, limit=1)
+    recent_toss_snapshot_dates = repository.list_recent_toss_market_snapshot_dates(on_or_before=business_date, limit=3)
+    recent_market_flow_dates = repository.list_recent_market_investor_flow_dates(
+        on_or_before=business_date, source="toss_openapi", limit=1
+    )
+    recent_flow_dates = repository.list_recent_investor_flow_dates(
+        on_or_before=business_date, source="toss_openapi", limit=1
+    )
     priority_candidate_snapshot = build_web_view_candidate_evidence_snapshot(
         config,
         repository,
@@ -32623,7 +32797,7 @@ def build_web_view_daily_snapshot(
         repository,
         business_date,
         summaries=summaries,
-        recent_krx_snapshot_dates=recent_krx_snapshot_dates[:1],
+        recent_krx_snapshot_dates=recent_toss_snapshot_dates[:1],
         recent_flow_dates=recent_market_flow_dates,
         priority_stock_codes=priority_stock_codes,
     )
@@ -32661,13 +32835,13 @@ def build_web_view_daily_snapshot(
     )
     market_briefing["news_observation_summary"] = news_observation_summary
     report_count = sum(summary.mention_count for summary in summaries)
-    krx_context = _build_web_view_krx_context(repository, business_date)
-    krx_recent_flow = _build_web_view_krx_recent_flow(
+    toss_context = _build_web_view_toss_context(repository, business_date)
+    toss_recent_flow = _build_web_view_toss_recent_flow(
         repository,
         business_date,
-        recent_snapshot_dates=recent_krx_snapshot_dates,
+        recent_snapshot_dates=recent_toss_snapshot_dates,
     )
-    krx_investor_flow = _build_web_view_krx_investor_flow_context(repository, business_date)
+    toss_investor_flow = _build_web_view_toss_investor_flow_context(repository, business_date)
     investor_flow_item = _build_stock_flow_source_freshness_item(
         repository,
         business_date,
@@ -32677,7 +32851,7 @@ def build_web_view_daily_snapshot(
     source_freshness_summary = _build_web_view_source_freshness_summary(
         business_date=business_date,
         report_count=report_count,
-        recent_krx_snapshot_dates=recent_krx_snapshot_dates,
+        recent_krx_snapshot_dates=recent_toss_snapshot_dates,
         recent_flow_dates=recent_flow_dates,
         toss_openapi_ready=_web_view_toss_openapi_ready(config),
         investor_flow_item=investor_flow_item,
@@ -32693,7 +32867,7 @@ def build_web_view_daily_snapshot(
         "summary_stock_count": len(summaries),
         "mapping_notice": category_contract["notice"],
         "category_contract": category_contract,
-        "market_reference_notice": "KRX 저장 스냅샷 기준입니다.",
+        "market_reference_notice": "Toss 20:00 저장 스냅샷 기준입니다.",
         "market_briefing": market_briefing,
         "market_commentary": market_commentary,
         "observation_summary": observation_summary,
@@ -32701,9 +32875,9 @@ def build_web_view_daily_snapshot(
         "priority_candidate_evidence": priority_candidate_snapshot,
         "news_observation_summary": news_observation_summary,
         "source_freshness_summary": source_freshness_summary,
-        "krx_context": krx_context,
-        "krx_recent_flow": krx_recent_flow,
-        "krx_investor_flow": krx_investor_flow,
+        "toss_context": toss_context,
+        "toss_recent_flow": toss_recent_flow,
+        "toss_investor_flow": toss_investor_flow,
         "stocks": [
             {
                 "business_date": summary.business_date.isoformat(),
@@ -32765,7 +32939,7 @@ def _build_web_view_source_freshness_summary(
     toss_openapi_ready: bool = False,
     investor_flow_item: dict[str, object] | None = None,
 ) -> dict:
-    krx_reference_date = recent_krx_snapshot_dates[0] if recent_krx_snapshot_dates else None
+    toss_reference_date = recent_krx_snapshot_dates[0] if recent_krx_snapshot_dates else None
     flow_reference_date = recent_flow_dates[0] if recent_flow_dates else None
     report_reference_date = business_date if report_count > 0 else None
     return {
@@ -32788,35 +32962,35 @@ def _build_web_view_source_freshness_summary(
                 notice="Stored Naver research reports for the selected date.",
             ),
             _web_view_source_freshness_item(
-                key="krx_market",
-                label="KRX market",
-                source="krx_open_api",
-                reference_date=krx_reference_date,
+                key="toss_market",
+                label="Toss market",
+                source="toss_openapi",
+                reference_date=toss_reference_date,
                 business_date=business_date,
-                available=krx_reference_date is not None,
-                data_scope="stored_stock_etf_index_daily",
-                notice="Stored KRX stock, ETF, and index daily snapshots.",
+                available=toss_reference_date is not None,
+                data_scope="stored_toss_close_market_snapshot",
+                notice="Stored Toss close snapshot for market, turnover, and indices.",
             ),
             _web_view_source_freshness_item(
-                key="etf_daily",
-                label="ETF daily",
-                source="krx_open_api",
-                reference_date=krx_reference_date,
+                key="toss_etf",
+                label="Toss ETF",
+                source="toss_openapi",
+                reference_date=toss_reference_date,
                 business_date=business_date,
-                available=krx_reference_date is not None,
-                data_scope="stored_krx_etf_daily_snapshot",
-                notice="Stored ETF daily turnover/NAV reference only; constituents are not loaded.",
+                available=toss_reference_date is not None,
+                data_scope="stored_toss_close_etf_snapshot",
+                notice="Stored Toss Top20 ETF turnover reference; constituents are not loaded.",
             ),
             investor_flow_item
             or _web_view_source_freshness_item(
                 key="investor_flow",
                 label="Investor flow",
-                source="krx_data_market",
+                source="toss_openapi",
                 reference_date=flow_reference_date,
                 business_date=business_date,
                 available=flow_reference_date is not None,
-                data_scope="stored_krx_data_market_sample",
-                notice="Stored KRX Data Marketplace investor flow sample.",
+                data_scope="stored_toss_close_market_flow",
+                notice="Stored Toss close market flow reference.",
             ),
             {
                 "key": "toss_openapi",
@@ -33346,7 +33520,9 @@ def _decision_journal_market_index_close(
     business_date: date,
     series: str,
 ) -> float | None:
-    rows = repository.list_market_index_daily(business_date, index_series=series, limit=20)
+    rows = repository.list_market_index_daily(
+        business_date, index_series=series, limit=20, source="toss_openapi"
+    )
     picked = _find_named_market_index(rows, series=series, name="코스닥" if series == "KOSDAQ" else "코스피")
     if picked is not None and picked.close_index is not None:
         return float(picked.close_index)
@@ -33947,13 +34123,9 @@ def _build_web_view_market_briefing_context(
     recent_flow_dates: list[date] | None = None,
     priority_stock_codes: tuple[str, ...] | list[str] | None = None,
 ) -> dict:
-    snapshot_dates = (
-        recent_krx_snapshot_dates
-        if recent_krx_snapshot_dates is not None
-        else repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=1)
-    )
+    snapshot_dates = repository.list_recent_toss_market_snapshot_dates(on_or_before=business_date, limit=1)
     reference_date = snapshot_dates[0] if snapshot_dates else None
-    indices = repository.list_market_index_daily(reference_date, limit=200) if reference_date else []
+    indices = repository.list_market_index_daily(reference_date, limit=200, source="toss_openapi") if reference_date else []
     kospi = _find_named_market_index(indices, series="KOSPI", name="코스피")
     kosdaq = _find_named_market_index(indices, series="KOSDAQ", name="코스닥")
     turnover_rows_by_market: dict[str, list[StockMarketDailySnapshot]] = {}
@@ -33961,19 +34133,15 @@ def _build_web_view_market_briefing_context(
         for market in ("KOSPI", "KOSDAQ"):
             turnover_rows_by_market[market] = [
                 item
-                for item in repository.list_stock_market_daily_by_turnover(reference_date, market=market, limit=3)
+                for item in repository.list_stock_market_daily_by_turnover(
+                    reference_date, market=market, limit=3, source="toss_openapi"
+                )
                 if item.turnover is not None
             ]
-    flow_dates = (
-        recent_flow_dates
-        if recent_flow_dates is not None
-        else repository.list_recent_investor_flow_dates(on_or_before=business_date, limit=1)
-    )
-    # Market briefing must not substitute an old market-wide sample for the
-    # current KRX reference date. Candidate-level [12009] remains separate.
-    flow_reference_date = flow_dates[0] if flow_dates and flow_dates[0] == reference_date else None
+    flow_reference_date = reference_date
     flow_market_rows = (
-        repository.list_market_investor_flow_daily(flow_reference_date, "STK")
+        repository.list_market_investor_flow_daily(flow_reference_date, "KOSPI", source="toss_openapi")
+        + repository.list_market_investor_flow_daily(flow_reference_date, "KOSDAQ", source="toss_openapi")
         if flow_reference_date
         else []
     )
@@ -34028,7 +34196,7 @@ def _build_web_view_market_briefing_context(
     notable_stocks = _build_web_view_market_briefing_notable_stocks(summaries)
     check_points = _web_view_market_briefing_check_points(check_point_lines)
     return {
-        "source": "stored_report_krx_market_briefing",
+        "source": "stored_report_toss_market_briefing",
         "live_fetch": False,
         "scoring": False,
         "recommendation": False,
@@ -34109,9 +34277,9 @@ def _web_view_time_slot_market_mood_card(
         if point and not _web_view_time_slot_market_mood_is_index_direction_point(point)
     ][:3]
     if not index_summary.get("exact_date_available"):
-        card_check_points.append("지수와 등락률은 최신 저장 KRX 기준일을 함께 확인")
+        card_check_points.append("지수와 등락률은 최신 저장 Toss 기준시각을 함께 확인")
     return {
-        "source": "stored_report_krx_market_mood_card",
+        "source": "stored_report_toss_market_mood_card",
         "read_only": True,
         "live_fetch": False,
         "scoring": False,
@@ -34120,7 +34288,7 @@ def _web_view_time_slot_market_mood_card(
         "manual_review_candidate": True,
         "business_date": business_date.isoformat(),
         "title": "국장 시장 분위기",
-        "reference_note": "당일 리포트와 저장된 KRX 참고값 기준",
+        "reference_note": "당일 리포트와 저장된 Toss 기준값 참고",
         "headline": headline,
         "sections": [
             {
@@ -34268,7 +34436,7 @@ def _web_view_market_reference_lines_from_indices(
         fragments.append(f"KOSDAQ {_format_index_level(kosdaq.close_index)} {_format_index_percent(kosdaq.change_percent)}")
     suffix = "" if reference_date == business_date else " / 리포트일 전 최신"
     return [
-        f"지수 참고 · {reference_date.strftime('%y.%m.%d')} KRX 저장값{suffix}",
+        f"지수 참고 · {reference_date.strftime('%y.%m.%d')} Toss 저장값{suffix}",
         "- " + " / ".join(fragments),
     ]
 
@@ -34291,7 +34459,7 @@ def _web_view_turnover_reference_lines_from_rows(
     if not lines:
         return []
     suffix = "" if reference_date == business_date else " / 리포트일 전 최신"
-    return [f"거래대금 참고 · {reference_date.strftime('%y.%m.%d')} KRX 저장값{suffix}", *lines]
+    return [f"거래대금 참고 · {reference_date.strftime('%y.%m.%d')} Toss 저장값{suffix}", *lines]
 
 
 def _web_view_flow_reference_lines_from_rows(
@@ -34304,7 +34472,7 @@ def _web_view_flow_reference_lines_from_rows(
         return []
     by_investor = {row.investor_type: row for row in market_rows}
     pieces: list[str] = []
-    for label, investor_key in (("개인", "개인"), ("외국인", "외국인"), ("기관", "기관합계")):
+    for label, investor_key in (("개인", "개인"), ("외국인", "외국인"), ("기관", "기관")):
         row = by_investor.get(investor_key)
         direction = _flow_direction_label(row.net_buy_amount if row else None)
         if direction:
@@ -34313,7 +34481,7 @@ def _web_view_flow_reference_lines_from_rows(
         return []
     suffix = "" if reference_date == business_date else " / 리포트일 전 최신"
     return [
-        f"수급 참고 · {reference_date.strftime('%y.%m.%d')} KOSPI 저장값{suffix}",
+        f"수급 참고 · {reference_date.strftime('%y.%m.%d')} Toss KOSPI/KOSDAQ 저장값{suffix}",
         "- " + " / ".join(pieces),
     ]
 
@@ -35164,8 +35332,8 @@ def _web_view_stock_flow_window_item_from_rows(
         "windows": windows,
         "persistence": persistence,
         "display": (
-            f"{summary.stock_name} 외국인 {_format_flow_reference_amount(latest['foreign_net_buy_amount'])} · "
-            f"기관 {_format_flow_reference_amount(latest['institution_net_buy_amount'])}"
+            f"{summary.stock_name} 외국인 {_format_flow_reference_volume(latest['foreign_net_buy_amount'])} · "
+            f"기관 {_format_flow_reference_volume(latest['institution_net_buy_amount'])}"
             f"{persistence_text}"
         ),
     }
@@ -35181,11 +35349,11 @@ def _load_stock_flow_window_rows(
     with repository.connect() as connection:
         rows = connection.execute(
             """
-            SELECT business_date, investor_type, net_buy_amount
+            SELECT business_date, investor_type, net_buy_volume AS net_buy_amount
             FROM stock_investor_flow_daily
             WHERE business_date BETWEEN ? AND ?
               AND stock_code = ?
-              AND source = 'krx_data_market'
+              AND source = 'toss_openapi'
             ORDER BY business_date DESC, investor_type ASC
             """,
             (from_date.isoformat(), business_date.isoformat(), stock_code),
@@ -35280,6 +35448,16 @@ def _format_flow_reference_amount(value: int | None) -> str:
     return "중립"
 
 
+def _format_flow_reference_volume(value: int | None) -> str:
+    if value is None:
+        return "-"
+    if value > 0:
+        return f"순매수 {value:,}주"
+    if value < 0:
+        return f"순매도 {abs(value):,}주"
+    return "중립"
+
+
 def _web_view_price_volume_position_item(
     repository: StockMonitorRepository,
     summary: DailyStockSummary,
@@ -35292,6 +35470,7 @@ def _web_view_price_volume_position_item(
         business_date,
         summary.stock_code,
         limit=252,
+        source="toss_openapi",
     )
     return _web_view_price_volume_position_item_from_rows(summary, rows=rows)
 
@@ -35436,9 +35615,9 @@ def _build_web_view_market_briefing_index_summary(
     repository: StockMonitorRepository,
     business_date: date,
 ) -> dict:
-    snapshot_dates = repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=1)
+    snapshot_dates = repository.list_recent_toss_market_snapshot_dates(on_or_before=business_date, limit=1)
     reference_date = snapshot_dates[0] if snapshot_dates else None
-    indices = repository.list_market_index_daily(reference_date, limit=200) if reference_date else []
+    indices = repository.list_market_index_daily(reference_date, limit=200, source="toss_openapi") if reference_date else []
     picked = [
         item
         for item in (
@@ -35462,7 +35641,7 @@ def _build_web_view_market_briefing_turnover_summary(
     *,
     limit_per_market: int = 2,
 ) -> dict:
-    snapshot_dates = repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=1)
+    snapshot_dates = repository.list_recent_toss_market_snapshot_dates(on_or_before=business_date, limit=1)
     reference_date = snapshot_dates[0] if snapshot_dates else None
     markets: list[dict[str, object]] = []
     if reference_date:
@@ -36630,12 +36809,13 @@ def build_web_view_candidate_evidence_snapshot(
         for item in repository.list_stock_market_daily_for_codes(
             business_date,
             [summary.stock_code for summary in summaries if summary.stock_code],
+            source="toss_openapi",
         )
     }
     market_flow_rows: list[MarketInvestorFlowDaily] = []
     rank_rows: list[InvestorNetBuyTopDaily] = []
-    for market in ("STK", "KSQ", "ALL"):
-        market_flow_rows.extend(repository.list_market_investor_flow_daily(business_date, market))
+    for market in ("KOSPI", "KOSDAQ"):
+        market_flow_rows.extend(repository.list_market_investor_flow_daily(business_date, market, source="toss_openapi"))
         if include_internal:
             rank_rows.extend(repository.list_investor_net_buy_top_daily(business_date, market, "foreign", limit=20))
     foreign_rank_by_code = {
@@ -36888,7 +37068,7 @@ def build_web_view_candidate_evidence_snapshot(
         "live_fetch": False,
         "scoring": False,
         "recommendation": False,
-        "display_policy": "관찰 후보는 저장된 리포트와 KRX/수급 참고값을 확인용으로 묶어 보여줍니다.",
+        "display_policy": "관찰 후보는 저장된 리포트와 Toss 저장/수급 참고값을 확인용으로 묶어 보여줍니다.",
         "notice": "오늘의 관찰 후보는 저장된 리포트/KRX/[12009] 수급 참고값 기준입니다. 실시간 시세가 아닙니다.",
         "market_flow_context": [_web_view_market_investor_flow_item(item) for item in sorted(
             market_flow_rows,
@@ -37160,7 +37340,7 @@ def _web_view_candidate_value_profile(
     elif target_only and news_collected_no_match and (not has_market_reference or not has_stock_flow):
         observation_priority = "정보 보강"
         value_label = "정보 보강"
-        value_reason = "목표가 변화 단독이고 뉴스 매칭/KRX/수급 확인이 부족합니다."
+        value_reason = "목표가 변화 단독이고 뉴스 매칭/Toss 저장/수급 확인이 부족합니다."
     elif news_collected_no_match:
         observation_priority = str(candidate_profile.get("observation_priority") or "확인 후보")
         value_label = "뉴스 매칭 없음"
@@ -37963,7 +38143,7 @@ def _web_view_opinion_display(value: str | None) -> str:
     return f"증권사 의견: {label}"
 
 
-def _build_web_view_krx_context(
+def _build_web_view_toss_context(
     repository: StockMonitorRepository,
     business_date: date,
     *,
@@ -37971,19 +38151,19 @@ def _build_web_view_krx_context(
     etf_limit: int = 5,
     index_limit: int = 10,
 ) -> dict:
-    top_kospi = repository.list_stock_market_daily_by_turnover(business_date, market="KOSPI", limit=stock_limit)
-    top_kosdaq = repository.list_stock_market_daily_by_turnover(business_date, market="KOSDAQ", limit=stock_limit)
-    top_etfs = repository.list_etf_daily_by_turnover(business_date, limit=etf_limit)
-    indices = repository.list_market_index_daily(business_date, limit=index_limit)
+    top_kospi = repository.list_stock_market_daily_by_turnover(business_date, market="KOSPI", limit=stock_limit, source="toss_openapi")
+    top_kosdaq = repository.list_stock_market_daily_by_turnover(business_date, market="KOSDAQ", limit=stock_limit, source="toss_openapi")
+    top_etfs = repository.list_etf_daily_by_turnover(business_date, limit=etf_limit, source="toss_openapi")
+    indices = repository.list_market_index_daily(business_date, limit=index_limit, source="toss_openapi")
     available = bool(top_kospi or top_kosdaq or top_etfs or indices)
     return {
         "available": available,
-        "source": "krx" if available else None,
+        "source": "toss_openapi" if available else None,
         "snapshot_date": business_date.isoformat() if available else None,
         "notice": (
-            "선택 날짜의 KRX 저장 스냅샷 기준입니다. 실시간값이나 확정 판단은 포함하지 않습니다."
+            "선택 날짜의 Toss 20:00 저장 스냅샷 기준입니다. 실시간값이나 확정 판단은 포함하지 않습니다."
             if available
-            else "선택 날짜의 KRX 저장 스냅샷이 없습니다. 최신 날짜 값으로 대체하지 않습니다."
+            else "선택 날짜의 Toss 20:00 저장 스냅샷이 없습니다. 최신 날짜 값으로 대체하지 않습니다."
         ),
         "top_kospi_by_turnover": [_web_view_stock_market_item(item) for item in top_kospi],
         "top_kosdaq_by_turnover": [_web_view_stock_market_item(item) for item in top_kosdaq],
@@ -37992,7 +38172,7 @@ def _build_web_view_krx_context(
     }
 
 
-def _build_web_view_krx_recent_flow(
+def _build_web_view_toss_recent_flow(
     repository: StockMonitorRepository,
     business_date: date,
     *,
@@ -38002,13 +38182,13 @@ def _build_web_view_krx_recent_flow(
     snapshot_dates = (
         recent_snapshot_dates[:limit]
         if recent_snapshot_dates is not None
-        else repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=limit)
+        else repository.list_recent_toss_market_snapshot_dates(on_or_before=business_date, limit=limit)
     )
     items = []
     for snapshot_date in snapshot_dates:
-        kospi_top = repository.list_stock_market_daily_by_turnover(snapshot_date, market="KOSPI", limit=1)
-        kosdaq_top = repository.list_stock_market_daily_by_turnover(snapshot_date, market="KOSDAQ", limit=1)
-        etf_top = repository.list_etf_daily_by_turnover(snapshot_date, limit=1)
+        kospi_top = repository.list_stock_market_daily_by_turnover(snapshot_date, market="KOSPI", limit=1, source="toss_openapi")
+        kosdaq_top = repository.list_stock_market_daily_by_turnover(snapshot_date, market="KOSDAQ", limit=1, source="toss_openapi")
+        etf_top = repository.list_etf_daily_by_turnover(snapshot_date, limit=1, source="toss_openapi")
         items.append(
             {
                 "business_date": snapshot_date.isoformat(),
@@ -38019,16 +38199,16 @@ def _build_web_view_krx_recent_flow(
         )
     return {
         "available": bool(items),
-        "source": "krx" if items else None,
+        "source": "toss_openapi" if items else None,
         "business_date": business_date.isoformat(),
         "reference_date": snapshot_dates[0].isoformat() if snapshot_dates else None,
         "exact_date_available": bool(snapshot_dates and snapshot_dates[0] == business_date),
         "notice": (
-            "선택 날짜를 포함한 최근 KRX 저장 스냅샷 기준입니다. 실시간값이나 확정 판단은 포함하지 않습니다."
+            "선택 날짜를 포함한 최근 Toss 20:00 저장 스냅샷 기준입니다. 실시간값이나 확정 판단은 포함하지 않습니다."
             if items and snapshot_dates and snapshot_dates[0] == business_date
-            else "선택 날짜의 KRX 저장값이 없어 최근 KRX 저장 스냅샷 기준 흐름만 표시합니다."
+            else "선택 날짜의 Toss 저장값이 없어 최근 Toss 20:00 저장 스냅샷 기준 흐름만 표시합니다."
             if items
-            else "선택 날짜 이전 또는 해당 날짜의 KRX 저장 스냅샷이 없습니다."
+            else "선택 날짜 이전 또는 해당 날짜의 Toss 저장 스냅샷이 없습니다."
         ),
         "items": items,
     }
@@ -38043,12 +38223,12 @@ def build_web_view_etf_trend_snapshot(
     now: datetime | None = None,
 ) -> dict:
     current = now or datetime.now(ZoneInfo(config.timezone))
-    snapshot_dates = repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=limit)
+    snapshot_dates = repository.list_recent_toss_market_snapshot_dates(on_or_before=business_date, limit=limit)
     reference_date = snapshot_dates[0] if snapshot_dates else None
     reference_status = _web_view_etf_reference_status(reference_date, business_date)
     items = []
     for snapshot_date in snapshot_dates:
-        top_etfs = repository.list_etf_daily_by_turnover(snapshot_date, limit=5)
+        top_etfs = repository.list_etf_daily_by_turnover(snapshot_date, limit=5, source="toss_openapi")
         items.append(
             {
                 "business_date": snapshot_date.isoformat(),
@@ -38065,18 +38245,18 @@ def build_web_view_etf_trend_snapshot(
         "reference_status": reference_status,
         "exact_date_available": reference_status == "exact",
         "available": bool(items),
-        "source": "krx" if items else None,
-        "data_scope": "stored_krx_snapshot",
-        "basis": "KRX ETF 일별매매정보",
+        "source": "toss_openapi" if items else None,
+        "data_scope": "stored_toss_close_snapshot",
+        "basis": "Toss 거래대금 상위 ETF",
         "display_label": "ETF 순환매 참고" if items else "ETF 저장값 없음",
         "constituents_available": False,
         "composition_scope": "구성종목 미포함",
         "live_fetch": False,
         "scoring": False,
         "notice": (
-            "선택 날짜 이하 최근 KRX 저장 스냅샷의 ETF 거래대금/NAV/기초지수 흐름입니다. 구성종목이 아닌 KRX ETF 일별매매정보 기준입니다."
+            "선택 날짜 이하 최근 Toss 20:00 저장 스냅샷의 ETF 거래대금 흐름입니다. 구성종목은 포함하지 않습니다."
             if items and reference_status == "exact"
-            else f"선택 날짜의 ETF 저장값이 없어 {reference_date.isoformat()} 기준 ETF 흐름만 표시합니다. 구성종목이 아닌 KRX ETF 일별매매정보 기준입니다."
+            else f"선택 날짜의 ETF 저장값이 없어 {reference_date.isoformat()} 기준 Toss ETF 흐름만 표시합니다."
             if items and reference_date
             else "선택 날짜 이전 또는 해당 날짜의 ETF 저장 스냅샷이 없습니다."
         ),
@@ -38084,13 +38264,13 @@ def build_web_view_etf_trend_snapshot(
     }
 
 
-def _build_web_view_krx_investor_flow_context(
+def _build_web_view_toss_investor_flow_context(
     repository: StockMonitorRepository,
     business_date: date,
 ) -> dict:
     market_rows: list[MarketInvestorFlowDaily] = []
-    for market in ("STK", "KSQ", "ALL"):
-        market_rows.extend(repository.list_market_investor_flow_daily(business_date, market))
+    for market in ("KOSPI", "KOSDAQ"):
+        market_rows.extend(repository.list_market_investor_flow_daily(business_date, market, source="toss_openapi"))
     market_rows = sorted(
         market_rows,
         key=lambda item: (_web_view_market_sort_key(item.market), _web_view_investor_sort_key(item.investor_type)),
@@ -38098,15 +38278,15 @@ def _build_web_view_krx_investor_flow_context(
     available = bool(market_rows)
     return {
         "available": available,
-        "source": "krx_data_market" if available else None,
-        "data_scope": "stored_krx_data_market_sample",
+        "source": "toss_openapi" if available else None,
+        "data_scope": "stored_toss_close_market_flow",
         "live_fetch": False,
         "scoring": False,
         "snapshot_date": business_date.isoformat() if available else None,
         "notice": (
-            "저장된 KRX 수급 데이터 기준입니다. 확정 판단은 포함하지 않습니다."
+            "저장된 Toss 20:00 시장 수급 기준입니다. 확정 판단은 포함하지 않습니다."
             if available
-            else "선택 날짜의 KRX 수급 데이터가 없습니다."
+            else "선택 날짜의 Toss 시장 수급 데이터가 없습니다."
         ),
         "market_flows": [_web_view_market_investor_flow_item(item) for item in market_rows],
     }
@@ -38121,15 +38301,14 @@ def build_web_view_flow_trend_snapshot(
     now: datetime | None = None,
 ) -> dict:
     current = now or datetime.now(ZoneInfo(config.timezone))
-    snapshot_dates = repository.list_recent_market_investor_flow_dates(on_or_before=business_date, limit=limit)
-    latest_expected_date = previous_business_day(business_date, config.holiday_overrides)
-    if snapshot_dates and snapshot_dates[0] < latest_expected_date:
-        snapshot_dates = []
+    snapshot_dates = repository.list_recent_market_investor_flow_dates(
+        on_or_before=business_date, source="toss_openapi", limit=limit
+    )
     items = []
     for snapshot_date in snapshot_dates:
         market_rows: list[MarketInvestorFlowDaily] = []
-        for market in ("STK", "KSQ"):
-            market_rows.extend(repository.list_market_investor_flow_daily(snapshot_date, market))
+        for market in ("KOSPI", "KOSDAQ"):
+            market_rows.extend(repository.list_market_investor_flow_daily(snapshot_date, market, source="toss_openapi"))
         market_rows = sorted(
             market_rows,
             key=lambda item: (_web_view_market_sort_key(item.market), _web_view_investor_sort_key(item.investor_type)),
@@ -38149,12 +38328,12 @@ def build_web_view_flow_trend_snapshot(
         "reference_date": snapshot_dates[0].isoformat() if snapshot_dates else None,
         "exact_date_available": bool(snapshot_dates and snapshot_dates[0] == business_date),
         "available": bool(items),
-        "source": "krx_data_market" if items else None,
-        "data_scope": "stored_krx_data_market_sample",
+        "source": "toss_openapi" if items else None,
+        "data_scope": "stored_toss_close_market_flow",
         "live_fetch": False,
         "scoring": False,
         "notice": (
-            "선택 날짜를 포함한 최근 저장 수급 데이터 기준입니다. 실시간 호출은 포함하지 않습니다."
+            "선택 날짜를 포함한 최근 Toss 20:00 시장 수급 기준입니다. 실시간 호출은 포함하지 않습니다."
             if items
             else "선택 날짜 이전 또는 해당 날짜의 저장 수급 데이터가 없습니다."
         ),
@@ -38168,20 +38347,20 @@ def _build_web_view_stock_investor_flow_context(
     stock_code: str,
 ) -> dict:
     rows = sorted(
-        repository.list_stock_investor_flow_daily(business_date, stock_code),
+        repository.list_stock_investor_flow_daily(business_date, stock_code, source="toss_openapi"),
         key=lambda item: _web_view_investor_sort_key(item.investor_type),
     )
     return {
         "available": bool(rows),
-        "source": "krx_data_market" if rows else None,
-        "data_scope": "stored_krx_data_market_sample",
+        "source": "toss_openapi" if rows else None,
+        "data_scope": "stored_toss_close_priority_flow",
         "live_fetch": False,
         "scoring": False,
         "snapshot_date": business_date.isoformat() if rows else None,
         "notice": (
-            "저장된 KRX 수급 데이터 기준 종목별 투자자 수급 참고입니다. 확정 판단은 포함하지 않습니다."
+            "저장된 Toss 20:00 기준 우선 후보 수급 참고입니다. 확정 판단은 포함하지 않습니다."
             if rows
-            else "선택 종목의 KRX 수급 데이터가 없습니다."
+            else "선택 종목의 Toss 우선 후보 수급 데이터가 없습니다."
         ),
         "rows": [_web_view_stock_investor_flow_item(item) for item in rows],
     }
@@ -38209,17 +38388,19 @@ def _build_web_view_stock_volume_context(
     *,
     limit: int = 20,
 ) -> dict:
-    rows = repository.list_stock_market_daily_for_code_on_or_before(business_date, stock_code, limit=limit)
+    rows = repository.list_stock_market_daily_for_code_on_or_before(
+        business_date, stock_code, limit=limit, source="toss_openapi"
+    )
     reference_date = rows[0].business_date if rows else None
     return {
         "available": bool(rows),
-        "source": "krx" if rows else None,
+        "source": "toss_openapi" if rows else None,
         "live_fetch": False,
         "business_date": business_date.isoformat(),
         "reference_date": reference_date.isoformat() if reference_date else None,
         "exact_date_available": bool(reference_date == business_date) if reference_date else False,
         "items": [_web_view_stock_volume_item(item) for item in rows],
-        "notice": "저장된 KRX 거래량 기준입니다." if rows else "선택 종목의 거래량 데이터가 없습니다.",
+        "notice": "저장된 Toss 20:00 거래량 기준입니다." if rows else "선택 종목의 거래량 데이터가 없습니다.",
     }
 
 
@@ -38253,12 +38434,14 @@ def _build_web_view_stock_investor_flow_tabs(
     *,
     limit: int = 31,
 ) -> dict:
-    dates = repository.list_recent_investor_flow_dates(on_or_before=business_date, limit=max(limit * 3, limit))
+    dates = repository.list_recent_investor_flow_dates(
+        on_or_before=business_date, source="toss_openapi", limit=max(limit * 3, limit)
+    )
     retail_rows: list[dict] = []
     institution_rows: list[dict] = []
     institution_labels = ["금융투자", "보험", "투신", "사모", "은행", "연기금 등", "기타법인", "기타금융"]
     for flow_date in dates:
-        rows = repository.list_stock_investor_flow_daily(flow_date, stock_code)
+        rows = repository.list_stock_investor_flow_daily(flow_date, stock_code, source="toss_openapi")
         if not rows:
             continue
         retail_rows.append(
@@ -38289,7 +38472,7 @@ def _build_web_view_stock_investor_flow_tabs(
     reference_date = date.fromisoformat(retail_rows[0]["business_date"]) if retail_rows else None
     return {
         "available": bool(retail_rows or institution_rows),
-        "source": "krx_data_market" if retail_rows or institution_rows else None,
+        "source": "toss_openapi" if retail_rows or institution_rows else None,
         "live_fetch": False,
         "business_date": business_date.isoformat(),
         "reference_date": reference_date.isoformat() if reference_date else None,
@@ -38301,9 +38484,9 @@ def _build_web_view_stock_investor_flow_tabs(
             "rows": institution_rows,
         },
         "notice": (
-            "저장된 KRX 종목별 투자자 수급 기준입니다. 종목별 수급은 화면 기본 노출 후보 중심으로 수집합니다."
+            "저장된 Toss 20:00 우선 후보 수급 기준입니다."
             if retail_rows or institution_rows
-            else "선택 종목의 저장 수급 데이터가 없습니다. 현재 종목별 수급은 화면 기본 노출 후보 중심으로 수집합니다."
+            else "선택 종목의 Toss 우선 후보 수급 데이터가 없습니다."
         ),
     }
 
@@ -38318,7 +38501,7 @@ def build_web_view_stock_detail_snapshot(
 ) -> dict:
     current = now or datetime.now(ZoneInfo(config.timezone))
     reports = repository.list_reports_for_stock_on_business_date(business_date, stock_code)
-    market_refs = repository.list_stock_market_daily_for_codes(business_date, [stock_code])
+    market_refs = repository.list_stock_market_daily_for_codes(business_date, [stock_code], source="toss_openapi")
     market_reference = market_refs[0] if market_refs else None
     krx_metadata = repository.get_latest_krx_stock_metadata(stock_code)
     stock_metadata = repository.get_stock_metadata(stock_code)
@@ -38449,6 +38632,7 @@ def build_web_view_category_detail_snapshot(
         for item in repository.list_stock_market_daily_for_codes(
             business_date,
             [summary.stock_code for summary in summaries if summary.stock_code],
+            source="toss_openapi",
         )
     }
     return {
@@ -38543,29 +38727,42 @@ def build_web_view_market_snapshot(
     now: datetime | None = None,
 ) -> dict:
     current = now or datetime.now(ZoneInfo(config.timezone))
-    krx_snapshot_date = repository.latest_krx_snapshot_date()
-    krx_top_kospi_stocks = (
-        repository.list_stock_market_daily_by_turnover(krx_snapshot_date, market="KOSPI", limit=5)
-        if krx_snapshot_date
+    toss_snapshot_date = repository.latest_toss_market_snapshot_date()
+    toss_top_kospi_stocks = (
+        repository.list_stock_market_daily_by_turnover(
+            toss_snapshot_date, market="KOSPI", limit=5, source="toss_openapi"
+        )
+        if toss_snapshot_date
         else []
     )
-    krx_top_kosdaq_stocks = (
-        repository.list_stock_market_daily_by_turnover(krx_snapshot_date, market="KOSDAQ", limit=5)
-        if krx_snapshot_date
+    toss_top_kosdaq_stocks = (
+        repository.list_stock_market_daily_by_turnover(
+            toss_snapshot_date, market="KOSDAQ", limit=5, source="toss_openapi"
+        )
+        if toss_snapshot_date
         else []
     )
-    krx_top_etfs = repository.list_etf_daily_by_turnover(krx_snapshot_date, limit=5) if krx_snapshot_date else []
-    krx_market_indices = repository.list_market_index_daily(krx_snapshot_date, limit=10) if krx_snapshot_date else []
+    toss_top_etfs = (
+        repository.list_etf_daily_by_turnover(toss_snapshot_date, limit=5, source="toss_openapi")
+        if toss_snapshot_date
+        else []
+    )
+    toss_market_indices = (
+        repository.list_market_index_daily(toss_snapshot_date, limit=10, source="toss_openapi")
+        if toss_snapshot_date
+        else []
+    )
     return {
         "now": current.isoformat(),
         "timezone": config.timezone,
         "surface": "web-view",
         "read_only": True,
-        "krx_snapshot_date": krx_snapshot_date.isoformat() if krx_snapshot_date else None,
-        "krx_top_kospi_stocks": [_web_view_stock_market_item(item) for item in krx_top_kospi_stocks],
-        "krx_top_kosdaq_stocks": [_web_view_stock_market_item(item) for item in krx_top_kosdaq_stocks],
-        "krx_top_etfs": [_web_view_etf_item(item) for item in krx_top_etfs],
-        "krx_market_indices": [_web_view_index_item(item) for item in krx_market_indices],
+        "snapshot_source": "toss_openapi",
+        "snapshot_date": toss_snapshot_date.isoformat() if toss_snapshot_date else None,
+        "top_kospi_stocks": [_web_view_stock_market_item(item) for item in toss_top_kospi_stocks],
+        "top_kosdaq_stocks": [_web_view_stock_market_item(item) for item in toss_top_kosdaq_stocks],
+        "top_etfs": [_web_view_etf_item(item) for item in toss_top_etfs],
+        "market_indices": [_web_view_index_item(item) for item in toss_market_indices],
     }
 
 

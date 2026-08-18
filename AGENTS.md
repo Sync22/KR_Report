@@ -48,8 +48,7 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
 - 한국 영업일 장중 보고서 polling
 - 신규 보고서 감지
 - 종목별 일일 요약
-- KRX Open API 일봉/ETF/index 누락 백필
-- KRX Data Marketplace `[12009]` 투자자 수급의 제한적 자동 백필
+- Toss 20:00 시장 종가 스냅샷(지수, 거래대금 Top20, 시장 수급, 우선 후보 수급)
 - Telegram 알림 및 명령 worker
 - Task Scheduler 기반 운영
 - `admin-gui` 와 `web-view` 분리 운영
@@ -59,7 +58,7 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
 - `admin-gui`는 operator-only, `web-view`는 friend-facing GET-only surface다.
 - public trading recommendation, buy/sell signal, numeric score는 계속 금지다.
 - `web-view` 기본 로드는 stored-data 기반이어야 한다.
-- KRX Data Marketplace 자동 수집은 anchor-day mentioned stocks + stock-level `[12009]` + recent 31-day window까지만 허용한다.
+- KRX 저장 행은 과거 분석/복기 전용으로 유지하며, 신규 웹뷰·스케줄러 시장 기준값은 Toss 20:00 저장 스냅샷을 사용한다.
 - `.env` raw login 확인이 가능하면 browser login automation보다 우선한다.
 - 외부 실험 도구/라이브러리는 production runtime, scheduler task, public `web-view` 기능으로 바로 연결하지 않는다.
 
@@ -71,7 +70,7 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
 - scheduled run 검증
 - Telegram paging / retry / outbox 상태 안전성
 - `web-view` 품질과 public-safe 노출 경계
-- KRX latest-date evidence와 backfill 판단 정확성
+- Toss 20:00 종가 스냅샷의 완결성과 기준일 정확성
 - schema / replay / migration 안전성
 
 ## Important Working Rules

@@ -76,12 +76,13 @@ def _write_required_migration_entries(archive: zipfile.ZipFile) -> None:
         archive.writestr(f"02.Stock_Moniter/{entry}", "required\n")
 
 
-def test_register_task_scheduler_keeps_krx_flow_reminder_opt_in() -> None:
+def test_register_task_scheduler_removes_legacy_krx_tasks() -> None:
     script = (PROJECT_ROOT / "scripts" / "register_task_scheduler_tasks.ps1").read_text(encoding="utf-8")
 
-    assert "[switch]$IncludeKrxFlowReminder" in script
-    assert "if ($IncludeKrxFlowReminder)" in script
-    assert "[switch]$SkipKrxFlowReminder" not in script
+    assert 'Remove-LegacyTask -TaskName "$TaskPrefix-KrxDailyBackfill"' in script
+    assert 'Remove-LegacyTask -TaskName "$TaskPrefix-KrxMentionedFlowBackfill"' in script
+    assert 'Remove-LegacyTask -TaskName "$TaskPrefix-KrxFlowLoginReminder"' in script
+    assert 'Remove-LegacyTask -TaskName "$TaskPrefix-TossPriorityBaseline"' in script
 
 
 def test_scheduler_wrappers_require_project_venv_python() -> None:
@@ -108,13 +109,12 @@ def test_scheduler_registration_resolves_project_venv_before_creating_tasks() ->
         assert "Resolve-StockMonitorPython" in script
 
 
-def test_register_task_scheduler_keeps_toss_market_context_capture_opt_in() -> None:
+def test_register_task_scheduler_uses_toss_close_snapshot_at_2000() -> None:
     script = (PROJECT_ROOT / "scripts" / "register_task_scheduler_tasks.ps1").read_text(encoding="utf-8")
 
-    assert '[string]$TossMarketContextCaptureTime = "15:00"' in script
-    assert "[switch]$IncludeTossMarketContextCapture" in script
-    assert "if ($IncludeTossMarketContextCapture)" in script
-    assert "run_scheduled_toss_market_context_capture.ps1" in script
+    assert '[string]$TossPriorityBaselineTime = "20:00"' in script
+    assert "run_scheduled_toss_priority_baseline.ps1" in script
+    assert "TossMarketContextCaptureTime" not in script
 
 
 def test_krx_openapi_availability_probe_is_not_registered_by_default() -> None:
@@ -131,13 +131,11 @@ def test_krx_openapi_availability_probe_is_not_registered_by_default() -> None:
         assert "run_krx_openapi_availability_probe.ps1" not in script
 
 
-def test_krx_daily_backfill_defaults_to_next_business_day_official_window() -> None:
+def test_register_task_scheduler_does_not_register_krx_daily_backfill() -> None:
     script = (PROJECT_ROOT / "scripts" / "register_task_scheduler_tasks.ps1").read_text(encoding="utf-8")
 
-    assert '[string]$KrxDailyBackfillTime = "08:10"' in script
-    assert '[string]$KrxDailyBackfillEnd = "08:10"' in script
-    assert '[string]$KrxDailyBackfillTime = "00:10"' not in script
-    assert '[string]$KrxDailyBackfillEnd = "12:10"' not in script
+    assert "KrxDailyBackfillTime" not in script
+    assert "run_scheduled_krx_daily_backfill.ps1" not in script
 
 
 def test_create_migration_archive_excludes_secrets_and_transient_files_by_default() -> None:
@@ -629,7 +627,7 @@ def test_register_task_scheduler_tasks_registers_toss_priority_baseline_at_2000(
     assert '[string]$TossPriorityBaselineTime = "20:00"' in script
     assert "[switch]$SkipTossPriorityBaseline" in script
     assert "run_scheduled_toss_priority_baseline.ps1" in script
-    assert "$TaskPrefix-TossPriorityBaseline" in script
+    assert "$TaskPrefix-TossCloseSnapshot" in script
     assert "-StartWhenAvailable $false" in script
 
 
@@ -639,7 +637,6 @@ def test_verify_task_scheduler_registration_checks_expected_tasks_and_actions() 
     assert '[string]$TaskPrefix = "StockMonitor"' in script
     assert "[string]$PythonExe" in script
     assert "[switch]$IncludeShutdown" in script
-    assert "[switch]$IncludeKrxFlowReminder" in script
     assert "Get-ScheduledTask" in script
     assert "Get-ScheduledTaskInfo" in script
     assert "Task Scheduler metadata access denied" in script
@@ -649,30 +646,24 @@ def test_verify_task_scheduler_registration_checks_expected_tasks_and_actions() 
     assert "0x80041003" in script
     assert "PermissionDenied" in script
     assert "Get-ExpectedScheduledTask" in script
-    assert "StockMonitor-KrxDailyBackfill" in script
     assert "StockMonitor-Notify" in script
     assert "StockMonitor-Poll" in script
-    assert "StockMonitor-KrxMentionedFlowBackfill" in script
     assert "StockMonitor-MarketBriefingMood" in script
     assert "StockMonitor-MarketBriefingLunch" in script
     assert "StockMonitor-MarketBriefingPreclose" in script
     assert "StockMonitor-TelegramCommands" in script
     assert "StockMonitor-WebViewHourlyRestart" in script
-    assert "StockMonitor-TossPriorityBaseline" in script
-    assert "StockMonitor-KrxFlowLoginReminder" in script
+    assert "StockMonitor-TossCloseSnapshot" in script
     assert "StockMonitor-Shutdown" in script
-    assert "run_scheduled_krx_daily_backfill.ps1" in script
     assert "run_scheduled_notify.ps1" in script
     assert "run_scheduled_poll.ps1" in script
-    assert "run_scheduled_krx_mentioned_flow_backfill.ps1" in script
     assert "run_scheduled_market_briefing_slot.ps1" in script
     assert "run_scheduled_toss_priority_baseline.ps1" in script
     assert "run_process_telegram_commands.ps1" in script
     assert "restart_web_view.ps1" in script
-    assert "run_krx_flow_login_reminder.ps1" in script
     assert "run_scheduled_shutdown.ps1" in script
     assert "if ($IncludeShutdown)" in script
-    assert "if ($IncludeKrxFlowReminder)" in script
+    assert "Legacy KRX or duplicate Toss task is registered" in script
     assert "$unexpectedShutdownTaskName" in script
     assert "Unexpected desktop validation shutdown task is registered" in script
     assert "Task scheduler registration verified" in script
@@ -682,13 +673,10 @@ def test_register_mini_pc_scheduler_tasks_skips_shutdown_by_default() -> None:
     script = (PROJECT_ROOT / "scripts" / "register_mini_pc_scheduler_tasks.ps1").read_text(encoding="utf-8")
 
     assert "[string]$PythonExe" in script
-    assert "[switch]$IncludeKrxFlowReminder" in script
     assert "register_task_scheduler_tasks.ps1" in script
-    assert "IncludeKrxFlowReminder = $true" in script
     assert "SkipShutdown = $true" in script
     assert "verify_task_scheduler_registration.ps1" in script
-    assert "$verifyArgs.IncludeKrxFlowReminder = $true" in script
     assert "StockMonitor-Shutdown is intentionally not registered" in script
     assert "StockMonitor-WebViewHourlyRestart" in script
-    assert "StockMonitor-TossPriorityBaseline" in script
+    assert "StockMonitor-TossCloseSnapshot" in script
     assert "web_view_hourly_restart" in script

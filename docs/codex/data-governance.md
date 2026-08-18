@@ -20,6 +20,8 @@ Use it before changing parser, summary, Telegram, admin-gui, or web-view behavio
 
 Missing or non-actionable source values are not data points.
 
+Current operating ownership: web-view market, ETF, and investor-flow snapshots are written from the bounded Toss `20:00` close capture. Existing KRX rows are retained historical data only; they must not be selected as a current-display fallback.
+
 They can be preserved for detail review, but they must not distort aggregate calculations, rankings, ranges, or representative labels.
 
 A completed news collection with no matched article is a coverage result, not negative evidence. Show `매칭 뉴스 없음` clearly, but do not lower a report/market-supported observation candidate solely because the bounded collection returned zero matches. Direct positive or direct caution evidence may change observation ordering; an empty match must not cause the top-two cohort to churn into newly uncollected rows.

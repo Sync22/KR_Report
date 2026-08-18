@@ -2561,12 +2561,17 @@ class StockMonitorRepository:
         *,
         market: str | None = None,
         limit: int = 10,
+        source: str | None = None,
     ) -> list[StockMarketDailySnapshot]:
         params: list[object] = [business_date.isoformat()]
         market_clause = ""
+        source_clause = ""
         if market:
             market_clause = "AND market = ?"
             params.append(market)
+        if source:
+            source_clause = "AND source = ?"
+            params.append(source)
         params.append(limit)
         with self.connect() as connection:
             rows = connection.execute(
@@ -2579,12 +2584,24 @@ class StockMonitorRepository:
                 FROM stock_market_daily
                 WHERE business_date = ?
                   {market_clause}
+                  {source_clause}
                 ORDER BY COALESCE(turnover, 0) DESC, stock_code ASC
                 LIMIT ?
                 """,
                 tuple(params),
             ).fetchall()
         return [self._row_to_stock_market_daily_snapshot(row) for row in rows]
+
+    def latest_toss_market_snapshot_date(self) -> date | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT MAX(business_date) AS business_date
+                FROM stock_market_daily
+                WHERE source = 'toss_openapi'
+                """
+            ).fetchone()
+        return date.fromisoformat(row["business_date"]) if row and row["business_date"] else None
 
     def list_stock_market_daily_for_codes(
         self,
@@ -2916,10 +2933,13 @@ class StockMonitorRepository:
         business_date: date,
         *,
         limit: int = 10,
+        source: str | None = None,
     ) -> list[EtfDailySnapshot]:
+        source_clause = "AND source = ?" if source else ""
+        params: tuple[object, ...] = (business_date.isoformat(), *((source,) if source else ()), limit)
         with self.connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT
                     business_date, etf_code, etf_name, close_price, change_amount,
                     change_percent, nav, open_price, high_price, low_price,
@@ -2929,10 +2949,11 @@ class StockMonitorRepository:
                     fetched_at, source
                 FROM etf_daily_snapshots
                 WHERE business_date = ?
+                  {source_clause}
                 ORDER BY COALESCE(turnover, 0) DESC, etf_code ASC
                 LIMIT ?
                 """,
-                (business_date.isoformat(), limit),
+                params,
             ).fetchall()
         return [self._row_to_etf_daily_snapshot(row) for row in rows]
 
@@ -2970,12 +2991,17 @@ class StockMonitorRepository:
         *,
         index_series: str | None = None,
         limit: int = 20,
+        source: str | None = None,
     ) -> list[MarketIndexDailySnapshot]:
         params: list[object] = [business_date.isoformat()]
         series_clause = ""
+        source_clause = ""
         if index_series:
             series_clause = "AND index_series = ?"
             params.append(index_series)
+        if source:
+            source_clause = "AND source = ?"
+            params.append(source)
         params.append(limit)
         with self.connect() as connection:
             rows = connection.execute(
@@ -2988,6 +3014,7 @@ class StockMonitorRepository:
                 FROM market_index_daily
                 WHERE business_date = ?
                   {series_clause}
+                  {source_clause}
                 ORDER BY index_series ASC, index_name ASC
                 LIMIT ?
                 """,
@@ -3032,6 +3059,28 @@ class StockMonitorRepository:
                     on_or_before.isoformat(),
                     limit,
                 ),
+            ).fetchall()
+        return [date.fromisoformat(row["business_date"]) for row in rows]
+
+    def list_recent_toss_market_snapshot_dates(self, *, on_or_before: date, limit: int = 5) -> list[date]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT business_date
+                FROM (
+                    SELECT business_date FROM stock_market_daily
+                    WHERE business_date <= ? AND source = 'toss_openapi' GROUP BY business_date
+                    UNION
+                    SELECT business_date FROM etf_daily_snapshots
+                    WHERE business_date <= ? AND source = 'toss_openapi' GROUP BY business_date
+                    UNION
+                    SELECT business_date FROM market_index_daily
+                    WHERE business_date <= ? AND source = 'toss_openapi' GROUP BY business_date
+                )
+                ORDER BY business_date DESC
+                LIMIT ?
+                """,
+                (on_or_before.isoformat(), on_or_before.isoformat(), on_or_before.isoformat(), limit),
             ).fetchall()
         return [date.fromisoformat(row["business_date"]) for row in rows]
 

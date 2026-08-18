@@ -1,7 +1,6 @@
 param(
     [string]$TaskPrefix = "StockMonitor",
-    [string]$PythonExe = "python",
-    [switch]$IncludeKrxFlowReminder
+    [string]$PythonExe = "python"
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,10 +19,6 @@ $registerArgs = @{
     PythonExe = $PythonExe
     SkipShutdown = $true
 }
-if ($IncludeKrxFlowReminder) {
-    $registerArgs.IncludeKrxFlowReminder = $true
-}
-
 & $registerScript @registerArgs
 
 if (-not $?) {
@@ -34,10 +29,6 @@ $verifyArgs = @{
     TaskPrefix = $TaskPrefix
     PythonExe = $PythonExe
 }
-if ($IncludeKrxFlowReminder) {
-    $verifyArgs.IncludeKrxFlowReminder = $true
-}
-
 & $verifyScript @verifyArgs
 
 if (-not $?) {
@@ -48,6 +39,5 @@ Write-Output "Mini PC scheduler tasks registered and verified."
 Write-Output "- project: $projectRoot"
 Write-Output "- python_exe: $PythonExe"
 Write-Output "- shutdown_task: skipped"
-Write-Output "- krx_flow_login_reminder: $($IncludeKrxFlowReminder.IsPresent)"
 Write-Output "- web_view_hourly_restart: StockMonitor-WebViewHourlyRestart"
-Write-Output "- toss_priority_baseline: StockMonitor-TossPriorityBaseline at 20:00 on weekdays"
+Write-Output "- toss_close_snapshot: StockMonitor-TossCloseSnapshot at 20:00 on weekdays"

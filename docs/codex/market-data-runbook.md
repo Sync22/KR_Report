@@ -1,6 +1,15 @@
 # Market Data Runbook
 
-KRX and investor-flow operating rules, field evidence, and capture procedures.
+## Current Operating Source
+
+The active market-data path is one Toss OpenAPI capture at `20:00` KST on each Korean business day. It stores only the bounded values used by the web-view: KOSPI/KOSDAQ level and change, market-level individual/foreigner/institution flow, named turnover Top20 split into stocks and ETFs, and the server-derived priority Top2 quote/flow references.
+
+- `StockMonitor-TossPriorityBaseline` runs the close capture through `toss-market-context-capture`.
+- KRX Open API and KRX Data Marketplace tasks are removed from normal scheduler registration.
+- Existing KRX rows remain intact for historical analysis and old report windows; they are not a live fallback for the web-view.
+- The Toss snapshot is a stored close reference, not an intraday quote or execution signal.
+
+The KRX and investor-flow material below is retained as a historical-reference runbook only. It is not a normal scheduler, web-view, or close-snapshot fallback path.
 
 ## Included sections
 - KRX Market Data Runbook
@@ -12,13 +21,13 @@ KRX and investor-flow operating rules, field evidence, and capture procedures.
 - KRX Investor Flow Source Plan
 
 <!-- Merged from: docs/codex/market-data-runbook.md -->
-## KRX Market Data Runbook
+## Historical KRX Market Data Runbook
 
 ## Purpose
 
-This is the consolidated KRX and market-reference runbook.
+This is the consolidated historical KRX and market-reference runbook.
 
-Use this before touching KRX Open API snapshots, KRX Data Marketplace investor-flow samples, ETF references, flow display, or scheduled ingest planning.
+Use this only for existing KRX records, historical analysis, or an explicitly approved reintroduction. The active web-view and scheduler source is Toss OpenAPI.
 
 ## Source Ownership
 

@@ -314,6 +314,8 @@ class TossPriorityQuoteProvider:
                 if isinstance(item, dict) and str(item.get("symbol") or "").strip()
             )
             stock_names: dict[str, str] = {}
+            stock_markets: dict[str, str] = {}
+            stock_security_types: dict[str, str] = {}
             etf_symbols: list[str] = []
             if ranking_symbols:
                 try:
@@ -329,6 +331,16 @@ class TossPriorityQuoteProvider:
                         if isinstance(item, dict)
                         and str(item.get("symbol") or "").strip()
                         and str(item.get("name") or "").strip()
+                    }
+                    stock_markets = {
+                        str(item.get("symbol") or "").strip(): str(item.get("market") or "").strip()
+                        for item in stock_response.result
+                        if isinstance(item, dict) and str(item.get("symbol") or "").strip()
+                    }
+                    stock_security_types = {
+                        str(item.get("symbol") or "").strip(): str(item.get("securityType") or "").strip()
+                        for item in stock_response.result
+                        if isinstance(item, dict) and str(item.get("symbol") or "").strip()
                     }
                     etf_symbols = [
                         str(item.get("symbol") or "").strip()
@@ -358,6 +370,8 @@ class TossPriorityQuoteProvider:
                 "ranked_at": ranking_result.get("rankedAt"),
                 "rankings": rankings,
                 "stock_names": stock_names,
+                "stock_markets": stock_markets,
+                "stock_security_types": stock_security_types,
                 "etf_symbols": etf_symbols,
                 "market_prices": market_prices,
                 "market_price_changes": _project_market_price_changes(

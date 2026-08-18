@@ -34,7 +34,7 @@ def _build_web_view_value_qa_payload(
     _collect_web_view_value_qa_issues(archive, path="archive", issues=issues, warnings=warnings)
     market = runtime.build_web_view_market_snapshot(config, repository)
     _collect_web_view_value_qa_issues(market, path="market", issues=issues, warnings=warnings)
-    latest_krx_snapshot_date = repository.latest_krx_snapshot_date()
+    latest_toss_snapshot_date = repository.latest_toss_market_snapshot_date()
     runtime.collect_rotation_alias_mapping_qa_issues(
         config,
         issues=issues,
@@ -42,21 +42,20 @@ def _build_web_view_value_qa_payload(
     runtime.collect_rotation_etf_mapping_qa_issues(
         config,
         repository,
-        latest_krx_snapshot_date=latest_krx_snapshot_date,
+        latest_krx_snapshot_date=latest_toss_snapshot_date,
         issues=issues,
         warnings=warnings,
     )
     for business_date in dates:
-        krx_snapshot_not_yet_available = latest_krx_snapshot_date is not None and business_date > latest_krx_snapshot_date
-        if krx_snapshot_not_yet_available:
+        toss_snapshot_not_yet_available = latest_toss_snapshot_date is not None and business_date > latest_toss_snapshot_date
+        if toss_snapshot_not_yet_available:
             warnings.append(
                 {
-                    "code": "krx_snapshot_not_yet_available",
+                    "code": "toss_close_snapshot_not_yet_available",
                     "path": f"daily[{business_date.isoformat()}].market_reference",
                     "message": (
-                        f"selected date is newer than latest stored KRX snapshot "
-                        f"{latest_krx_snapshot_date.isoformat()}; KRX OpenAPI daily rows are officially "
-                        "published on the next Korean business day at 08:00 KST"
+                        f"selected date is newer than latest stored Toss close snapshot "
+                        f"{latest_toss_snapshot_date.isoformat()}; the 20:00 capture has not completed for this date"
                     ),
                 }
             )

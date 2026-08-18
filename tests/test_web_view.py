@@ -352,6 +352,7 @@ def test_web_view_stock_search_includes_stored_universe_without_same_day_report(
                 change_percent=1.2,
                 turnover=123_000_000,
                 fetched_at=datetime(2026, 6, 2, 18, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -392,9 +393,9 @@ def test_web_view_stock_search_includes_stored_universe_without_same_day_report(
             "stock_name": "Beta Memory",
             "market": "KOSPI",
             "has_selected_date_report": False,
-            "has_selected_date_krx": True,
+            "has_selected_date_toss": True,
             "has_news_observation": True,
-            "display_status": "당일 리포트 없음 · 저장 KRX 있음 · 뉴스 근거 있음",
+            "display_status": "당일 리포트 없음 · 저장 Toss 있음 · 뉴스 근거 있음",
         }
     ]
     _assert_public_safe_payload(snapshot)
@@ -430,6 +431,7 @@ def test_web_view_stock_detail_uses_stored_name_when_selected_date_has_no_report
                 change_percent=1.2,
                 turnover=123_000_000,
                 fetched_at=datetime(2026, 6, 2, 18, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -1353,6 +1355,7 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
                 volume=8_000,
                 turnover=400,
                 fetched_at=datetime(2026, 5, 7, 20, 0, 0),
+                source="toss_openapi",
             ),
             StockMarketDailySnapshot(
                 business_date=date(2026, 5, 8),
@@ -1364,6 +1367,7 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
                 volume=10_000,
                 turnover=500,
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             ),
             StockMarketDailySnapshot(
                 business_date=date(2026, 5, 7),
@@ -1375,6 +1379,7 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
                 volume=9_000,
                 turnover=400,
                 fetched_at=datetime(2026, 5, 7, 20, 0, 0),
+                source="toss_openapi",
             ),
             StockMarketDailySnapshot(
                 business_date=date(2026, 5, 8),
@@ -1386,6 +1391,7 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
                 volume=50_000,
                 turnover=900,
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             ),
         ]
     )
@@ -1402,6 +1408,7 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
                 turnover=300,
                 underlying_index_name="코스피 200",
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -1429,23 +1436,25 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
         [
             MarketInvestorFlowDaily(
                 business_date=date(2026, 5, 8),
-                market="STK",
+                market="KOSPI",
                 investor_type="개인",
                 net_buy_volume=-50,
                 net_buy_amount=-100,
                 volume_unit="주",
                 amount_unit="원",
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             ),
             MarketInvestorFlowDaily(
                 business_date=date(2026, 5, 8),
-                market="STK",
+                market="KOSPI",
                 investor_type="외국인",
                 net_buy_volume=100,
                 net_buy_amount=200,
                 volume_unit="주",
                 amount_unit="원",
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -1469,25 +1478,27 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
                 business_date=date(2026, 5, 8),
                 stock_code="005930",
                 stock_name="삼성전자",
-                market="STK",
+                market="KOSPI",
                 investor_type="외국인",
                 net_buy_volume=500,
                 net_buy_amount=1_000,
                 volume_unit="주",
                 amount_unit="원",
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             ),
             StockInvestorFlowDaily(
                 business_date=date(2026, 5, 8),
                 stock_code="005930",
                 stock_name="삼성전자",
-                market="STK",
+                market="KOSPI",
                 investor_type="개인",
                 net_buy_volume=-300,
                 net_buy_amount=-600,
                 volume_unit="주",
                 amount_unit="원",
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             ),
         ]
     )
@@ -1535,10 +1546,10 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
         "volume": 10_000,
         "turnover": 500,
     }
-    assert snapshot["krx_context"]["available"] is True
-    assert snapshot["krx_context"]["snapshot_date"] == "2026-05-08"
-    assert snapshot["krx_context"]["top_kospi_by_turnover"][0]["stock_code"] == "000660"
-    assert snapshot["krx_context"]["top_kospi_by_turnover"][0]["volume"] == 50_000
+    assert snapshot["toss_context"]["available"] is True
+    assert snapshot["toss_context"]["snapshot_date"] == "2026-05-08"
+    assert snapshot["toss_context"]["top_kospi_by_turnover"][0]["stock_code"] == "000660"
+    assert snapshot["toss_context"]["top_kospi_by_turnover"][0]["volume"] == 50_000
     source_freshness_items = {
         item["key"]: item for item in snapshot["source_freshness_summary"]["items"]
     }
@@ -1548,23 +1559,23 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
     assert snapshot["source_freshness_summary"]["scoring"] is False
     assert source_freshness_items["reports"]["status"] == "exact"
     assert source_freshness_items["reports"]["reference_date"] == "2026-05-08"
-    assert source_freshness_items["krx_market"]["status"] == "exact"
-    assert source_freshness_items["krx_market"]["source"] == "krx_open_api"
-    assert source_freshness_items["krx_market"]["reference_date"] == "2026-05-08"
-    assert source_freshness_items["krx_market"]["exact_date_available"] is True
-    assert source_freshness_items["etf_daily"]["status"] == "exact"
+    assert source_freshness_items["toss_market"]["status"] == "exact"
+    assert source_freshness_items["toss_market"]["source"] == "toss_openapi"
+    assert source_freshness_items["toss_market"]["reference_date"] == "2026-05-08"
+    assert source_freshness_items["toss_market"]["exact_date_available"] is True
+    assert source_freshness_items["toss_etf"]["status"] == "exact"
     assert source_freshness_items["investor_flow"]["status"] == "exact"
-    assert source_freshness_items["investor_flow"]["source"] == "krx_data_market"
+    assert source_freshness_items["investor_flow"]["source"] == "toss_openapi"
     assert source_freshness_items["toss_openapi"]["status"] == "disabled"
     assert source_freshness_items["toss_openapi"]["live_fetch"] is False
     assert source_freshness_items["toss_openapi"]["affects_ordering"] is False
-    assert snapshot["krx_recent_flow"] == {
+    assert snapshot["toss_recent_flow"] == {
         "available": True,
-        "source": "krx",
+        "source": "toss_openapi",
         "business_date": "2026-05-08",
         "reference_date": "2026-05-08",
         "exact_date_available": True,
-        "notice": "선택 날짜를 포함한 최근 KRX 저장 스냅샷 기준입니다. 실시간값이나 확정 판단은 포함하지 않습니다.",
+        "notice": "선택 날짜를 포함한 최근 Toss 20:00 저장 스냅샷 기준입니다. 실시간값이나 확정 판단은 포함하지 않습니다.",
         "items": [
             {
                 "business_date": "2026-05-08",
@@ -1610,18 +1621,18 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
             },
         ],
     }
-    assert snapshot["krx_investor_flow"]["available"] is True
-    assert snapshot["krx_investor_flow"]["source"] == "krx_data_market"
-    assert snapshot["krx_investor_flow"]["data_scope"] == "stored_krx_data_market_sample"
-    assert snapshot["krx_investor_flow"]["live_fetch"] is False
-    assert snapshot["krx_investor_flow"]["scoring"] is False
-    assert snapshot["krx_investor_flow"]["market_flows"][0]["investor_type"] == "외국인"
-    assert snapshot["krx_investor_flow"]["market_flows"][0]["investor_label"] == "외국인"
-    assert snapshot["krx_investor_flow"]["market_flows"][0]["market_label"] == "KOSPI"
-    assert snapshot["krx_investor_flow"]["market_flows"][0]["net_buy_amount"] == 200
-    assert snapshot["krx_investor_flow"]["market_flows"][1]["investor_type"] == "개인"
-    assert "net_buy_top" not in snapshot["krx_investor_flow"]
-    assert snapshot["market_reference_notice"] == "KRX 저장 스냅샷 기준입니다."
+    assert snapshot["toss_investor_flow"]["available"] is True
+    assert snapshot["toss_investor_flow"]["source"] == "toss_openapi"
+    assert snapshot["toss_investor_flow"]["data_scope"] == "stored_toss_close_market_flow"
+    assert snapshot["toss_investor_flow"]["live_fetch"] is False
+    assert snapshot["toss_investor_flow"]["scoring"] is False
+    assert snapshot["toss_investor_flow"]["market_flows"][0]["investor_type"] == "외국인"
+    assert snapshot["toss_investor_flow"]["market_flows"][0]["investor_label"] == "외국인"
+    assert snapshot["toss_investor_flow"]["market_flows"][0]["market_label"] == "KOSPI"
+    assert snapshot["toss_investor_flow"]["market_flows"][0]["net_buy_amount"] == 200
+    assert snapshot["toss_investor_flow"]["market_flows"][1]["investor_type"] == "개인"
+    assert "net_buy_top" not in snapshot["toss_investor_flow"]
+    assert snapshot["market_reference_notice"] == "Toss 20:00 저장 스냅샷 기준입니다."
     assert snapshot["market_briefing"]["index_summary"]["available"] is False
     assert snapshot["market_briefing"]["turnover_summary"]["available"] is True
     assert snapshot["market_briefing"]["turnover_summary"]["markets"][0]["market"] == "KOSPI"
@@ -1633,7 +1644,7 @@ def test_web_view_daily_snapshot_includes_read_only_summary_layers(tmp_path, mon
     assert "사용자 웹뷰" not in " ".join(snapshot["market_briefing"]["check_points"])
     assert "아래 종목/관찰 탭에서 세부 근거 확인" in snapshot["market_briefing"]["check_points"]
     mood_card = snapshot["market_briefing"]["time_slot_mood_card"]
-    assert mood_card["source"] == "stored_report_krx_market_mood_card"
+    assert mood_card["source"] == "stored_report_toss_market_mood_card"
     assert mood_card["read_only"] is True
     assert mood_card["live_fetch"] is False
     assert mood_card["scoring"] is False
@@ -3129,7 +3140,7 @@ def test_web_view_daily_snapshot_uses_public_label_for_missing_sector_mapping(tm
     assert trend["category_display_name"] == "업종 미확인"
 
 
-def test_web_view_daily_krx_context_is_exact_date_and_does_not_fallback_to_latest(tmp_path, monkeypatch) -> None:
+def test_web_view_daily_toss_context_is_exact_date_and_does_not_fallback_to_latest(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     config.ensure_runtime_dirs()
@@ -3177,6 +3188,7 @@ def test_web_view_daily_krx_context_is_exact_date_and_does_not_fallback_to_lates
                 volume=20_000,
                 turnover=900,
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -3193,6 +3205,7 @@ def test_web_view_daily_krx_context_is_exact_date_and_does_not_fallback_to_lates
                 turnover=300,
                 underlying_index_name="코스피 200",
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -3208,6 +3221,7 @@ def test_web_view_daily_krx_context_is_exact_date_and_does_not_fallback_to_lates
                 volume=100,
                 turnover=1000,
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -3225,25 +3239,25 @@ def test_web_view_daily_krx_context_is_exact_date_and_does_not_fallback_to_lates
         now=datetime(2026, 5, 8, 21, 0, 0),
     )
 
-    assert missing_context_snapshot["krx_context"]["available"] is False
-    assert missing_context_snapshot["krx_context"]["snapshot_date"] is None
-    assert missing_context_snapshot["krx_context"]["top_kospi_by_turnover"] == []
+    assert missing_context_snapshot["toss_context"]["available"] is False
+    assert missing_context_snapshot["toss_context"]["snapshot_date"] is None
+    assert missing_context_snapshot["toss_context"]["top_kospi_by_turnover"] == []
     assert missing_context_snapshot["stocks"][0]["market_reference"] is None
     missing_freshness = {
         item["key"]: item for item in missing_context_snapshot["source_freshness_summary"]["items"]
     }
     assert missing_freshness["reports"]["status"] == "exact"
     assert missing_freshness["reports"]["reference_date"] == "2026-05-07"
-    assert missing_freshness["krx_market"]["status"] == "missing"
-    assert missing_freshness["krx_market"]["reference_date"] is None
-    assert missing_freshness["etf_daily"]["status"] == "missing"
+    assert missing_freshness["toss_market"]["status"] == "missing"
+    assert missing_freshness["toss_market"]["reference_date"] is None
+    assert missing_freshness["toss_etf"]["status"] == "missing"
     assert missing_freshness["investor_flow"]["status"] == "missing"
     assert missing_freshness["toss_openapi"]["status"] == "disabled"
-    assert "최신 날짜 값으로 대체하지 않습니다" in missing_context_snapshot["krx_context"]["notice"]
+    assert "최신 날짜 값으로 대체하지 않습니다" in missing_context_snapshot["toss_context"]["notice"]
 
-    context = exact_context_snapshot["krx_context"]
+    context = exact_context_snapshot["toss_context"]
     assert context["available"] is True
-    assert context["source"] == "krx"
+    assert context["source"] == "toss_openapi"
     assert context["snapshot_date"] == "2026-05-08"
     assert context["top_kospi_by_turnover"][0]["stock_code"] == "005930"
     assert context["top_etfs_by_turnover"][0] == {
@@ -3263,9 +3277,9 @@ def test_web_view_daily_krx_context_is_exact_date_and_does_not_fallback_to_lates
     exact_freshness = {
         item["key"]: item for item in exact_context_snapshot["source_freshness_summary"]["items"]
     }
-    assert exact_freshness["krx_market"]["status"] == "exact"
-    assert exact_freshness["krx_market"]["reference_date"] == "2026-05-08"
-    assert exact_freshness["etf_daily"]["status"] == "exact"
+    assert exact_freshness["toss_market"]["status"] == "exact"
+    assert exact_freshness["toss_market"]["reference_date"] == "2026-05-08"
+    assert exact_freshness["toss_etf"]["status"] == "exact"
     assert exact_freshness["investor_flow"]["status"] == "missing"
     assert exact_freshness["toss_openapi"]["live_fetch"] is False
     assert "scheduler_tasks" not in context
@@ -3941,8 +3955,10 @@ def test_stock_flow_reference_keeps_each_priority_candidate_reference_date_visib
                 stock_code=stock_code,
                 stock_name=stock_name,
                 investor_type=investor_type,
+                net_buy_volume=amount,
                 net_buy_amount=amount,
                 fetched_at=datetime(2026, 6, 2, 15, 0, 0),
+                source="toss_openapi",
             )
             for flow_date, stock_code, stock_name, investor_type, amount in (
                 (date(2026, 6, 2), "000001", "후보A", "외국인", 100_000_000),
@@ -3968,7 +3984,7 @@ def test_stock_flow_reference_keeps_each_priority_candidate_reference_date_visib
         priority_stock_codes=("000001", "000002"),
     )
 
-    assert lines[0] == "수급 참고 · 종목별 [12009] 저장값 / 기준일 혼합"
+    assert lines[0] == "수급 참고 · Toss 우선 후보 저장값 / 기준일 혼합"
     assert lines[1].startswith("- [26.06.02] 후보A")
     assert lines[2].startswith("- [26.06.01] 후보B")
     assert freshness is not None
@@ -4415,6 +4431,7 @@ def test_web_view_etf_trend_snapshot_exposes_rotation_evidence_scope(tmp_path, m
                 turnover=98_765_432_100,
                 underlying_index_name="FnGuide 반도체 TOP10",
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -4427,7 +4444,7 @@ def test_web_view_etf_trend_snapshot_exposes_rotation_evidence_scope(tmp_path, m
     )
 
     assert snapshot["reference_status"] == "exact"
-    assert snapshot["basis"] == "KRX ETF 일별매매정보"
+    assert snapshot["basis"] == "Toss 거래대금 상위 ETF"
     assert snapshot["constituents_available"] is False
     assert snapshot["composition_scope"] == "구성종목 미포함"
     assert snapshot["display_label"] == "ETF 순환매 참고"
@@ -4455,6 +4472,7 @@ def test_web_view_etf_trend_snapshot_marks_stale_reference_date(tmp_path, monkey
                 turnover=1_000_000_000,
                 underlying_index_name="코스피 200",
                 fetched_at=datetime(2026, 5, 7, 20, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -4468,11 +4486,11 @@ def test_web_view_etf_trend_snapshot_marks_stale_reference_date(tmp_path, monkey
 
     assert snapshot["reference_status"] == "stale"
     assert snapshot["reference_date"] == "2026-05-07"
-    assert snapshot["notice"] == "선택 날짜의 ETF 저장값이 없어 2026-05-07 기준 ETF 흐름만 표시합니다. 구성종목이 아닌 KRX ETF 일별매매정보 기준입니다."
+    assert snapshot["notice"] == "선택 날짜의 ETF 저장값이 없어 2026-05-07 기준 Toss ETF 흐름만 표시합니다."
     _assert_public_safe_payload(snapshot)
 
 
-def test_web_view_recent_krx_flow_exposes_actual_reference_date_when_fallback(tmp_path, monkeypatch) -> None:
+def test_web_view_recent_toss_flow_exposes_actual_reference_date_when_fallback(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     config.ensure_runtime_dirs()
@@ -4517,11 +4535,11 @@ def test_web_view_recent_krx_flow_exposes_actual_reference_date_when_fallback(tm
         now=datetime(2026, 5, 11, 16, 0, 0),
     )
 
-    assert snapshot["krx_context"]["available"] is False
-    assert snapshot["krx_recent_flow"]["business_date"] == "2026-05-11"
-    assert snapshot["krx_recent_flow"]["reference_date"] == "2026-05-08"
-    assert snapshot["krx_recent_flow"]["exact_date_available"] is False
-    assert "최근 KRX 저장 스냅샷" in snapshot["krx_recent_flow"]["notice"]
+    assert snapshot["toss_context"]["available"] is False
+    assert snapshot["toss_recent_flow"]["business_date"] == "2026-05-11"
+    assert snapshot["toss_recent_flow"]["reference_date"] == "2026-05-08"
+    assert snapshot["toss_recent_flow"]["exact_date_available"] is False
+    assert "최근 Toss 20:00 저장 스냅샷" in snapshot["toss_recent_flow"]["notice"]
 
 
 def test_web_view_stock_detail_snapshot_exposes_reports_without_admin_state(tmp_path, monkeypatch) -> None:
@@ -4586,6 +4604,7 @@ def test_web_view_stock_detail_snapshot_exposes_reports_without_admin_state(tmp_
                 volume=8_000,
                 turnover=400,
                 fetched_at=datetime(2026, 5, 7, 20, 0, 0),
+                source="toss_openapi",
             ),
             StockMarketDailySnapshot(
                 business_date=date(2026, 5, 8),
@@ -4924,7 +4943,7 @@ def test_web_view_category_trend_snapshot_exposes_recent_dates_without_admin_sta
     _assert_public_safe_payload(snapshot)
 
 
-def test_web_view_market_snapshot_exposes_krx_reference_without_admin_state(tmp_path, monkeypatch) -> None:
+def test_web_view_market_snapshot_exposes_toss_reference_without_admin_state(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     config.ensure_runtime_dirs()
@@ -4941,6 +4960,7 @@ def test_web_view_market_snapshot_exposes_krx_reference_without_admin_state(tmp_
                 change_percent=1.2,
                 turnover=500,
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -4954,6 +4974,7 @@ def test_web_view_market_snapshot_exposes_krx_reference_without_admin_state(tmp_
                 change_percent=0.5,
                 turnover=300,
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -4968,6 +4989,7 @@ def test_web_view_market_snapshot_exposes_krx_reference_without_admin_state(tmp_
                 change_percent=0.8,
                 turnover=1000,
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -4980,10 +5002,11 @@ def test_web_view_market_snapshot_exposes_krx_reference_without_admin_state(tmp_
 
     assert snapshot["surface"] == "web-view"
     assert snapshot["read_only"] is True
-    assert snapshot["krx_snapshot_date"] == "2026-05-07"
-    assert snapshot["krx_top_kospi_stocks"][0]["stock_code"] == "005930"
-    assert snapshot["krx_top_etfs"][0]["etf_code"] == "069500"
-    assert snapshot["krx_market_indices"][0]["index_name"] == "코스피"
+    assert snapshot["snapshot_source"] == "toss_openapi"
+    assert snapshot["snapshot_date"] == "2026-05-07"
+    assert snapshot["top_kospi_stocks"][0]["stock_code"] == "005930"
+    assert snapshot["top_etfs"][0]["etf_code"] == "069500"
+    assert snapshot["market_indices"][0]["index_name"] == "코스피"
     assert "scheduler_tasks" not in snapshot
     assert "worker_states" not in snapshot
     _assert_public_safe_payload(snapshot)
@@ -5000,21 +5023,23 @@ def test_web_view_flow_trend_snapshot_uses_stored_samples_only(tmp_path, monkeyp
         [
             MarketInvestorFlowDaily(
                 business_date=date(2026, 5, 8),
-                market="STK",
+                    market="KOSPI",
                 investor_type="외국인",
                 net_buy_amount=200,
                 volume_unit="주",
                 amount_unit="원",
-                fetched_at=fetched_at,
+                    fetched_at=fetched_at,
+                    source="toss_openapi",
             ),
             MarketInvestorFlowDaily(
                 business_date=date(2026, 5, 7),
-                market="KSQ",
+                    market="KOSDAQ",
                 investor_type="개인",
                 net_buy_amount=-150,
                 volume_unit="주",
                 amount_unit="원",
-                fetched_at=fetched_at,
+                    fetched_at=fetched_at,
+                    source="toss_openapi",
             ),
         ]
     )
@@ -5241,6 +5266,7 @@ def test_web_view_rotation_overlay_snapshot_uses_manual_coordinates(tmp_path, mo
                 change_percent=2.5,
                 turnover=123_456_789_000,
                 fetched_at=fetched_at,
+                source="toss_openapi",
             )
         ]
     )

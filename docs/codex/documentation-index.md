@@ -9,7 +9,7 @@ This is the documentation skeleton. Read this file first, then open only the bra
 | [Operating guide](operating-guide.md) | Current state, roadmap, next work, and TODOs. |
 | [Architecture guide](architecture-guide.md) | Code map, ownership, agent use, risks, and decisions. |
 | [Data governance](data-governance.md) | Value layers, source ownership, rebaseline, and baseline coverage. |
-| [Market-data runbook](market-data-runbook.md) | KRX Open API, Data Marketplace, ETF, and investor-flow operations. |
+| [Market-data runbook](market-data-runbook.md) | Toss close snapshot operations and retained KRX historical-reference policy. |
 | [Surface guide](surface-guide.md) | `admin-gui`, GET-only `web-view`, rotation, and realtime-first display policy. |
 | [Candidate evidence](candidate-evidence.md) | Candidate DTO and evidence/target-progress/operator-memo implementation rules. |
 | [News intelligence](news-intelligence.md) | Operator-only news collection and future public-safe projection boundary. |
@@ -24,7 +24,7 @@ This is the documentation skeleton. Read this file first, then open only the bra
 - `admin-gui` is operator-only; `web-view` is public-safe and GET-only.
 - No public score, grade, buy/sell recommendation, or broker execution behavior.
 - Keep raw/source, parsed/storage, aggregate, and display values separate.
-- KRX Data Marketplace automation remains limited to mentioned stocks, stock-level `[12009]`, and the approved 31-day window.
+- Web-view market, ETF, and flow projections use the stored Toss 20:00 close snapshot. Existing KRX rows are historical references only and no longer receive scheduled refreshes.
 - Lab/source probes must not connect directly to SQLite writes, Telegram, scheduler, admin GUI, or public web-view behavior.
 
 ## Maintenance

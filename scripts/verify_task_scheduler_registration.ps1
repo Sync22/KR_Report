@@ -1,8 +1,7 @@
 param(
     [string]$TaskPrefix = "StockMonitor",
     [string]$PythonExe = "",
-    [switch]$IncludeShutdown,
-    [switch]$IncludeKrxFlowReminder
+    [switch]$IncludeShutdown
 )
 
 $ErrorActionPreference = "Stop"
@@ -62,33 +61,24 @@ function Get-ExpectedScheduledTaskInfo {
 }
 
 # Default task names:
-# - StockMonitor-KrxDailyBackfill
 # - StockMonitor-Notify
 # - StockMonitor-Poll
-# - StockMonitor-KrxMentionedFlowBackfill
 # - StockMonitor-MarketBriefingMood
 # - StockMonitor-MarketBriefingLunch
 # - StockMonitor-MarketBriefingPreclose
-# - StockMonitor-TossPriorityBaseline
+# - StockMonitor-TossCloseSnapshot
 # - StockMonitor-TelegramCommands
 # - StockMonitor-WebViewHourlyRestart
-# - StockMonitor-KrxFlowLoginReminder
 $expectedTasks = @(
-    @{ Name = "$TaskPrefix-KrxDailyBackfill"; Script = "run_scheduled_krx_daily_backfill.ps1" },
     @{ Name = "$TaskPrefix-Notify"; Script = "run_scheduled_notify.ps1" },
     @{ Name = "$TaskPrefix-Poll"; Script = "run_scheduled_poll.ps1" },
-    @{ Name = "$TaskPrefix-KrxMentionedFlowBackfill"; Script = "run_scheduled_krx_mentioned_flow_backfill.ps1" },
     @{ Name = "$TaskPrefix-MarketBriefingMood"; Script = "run_scheduled_market_briefing_slot.ps1" },
     @{ Name = "$TaskPrefix-MarketBriefingLunch"; Script = "run_scheduled_market_briefing_slot.ps1" },
     @{ Name = "$TaskPrefix-MarketBriefingPreclose"; Script = "run_scheduled_market_briefing_slot.ps1" },
-    @{ Name = "$TaskPrefix-TossPriorityBaseline"; Script = "run_scheduled_toss_priority_baseline.ps1" },
+    @{ Name = "$TaskPrefix-TossCloseSnapshot"; Script = "run_scheduled_toss_priority_baseline.ps1" },
     @{ Name = "$TaskPrefix-TelegramCommands"; Script = "run_process_telegram_commands.ps1" },
     @{ Name = "$TaskPrefix-WebViewHourlyRestart"; Script = "restart_web_view.ps1" }
 )
-
-if ($IncludeKrxFlowReminder) {
-    $expectedTasks += @{ Name = "$TaskPrefix-KrxFlowLoginReminder"; Script = "run_krx_flow_login_reminder.ps1" }
-}
 
 if ($IncludeShutdown) {
     # Desktop validation task:
@@ -103,6 +93,19 @@ else {
             "Unexpected desktop validation shutdown task is registered: $unexpectedShutdownTaskName. " +
             "Use -IncludeShutdown only for desktop validation, or disable/delete this task for mini PC always-on operation."
         )
+        exit 1
+    }
+}
+
+foreach ($legacyTaskName in @(
+    "$TaskPrefix-KrxDailyBackfill",
+    "$TaskPrefix-KrxMentionedFlowBackfill",
+    "$TaskPrefix-KrxFlowLoginReminder",
+    "$TaskPrefix-TossMarketContextCapture",
+    "$TaskPrefix-TossPriorityBaseline"
+)) {
+    if ($null -ne (Get-ExpectedScheduledTask -TaskName $legacyTaskName)) {
+        Write-Error "Legacy KRX or duplicate Toss task is registered: $legacyTaskName"
         exit 1
     }
 }

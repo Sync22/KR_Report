@@ -1690,21 +1690,71 @@ def test_toss_market_context_capture_parser_accepts_live_save_gate() -> None:
     assert args.json is True
 
 
-def test_toss_market_context_capture_saves_top20_snapshot_with_fake_provider(tmp_path, capsys) -> None:
+def test_toss_market_context_capture_saves_close_snapshot_with_fake_provider(tmp_path, capsys) -> None:
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    business_date = date(2026, 7, 10)
+    repository.initialize()
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="삼성전자 확인",
+                broker_name="테스트증권",
+                published_at=datetime(2026, 7, 10, 9, 0),
+                collected_at=datetime(2026, 7, 10, 9, 1),
+                source_id="toss-close-capture-report",
+                identity_key="toss-close-capture-report",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
 
     class FakeProvider:
-        def get_market_ranking(self) -> dict[str, object]:
+        def get_market_context(self, **_kwargs) -> dict[str, object]:
             return {
                 "configured": True,
                 "live_fetch": True,
                 "ranked_at": "2026-07-10T15:00:00+09:00",
                 "fetched_at": "2026-07-10T15:00:03+09:00",
                 "rankings": [
-                    {"rank": 1, "symbol": "005930", "tradingAmount": 1000, "tradingVolume": 100},
+                    {
+                        "rank": 1,
+                        "symbol": "005930",
+                        "tradingAmount": 1000,
+                        "tradingVolume": 100,
+                        "price": {"lastPrice": 70_000, "basePrice": 69_000, "changeRate": 0.0145},
+                    },
                     {"rank": 2, "symbol": "000660", "tradingAmount": 900, "tradingVolume": 90},
                 ],
+                "stock_names": {"005930": "삼성전자", "000660": "SK하이닉스"},
+                "stock_markets": {"005930": "KOSPI", "000660": "KOSPI"},
+                "etf_symbols": [],
+                "market_prices": [{"symbol": "KOSPI", "lastPrice": "3000.1"}],
+                "market_price_changes": {"KOSPI": {"change_rate": 0.008}},
+                "investor_flow": {
+                    "KOSPI": {
+                        "individual": {"buyAmount": 300, "sellAmount": 100},
+                        "foreigner": {"buyAmount": 100, "sellAmount": 300},
+                    }
+                },
+            }
+
+        def get_quotes(self, **_kwargs) -> dict[str, object]:
+            return {
+                "quotes": [{"symbol": "005930", "lastPrice": 70_000, "timestamp": "2026-07-10T20:00:00+09:00"}],
+                "investor_trading": {
+                    "items": [
+                        {
+                            "symbol": "005930",
+                            "updated_at": "2026-07-10T20:00:00+09:00",
+                            "foreigner_net_buy_volume": 120,
+                            "institution_net_buy_volume": -30,
+                        }
+                    ]
+                },
             }
 
     exit_code = cli_module._run_toss_market_context_capture(
@@ -1722,10 +1772,21 @@ def test_toss_market_context_capture_saves_top20_snapshot_with_fake_provider(tmp
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["saved_count"] == 2
+    assert payload["stock_snapshot_count"] == 2
+    assert payload["market_index_count"] == 1
+    assert payload["market_flow_count"] == 2
+    assert payload["priority_investor_flow_count"] == 2
     assert payload["live_fetch"] is True
+    assert repository.latest_toss_market_snapshot_date() == date(2026, 7, 10)
+    assert repository.list_stock_market_daily_for_codes(
+        date(2026, 7, 10), ["005930"], source="toss_openapi"
+    )[0].close_price == 70_000
+    assert [item.net_buy_volume for item in repository.list_stock_investor_flow_daily(
+        date(2026, 7, 10), "005930", source="toss_openapi"
+    )] == [-30, 120]
     assert repository.list_latest_toss_market_context_snapshot(business_date=date(2026, 7, 10)) == [
         TossMarketContextSnapshot(
-            business_date=date(2026, 7, 10),
+            business_date=business_date,
             observed_at=datetime.fromisoformat("2026-07-10T15:00:00+09:00"),
             rank=1,
             stock_code="005930",

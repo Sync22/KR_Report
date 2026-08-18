@@ -15,9 +15,8 @@ $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 
 $today = Get-Date -Format "yyyy-MM-dd"
-& $PythonExe -m stock_monitor toss-priority-baseline-collect `
+& $PythonExe -m stock_monitor toss-market-context-capture `
     --date $today `
-    --baseline-time "20:00" `
     --live `
     --confirm-token-reissue `
     --confirm-save `
