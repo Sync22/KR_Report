@@ -1119,8 +1119,8 @@ The external references did not justify another immediate local agent beyond the
 
 - Windows Task Scheduler registration is now part of the active operating model rather than a future task.
 - The host only needs to be powered on and connected before the scheduled windows; the monitor does not require a permanently running foreground shell.
-- Current weekday scheduler windows are `KrxDailyBackfill 08:10`, `Notify 08:20`, `Poll 08:30~16:30`, and `TelegramCommands 08:00~16:30`.
-- During the live validation period, `StockMonitor-Shutdown` shuts the host down at `17:10` with a 60-second delay, so the `16:45` KRX login reminder and `16:50` flow validation window can complete first.
+- Current weekday scheduler windows are `Notify 08:20`, `Poll 08:30~16:30`, market briefings at `09:15`/`12:00`/`15:15`, `TelegramCommands 08:00~16:30`, and `TossCloseSnapshot 20:00`.
+- `StockMonitor-Shutdown` is desktop-validation only and must remain absent on the always-on mini PC.
 - The shutdown task should not use missed-run catch-up, because a delayed shutdown after a later boot would be more harmful than a missed same-day shutdown.
 - Windows Task Scheduler itself is weekday-based and does not know Korean market holidays, so command processing and shutdown must use scheduled Python wrappers with internal business-day guards.
 - Telegram command processing should use a single hidden daily worker loop rather than one Task Scheduler launch per minute, because per-minute launches can create visible console flicker even when each run immediately skips on holidays.

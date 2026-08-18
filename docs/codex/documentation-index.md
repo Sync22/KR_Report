@@ -6,7 +6,7 @@ This is the documentation skeleton. Read this file first, then open only the bra
 
 | Branch | Use it for |
 | --- | --- |
-| [Operating guide](operating-guide.md) | Current state, roadmap, next work, and TODOs. |
+| [Operating guide](operating-guide.md) | Roadmap, decision history, and next work. Verify live scheduler/source contracts in the runbooks below. |
 | [Architecture guide](architecture-guide.md) | Code map, ownership, agent use, risks, and decisions. |
 | [Data governance](data-governance.md) | Value layers, source ownership, rebaseline, and baseline coverage. |
 | [Market-data runbook](market-data-runbook.md) | Toss close snapshot operations and retained KRX historical-reference policy. |
@@ -25,6 +25,7 @@ This is the documentation skeleton. Read this file first, then open only the bra
 - No public score, grade, buy/sell recommendation, or broker execution behavior.
 - Keep raw/source, parsed/storage, aggregate, and display values separate.
 - Web-view market, ETF, and flow projections use the stored Toss 20:00 close snapshot. Existing KRX rows are historical references only and no longer receive scheduled refreshes.
+- Current scheduler task names and timings live in [Mini PC runbook](mini-pc-runbook.md); current market-source ownership lives in [Market-data runbook](market-data-runbook.md). Older KRX task text elsewhere is historical unless those runbooks explicitly reintroduce it.
 - Lab/source probes must not connect directly to SQLite writes, Telegram, scheduler, admin GUI, or public web-view behavior.
 
 ## Maintenance

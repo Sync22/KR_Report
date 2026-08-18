@@ -53,13 +53,14 @@ Current snapshot as of `2026-05-17 17:02 KST`:
 
 ## Current Operating Contract
 
+This table is the current scheduler contract. Later KRX-specific procedures in this document are retained for historical recovery/reference only; they are not registered during normal operation.
+
 | Task | Contract |
 | --- | --- |
-| `StockMonitor-Notify` | `08:20` KST on Korean business days, after the official next-business-day `08:00` KRX Open API publication window and the `08:10` previous-business-day fill. Runtime guard allows production send only from `08:00` to `08:30` unless `--allow-late` is explicit. |
+| `StockMonitor-Notify` | `08:20` KST on Korean business days. Runtime guard allows production send only from `08:00` to `08:30` unless `--allow-late` is explicit. |
 | `StockMonitor-Poll` | Every 30 minutes from `08:30` to `16:30` KST on Korean business days. |
-| `StockMonitor-KrxDailyBackfill` | `08:10` KST on Korean business days; fills previous-business-day or recent missing KRX Open API stock/ETF/index rows after the official `08:00` publication window. Existing rows are skipped by the backfill planner, and same-day rows are not targeted. |
-| `StockMonitor-KrxMentionedFlowBackfill` | `16:00` KST on Korean business days; fills recent 31-day KRX Data Marketplace `[12009]` stock investor-flow rows for stocks mentioned in the anchor day's reports. In normal live operation the anchor is that day; after restore or prefilled report ingestion, use the latest report-mentioned business date as the anchor and repeat until dry-run shows no remaining calls. |
-| `StockMonitor-KrxFlowLoginReminder` | Optional `16:45` KST validation reminder. Keep disabled during normal operation unless a deliberate manual validation day needs it. |
+| `StockMonitor-MarketBriefingMood` / `Lunch` / `Preclose` | `09:15` / `12:00` / `15:15` KST operator briefing slots. |
+| `StockMonitor-TossCloseSnapshot` | `20:00` KST on Korean business days; stores the bounded Toss close snapshot used by web-view market, ETF, and flow references. |
 | `StockMonitor-TelegramCommands` | Hidden worker starts at `08:00`, checks Telegram commands every 1 minute, exits at `16:30`, and skips market holidays/no-run dates. |
 | `StockMonitor-WebViewHourlyRestart` | Hourly restart, default first run `00:05`, for the read-only loopback `web-view` target on `{LOCAL_WEB_VIEW_TARGET}`. |
 | `StockMonitor-Shutdown` | Desktop-validation only. It is not registered by the mini-PC scheduler wrapper and should remain absent during always-on operation. |
@@ -344,10 +345,12 @@ It is intentionally separate from mini PC registration so the operator can verif
 
 Expected scheduler task names in normal operation:
 
-- `StockMonitor-KrxDailyBackfill`
 - `StockMonitor-Notify`
 - `StockMonitor-Poll`
-- `StockMonitor-KrxMentionedFlowBackfill`
+- `StockMonitor-MarketBriefingMood`
+- `StockMonitor-MarketBriefingLunch`
+- `StockMonitor-MarketBriefingPreclose`
+- `StockMonitor-TossCloseSnapshot`
 - `StockMonitor-TelegramCommands`
 - `StockMonitor-WebViewHourlyRestart`
 
@@ -355,13 +358,7 @@ Desktop validation-only task:
 
 - `StockMonitor-Shutdown`
 
-Optional validation-only task:
-
-- `StockMonitor-KrxFlowLoginReminder`
-
-`StockMonitor-KrxFlowLoginReminder` is not registered by default by `register_task_scheduler_tasks.ps1`.
-On mini PC, register it only with `register_mini_pc_scheduler_tasks.ps1 -IncludeKrxFlowReminder` on a deliberate manual validation day so `StockMonitor-Shutdown` remains excluded.
-When validating that opt-in path directly, pass `-IncludeKrxFlowReminder` to `verify_task_scheduler_registration.ps1` as well.
+Legacy KRX scheduler names are intentionally absent. Use the historical sections below only for an explicitly approved recovery/reference task; do not re-register them as an opt-in mini-PC path.
 
 When using a virtual environment, always pass the explicit venv Python path through `-PythonExe`.
 Do not rely on a generic `python` PATH lookup for unattended Task Scheduler jobs.
