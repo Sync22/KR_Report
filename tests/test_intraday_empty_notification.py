@@ -394,6 +394,29 @@ def test_market_briefing_toss_context_resolves_ranked_stock_names_from_metadata(
     assert context["names_by_symbol"] == {"005930": "Samsung Electronics", "000660": "SK hynix"}
 
 
+def test_market_briefing_toss_context_hides_unclassified_top20_symbols() -> None:
+    _market_lines, _overlap_lines, ranking_lines = cli_module._build_market_briefing_toss_market_context_sections(
+        {
+            "market_context": {
+                "live_fetch": True,
+                "rankings": [
+                    {"symbol": "005930", "price": {"lastPrice": 72_000}},
+                    {"symbol": "122630", "price": {"lastPrice": 10_000}},
+                ],
+                "stock_metadata_available": False,
+                "etf_symbols": [],
+            },
+            "names_by_symbol": {"005930": "삼성전자"},
+        }
+    )
+
+    assert ranking_lines == [
+        "Toss 거래대금 상위",
+        "- 종목명/ETF 분류를 확인하지 못해 이번 회차에는 생략",
+    ]
+    assert "122630" not in "\n".join(ranking_lines)
+
+
 def test_scheduled_intraday_briefing_does_not_send_empty_when_prior_day_batch_is_pending(tmp_path, monkeypatch) -> None:
     config, repository = _config_and_repository(tmp_path, monkeypatch)
     prior_day_report = replace(

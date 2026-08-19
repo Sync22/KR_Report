@@ -3601,6 +3601,8 @@ def test_web_view_main_has_toss_market_context_panel() -> None:
     assert "Toss 시장 문맥 확인 중" in html
     assert "당일 지수" in html
     assert 'id="toss-market-context" class="intraday-overlap-panel" aria-live="polite"' in html
+    assert "리포트·Toss 20:00 저장 수급은 참고 기준입니다." in html
+    assert "후보 수급 [12009]은 관찰 후보·종목 상세에서 확인" not in html
 
 
 def test_web_view_html_renders_toss_same_day_investor_trading_for_top_two_only() -> None:

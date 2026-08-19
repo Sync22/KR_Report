@@ -23310,13 +23310,19 @@ def _build_market_briefing_toss_market_context_sections(
         for item in rankings
         if isinstance(item, dict) and str(item.get("symbol") or "").strip()
     }
-    individual_names = [str(names_by_symbol.get(symbol) or symbol) for symbol in individual_symbols]
-    ranking_lines = ["Toss 거래대금 상위 Top10"]
-    for start in range(0, len(individual_names), 5):
-        ranking_lines.append(f"- {', '.join(individual_names[start : start + 5])}")
-    if len(ranking_lines) == 1:
-        ranking_lines.append("- 집계 종목 없음")
-    if ranked_etf_symbols:
+    metadata_ready = bool(ranking_symbols) and all(
+        str(names_by_symbol.get(symbol) or "").strip() for symbol in ranking_symbols
+    ) and payload.get("stock_metadata_available") is not False
+    if ranking_symbols and not metadata_ready:
+        ranking_lines = ["Toss 거래대금 상위", "- 종목명/ETF 분류를 확인하지 못해 이번 회차에는 생략"]
+    else:
+        individual_names = [str(names_by_symbol.get(symbol) or symbol) for symbol in individual_symbols]
+        ranking_lines = ["Toss 거래대금 상위 Top10"]
+        for start in range(0, len(individual_names), 5):
+            ranking_lines.append(f"- {', '.join(individual_names[start : start + 5])}")
+        if len(ranking_lines) == 1:
+            ranking_lines.append("- 집계 종목 없음")
+    if metadata_ready and ranked_etf_symbols:
         ranking_lines.append("Toss 거래대금 상위 ETF Top5")
         for symbol in ranked_etf_symbols:
             item = ranking_by_symbol[symbol]
@@ -29043,7 +29049,7 @@ def _render_web_view_html() -> str:
         <p class="brief">오늘 볼 것: Top2 후보와 현재 확인 가능한 근거만 먼저 봅니다. 전일 Toss 저장값/수급/ETF는 참고 영역입니다.</p>
         <div id="main-priority-rows" class="main-priority-list"><span class="muted">날짜를 선택하세요.</span></div>
         <div id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden></div>
-        <p class="main-priority-note">Top2 현재가는 Naver/Toss 조회값으로 갱신하며, 리포트·KRX·[12009] 수급은 저장 기준입니다.</p>
+        <p class="main-priority-note">Top2 현재가는 Naver/Toss 조회값으로 갱신하며, 리포트·Toss 20:00 저장 수급은 참고 기준입니다.</p>
       </div>
 
       <div class="card span-12" id="candidate-evidence-card" data-view-panel="watch" hidden>
@@ -30435,7 +30441,7 @@ def _render_web_view_html() -> str:
         return {
           value: "시장 수급 저장값 없음",
           title: "시장 수급 참고",
-          label: "후보 수급 [12009]은 관찰 후보·종목 상세에서 확인",
+          label: "후보 Toss 수급은 관찰 후보·종목 상세에서 확인",
           referenceDate: "",
         };
       }
@@ -34656,7 +34662,7 @@ def _build_web_view_observation_summary(
         "scoring": False,
         "recommendation": False,
         "business_date": business_date.isoformat(),
-        "notice": "국장 관찰 요약은 저장된 리포트, KRX 가격/거래량, [12009] 수급 참고값만 압축해 보여줍니다.",
+        "notice": "국장 관찰 요약은 저장된 리포트와 Toss 저장 가격·거래량·수급 참고값을 압축해 보여줍니다.",
         "market_mood": {
             "label": "시장 분위기",
             "report_count": report_count,
@@ -37069,7 +37075,7 @@ def build_web_view_candidate_evidence_snapshot(
         "scoring": False,
         "recommendation": False,
         "display_policy": "관찰 후보는 저장된 리포트와 Toss 저장/수급 참고값을 확인용으로 묶어 보여줍니다.",
-        "notice": "오늘의 관찰 후보는 저장된 리포트/KRX/[12009] 수급 참고값 기준입니다. 실시간 시세가 아닙니다.",
+        "notice": "오늘의 관찰 후보는 저장된 리포트와 Toss 저장 수급 참고값 기준입니다. 실시간 시세가 아닙니다.",
         "market_flow_context": [_web_view_market_investor_flow_item(item) for item in sorted(
             market_flow_rows,
             key=lambda row: (_web_view_market_sort_key(row.market), _web_view_investor_sort_key(row.investor_type)),

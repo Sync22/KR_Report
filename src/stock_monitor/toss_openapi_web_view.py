@@ -317,6 +317,8 @@ class TossPriorityQuoteProvider:
             stock_markets: dict[str, str] = {}
             stock_security_types: dict[str, str] = {}
             etf_symbols: list[str] = []
+            stock_metadata_available = not ranking_symbols
+            stock_metadata_reason: str | None = None
             if ranking_symbols:
                 try:
                     stock_endpoint = resolve_toss_market_context_endpoint("market-ranking-stocks")
@@ -349,8 +351,14 @@ class TossPriorityQuoteProvider:
                         and str(item.get("symbol") or "").strip()
                         and str(item.get("securityType") or "").upper() == "ETF"
                     ]
+                    stock_metadata_available = (
+                        len(stock_names) == len(ranking_symbols)
+                        and len(stock_security_types) == len(ranking_symbols)
+                    )
+                    if not stock_metadata_available:
+                        stock_metadata_reason = "partial_stock_metadata"
                 except RuntimeError:
-                    pass
+                    stock_metadata_reason = "stock_metadata_unavailable"
             market_prices = price_response.result if isinstance(price_response.result, list) else []
             ranked_symbols = {
                 str(item.get("symbol") or "").strip()
@@ -373,6 +381,8 @@ class TossPriorityQuoteProvider:
                 "stock_markets": stock_markets,
                 "stock_security_types": stock_security_types,
                 "etf_symbols": etf_symbols,
+                "stock_metadata_available": stock_metadata_available,
+                "stock_metadata_reason": stock_metadata_reason,
                 "market_prices": market_prices,
                 "market_price_changes": _project_market_price_changes(
                     market_prices=market_prices,

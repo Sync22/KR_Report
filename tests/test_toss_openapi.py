@@ -314,6 +314,8 @@ def test_toss_market_context_provider_uses_fixed_queries_and_keeps_top_two_order
     assert payload["reference_date"] == "2026-07-09"
     assert payload["stock_names"] == {"005930": "Samsung Electronics", "035420": "NAVER"}
     assert payload["etf_symbols"] == ["035420"]
+    assert payload["stock_metadata_available"] is True
+    assert payload["stock_metadata_reason"] is None
     assert payload["investor_flow"]["KOSPI"]["institution"] == {"buyAmount": 80, "sellAmount": 120}
     assert "breakdown" not in payload["investor_flow"]["KOSPI"]["institution"]
     assert payload["affects_ordering"] is False
@@ -547,6 +549,23 @@ def test_market_ranking_stocks_validates_stock_names() -> None:
         {"symbol": "005930", "name": "Samsung Electronics"},
         {"symbol": "035420", "name": "NAVER"},
     ]
+
+
+def test_market_ranking_stocks_accepts_toss_etf_alphanumeric_symbol() -> None:
+    response = fetch_toss_readonly_endpoint(
+        base_url=TOSS_OPENAPI_BASE_URL,
+        access_token="token-value",
+        endpoint=resolve_toss_market_context_endpoint("market-ranking-stocks"),
+        params={"symbols": "005930,0167A0"},
+        timeout_seconds=12,
+        live_enabled=True,
+        urlopen=lambda *_args, **_kwargs: FakeResponse(
+            b'{"result":[{"symbol":"005930","name":"Samsung Electronics"},'
+            b'{"symbol":"0167A0","name":"TIGER ETF","securityType":"ETF"}]}'
+        ),
+    )
+
+    assert [row["symbol"] for row in response.result] == ["005930", "0167A0"]
 
 
 def test_fetch_toss_priority_investor_trading_uses_fixed_symbol_path_and_query() -> None:

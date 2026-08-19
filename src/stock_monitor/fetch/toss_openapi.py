@@ -15,6 +15,7 @@ from stock_monitor.config import _parse_bool, _read_dotenv
 TOSS_OPENAPI_BASE_URL = "https://openapi.tossinvest.com"
 TOSS_OPENAPI_MAX_RESPONSE_BYTES = 1_048_576
 _SYMBOL_PATTERN = re.compile(r"^\d{6}$")
+_MARKET_RANKING_SYMBOL_PATTERN = re.compile(r"^[0-9A-Z]{6}$")
 _FORBIDDEN_GROUPS = ("account", "asset", "order-info", "order-history", "order", "conditional-order")
 _PRICE_FIELDS = frozenset({"symbol", "timestamp", "lastPrice", "currency"})
 _STOCK_FIELDS = frozenset(
@@ -472,8 +473,13 @@ def _build_readonly_params(
     max_symbols = 20 if endpoint.key == "market-ranking-stocks" else 2
     if len(normalized_symbols) > max_symbols:
         raise TossOpenApiSafetyError(f"Toss endpoint '{endpoint.key}' accepts at most {max_symbols} symbols.")
-    if any(not _SYMBOL_PATTERN.fullmatch(symbol) for symbol in normalized_symbols):
-        raise TossOpenApiSafetyError("The main Toss lab profile accepts only six-digit Korean stock codes.")
+    symbol_pattern = _MARKET_RANKING_SYMBOL_PATTERN if endpoint.key == "market-ranking-stocks" else _SYMBOL_PATTERN
+    if any(not symbol_pattern.fullmatch(symbol) for symbol in normalized_symbols):
+        raise TossOpenApiSafetyError(
+            "Toss market-ranking stock metadata accepts only six-character Korean symbols."
+            if endpoint.key == "market-ranking-stocks"
+            else "The main Toss lab profile accepts only six-digit Korean stock codes."
+        )
     if endpoint.requires_symbols and not normalized_symbols:
         raise TossOpenApiSafetyError(f"Toss endpoint '{endpoint.key}' requires at least one --symbol.")
     if not endpoint.requires_symbols and normalized_symbols:
