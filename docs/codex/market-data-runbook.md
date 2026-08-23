@@ -9,6 +9,72 @@ The active market-data path is one Toss OpenAPI capture at `20:00` KST on each K
 - Existing KRX rows remain intact for historical analysis and old report windows; they are not a live fallback for the web-view.
 - The Toss snapshot is a stored close reference, not an intraday quote or execution signal.
 
+## Planned: KOSPI/KOSDAQ Rapid-Move Telegram Alert
+
+### Official API Finding
+
+The current Toss OpenAPI does **not** document a market-wide sidecar or circuit-breaker endpoint. The usable official facts for a market-wide rapid-move alert are the real-time KOSPI/KOSDAQ indicator price and the supported one-minute indicator candles. The latter provides a bounded short-window comparison without using account, order, or individual-stock APIs.
+
+| Official endpoint | Available fact | Planned use |
+| --- | --- | --- |
+| `GET /api/v1/market-indicators/prices?symbols=KOSPI,KOSDAQ` | Current index level and timestamp | Current level plus previous-day-close change. |
+| `GET /api/v1/market-indicators/{symbol}/candles?interval=1m&count=6` | Latest six one-minute index candles for `KOSPI` or `KOSDAQ` | Five-minute rapid-move comparison. |
+| `GET /api/v1/market-calendar/KR` | KRX/NXT market-session timetable | Suppress checks outside the regular session and on holidays. |
+
+The stock-level `warnings` API exposes VI and trading restrictions for one symbol, but it is not the requested market-wide signal and remains out of this alert's first scope.
+
+### Scope
+
+The product is a factual market-condition alert: notify only when KOSPI or KOSDAQ crosses an approved same-day or five-minute movement threshold. It is not a scheduled market briefing, Top2 message, stock selection change, or trading instruction.
+
+| Area | First implementation |
+| --- | --- |
+| Universe | KOSPI and KOSDAQ only. |
+| Source | Toss indicator price and 1-minute candle endpoints only. |
+| Window | Korean regular session only, gated by Toss market calendar. |
+| State | Reuse the existing delivery log for per-index, direction, threshold-bucket dedupe; no new table. |
+| Telegram text | Index, current level, same-day change, five-minute change, observed KST time, and source label. |
+| Excluded | Sidecar/circuit-breaker claim, Top2 changes, individual-stock warning polling, public score, buy/sell wording, account/order APIs. |
+
+### Trigger Contract Requiring Approval
+
+The API supplies the measurements, but it does not define what the operator considers “급격한”. Set these values explicitly before implementation; do not silently choose them:
+
+| Setting | Meaning | Candidate default for review only |
+| --- | --- | --- |
+| `daily_change_threshold` | Absolute change from previous close that can alert | KOSPI `2.0%`, KOSDAQ `2.5%` |
+| `five_minute_change_threshold` | Absolute change from the oldest of six one-minute candles | KOSPI `0.8%`, KOSDAQ `1.0%` |
+| `cooldown_minutes` | Suppress same index/direction/threshold-bucket repeats | `30` minutes |
+| `check_interval_minutes` | Regular-session source check cadence | `1` minute |
+
+Crossing a threshold sends one factual alert. A later opposite-direction crossing uses a distinct direction key. A duplicate within the cooldown is suppressed. Missing candles, stale timestamps, or provider errors create an operator event/skip reason but never a fabricated market-state alert.
+
+### Display Contract
+
+```text
+시장 급변 참고 · Toss 10:15
+- KOSPI 6,461.49 (-5.94%) · 5분 -0.92%
+- 기준: Toss 실시간 지수 / 관찰용 알림
+```
+
+The message must not state or imply a market-wide halt, sidecar, investment recommendation, buy/sell decision, forecast, or Top2 priority update. It reports only observed index moves and their timestamps.
+
+### Implementation Sequence
+
+1. Add exact read-only endpoint validation for the two indicator calls and the KR market calendar; keep account/order endpoint groups rejected.
+2. Add one bounded `scheduled-market-rapid-move-alert` command that exits outside the market-calendar regular session.
+3. Calculate previous-close and five-minute percentage changes, validate timestamps, and apply the approved threshold/cooldown keys through the existing delivery-log dedupe mechanism.
+4. Send only a threshold-crossing Telegram text; write a clear skip reason for non-crossing, missing, stale, or provider-failure paths.
+5. Register it only after a dry-run and one explicit Telegram test send confirm message length, duplicate suppression, and regular-session behavior.
+
+### Acceptance Criteria
+
+- Only KOSPI/KOSDAQ official indicator and market-calendar calls occur; no account, asset, holding, order, or stock-selection request occurs.
+- The alert uses an explicit approved threshold, five-minute comparison, timestamp, and direction.
+- One index/direction/threshold bucket cannot duplicate inside its cooldown, including across process restarts.
+- Provider failure cannot generate an alert or block existing report/market-briefing deliveries.
+- Fixture tests cover threshold crossing, no crossing, cooldown, opposite direction, stale/missing candle data, outside-session skip, and provider failure.
+
 The KRX and investor-flow material below is retained as a historical-reference runbook only. It is not a normal scheduler, web-view, or close-snapshot fallback path.
 
 ## Included sections
