@@ -61,7 +61,7 @@ This table is the current scheduler contract. Later KRX-specific procedures in t
 | `StockMonitor-Poll` | Every 30 minutes from `08:30` to `16:30` KST on Korean business days. |
 | `StockMonitor-MarketBriefingMood` / `Lunch` / `Preclose` | `09:15` / `12:00` / `15:15` KST operator briefing slots. |
 | `StockMonitor-TossCloseSnapshot` | `20:00` KST on Korean business days; stores the bounded Toss close snapshot used by web-view market, ETF, and flow references. |
-| `StockMonitor-TelegramCommands` | Hidden worker starts at `08:00`, checks Telegram commands every 1 minute, exits at `16:30`, and skips market holidays/no-run dates. |
+| `StockMonitor-TelegramCommands` | Hidden worker starts at `08:00`, checks Telegram commands every 1 minute, exits at `16:30`, and skips market holidays/no-run dates. During `09:00~15:30`, it also checks the official KIND `서킷브레이커/사이드카` market-action category and sends one operator alert per official acceptance number. |
 | `StockMonitor-WebViewHourlyRestart` | Hourly restart, default first run `00:05`, for the read-only loopback `web-view` target on `{LOCAL_WEB_VIEW_TARGET}`. |
 | `StockMonitor-Shutdown` | Desktop-validation only. It is not registered by the mini-PC scheduler wrapper and should remain absent during always-on operation. |
 
@@ -533,7 +533,7 @@ Read AGENTS.md, docs/codex/operating-guide.md, docs/codex/operating-guide.md, do
 Current operating contract:
 - Notify: 08:20 KST after KRX daily backfill, production send allowed only 08:00~08:30 unless --allow-late.
 - Poll: 08:30~16:30 every 30 minutes on Korean business days.
-- Telegram command worker: 08:00~16:30, 1-minute loop.
+- Telegram command worker: 08:00~16:30, 1-minute loop; KIND official sidecar/circuit-breaker confirmation check runs within the same worker from 09:00~15:30.
 - KRX Open API daily retry: StockMonitor-KrxDailyBackfill checks previous-business-day/recent missing stock/ETF/index snapshots at 08:10 on Korean business days, after the officially confirmed next-business-day 08:00 publication window.
 - Web-view hourly restart: StockMonitor-WebViewHourlyRestart refreshes only {LOCAL_WEB_VIEW_TARGET} every hour.
 - Shutdown: desktop validation only. For mini PC always-on operation, use scripts/register_mini_pc_scheduler_tasks.ps1 so StockMonitor-Shutdown is not registered.

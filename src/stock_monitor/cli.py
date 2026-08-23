@@ -72,6 +72,7 @@ from stock_monitor.fetch.krx_api import (
     resolve_krx_data_market_endpoint,
     resolve_krx_endpoints,
 )
+from stock_monitor.fetch.krx_kind import KrxKindMarketAction, fetch_krx_kind_market_actions
 from stock_monitor.fetch.naver_stock_quote import (
     NaverMarketTopStock,
     StockQuoteSnapshot,
@@ -154,6 +155,7 @@ from stock_monitor.summary import build_daily_summaries
 PRODUCTION_DELIVERY_CHANNEL = "telegram"
 TEST_DELIVERY_CHANNEL = "telegram_test"
 MARKET_BRIEFING_DELIVERY_CHANNEL = "telegram_market_briefing"
+KRX_KIND_MARKET_ACTION_DELIVERY_CHANNEL_PREFIX = "telegram_krx_kind_market_action"
 MARKET_BRIEFING_PHONE_REVIEW_SETTING = "market_briefing_phone_review_accepted"
 MARKET_BRIEFING_MIN_MANUAL_REVIEW_SENDS = 3
 MARKET_BRIEFING_LAYOUTS = ("default", "realtime-first")
@@ -176,6 +178,8 @@ SCHEDULED_TOSS_PRIORITY_BASELINE_EARLIEST_TIME = datetime_time(hour=20, minute=0
 SCHEDULED_TOSS_PRIORITY_BASELINE_LATEST_TIME = datetime_time(hour=20, minute=15)
 SCHEDULED_TOSS_MARKET_CONTEXT_EARLIEST_TIME = datetime_time(hour=20, minute=0)
 SCHEDULED_TOSS_MARKET_CONTEXT_LATEST_TIME = datetime_time(hour=20, minute=15)
+SCHEDULED_KRX_KIND_MARKET_ACTION_EARLIEST_TIME = datetime_time(hour=9, minute=0)
+SCHEDULED_KRX_KIND_MARKET_ACTION_LATEST_TIME = datetime_time(hour=15, minute=30)
 SCHEDULED_MARKET_BRIEFING_SLOT_TIMES = {
     "mood": datetime_time(hour=9, minute=15),
     "lunch": datetime_time(hour=12, minute=0),
@@ -2073,6 +2077,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     telegram_loop_parser.add_argument("--end-time", default="16:30")
     telegram_loop_parser.add_argument("--interval-seconds", type=int, default=60)
+    kind_market_action_parser = subparsers.add_parser(
+        "krx-kind-market-action-check",
+        help="Check official KRX KIND sidecar/circuit-breaker notices and alert the operator once per notice.",
+    )
+    kind_market_action_parser.add_argument("--dry-run", action="store_true")
 
     intraday_parser = subparsers.add_parser(
         "process-intraday-alerts",
@@ -3086,6 +3095,8 @@ def main(argv: list[str] | None = None) -> int:
                 end_time=_parse_hhmm_time(args.end_time),
                 interval_seconds=args.interval_seconds,
             )
+        if args.command == "krx-kind-market-action-check":
+            return _run_krx_kind_market_action_check(config, repository, dry_run=args.dry_run)
         if args.command == "process-intraday-alerts":
             return _run_process_intraday_alerts(config, repository, dry_run=args.dry_run)
         if args.command == "scheduled-shutdown":
@@ -39783,6 +39794,106 @@ def _run_scheduled_telegram_commands(config: RuntimeConfig, repository: StockMon
     return _run_process_telegram_commands(config, repository)
 
 
+def _run_krx_kind_market_action_check(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    current: datetime | None = None,
+    dry_run: bool = False,
+) -> int:
+    repository.initialize()
+    now = current or datetime.now(ZoneInfo(config.timezone))
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=ZoneInfo(config.timezone))
+    today = now.date()
+    skip_reason = _scheduled_skip_reason(config, today, repository) or _operation_profile_skip_reason(
+        config,
+        repository,
+        component="krx-kind-market-action",
+    )
+    if skip_reason:
+        print(f"Skipping KRX KIND market-action check: {skip_reason}")
+        return 0
+    current_time = now.timetz().replace(tzinfo=None)
+    if not SCHEDULED_KRX_KIND_MARKET_ACTION_EARLIEST_TIME <= current_time <= SCHEDULED_KRX_KIND_MARKET_ACTION_LATEST_TIME:
+        print(
+            "Skipping KRX KIND market-action check outside "
+            f"{SCHEDULED_KRX_KIND_MARKET_ACTION_EARLIEST_TIME.strftime('%H:%M')}~"
+            f"{SCHEDULED_KRX_KIND_MARKET_ACTION_LATEST_TIME.strftime('%H:%M')}."
+        )
+        return 0
+
+    notices = fetch_krx_kind_market_actions(today)
+    for notice in notices:
+        channel = f"{KRX_KIND_MARKET_ACTION_DELIVERY_CHANNEL_PREFIX}:{notice.acceptance_number}"
+        if repository.has_successful_delivery(today, channel):
+            continue
+        if dry_run:
+            print(f"Would alert KRX KIND market action {notice.acceptance_number}: {notice.title}")
+            continue
+        if not config.telegram_bot_token or not config.telegram_chat_id:
+            raise RuntimeError("Telegram configuration is missing for KRX KIND market-action alerts.")
+        try:
+            message_id = send_telegram_message(
+                config.telegram_bot_token,
+                config.telegram_chat_id,
+                _format_krx_kind_market_action_message(notice),
+                timeout_seconds=config.telegram_timeout_seconds,
+                max_retries=config.telegram_max_retries,
+                retry_delay_seconds=config.telegram_retry_delay_seconds,
+            )
+        except Exception as exc:
+            repository.record_operation_event(
+                _operation_event(
+                    config,
+                    component="krx-kind-market-action",
+                    event_type="telegram-send",
+                    status="failed",
+                    business_date=today,
+                    detail=f"acceptance_number={notice.acceptance_number}; error={exc}",
+                )
+            )
+            raise
+        repository.record_delivery(
+            DeliveryLog(
+                business_date=today,
+                channel=channel,
+                status="sent",
+                delivered_at=now,
+                message_id=str(message_id),
+                detail=f"source=krx-kind; acceptance_number={notice.acceptance_number}",
+            )
+        )
+        repository.record_operation_event(
+            _operation_event(
+                config,
+                component="krx-kind-market-action",
+                event_type="telegram-send",
+                status="sent",
+                business_date=today,
+                detail=f"acceptance_number={notice.acceptance_number}; message_id={message_id}",
+            )
+        )
+        print(f"KRX KIND market-action alert sent for {notice.acceptance_number} with message_id={message_id}")
+    return 0
+
+
+def _format_krx_kind_market_action_message(notice: KrxKindMarketAction) -> str:
+    lines = [
+        f"KRX 공식 시장조치 확인 · {notice.published_at.strftime('%H:%M')}",
+        f"- {notice.title}",
+    ]
+    if notice.submitter:
+        lines.append(f"- 제출: {notice.submitter}")
+    lines.extend(
+        [
+            f"- KIND 접수번호: {notice.acceptance_number}",
+            "- 확인: https://kind.krx.co.kr/disclosure/details.do?method=searchDetailsMain",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _run_scheduled_telegram_command_loop(
     config: RuntimeConfig,
     repository: StockMonitorRepository,
@@ -39851,6 +39962,21 @@ def _run_scheduled_telegram_command_loop(
             )
             print(f"Stopping Telegram command loop: {detail}")
             return 0
+
+        try:
+            _run_krx_kind_market_action_check(config, repository, current=now)
+        except Exception as exc:
+            repository.record_operation_event(
+                _operation_event(
+                    config,
+                    component="krx-kind-market-action",
+                    event_type="check",
+                    status="failed",
+                    business_date=today,
+                    detail=str(exc),
+                )
+            )
+            print(f"KRX KIND market-action check failed: {exc}", file=sys.stderr)
 
         try:
             _run_process_telegram_commands(config, repository)
