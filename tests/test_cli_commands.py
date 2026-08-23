@@ -10653,6 +10653,10 @@ def test_web_view_value_qa_flags_static_html_public_copy_regressions() -> None:
         <table><thead><tr><th>D+1</th><th>D+5</th><th>D+10</th><th>D+20</th></tr></thead></table>
         <td colspan="8">검증표</td>
         <p>선택 날짜 KRX 마감값 없음</p>
+        <p>선택 날짜 KRX 확정 이력</p>
+        <p>KRX 최근 흐름</p>
+        <p>구성종목이 아닌 KRX ETF 일별매매정보 기준</p>
+        <p>웹뷰에서 뉴스 근거 저장을 실행하면 후보와 연결됩니다.</p>
         <p>추천/점수 아님</p>
         <p>추천 순위</p>
         <p>추천이나 매수/매도</p>
@@ -10661,6 +10665,10 @@ def test_web_view_value_qa_flags_static_html_public_copy_regressions() -> None:
     )
 
     assert [issue["code"] for issue in issues] == [
+        "public_html_internal_copy",
+        "public_html_internal_copy",
+        "public_html_internal_copy",
+        "public_html_internal_copy",
         "public_html_internal_copy",
         "public_html_internal_copy",
         "public_html_internal_copy",
@@ -10680,6 +10688,10 @@ def test_web_view_value_qa_flags_static_html_public_copy_regressions() -> None:
         "web_view_html.D+ reaction columns",
         "web_view_html.8-column observation table",
         "web_view_html.선택 날짜 KRX 마감값 없음",
+        "web_view_html.선택 날짜 KRX 확정 이력",
+        "web_view_html.KRX 최근 흐름",
+        "web_view_html.KRX ETF 오표기",
+        "web_view_html.GET-only 뉴스 저장 안내",
         "web_view_html.추천/점수 아님",
         "web_view_html.추천 순위",
         "web_view_html.추천이나 매수/매도",
@@ -10888,6 +10900,17 @@ def test_web_view_value_qa_fails_when_active_rotation_etf_mapping_has_no_snapsho
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     config.rotation_overlay_coordinates_path.parent.mkdir(parents=True, exist_ok=True)
+    config.rotation_overlay_coordinates_path.write_text(
+        json.dumps(
+            {
+                "coordinates": [
+                    {"display_name": "반도체와반도체장비", "x": 100, "y": 100, "radius": 20}
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     (config.rotation_overlay_coordinates_path.parent / "rotation_etf_candidates.json").write_text(
         json.dumps(
             {
@@ -10913,7 +10936,28 @@ def test_web_view_value_qa_fails_when_active_rotation_etf_mapping_has_no_snapsho
                 etf_code="396500",
                 etf_name="TIGER 반도체TOP10",
                 fetched_at=datetime(2026, 5, 8, 18, 0, 0),
+                source="toss_openapi",
                 close_price=20_000,
+            ),
+            EtfDailySnapshot(
+                business_date=date(2026, 5, 8),
+                etf_code="999999",
+                etf_name="KRX-only fixture",
+                fetched_at=datetime(2026, 5, 8, 18, 0, 0),
+                close_price=10_000,
+            ),
+        ]
+    )
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=date(2026, 5, 8),
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                close_price=90_000,
+                fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -11246,7 +11290,7 @@ def test_web_view_value_qa_scans_all_public_web_view_surfaces(tmp_path, monkeypa
     ]
 
 
-def test_web_view_value_qa_collapses_future_krx_missing_market_reference_warnings(tmp_path, monkeypatch, capsys) -> None:
+def test_web_view_value_qa_collapses_future_toss_missing_market_reference_warnings(tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
@@ -11291,6 +11335,7 @@ def test_web_view_value_qa_collapses_future_krx_missing_market_reference_warning
                 market="KOSPI",
                 close_price=90_000,
                 fetched_at=datetime(2026, 5, 12, 20, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -11308,7 +11353,7 @@ def test_web_view_value_qa_collapses_future_krx_missing_market_reference_warning
     assert payload["warning_count"] == 2
     assert {warning["code"] for warning in payload["warnings"]} == {
         "category_mapping_fallback",
-        "krx_snapshot_not_yet_available",
+        "toss_close_snapshot_not_yet_available",
     }
     assert not any(warning["code"] == "missing_market_reference" for warning in payload["warnings"])
 
@@ -11370,6 +11415,7 @@ def test_web_view_value_qa_fails_on_same_date_missing_market_reference(tmp_path,
                 market="KOSPI",
                 close_price=90_000,
                 fetched_at=datetime(2026, 5, 12, 20, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -11387,7 +11433,7 @@ def test_web_view_value_qa_fails_on_same_date_missing_market_reference(tmp_path,
     assert payload["issues"][0]["code"] == "missing_market_reference"
 
 
-def test_web_view_value_qa_warns_on_unresolved_stock_market_reference(tmp_path, monkeypatch, capsys) -> None:
+def test_web_view_value_qa_fails_on_unresolved_toss_market_reference(tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
@@ -11432,6 +11478,7 @@ def test_web_view_value_qa_warns_on_unresolved_stock_market_reference(tmp_path, 
                 market="KOSPI",
                 close_price=90_000,
                 fetched_at=datetime(2026, 5, 12, 20, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -11445,9 +11492,8 @@ def test_web_view_value_qa_warns_on_unresolved_stock_market_reference(tmp_path, 
     )
 
     payload = json.loads(capsys.readouterr().out)
-    assert exit_code == 0
-    assert payload["issue_count"] == 0
-    assert any(warning["code"] == "unresolved_stock_market_reference" for warning in payload["warnings"])
+    assert exit_code == 1
+    assert any(issue["code"] == "missing_market_reference" for issue in payload["issues"])
 
 
 def test_db_verify_fails_on_investor_flow_quality_issue(tmp_path, capsys) -> None:

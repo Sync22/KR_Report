@@ -2961,11 +2961,17 @@ class StockMonitorRepository:
         self,
         business_date: date,
         etf_codes: list[str],
+        *,
+        source: str | None = None,
     ) -> list[EtfDailySnapshot]:
         normalized_codes = sorted({code.strip() for code in etf_codes if code and code.strip()})
         if not normalized_codes:
             return []
         placeholders = ", ".join("?" for _ in normalized_codes)
+        source_clause = "AND source = ?" if source else ""
+        params: list[object] = [business_date.isoformat(), *normalized_codes]
+        if source:
+            params.append(source)
         with self.connect() as connection:
             rows = connection.execute(
                 f"""
@@ -2979,9 +2985,10 @@ class StockMonitorRepository:
                 FROM etf_daily_snapshots
                 WHERE business_date = ?
                   AND etf_code IN ({placeholders})
+                  {source_clause}
                 ORDER BY COALESCE(turnover, 0) DESC, etf_code ASC
                 """,
-                (business_date.isoformat(), *normalized_codes),
+                tuple(params),
             ).fetchall()
         return [self._row_to_etf_daily_snapshot(row) for row in rows]
 

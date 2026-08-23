@@ -19702,7 +19702,7 @@ def _candidate_evidence_next_gap(gap_counts: Counter[str]) -> str | None:
         return None
     priority = {
         "종목 수급 저장값 없음": 0,
-        "선택일 KRX 저장값 없음": 1,
+        "선택일 Toss 저장값 없음": 1,
         "목표가 정보 없음": 2,
         "투자의견 정보 없음": 3,
     }
@@ -19717,8 +19717,8 @@ def _candidate_evidence_review_priority(
 ) -> str:
     if next_evidence_gap == "종목 수급 저장값 없음":
         return "flow_backfill"
-    if next_evidence_gap == "선택일 KRX 저장값 없음":
-        return "krx_backfill"
+    if next_evidence_gap == "선택일 Toss 저장값 없음":
+        return "toss_snapshot_review"
     if explanation_quality_counts.get("missing_price_volume_context", 0):
         return "price_volume_review"
     if explanation_quality_counts.get("rank_without_stock_flow", 0):
@@ -25284,7 +25284,8 @@ def _build_rotation_mapping_audit(
     _collect_rotation_etf_mapping_qa_issues(
         config,
         repository,
-        latest_krx_snapshot_date=latest_krx_snapshot_date,
+        snapshot_date=latest_krx_snapshot_date,
+        source="krx",
         issues=issues,
         warnings=warnings,
     )
@@ -25395,7 +25396,8 @@ def _collect_rotation_etf_mapping_qa_issues(
     config: RuntimeConfig,
     repository: StockMonitorRepository,
     *,
-    latest_krx_snapshot_date: date | None,
+    snapshot_date: date | None,
+    source: str | None = None,
     issues: list[dict],
     warnings: list[dict],
 ) -> None:
@@ -25420,19 +25422,19 @@ def _collect_rotation_etf_mapping_qa_issues(
                 "message": "active rotation ETF mapping has no overlay coordinate or active alias for this category",
             }
         )
-    if latest_krx_snapshot_date is None:
+    if snapshot_date is None:
         warnings.append(
             {
-                "code": "rotation_etf_mapping_no_krx_snapshot",
+                "code": "rotation_etf_mapping_no_snapshot",
                 "path": "rotation_etf_candidates",
-                "message": "active rotation ETF mappings exist but no stored KRX snapshot date is available",
+                "message": "active rotation ETF mappings exist but no stored ETF snapshot date is available",
             }
         )
         return
     for (category_type, display_name), etf_codes in mappings.items():
         existing_codes = {
             item.etf_code
-            for item in repository.list_etf_daily_for_codes(latest_krx_snapshot_date, etf_codes)
+            for item in repository.list_etf_daily_for_codes(snapshot_date, etf_codes, source=source)
         }
         for etf_code in sorted({code for code in etf_codes if code} - existing_codes):
             issues.append(
@@ -25441,7 +25443,7 @@ def _collect_rotation_etf_mapping_qa_issues(
                     "path": f"rotation_etf_candidates[{category_type}:{display_name}].{etf_code}",
                     "message": (
                         "active rotation ETF mapping code has no stored ETF snapshot on "
-                        f"{latest_krx_snapshot_date.isoformat()}"
+                        f"{snapshot_date.isoformat()}"
                     ),
                 }
             )
@@ -29006,9 +29008,6 @@ def _render_web_view_html() -> str:
       <div class="card span-12 daily-briefing" data-view-panel="main">
         <div class="section-header">
           <h2>오늘 읽을 요약 <span class="muted" id="daily-briefing-date"></span></h2>
-          <div class="summary-actions">
-            <span class="status-pill">저장 데이터 기준</span>
-          </div>
         </div>
         <p class="briefing-mini-label">리포트 간략 정리</p>
         <p class="briefing-line" id="daily-briefing-headline">날짜를 선택하면 읽을 흐름을 압축해서 보여줍니다.</p>
@@ -29021,7 +29020,7 @@ def _render_web_view_html() -> str:
           </div>
         </div>
         <div id="news-observation-summary" class="news-observation-summary" aria-live="polite">
-          <div class="news-observation-summary-head"><b>뉴스 관찰</b><span class="status-pill">저장 데이터</span></div>
+          <div class="news-observation-summary-head"><b>뉴스 관찰</b></div>
           <p class="news-observation-summary-reason">날짜를 선택하면 저장된 뉴스 관찰을 확인합니다.</p>
           <p class="news-observation-summary-connection">우선 확인 후보와 함께 읽는 뉴스 근거입니다.</p>
         </div>
@@ -29029,7 +29028,6 @@ def _render_web_view_html() -> str:
           <div class="briefing-reference-card">
             <div class="briefing-reference-head">
               <b id="briefing-reference-title">시장 참고</b>
-              <span>저장 데이터 기준</span>
             </div>
             <div class="briefing-box briefing-reference-section">
               <b id="briefing-turnover-title">거래대금 참고</b>
@@ -29060,7 +29058,6 @@ def _render_web_view_html() -> str:
         <p class="brief">오늘 볼 것: Top2 후보와 현재 확인 가능한 근거만 먼저 봅니다. 전일 Toss 저장값/수급/ETF는 참고 영역입니다.</p>
         <div id="main-priority-rows" class="main-priority-list"><span class="muted">날짜를 선택하세요.</span></div>
         <div id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden></div>
-        <p class="main-priority-note">Top2 현재가는 Naver/Toss 조회값으로 갱신하며, 리포트·Toss 20:00 저장 수급은 참고 기준입니다.</p>
       </div>
 
       <div class="card span-12" id="candidate-evidence-card" data-view-panel="watch" hidden>
@@ -29154,7 +29151,7 @@ def _render_web_view_html() -> str:
 
       <details class="card span-12 market-reference-card" id="market-reference-card" data-view-panel="market" hidden open>
         <summary>
-          <h2>시장 문맥 <span class="muted">Toss 당일 · KRX 확정 이력</span></h2>
+          <h2>시장 문맥 <span class="muted">Toss 당일 · Toss 저장</span></h2>
           <span class="muted">현재값 우선 참고</span>
         </summary>
         <p class="brief">시장 탭은 해석 문장이 아니라 선택 날짜의 Toss 저장/수급 근거를 확인하는 화면입니다.</p>
@@ -29162,11 +29159,11 @@ def _render_web_view_html() -> str:
         <details class="market-reference-panel" open>
           <summary>Toss 당일 시장 <span class="muted">실시간 집계</span></summary>
           <div id="toss-market-context" class="intraday-overlap-panel" aria-live="polite" hidden></div>
-          <p class="notice">당일 지수·시장 수급·거래대금 Top20을 우선 표시합니다. KRX 확정 이력은 아래 참고용입니다.</p>
+          <p class="notice">당일 지수·시장 수급·거래대금 Top20을 우선 표시합니다. Toss 저장 이력은 아래 참고용입니다.</p>
         </details>
 
         <details class="market-reference-panel">
-          <summary>선택 날짜 KRX 확정 이력 <span class="muted" id="market-date"></span></summary>
+          <summary>선택 날짜 Toss 저장 기준 <span class="muted" id="market-date"></span></summary>
           <p class="brief" id="market-notice">날짜를 선택하면 같은 날짜의 시장 참고값을 표시합니다.</p>
           <div class="market-grid" id="selected-date-market-grid">
             <div class="market-block">
@@ -29186,7 +29183,7 @@ def _render_web_view_html() -> str:
         </details>
 
         <details class="market-reference-panel" id="etf-trend-panel">
-          <summary>KRX 최근 흐름 <span class="muted" id="krx-flow-title"></span></summary>
+          <summary>Toss 저장 최근 흐름 <span class="muted" id="krx-flow-title"></span></summary>
           <table class="mobile-card-table">
             <thead><tr><th>날짜</th><th>KOSPI 거래대금 1위</th><th>KOSDAQ 거래대금 1위</th></tr></thead>
             <tbody id="krx-flow-rows"><tr><td colspan="3" class="muted">날짜를 선택하세요.</td></tr></tbody>
@@ -29197,7 +29194,7 @@ def _render_web_view_html() -> str:
         <details class="market-reference-panel">
           <summary>투자자 수급 참고 <span class="muted" id="investor-flow-title"></span></summary>
           <div class="market-block">
-            <h3>전일 확정 시장 수급</h3>
+            <h3>Toss 저장 시장 수급 <span class="muted">확정 판단 아님</span></h3>
             <table class="mobile-card-table"><thead><tr><th>시장</th><th>투자자</th><th>순매수량</th><th>순매수금액</th></tr></thead><tbody id="investor-market-rows"><tr><td colspan="4" class="muted">수급 데이터가 없습니다.</td></tr></tbody></table>
           </div>
           <p class="notice" id="investor-flow-notice">저장된 수급 데이터 기준입니다.</p>
@@ -29284,8 +29281,9 @@ def _render_web_view_html() -> str:
       return `<span title="${esc(text)}">${esc(first)} 외 ${brokers.length - 1}곳</span>`;
     };
     const marketReference = (item, snapshotMissing = false) => {
-      if (!item) return `<span class="muted">${snapshotMissing ? "마감 대기" : "KRX 없음"}</span>`;
-      return `${price(item.close_price)}<div class="muted">${percent(item.change_percent)} · ${esc(item.market || "-")}</div>`;
+      if (!item) return `<span class="muted">${snapshotMissing ? "마감 대기" : "Toss 저장값 없음"}</span>`;
+      const storedAt = item.fetched_at ? ` · ${publishedLabel(item.fetched_at)} 저장` : "";
+      return `${price(item.close_price)}<div class="muted">${percent(item.change_percent)} · ${esc(item.market || "-")}${esc(storedAt)}</div>`;
     };
     const moneyRange = (min, max) => {
       if (min === null && max === null) return "-";
@@ -30018,8 +30016,9 @@ def _render_web_view_html() -> str:
       const observedAt = newsObservationTimeLabel(summary);
       const titles = Array.isArray(summary?.top_titles) ? summary.top_titles.filter(Boolean).slice(0, 3) : [];
       const items = Array.isArray(summary?.items) ? summary.items.filter(Boolean).slice(0, 6) : [];
+      const actionableItems = items.filter((item) => candidateNewsHasActionableEvidence(item));
       const metaChips = newsObservationMetaChips(available, direct, caution, marketContext, krx, candidateOverlapNames);
-      const groups = newsObservationSummaryGroups(items);
+      const groups = newsObservationSummaryGroups(actionableItems);
       node.innerHTML = `
         <div class="news-observation-summary-head">
           <b>${esc(label)}</b>
@@ -30027,10 +30026,10 @@ def _render_web_view_html() -> str:
           ${observedAt ? `<span class="muted">${esc(observedAt)}</span>` : ""}
         </div>
         <p class="news-observation-summary-reason">${esc(reason)}</p>
-        ${items.length ? "" : `<p class="news-observation-summary-connection">${esc(connection)}</p>`}
+        ${actionableItems.length ? "" : `<p class="news-observation-summary-connection">${esc(connection)}</p>`}
         <div class="news-observation-summary-meta">${metaChips.map((item) => `<span class="quality-chip">${esc(item)}</span>`).join("")}</div>
         ${groups.length ? `<div class="news-observation-summary-groups">${groups.map((group) => renderNewsObservationSummaryGroup(group.title, group.items)).join("")}</div>` : ""}
-        ${titles.length ? `<ul class="news-observation-summary-titles">${titles.map((title) => `<li>${esc(title)}</li>`).join("")}</ul>` : ""}
+        ${actionableItems.length && titles.length ? `<ul class="news-observation-summary-titles">${titles.map((title) => `<li>${esc(title)}</li>`).join("")}</ul>` : ""}
       `;
     }
 
@@ -30568,7 +30567,7 @@ def _render_web_view_html() -> str:
 
     function renderStockContext(data) {
       const market = data.market_reference
-        ? `KRX ${price(data.market_reference.close_price)} · ${percent(data.market_reference.change_percent)} · ${esc(data.market_reference.market || "-")}`
+        ? `Toss 저장 ${price(data.market_reference.close_price)} · ${percent(data.market_reference.change_percent)} · ${esc(data.market_reference.market || "-")} · ${esc(publishedLabel(data.market_reference.fetched_at))}`
         : "당일 시장 참고 없음";
       const valueContext = renderStockValueContext(data.value_context);
       const volumeItems = data.recent_volume_days?.items || [];
@@ -30588,10 +30587,10 @@ def _render_web_view_html() -> str:
         ? `<div class="detail-item"><b>기간별 수급량 <span class="muted">최근 31일 저장값 · 구분: 주</span></b>${flowReference}${renderInvestorFlowPeriodSummary(investorTabs.retail_foreign_institution)}${renderInvestorFlowBars(investorTabs.retail_foreign_institution)}</div>`
         : `<div class="detail-item"><span class="detail-meta">${esc(investorTabs.notice || data.investor_flow?.notice || "수급 데이터가 없습니다.")}</span></div>`;
       const targetJourneyBlock = targetJourney.available
-        ? `<div class="detail-item target-journey-section"><b>목표가 검증 <span class="muted">저장 리포트 목표가별 도달 기록</span></b>${renderTargetJourney(targetJourney.items)}</div>`
+        ? `<div class="detail-item target-journey-section"><b>리포트 변화·도달 기록 <span class="muted">선택일 이후 저장 KRX 이력 · 고가 우선/종가 보조</span></b>${renderTargetJourney(targetJourney.items)}</div>`
         : "";
       const targetTrailBlock = targetTrail.available
-        ? `<div class="detail-item target-trail-section"><b>목표가 흐름 <span class="muted">저장 리포트 기준</span></b>${renderTargetPriceTrailRows(targetTrail.items)}${targetAttainmentLine(targetTrail)}${targetProgressDetailLabel(targetProgress)}</div>`
+        ? `<div class="detail-item target-trail-section"><b>현재 목표가 진행 <span class="muted">선택일 Toss 저장값 기준</span></b>${targetAttainmentLine(targetTrail)}${targetProgressDetailLabel(targetProgress)}</div>`
         : `<div class="detail-item target-trail-section"><span class="detail-meta">${esc(targetTrail.notice || "저장된 목표가 흐름이 없습니다.")}</span></div>`;
       const relatedContextBlock = relatedContext.available
         ? `<div class="detail-item"><b>관련 업종/ETF 참고 <span class="muted">저장 분류 · 수동 ETF 매핑</span></b>${renderRelatedContext(relatedContext.categories)}</div>`
@@ -30631,7 +30630,7 @@ def _render_web_view_html() -> str:
       const rows = [
         ["저장 가격 기준", valueContextPriceBasis(context)],
         ["거래대금", valueContextDate(context.turnover_reference_date)],
-        ["KRX 기준일", valueContextDate(context.krx_reference_date)],
+        ["Toss 저장 기준일", valueContextDate(context.krx_reference_date)],
         ["수급 기준일", valueContextDate(context.investor_flow_reference_date)],
         ["리포트", valueContextDate(context.report_reference_date)],
         ["뉴스 수집 상태", valueContextNewsStatus(context.news_collection_status)]
@@ -30659,9 +30658,10 @@ def _render_web_view_html() -> str:
 
     function targetJourneyStatusLine(item) {
       if (!item) return "데이터 없음";
+      const observedThrough = item.observed_through ? ` · 관측 ${item.observed_through}` : "";
       if (item.status === "hit") {
         const days = item.hit_trading_days === 0 ? "당일" : `${number(item.hit_trading_days)}영업일`;
-        return `달성 · ${days}`;
+        return `달성 · ${days}${observedThrough}`;
       }
       if (item.status === "in_progress") {
         const parts = ["진행 중"];
@@ -30671,6 +30671,7 @@ def _render_web_view_html() -> str:
         if (item.max_attainment_percent !== null && item.max_attainment_percent !== undefined) {
           parts.push(`최대 ${percent(item.max_attainment_percent)}`);
         }
+        if (item.observed_through) parts.push(`관측 ${item.observed_through}`);
         return parts.join(" · ");
       }
       return "가격 검증 대기";
@@ -30694,45 +30695,21 @@ def _render_web_view_html() -> str:
       const why = candidateCompactLabel(candidateWhyDisplayItems(layers.primary), 3) || "저장 근거 확인";
       const quote = tossPriorityQuoteByCode.get(String(data.stock_code || "")) || "Toss 현재가 확인 전";
       const valueProfile = candidate.value_profile || {};
-      const value = valueProfile.value_label
-        ? `${valueProfile.value_label}${valueProfile.value_reason ? ` · ${valueProfile.value_reason}` : ""}`
-        : "저장 근거 확인";
+      const status = [candidate.observation_priority || "확인 후보"];
+      if (valueProfile.value_label && valueProfile.value_label !== status[0]) status.push(valueProfile.value_label);
       return `<div class="detail-item stock-observation-journey">
-        <b>현재 관찰 맥락</b>
-        <span>관찰 상태: ${esc(candidate.observation_priority || "확인 후보")} · ${esc(value)}</span>
-        <span>관찰 사유: ${esc(why)}</span>
-        <span>${esc(candidateNewsCompactLine(candidate.news_observation_badge))}</span>
-        <span>장중 참고: ${esc(candidateIntradayReferenceLabel(candidate.intraday_reference))}</span>
-        <span>${esc(quote)} · ${esc(candidateTossBaselineCompactLine(candidate.toss_baseline_reference))}</span>
+        <b>근거 원장</b>
+        <span>상태: ${esc(status.join(" · "))}</span>
+        ${valueProfile.value_reason ? `<span>해석: ${esc(valueProfile.value_reason)}</span>` : ""}
+        <span>리포트 근거: ${esc(why)}</span>
+        <span>뉴스: ${esc(candidateNewsCompactLine(candidate.news_observation_badge))}</span>
+        <span>현재가: ${esc(quote)} · ${esc(candidateIntradayReferenceLabel(candidate.intraday_reference))}</span>
+        <span>저장 기준: ${esc(candidateTossBaselineCompactLine(candidate.toss_baseline_reference))}</span>
         <div class="journey-actions">
           <button class="journey-link" type="button" data-journey-view="market">시장 기준 보기</button>
           <button class="journey-link" type="button" data-journey-view="rotation">관련 업종/ETF 보기</button>
         </div>
       </div>`;
-    }
-
-    function renderTargetPriceTrailRows(items) {
-      const picked = (items || []).slice(0, 6);
-      if (!picked.length) return '<span class="detail-meta">저장된 목표가 흐름이 없습니다.</span>';
-      return `<div class="target-trail-list">${picked.map((item) => {
-        const direction = item.direction_label || "최근";
-        const broker = item.broker_name
-          ? `<span class="target-trail-meta">${esc(item.broker_name)}</span>`
-          : "";
-        return `
-        <div class="target-trail-line">
-          <span class="target-trail-date">${esc(item.business_date || "-")}</span>
-          <span class="target-trail-main">
-            <span class="target-trail-main-row"><span class="target-direction-label">${esc(direction)}</span><span class="target-price-text">${esc(item.target_price_display || item.display || "-")}</span></span>
-            ${broker}
-          </span>
-        </div>
-      `;
-      }).join("")}</div>`;
-    }
-
-    function renderTargetPriceTrail(items) {
-      return renderTargetPriceTrailRows(items);
     }
 
     function targetAttainmentLine(trail) {
@@ -30895,7 +30872,7 @@ def _render_web_view_html() -> str:
         ? `1건 포함 ${number(visibleStocks.length)}종목 표시`
         : `2건 이상 ${number(visibleStocks.length)}종목 표시`;
       const marketNotice = data?.toss_context && data.toss_context.available === false
-        ? " · 선택 날짜 Toss 20:00 저장 대기"
+        ? " · 선택 날짜 Toss 저장 대기"
         : "";
       const krxSnapshotMissing = data?.toss_context && data.toss_context.available === false;
       document.getElementById("stock-filter-status").textContent = `${filterText}${hiddenParts.length ? ` · ${hiddenParts.join(" · ")}` : ""}${marketNotice}`;
@@ -31057,7 +31034,7 @@ def _render_web_view_html() -> str:
 
     function topTwoCurrentEvidenceLine(item) {
       const parts = [];
-      if (item?.news_observation_badge?.available === true) {
+      if (candidateNewsHasActionableEvidence(item?.news_observation_badge)) {
         parts.push(candidateNewsDigestLine(item.news_observation_badge));
       }
       if (item?.intraday_reference?.available === true) {
@@ -31071,7 +31048,11 @@ def _render_web_view_html() -> str:
       const gaps = candidateWhyDisplayItems(layers.gap);
       const missing = [];
       const hasCurrentPrice = item?.intraday_reference?.available === true || topTwoTossQuoteIsCurrent(tossQuote);
-      if (item?.news_observation_badge?.available !== true) missing.push("뉴스 근거 대기");
+      if (item?.news_observation_badge?.available !== true) {
+        missing.push("뉴스 근거 대기");
+      } else if (!candidateNewsHasActionableEvidence(item.news_observation_badge)) {
+        missing.push("뉴스 직접 매칭 없음");
+      }
       if (!hasCurrentPrice) missing.push("현재가 확인 전");
       const relevantGaps = hasCurrentPrice
         ? gaps.filter((gap) => !String(gap || "").includes("현재가"))
@@ -31094,8 +31075,9 @@ def _render_web_view_html() -> str:
         const time = String(context.current_price_reference_time || "");
         return time ? `${time.slice(11, 16) || "20:00"} 저장` : "20:00 저장";
       }
-      if (context.current_price_basis === "KRX close") {
-        return context.current_price_reference_time ? `${context.current_price_reference_time} KRX 종가` : "KRX 종가";
+      if (context.current_price_basis === "Toss stored snapshot") {
+        const time = String(context.current_price_reference_time || "");
+        return time ? `${time.replace("T", " ").slice(0, 16)} 저장` : "Toss 저장";
       }
       return "다음 확인 필요";
     }
@@ -31433,6 +31415,13 @@ def _render_web_view_html() -> str:
       return parts.join(" · ");
     }
 
+    function candidateNewsHasActionableEvidence(badge) {
+      if (!badge || badge.available !== true) return false;
+      return Number(badge.direct_count || 0) > 0
+        || Number(badge.caution_count || 0) > 0
+        || Number(badge.market_context_count || 0) > 0;
+    }
+
     function candidateNewsPrimaryLabel(badge) {
       if (!badge) return "뉴스 근거 있음";
       if (Number(badge.direct_count || 0) > 0 && badge.display_label) return badge.display_label;
@@ -31597,10 +31586,11 @@ def _render_web_view_html() -> str:
 
     function candidateMarketInline(reference) {
       if (!reference) {
-        return '<span class="candidate-market-inline"><span>-</span><span>KRX 없음</span></span>';
+        return '<span class="candidate-market-inline"><span>-</span><span>Toss 저장값 없음</span></span>';
       }
-      const market = reference.market || "KRX";
-      return `<span class="candidate-market-inline"><span>${esc(price(reference.close_price))}</span><span>${esc(percent(reference.change_percent))} · ${esc(market)}</span></span>`;
+      const market = reference.market || "Toss";
+      const storedAt = reference.fetched_at ? ` · ${publishedLabel(reference.fetched_at)} 저장` : "";
+      return `<span class="candidate-market-inline"><span>${esc(price(reference.close_price))}</span><span>${esc(percent(reference.change_percent))} · ${esc(market)}${esc(storedAt)}</span></span>`;
     }
 
     function marketMoodSectorLabel(value) {
@@ -31787,13 +31777,13 @@ def _render_web_view_html() -> str:
         return;
       }
       document.getElementById("market-kospi-rows").innerHTML = context.top_kospi_by_turnover.length ? context.top_kospi_by_turnover.map((item) => row([
-        labeled("종목", `${esc(item.stock_name)}<div class="muted">${esc(item.stock_code)}</div>`),
+        labeled("종목", `${esc(item.stock_name)}<div class="muted">${esc(item.stock_code)}${item.fetched_at ? ` · ${esc(publishedLabel(item.fetched_at))} 저장` : ""}</div>`),
         labeled("종가", price(item.close_price)),
         labeled("등락률", percent(item.change_percent)),
         labeled("거래대금", compactTurnover(item.turnover))
       ])).join("") : empty(4);
       document.getElementById("market-kosdaq-rows").innerHTML = context.top_kosdaq_by_turnover.length ? context.top_kosdaq_by_turnover.map((item) => row([
-        labeled("종목", `${esc(item.stock_name)}<div class="muted">${esc(item.stock_code)}</div>`),
+        labeled("종목", `${esc(item.stock_name)}<div class="muted">${esc(item.stock_code)}${item.fetched_at ? ` · ${esc(publishedLabel(item.fetched_at))} 저장` : ""}</div>`),
         labeled("종가", price(item.close_price)),
         labeled("등락률", percent(item.change_percent)),
         labeled("거래대금", compactTurnover(item.turnover))
@@ -31873,7 +31863,7 @@ def _render_web_view_html() -> str:
           : `(기준 ${referenceDate})`)
         : (selectedDateText ? `(선택 ${selectedDateText})` : "");
       const notice = flow?.reference_status === "stale" || flow?.exact_date_available === false
-        ? `선택 날짜의 ETF 저장값이 없어 ${referenceDate || "최근 저장일"} 기준 흐름만 표시합니다. 구성종목이 아닌 KRX ETF 일별매매정보 기준입니다.`
+        ? `선택 날짜의 ETF 저장값이 없어 ${referenceDate || "최근 저장일"} 기준 흐름만 표시합니다. 구성종목을 포함하지 않는 Toss 저장 ETF 거래대금 기준입니다.`
         : String(flow?.notice || "저장된 ETF 데이터 기준입니다.");
       document.getElementById("etf-tab-title").textContent = title;
       document.getElementById("etf-tab-notice").textContent = notice;
@@ -32884,7 +32874,7 @@ def build_web_view_daily_snapshot(
         "summary_stock_count": len(summaries),
         "mapping_notice": category_contract["notice"],
         "category_contract": category_contract,
-        "market_reference_notice": "Toss 20:00 저장 스냅샷 기준입니다.",
+        "market_reference_notice": "Toss 저장 스냅샷 기준입니다.",
         "market_briefing": market_briefing,
         "market_commentary": market_commentary,
         "observation_summary": observation_summary,
@@ -34757,7 +34747,7 @@ def _build_web_view_news_observation_summary(
             "business_date": business_date.isoformat(),
             "display_label": "뉴스 근거 수집 전",
             "reason": "저장 뉴스 근거를 아직 수집하지 않았습니다.",
-            "connection_note": "웹뷰에서 뉴스 근거 저장을 실행하면 우선 확인 후보와 연결됩니다.",
+            "connection_note": "저장 뉴스 근거가 수집되면 우선 확인 후보와 연결됩니다.",
             "candidate_overlap_count": 0,
             "candidate_overlap_names": [],
             "direct_count": 0,
@@ -34770,7 +34760,7 @@ def _build_web_view_news_observation_summary(
             "empty_state": "뉴스 근거 수집 전",
             "missing_context": ["stored_news_observation"],
             "connection_label": "뉴스 근거 수집 전",
-            "connection_reason": "웹뷰에서 뉴스 근거 저장을 실행하면 우선 확인 후보와 연결됩니다.",
+            "connection_reason": "저장 뉴스 근거가 수집되면 우선 확인 후보와 연결됩니다.",
         }
 
     direct_count = sum(1 for row in evidence_rows if row.relevance == "direct")
@@ -35907,8 +35897,8 @@ def _web_view_value_context(
         current_price_reference_time = toss_baseline_reference.get("reference_time")
         current_price_basis = "20:00 stored"
     elif market_reference is not None and market_reference.close_price is not None:
-        current_price_reference_time = krx_date
-        current_price_basis = "KRX close"
+        current_price_reference_time = market_reference.fetched_at.isoformat()
+        current_price_basis = "Toss stored snapshot"
     else:
         current_price_reference_time = None
         current_price_basis = None
@@ -36056,7 +36046,7 @@ def _web_view_target_price_progress_from_rows(
             "progress_available": False,
             **_web_view_empty_target_validation("missing_target_or_market_reference"),
             "policy": "range_only",
-            "notice": "목표가, 종목코드, 또는 선택일 KRX 종가가 없어 계산하지 않습니다.",
+            "notice": "목표가, 종목코드, 또는 선택일 Toss 저장 가격이 없어 계산하지 않습니다.",
         }
 
     target_min = min(target_values)
@@ -36192,6 +36182,7 @@ def _build_web_view_target_journey(
                 "hit_trading_days": hit_index,
                 "current_attainment_percent": current_attainment_percent,
                 "max_attainment_percent": max_attainment_percent,
+                "observed_through": market_series[-1].business_date.isoformat() if market_series else None,
             }
         )
     return {
@@ -36308,7 +36299,7 @@ def _web_view_empty_candidate_news_badge() -> dict[str, object]:
         "display_label": "뉴스 근거 수집 전",
         "reason": "저장 뉴스 근거를 아직 수집하지 않았습니다.",
         "connection_label": "뉴스 근거 수집 전",
-        "connection_reason": "웹뷰에서 뉴스 근거 저장을 실행하면 후보와 연결됩니다.",
+        "connection_reason": "저장 뉴스 근거가 수집되면 후보와 연결됩니다.",
         "direct_count": 0,
         "caution_count": 0,
         "market_context_count": 0,
@@ -36881,7 +36872,7 @@ def build_web_view_candidate_evidence_snapshot(
         rank_reference = foreign_rank_by_code.get(stock_code)
         quality_flags: list[str] = []
         if market_reference is None:
-            quality_flags.append("missing_krx_stock_snapshot")
+            quality_flags.append("missing_toss_stock_snapshot")
         if not stock_flow_rows:
             quality_flags.append("missing_stock_flow")
         if not target_range["available"]:
@@ -36896,7 +36887,7 @@ def build_web_view_candidate_evidence_snapshot(
         if target_range["available"]:
             notes.append("목표가 범위 있음")
         if market_reference and market_reference.turnover is not None:
-            notes.append("KRX 거래대금 있음")
+            notes.append("Toss 저장 거래대금 있음")
         if stock_flow_rows:
             notes.append("종목별 수급 있음")
         if rank_reference:
@@ -37176,7 +37167,7 @@ def _web_view_candidate_support_evidence(
 ) -> list[str]:
     labels: list[str] = []
     if market_reference is not None and market_reference.close_price is not None:
-        labels.append("KRX 가격 참고")
+        labels.append("Toss 저장 가격 참고")
     if market_reference is not None and market_reference.turnover is not None:
         labels.append("거래대금 참고")
     if price_volume_reference.get("available"):
@@ -37238,8 +37229,8 @@ def _web_view_observation_candidate_profile(
     missing: list[str] = []
     internal_missing: list[str] = []
     if market_reference is None:
-        missing.append("선택일 KRX 저장값 없음")
-        internal_missing.append("당일 KRX 없음")
+        missing.append("선택일 Toss 저장값 없음")
+        internal_missing.append("당일 Toss 저장값 없음")
     if not stock_flow_rows:
         missing.append("종목 수급 저장값 없음")
         internal_missing.append("종목 수급 데이터 없음")
@@ -37382,7 +37373,7 @@ def _web_view_candidate_value_profile(
     else:
         reference_notes.append("뉴스: 수집 전")
     if not has_market_reference:
-        reference_notes.append("KRX: 선택일 저장값 없음")
+        reference_notes.append("Toss: 선택일 저장값 없음")
     if not has_stock_flow:
         reference_notes.append("수급: 저장값 없음")
     if has_toss_baseline:
@@ -37634,6 +37625,7 @@ def _web_view_stock_market_reference(item: StockMarketDailySnapshot | None) -> d
         "change_percent": item.change_percent,
         "volume": item.volume,
         "turnover": item.turnover,
+        "fetched_at": item.fetched_at.isoformat(),
     }
 
 
@@ -37647,6 +37639,7 @@ def _web_view_stock_market_item(item: StockMarketDailySnapshot) -> dict:
         "change_percent": item.change_percent,
         "volume": item.volume,
         "turnover": item.turnover,
+        "fetched_at": item.fetched_at.isoformat(),
     }
 
 
@@ -38178,9 +38171,9 @@ def _build_web_view_toss_context(
         "source": "toss_openapi" if available else None,
         "snapshot_date": business_date.isoformat() if available else None,
         "notice": (
-            "선택 날짜의 Toss 20:00 저장 스냅샷 기준입니다. 실시간값이나 확정 판단은 포함하지 않습니다."
+            "선택 날짜의 Toss 저장 스냅샷 기준입니다. 20:00 저장을 보장하지 않으며 확정 판단은 포함하지 않습니다."
             if available
-            else "선택 날짜의 Toss 20:00 저장 스냅샷이 없습니다. 최신 날짜 값으로 대체하지 않습니다."
+            else "선택 날짜의 Toss 저장 스냅샷이 없습니다. 최신 날짜 값으로 대체하지 않습니다."
         ),
         "top_kospi_by_turnover": [_web_view_stock_market_item(item) for item in top_kospi],
         "top_kosdaq_by_turnover": [_web_view_stock_market_item(item) for item in top_kosdaq],
@@ -38221,9 +38214,9 @@ def _build_web_view_toss_recent_flow(
         "reference_date": snapshot_dates[0].isoformat() if snapshot_dates else None,
         "exact_date_available": bool(snapshot_dates and snapshot_dates[0] == business_date),
         "notice": (
-            "선택 날짜를 포함한 최근 Toss 20:00 저장 스냅샷 기준입니다. 실시간값이나 확정 판단은 포함하지 않습니다."
+            "선택 날짜를 포함한 최근 Toss 저장 스냅샷 기준입니다. 실시간값이나 확정 판단은 포함하지 않습니다."
             if items and snapshot_dates and snapshot_dates[0] == business_date
-            else "선택 날짜의 Toss 저장값이 없어 최근 Toss 20:00 저장 스냅샷 기준 흐름만 표시합니다."
+            else "선택 날짜의 Toss 저장값이 없어 최근 Toss 저장 스냅샷 기준 흐름만 표시합니다."
             if items
             else "선택 날짜 이전 또는 해당 날짜의 Toss 저장 스냅샷이 없습니다."
         ),
@@ -38271,7 +38264,7 @@ def build_web_view_etf_trend_snapshot(
         "live_fetch": False,
         "scoring": False,
         "notice": (
-            "선택 날짜 이하 최근 Toss 20:00 저장 스냅샷의 ETF 거래대금 흐름입니다. 구성종목은 포함하지 않습니다."
+            "선택 날짜 이하 최근 Toss 저장 스냅샷의 ETF 거래대금 흐름입니다. 구성종목은 포함하지 않습니다."
             if items and reference_status == "exact"
             else f"선택 날짜의 ETF 저장값이 없어 {reference_date.isoformat()} 기준 Toss ETF 흐름만 표시합니다."
             if items and reference_date
@@ -38301,7 +38294,7 @@ def _build_web_view_toss_investor_flow_context(
         "scoring": False,
         "snapshot_date": business_date.isoformat() if available else None,
         "notice": (
-            "저장된 Toss 20:00 시장 수급 기준입니다. 확정 판단은 포함하지 않습니다."
+            "저장된 Toss 시장 수급 기준입니다. 확정 판단은 포함하지 않습니다."
             if available
             else "선택 날짜의 Toss 시장 수급 데이터가 없습니다."
         ),
@@ -38350,7 +38343,7 @@ def build_web_view_flow_trend_snapshot(
         "live_fetch": False,
         "scoring": False,
         "notice": (
-            "선택 날짜를 포함한 최근 Toss 20:00 시장 수급 기준입니다. 실시간 호출은 포함하지 않습니다."
+            "선택 날짜를 포함한 최근 Toss 저장 시장 수급 기준입니다. 실시간 호출은 포함하지 않습니다."
             if items
             else "선택 날짜 이전 또는 해당 날짜의 저장 수급 데이터가 없습니다."
         ),
@@ -38375,7 +38368,7 @@ def _build_web_view_stock_investor_flow_context(
         "scoring": False,
         "snapshot_date": business_date.isoformat() if rows else None,
         "notice": (
-            "저장된 Toss 20:00 기준 우선 후보 수급 참고입니다. 확정 판단은 포함하지 않습니다."
+            "저장된 Toss 우선 후보 수급 참고입니다. 확정 판단은 포함하지 않습니다."
             if rows
             else "선택 종목의 Toss 우선 후보 수급 데이터가 없습니다."
         ),
@@ -38417,7 +38410,7 @@ def _build_web_view_stock_volume_context(
         "reference_date": reference_date.isoformat() if reference_date else None,
         "exact_date_available": bool(reference_date == business_date) if reference_date else False,
         "items": [_web_view_stock_volume_item(item) for item in rows],
-        "notice": "저장된 Toss 20:00 거래량 기준입니다." if rows else "선택 종목의 거래량 데이터가 없습니다.",
+        "notice": "저장된 Toss 거래량 기준입니다." if rows else "선택 종목의 거래량 데이터가 없습니다.",
     }
 
 
@@ -38501,7 +38494,7 @@ def _build_web_view_stock_investor_flow_tabs(
             "rows": institution_rows,
         },
         "notice": (
-            "저장된 Toss 20:00 우선 후보 수급 기준입니다."
+            "저장된 Toss 우선 후보 수급 기준입니다."
             if retail_rows or institution_rows
             else "선택 종목의 Toss 우선 후보 수급 데이터가 없습니다."
         ),

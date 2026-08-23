@@ -42,7 +42,8 @@ def _build_web_view_value_qa_payload(
     runtime.collect_rotation_etf_mapping_qa_issues(
         config,
         repository,
-        latest_krx_snapshot_date=latest_toss_snapshot_date,
+        snapshot_date=latest_toss_snapshot_date,
+        source="toss_openapi",
         issues=issues,
         warnings=warnings,
     )
@@ -176,22 +177,12 @@ def _build_web_view_value_qa_payload(
                 issues=issues,
                 warnings=warnings,
             )
-            if detail.get("market_reference") is None and not krx_snapshot_not_yet_available:
-                unresolved_krx_metadata = repository.get_latest_krx_stock_metadata(str(stock_code)) is None
-                if unresolved_krx_metadata:
-                    warnings.append(
-                        {
-                            "code": "unresolved_stock_market_reference",
-                            "path": f"stock[{business_date.isoformat()}:{stock_code}].market_reference",
-                            "message": "selected stock has no KRX metadata mapping, so same-date market reference is unavailable",
-                        }
-                    )
-                    continue
+            if detail.get("market_reference") is None and not toss_snapshot_not_yet_available:
                 issues.append(
                     {
                         "code": "missing_market_reference",
                         "path": f"stock[{business_date.isoformat()}:{stock_code}].market_reference",
-                        "message": "selected stock has no same-date KRX market reference",
+                        "message": "selected stock has no same-date Toss market reference",
                     }
                 )
 
@@ -1105,6 +1096,10 @@ def _collect_web_view_static_html_copy_issues(markup: str, *, issues: list[dict]
         "<th>D+1</th><th>D+5</th><th>D+10</th><th>D+20</th>": "D+ reaction columns",
         'colspan="8"': "8-column observation table",
         "선택 날짜 KRX 마감값 없음": "선택 날짜 KRX 마감값 없음",
+        "선택 날짜 KRX 확정 이력": "선택 날짜 KRX 확정 이력",
+        "KRX 최근 흐름": "KRX 최근 흐름",
+        "구성종목이 아닌 KRX ETF 일별매매정보 기준": "KRX ETF 오표기",
+        "웹뷰에서 뉴스 근거 저장을 실행하면": "GET-only 뉴스 저장 안내",
     }
     blocked_decision_copy = {
         "추천/점수 아님": "추천/점수 아님",
