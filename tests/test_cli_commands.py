@@ -357,7 +357,7 @@ def test_main_db_verify_json_reports_stale_schema_without_traceback(tmp_path, mo
     assert payload["schema_status"]["current"] is False
     assert payload["schema_status"]["current_version"] == 5
     assert payload["schema_status"]["target_version"] == SCHEMA_VERSION
-    assert payload["schema_status"]["pending_versions"] == [6, 7, 8, 9]
+    assert payload["schema_status"]["pending_versions"] == [6, 7, 8, 9, 10]
     assert payload["blockers"][0]["code"] == "default_db_schema_not_current"
     assert "python -m stock_monitor db-migrate --dry-run" in payload["recommended_commands"]
     assert "schema migration on operating PC" in payload["requires_separate_approval"]
@@ -1004,8 +1004,9 @@ def test_decision_journal_dry_run_json_freezes_candidate_pool(tmp_path, monkeypa
                 close_price=9_500,
                 change_percent=1.2,
                 volume=1000,
-                turnover=3_000_000_000,
-                fetched_at=collected_at,
+                    turnover=3_000_000_000,
+                    fetched_at=collected_at,
+                    source="toss_openapi",
             ),
             StockMarketDailySnapshot(
                 business_date=business_date,
@@ -1015,8 +1016,9 @@ def test_decision_journal_dry_run_json_freezes_candidate_pool(tmp_path, monkeypa
                 close_price=8_500,
                 change_percent=-0.4,
                 volume=800,
-                turnover=1_000_000_000,
-                fetched_at=collected_at,
+                    turnover=1_000_000_000,
+                    fetched_at=collected_at,
+                    source="toss_openapi",
             ),
             StockMarketDailySnapshot(
                 business_date=business_date,
@@ -1026,8 +1028,9 @@ def test_decision_journal_dry_run_json_freezes_candidate_pool(tmp_path, monkeypa
                 close_price=6_500,
                 change_percent=0.1,
                 volume=500,
-                turnover=500_000_000,
-                fetched_at=collected_at,
+                    turnover=500_000_000,
+                    fetched_at=collected_at,
+                    source="toss_openapi",
             ),
         ]
     )
@@ -1808,6 +1811,151 @@ def test_toss_market_context_capture_saves_close_snapshot_with_fake_provider(tmp
     ]
 
 
+def test_toss_market_context_capture_saves_every_daily_candidate_in_two_symbol_batches(tmp_path, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    business_date = date(2026, 7, 10)
+    repository.initialize()
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name=stock_name,
+                stock_code=stock_code,
+                title=f"{stock_name} 확인",
+                broker_name="테스트증권",
+                published_at=datetime(2026, 7, 10, 9, 0),
+                collected_at=datetime(2026, 7, 10, 9, 1),
+                source_id=f"toss-all-candidate-{stock_code}",
+                identity_key=f"toss-all-candidate-{stock_code}",
+            )
+            for stock_code, stock_name in (
+                ("005930", "삼성전자"),
+                ("000660", "SK하이닉스"),
+                ("035420", "NAVER"),
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    class FakeProvider:
+        quote_batches: list[tuple[str, ...]] = []
+
+        def get_market_context(self, **_kwargs) -> dict[str, object]:
+            return {
+                "configured": True,
+                "live_fetch": True,
+                "ranked_at": "2026-07-10T20:00:00+09:00",
+                "fetched_at": "2026-07-10T20:00:03+09:00",
+                "rankings": [
+                    {
+                        "rank": 1,
+                        "symbol": "005930",
+                        "tradingAmount": 1000,
+                        "tradingVolume": 100,
+                        "price": {"lastPrice": 70_000},
+                    }
+                ],
+                "stock_names": {"005930": "삼성전자"},
+                "stock_markets": {"005930": "KOSPI"},
+                "etf_symbols": [],
+                "market_prices": [],
+                "market_price_changes": {},
+                "investor_flow": {},
+            }
+
+        def get_quotes(self, **kwargs) -> dict[str, object]:
+            symbols = tuple(kwargs["symbols"])
+            self.quote_batches.append(symbols)
+            return {
+                "quotes": [
+                    {
+                        "symbol": symbol,
+                        "lastPrice": 70_000,
+                        "currency": "KRW",
+                        "timestamp": "2026-07-10T20:00:00+09:00",
+                    }
+                    for symbol in symbols
+                ],
+                "investor_trading": {
+                    "items": [
+                        {
+                            "symbol": symbol,
+                            "updated_at": "2026-07-10T20:00:00+09:00",
+                            "foreigner_net_buy_volume": 120,
+                            "institution_net_buy_volume": -30,
+                        }
+                        for symbol in symbols
+                    ]
+                },
+            }
+
+    provider = FakeProvider()
+    exit_code = cli_module._run_toss_market_context_capture(
+        config,
+        repository,
+        business_date=business_date,
+        live=True,
+        confirm_token_reissue=True,
+        confirm_save=True,
+        scheduled=False,
+        as_json=True,
+        toss_provider=provider,
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert all(len(batch) <= 2 for batch in provider.quote_batches)
+    assert {symbol for batch in provider.quote_batches for symbol in batch} == {"005930", "000660", "035420"}
+    assert payload["candidate_target_count"] == 3
+    assert payload["candidate_baseline_count"] == 3
+    assert payload["candidate_missing_count"] == 0
+    assert payload["stock_snapshot_count"] == 3
+    assert {
+        row.stock_code
+        for row in repository.list_toss_priority_quote_baselines(
+            business_date=business_date,
+            stock_codes=["005930", "000660", "035420"],
+            baseline_time="20:00",
+        )
+    } == {"005930", "000660", "035420"}
+
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="000660",
+                stock_name="SK하이닉스",
+                market="KOSPI",
+                close_price=180_000,
+                volume=2_000_000,
+                turnover=900_000_000_000,
+                fetched_at=datetime(2026, 7, 10, 20, 1),
+                source="toss_openapi",
+            )
+        ]
+    )
+    assert cli_module._run_toss_market_context_capture(
+        config,
+        repository,
+        business_date=business_date,
+        live=True,
+        confirm_token_reissue=True,
+        confirm_save=True,
+        scheduled=False,
+        as_json=True,
+        toss_provider=provider,
+    ) == 0
+    capsys.readouterr()
+    stored = repository.list_stock_market_daily_for_codes(
+        business_date,
+        ["000660"],
+        source="toss_openapi",
+    )[0]
+    assert stored.turnover == 900_000_000_000
+    assert stored.volume == 2_000_000
+
+
 def test_toss_market_context_capture_defaults_to_no_network_or_db_write(tmp_path, capsys) -> None:
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
@@ -1858,7 +2006,9 @@ def test_toss_priority_baseline_collect_scheduled_late_run_skips_before_provider
     assert "late_run" in capsys.readouterr().out
 
 
-def test_toss_priority_baseline_collect_skips_existing_top_two_before_provider_access(tmp_path, monkeypatch, capsys) -> None:
+def test_toss_priority_baseline_collect_skips_existing_full_candidate_cohort_before_provider_access(
+    tmp_path, monkeypatch, capsys
+) -> None:
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
     repository.initialize()
@@ -1875,19 +2025,34 @@ def test_toss_priority_baseline_collect_skips_existing_top_two_before_provider_a
                 source="toss_openapi",
                 fetched_at=datetime(2026, 6, 19, 20, 0, 0),
             )
-            for stock_code, stock_name in (("005930", "삼성전자"), ("000660", "SK하이닉스"))
+            for stock_code, stock_name in (
+                ("005930", "삼성전자"),
+                ("000660", "SK하이닉스"),
+                ("035420", "NAVER"),
+            )
         ]
     )
-    monkeypatch.setattr(
-        cli_module,
-        "build_web_view_candidate_evidence_snapshot",
-        lambda *_args, **_kwargs: {
-            "rows": [
-                {"stock_code": "005930", "stock_name": "삼성전자"},
-                {"stock_code": "000660", "stock_name": "SK하이닉스"},
-            ]
-        },
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name=stock_name,
+                stock_code=stock_code,
+                title=f"{stock_name} 확인",
+                broker_name="테스트증권",
+                published_at=datetime(2026, 6, 19, 9, 0),
+                collected_at=datetime(2026, 6, 19, 9, 1),
+                source_id=f"baseline-all-{stock_code}",
+                identity_key=f"baseline-all-{stock_code}",
+            )
+            for stock_code, stock_name in (
+                ("005930", "삼성전자"),
+                ("000660", "SK하이닉스"),
+                ("035420", "NAVER"),
+            )
+        ]
     )
+    repository.rebuild_daily_summaries(business_date)
     monkeypatch.setattr(
         cli_module.TossOpenApiLabConfig,
         "from_env",
@@ -1911,6 +2076,82 @@ def test_toss_priority_baseline_collect_skips_existing_top_two_before_provider_a
     assert payload["reason"] == "all_priority_baselines_exist"
     assert payload["live_fetch"] is False
     assert payload["writes_db"] is False
+
+
+def test_toss_priority_baseline_collect_fetches_full_candidate_cohort_in_two_symbol_batches(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 19)
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name=stock_name,
+                stock_code=stock_code,
+                title=f"{stock_name} 확인",
+                broker_name="테스트증권",
+                published_at=datetime(2026, 6, 19, 9, 0),
+                collected_at=datetime(2026, 6, 19, 9, 1),
+                source_id=f"baseline-fetch-{stock_code}",
+                identity_key=f"baseline-fetch-{stock_code}",
+            )
+            for stock_code, stock_name in (
+                ("005930", "삼성전자"),
+                ("000660", "SK하이닉스"),
+                ("035420", "NAVER"),
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    class FakeTossConfig:
+        live_enabled = True
+        client_id = "client"
+        client_secret = "secret"
+        base_url = "https://example.test"
+        timeout_seconds = 1.0
+
+    batches: list[tuple[str, ...]] = []
+
+    def fake_probe(**kwargs) -> dict[str, object]:
+        symbols = tuple(kwargs["symbols"])
+        batches.append(symbols)
+        return {
+            "result": [
+                {
+                    "symbol": symbol,
+                    "lastPrice": 100_000,
+                    "currency": "KRW",
+                    "timestamp": "2026-06-19T20:00:00+09:00",
+                }
+                for symbol in symbols
+            ],
+            "rate_limit": {},
+            "token_expires_in": 3600,
+        }
+
+    monkeypatch.setattr(cli_module.TossOpenApiLabConfig, "from_env", classmethod(lambda cls, *_: FakeTossConfig()))
+    monkeypatch.setattr(cli_module, "run_toss_readonly_probe", fake_probe)
+
+    assert cli_module._run_toss_priority_baseline_collect(
+        config,
+        repository,
+        business_date=business_date,
+        baseline_time="20:00",
+        live=True,
+        confirm_token_reissue=True,
+        confirm_save=True,
+        scheduled=False,
+        as_json=True,
+    ) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert all(len(batch) <= 2 for batch in batches)
+    assert {symbol for batch in batches for symbol in batch} == {"005930", "000660", "035420"}
+    assert payload["saved_count"] == 3
 
 
 def test_toss_openapi_readonly_probe_defaults_to_no_network_plan(monkeypatch, capsys) -> None:
@@ -4800,7 +5041,7 @@ def test_news_intelligence_briefing_collect_saves_observations_for_actual_surfac
     assert "마지막 수집" in briefing_payload["message"]
     assert "뉴스 관찰" in briefing_payload["message"]
     assert "저장 관찰 2종목" in briefing_payload["message"]
-    assert "직접 2건" in briefing_payload["message"]
+    assert "독립 근거 확인 전" in briefing_payload["message"]
     assert "Samsung Electronics AI chip supply contract" in briefing_payload["message"]
     assert "SK Hynix expands HBM memory investment" in briefing_payload["message"]
     assert "sentiment_score" not in json.dumps(briefing_payload, ensure_ascii=False)
@@ -4814,7 +5055,8 @@ def test_news_intelligence_briefing_collect_saves_observations_for_actual_surfac
     )
     assert daily_snapshot["news_observation_summary"]["available"] is True
     assert daily_snapshot["market_briefing"]["news_observation_summary"]["available"] is True
-    assert daily_snapshot["market_briefing"]["news_observation_summary"]["direct_count"] == 2
+    assert daily_snapshot["market_briefing"]["news_observation_summary"]["direct_count"] == 0
+    assert daily_snapshot["market_briefing"]["news_observation_summary"]["unknown_count"] == 2
 
 
 def test_news_intelligence_briefing_target_summaries_preserves_explicit_top_two_scope() -> None:
@@ -5480,8 +5722,9 @@ def test_news_intelligence_preview_cli_saves_observation_only_when_explicit(tmp_
     assert runs[0].run_id == payload["saved_run_id"]
     assert runs[0].live_fetch is True
     assert len(rows) == 1
-    assert rows[0].evidence_case == "no_report_strong_direct_news"
-    assert rows[0].operator_recommendation == "promote_news_only_candidate"
+    assert rows[0].evidence_case == "unverified_news_context"
+    assert rows[0].operator_recommendation == "hold_until_independence_verified"
+    assert rows[0].lineage_type == "unknown"
     assert rows[0].related_report_count == 0
     assert rows[0].krx_reference_presence is False
 
@@ -5685,8 +5928,9 @@ def test_news_intelligence_preview_save_observation_attaches_report_and_krx_cont
     assert rows[0].krx_reference_presence is True
     assert rows[0].krx_reference_date == business_date
     assert rows[0].krx_turnover == 850_000_000_000
-    assert rows[0].evidence_case == "report_direct_positive_news"
-    assert rows[0].operator_recommendation == "strengthen_report_candidate"
+    assert rows[0].evidence_case == "unverified_news_context"
+    assert rows[0].operator_recommendation == "hold_until_independence_verified"
+    assert rows[0].lineage_type == "unknown"
     assert rows[0].candidate_priority_presence is False
     assert rows[0].candidate_observation_priority is None
 
@@ -7571,6 +7815,9 @@ def _news_intelligence_cli_evidence(
         recommendation_reason="리포트와 뉴스가 같은 방향이라 우선 확인 근거를 강화합니다.",
         operator_summary_snapshot=f"{stock_name} 운영자 전용 뉴스 판단입니다.",
         created_at=datetime(2026, 6, 1, 10, 0, 0),
+        canonical_url=f"https://n.news.naver.com/article/015/{evidence_key}",
+        lineage_type="independent",
+        lineage_reason="explicit_test_fixture",
     )
 
 
@@ -8422,6 +8669,7 @@ def test_market_briefing_preview_includes_turnover_reference(tmp_path, capsys) -
                 volume=1000,
                 turnover=2_300_000_000_000,
                 fetched_at=datetime(2026, 5, 14, 16, 0, 0),
+                source="toss_openapi",
             ),
             StockMarketDailySnapshot(
                 business_date=business_date,
@@ -8433,6 +8681,7 @@ def test_market_briefing_preview_includes_turnover_reference(tmp_path, capsys) -
                 volume=800,
                 turnover=500_000_000_000,
                 fetched_at=datetime(2026, 5, 14, 16, 0, 0),
+                source="toss_openapi",
             ),
         ]
     )
@@ -8469,12 +8718,12 @@ def test_market_briefing_preview_includes_turnover_reference(tmp_path, capsys) -
     output = capsys.readouterr().out
     assert exit_code == 0
     assert "오늘의 시장 분위기 · 26.05.14" in output
-    assert "거래대금 참고 · 26.05.14 KRX 저장값" in output
+    assert "거래대금 참고 · 26.05.14 Toss 저장값" in output
     assert "KOSPI: 삼성전자 2.3조" in output
     assert "데이터 기준" in output
     assert "Naver reports: exact 26.05.14 (3건)" in output
-    assert "KRX market: exact 26.05.14" in output
-    assert "ETF daily: exact 26.05.14" in output
+    assert "Toss market: exact 26.05.14" in output
+    assert "Toss ETF: exact 26.05.14" in output
     assert "Investor flow: missing" in output
     assert "Toss OpenAPI: disabled (호출 없음)" in output
     assert "추천" not in output
@@ -8623,7 +8872,7 @@ def test_market_briefing_adds_toss_top20_overlap_and_same_day_market_flow_contex
         toss_quote_provider=FakeTossProvider(),
     )
 
-    assert "Toss 거래대금 Top20" in message
+    assert "Toss 거래대금 상위 Top10" in message
     assert "삼성전자" in message
     assert "당일 지수: KOSPI 3120.45" in message
     assert "당일 시장 수급 잠정" in message
@@ -8733,6 +8982,7 @@ def test_market_briefing_json_preview_includes_slot_and_public_news_observation(
                 volume=1000,
                 turnover=2_300_000_000_000,
                 fetched_at=datetime(2026, 5, 14, 16, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -8802,8 +9052,8 @@ def test_market_briefing_json_preview_includes_slot_and_public_news_observation(
     assert payload["source_freshness_summary"]["live_fetch"] is False
     assert source_freshness_items["reports"]["status"] == "exact"
     assert source_freshness_items["reports"]["count"] == 1
-    assert source_freshness_items["krx_market"]["status"] == "exact"
-    assert source_freshness_items["etf_daily"]["status"] == "exact"
+    assert source_freshness_items["toss_market"]["status"] == "exact"
+    assert source_freshness_items["toss_etf"]["status"] == "exact"
     assert source_freshness_items["investor_flow"]["status"] == "missing"
     assert source_freshness_items["toss_openapi"]["status"] == "disabled"
     assert source_freshness_items["toss_openapi"]["live_fetch"] is False
@@ -9045,6 +9295,7 @@ def test_market_briefing_uses_stock_flow_reference_when_market_flow_missing(tmp_
                 investor_type="외국인",
                 net_buy_amount=1_500_000_000,
                 fetched_at=fetched_at,
+                source="toss_openapi",
             ),
             StockInvestorFlowDaily(
                 business_date=business_date,
@@ -9053,6 +9304,7 @@ def test_market_briefing_uses_stock_flow_reference_when_market_flow_missing(tmp_
                 investor_type="기관합계",
                 net_buy_amount=-600_000_000,
                 fetched_at=fetched_at,
+                source="toss_openapi",
             ),
         ]
     )
@@ -9095,6 +9347,7 @@ def test_market_briefing_readiness_reports_preview_and_manual_review_gate(tmp_pa
                 close_index=2700.0,
                 change_percent=0.8,
                 fetched_at=fetched_at,
+                source="toss_openapi",
             ),
             MarketIndexDailySnapshot(
                 business_date=business_date,
@@ -9104,6 +9357,7 @@ def test_market_briefing_readiness_reports_preview_and_manual_review_gate(tmp_pa
                 close_index=900.0,
                 change_percent=-0.2,
                 fetched_at=fetched_at,
+                source="toss_openapi",
             ),
         ]
     )
@@ -9119,6 +9373,7 @@ def test_market_briefing_readiness_reports_preview_and_manual_review_gate(tmp_pa
                 volume=1000,
                 turnover=2_300_000_000_000,
                 fetched_at=fetched_at,
+                source="toss_openapi",
             )
         ]
     )
@@ -9126,11 +9381,12 @@ def test_market_briefing_readiness_reports_preview_and_manual_review_gate(tmp_pa
         [
             MarketInvestorFlowDaily(
                 business_date=business_date,
-                market="STK",
+                market="KOSPI",
                 investor_type="개인",
                 fetched_at=fetched_at,
                 net_buy_amount=1000,
                 amount_unit="원",
+                source="toss_openapi",
             )
         ]
     )
@@ -9207,7 +9463,7 @@ def test_market_briefing_readiness_reports_preview_and_manual_review_gate(tmp_pa
     assert payload["dates"][0]["notable_stock_count"] == 1
     assert payload["dates"][0]["public_safe_issue_count"] == 0
     mood_card = payload["dates"][0]["time_slot_mood_card"]
-    assert mood_card["source"] == "stored_report_krx_market_mood_card"
+    assert mood_card["source"] == "stored_report_toss_market_mood_card"
     assert mood_card["manual_review_candidate"] is True
     assert mood_card["live_fetch"] is False
     assert mood_card["scoring"] is False
@@ -10060,6 +10316,18 @@ def test_candidate_evidence_readiness_reports_visible_review_coverage(tmp_path, 
                 turnover=2_500_000_000_000,
                 fetched_at=fetched_at,
             ),
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                close_price=90_000,
+                change_percent=1.2,
+                volume=1000,
+                turnover=2_300_000_000_000,
+                fetched_at=fetched_at,
+                source="toss_openapi",
+            ),
         ]
     )
     repository.upsert_stock_investor_flow_daily(
@@ -10072,6 +10340,7 @@ def test_candidate_evidence_readiness_reports_visible_review_coverage(tmp_path, 
                 fetched_at=fetched_at,
                 net_buy_volume=500,
                 volume_unit="주",
+                source="toss_openapi",
             )
         ]
     )
@@ -10079,7 +10348,7 @@ def test_candidate_evidence_readiness_reports_visible_review_coverage(tmp_path, 
         [
             InvestorNetBuyTopDaily(
                 business_date=business_date,
-                market="STK",
+                market="KOSPI",
                 investor_type="foreign",
                 rank=1,
                 stock_code="005930",
@@ -10144,7 +10413,7 @@ def test_candidate_evidence_readiness_reports_visible_review_coverage(tmp_path, 
     assert payload["top_candidate_gap_counts"] == {}
     assert payload["top_candidate_next_evidence_gap_counts"] == {}
     assert payload["top_candidate_support_counts"] == {
-        "KRX 가격 참고": 1,
+        "Toss 저장 가격 참고": 1,
         "거래대금 참고": 1,
         "거래량 위치 참고": 1,
         "외국인 순매수 상위 참고": 1,
@@ -10184,11 +10453,11 @@ def test_candidate_evidence_readiness_reports_visible_review_coverage(tmp_path, 
         "report_only_count": 1,
         "rank_without_stock_flow_count": 0,
         "missing_stock_flow_count": 0,
-        "missing_krx_count": 0,
+        "missing_toss_count": 0,
         "missing_price_volume_context_count": 0,
         "missing_52w_position_count": 1,
         "support_counts": {
-            "KRX 가격 참고": 1,
+            "Toss 저장 가격 참고": 1,
             "거래대금 참고": 1,
             "거래량 위치 참고": 1,
             "외국인 순매수 상위 참고": 1,
@@ -10285,14 +10554,26 @@ def test_candidate_evidence_readiness_reports_explanation_quality_gaps(tmp_path,
                 volume=1000,
                 turnover=2_300_000_000_000,
                 fetched_at=fetched_at,
-            )
+            ),
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="000222",
+                stock_name="랭크참고",
+                market="KOSPI",
+                close_price=70_000,
+                change_percent=1.2,
+                volume=1000,
+                turnover=2_300_000_000_000,
+                fetched_at=fetched_at,
+                source="toss_openapi",
+            ),
         ]
     )
     repository.upsert_investor_net_buy_top_daily(
         [
             InvestorNetBuyTopDaily(
                 business_date=business_date,
-                market="STK",
+                market="KOSPI",
                 investor_type="foreign",
                 rank=2,
                 stock_code="000222",
@@ -10314,7 +10595,7 @@ def test_candidate_evidence_readiness_reports_explanation_quality_gaps(tmp_path,
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 0
     assert payload["explanation_quality_counts"] == {
-        "missing_krx_reference": 1,
+        "missing_toss_reference": 1,
         "missing_price_volume_context": 1,
         "missing_stock_flow_reference": 2,
         "missing_52w_position": 1,
@@ -10323,14 +10604,14 @@ def test_candidate_evidence_readiness_reports_explanation_quality_gaps(tmp_path,
     }
     assert payload["top_candidate_explanation_quality_counts"] == payload["explanation_quality_counts"]
     assert payload["top_candidate_gap_counts"] == {
-        "선택일 KRX 저장값 없음": 1,
+        "선택일 Toss 저장값 없음": 1,
         "종목 수급 저장값 없음": 2,
     }
     assert payload["top_candidate_next_evidence_gap_counts"] == {
         "종목 수급 저장값 없음": 1,
     }
     assert payload["top_candidate_review_reason_counts"] == {
-        "top_missing_krx_reference": 1,
+        "top_missing_toss_reference": 1,
         "top_missing_price_volume_context": 1,
         "top_missing_stock_flow_reference": 1,
         "top_rank_without_stock_flow": 1,
@@ -10346,14 +10627,14 @@ def test_candidate_evidence_readiness_reports_explanation_quality_gaps(tmp_path,
     assert payload["dates"][0]["top_candidate_maturity"]["report_only_count"] == 1
     assert payload["dates"][0]["top_candidate_maturity"]["rank_without_stock_flow_count"] == 1
     assert payload["dates"][0]["top_candidate_maturity"]["missing_stock_flow_count"] == 2
-    assert payload["dates"][0]["top_candidate_maturity"]["missing_krx_count"] == 1
+    assert payload["dates"][0]["top_candidate_maturity"]["missing_toss_count"] == 1
     assert payload["dates"][0]["top_candidate_maturity"]["missing_price_volume_context_count"] == 1
     assert payload["dates"][0]["top_candidate_maturity"]["missing_52w_position_count"] == 1
     assert payload["dates"][0]["top_candidate_maturity"]["review_needed"] is True
     assert payload["dates"][0]["top_candidate_maturity"]["next_evidence_gap"] == "종목 수급 저장값 없음"
     assert payload["dates"][0]["top_candidate_maturity"]["review_priority"] == "flow_backfill"
     assert payload["dates"][0]["top_candidate_maturity"]["review_reasons"] == [
-        "top_missing_krx_reference",
+        "top_missing_toss_reference",
         "top_missing_price_volume_context",
         "top_missing_stock_flow_reference",
         "top_rank_without_stock_flow",
@@ -10363,7 +10644,7 @@ def test_candidate_evidence_readiness_reports_explanation_quality_gaps(tmp_path,
     top_by_code = {row["stock_code"]: row for row in payload["dates"][0]["top_rows"]}
     assert top_by_code["000111"]["explanation_quality"] == [
         "report_only_candidate",
-        "missing_krx_reference",
+        "missing_toss_reference",
         "missing_stock_flow_reference",
         "missing_price_volume_context",
     ]
@@ -10424,7 +10705,7 @@ def test_market_briefing_message_qa_allows_flow_buy_dominance_wording() -> None:
     assert issues == []
 
 
-def test_market_briefing_check_points_use_latest_stored_krx_index_date(tmp_path, capsys) -> None:
+def test_market_briefing_check_points_use_latest_stored_toss_index_date(tmp_path, capsys) -> None:
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
     repository.initialize()
@@ -10440,6 +10721,7 @@ def test_market_briefing_check_points_use_latest_stored_krx_index_date(tmp_path,
                 close_index=7844.01,
                 change_percent=2.63,
                 fetched_at=datetime(2026, 5, 14, 8, 10, 0),
+                source="toss_openapi",
             ),
             MarketIndexDailySnapshot(
                 business_date=index_date,
@@ -10449,6 +10731,7 @@ def test_market_briefing_check_points_use_latest_stored_krx_index_date(tmp_path,
                 close_index=1176.93,
                 change_percent=-0.20,
                 fetched_at=datetime(2026, 5, 14, 8, 10, 0),
+                source="toss_openapi",
             ),
         ]
     )
@@ -11680,6 +11963,7 @@ def test_observation_summary_audit_prints_recent_read_only_coverage(tmp_path, ca
                 volume=10_000 - min(index, 19) * 10,
                 turnover=500,
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             )
             for index in range(130)
         ]
@@ -11692,8 +11976,9 @@ def test_observation_summary_audit_prints_recent_read_only_coverage(tmp_path, ca
                 stock_name="삼성전자",
                 market="STK",
                 investor_type="외국인",
-                net_buy_amount=1_000,
+                net_buy_volume=1_000,
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             ),
             StockInvestorFlowDaily(
                 business_date=date(2026, 5, 7),
@@ -11701,8 +11986,9 @@ def test_observation_summary_audit_prints_recent_read_only_coverage(tmp_path, ca
                 stock_name="삼성전자",
                 market="STK",
                 investor_type="외국인",
-                net_buy_amount=500,
+                net_buy_volume=500,
                 fetched_at=datetime(2026, 5, 7, 20, 0, 0),
+                source="toss_openapi",
             ),
         ]
     )
@@ -11742,7 +12028,7 @@ def test_observation_summary_audit_json_is_machine_readable(tmp_path, capsys) ->
 
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 0
-    assert payload["source"] == "stored_report_krx_observation_summary"
+    assert payload["source"] == "stored_report_toss_observation_summary"
     assert payload["read_only"] is True
     assert payload["recommendation"] is False
     assert payload["recent_report_dates"] == 5
@@ -11796,6 +12082,7 @@ def test_observation_summary_preview_prints_phone_readable_public_safe_message(t
                 volume=10_000,
                 turnover=500_000_000_000,
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -11807,8 +12094,9 @@ def test_observation_summary_preview_prints_phone_readable_public_safe_message(t
                 stock_name="삼성전자",
                 market="STK",
                 investor_type="외국인",
-                net_buy_amount=1_000_000_000,
+                net_buy_volume=1_000_000,
                 fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -11829,7 +12117,7 @@ def test_observation_summary_preview_prints_phone_readable_public_safe_message(t
     assert "수급 참고" in output
     assert "과열 참고" in output
     assert "삼성전자 / 리포트 2건" in output
-    assert "외국인 순유입 10억" in output
+    assert "외국인 순매수 1,000,000주" in output
     assert "추천" not in output
     assert "점수" not in output
     assert "등급" not in output
@@ -14999,7 +15287,19 @@ def test_krx_flow_sample_scaffold_can_use_local_candidates(tmp_path, capsys) -> 
                 volume=1000000,
                 turnover=900000000000,
                 fetched_at=fetched_at,
-            )
+            ),
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                close_price=80000,
+                change_percent=3.5,
+                volume=1000000,
+                turnover=900000000000,
+                fetched_at=fetched_at,
+                source="toss_openapi",
+            ),
         ]
     )
     output_dir = tmp_path / "krx_samples"
@@ -15658,6 +15958,7 @@ def test_krx_flow_candidates_preview_uses_filtered_leadership_signals(tmp_path, 
                 volume=1000000,
                 turnover=900000000000,
                 fetched_at=fetched_at,
+                source="toss_openapi",
             )
         ]
     )

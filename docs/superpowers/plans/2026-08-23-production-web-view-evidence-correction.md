@@ -4,7 +4,7 @@
 
 **Goal:** Correct source semantics, remove repeated evidence, and make the stock detail read as a dated evidence ledger using data already present in the public DTOs.
 
-**Authority:** `docs/superpowers/specs/2026-08-09-web-view-evidence-composition-design.md`, project `AGENTS.md`, and the 2026-08-23 production inspection of `https://report.kr-stock.site/`.
+**Authority:** `docs/superpowers/specs/2026-08-09-web-view-evidence-composition-design.md`, project `AGENTS.md`, and the 2026-08-23 production web-view inspection.
 
 ## Task 1: Lock the source/date contract with failing tests
 

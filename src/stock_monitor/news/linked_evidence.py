@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .models import AnalyzedNewsArticle
 
@@ -28,6 +29,8 @@ class ReportLinkedNewsInput:
     relevance: str
     match_scope: str
     duplicate_count: int = 1
+    lineage_type: str | None = None
+    lineage_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,9 @@ class ReportLinkedNewsEvidence:
     evidence_case: str
     operator_recommendation: str
     recommendation_reason: str
+    canonical_url: str
+    lineage_type: str
+    lineage_reason: str
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -73,6 +79,9 @@ class ReportLinkedNewsEvidence:
             "evidence_case": self.evidence_case,
             "operator_recommendation": self.operator_recommendation,
             "recommendation_reason": self.recommendation_reason,
+            "canonical_url": self.canonical_url,
+            "lineage_type": self.lineage_type,
+            "lineage_reason": self.lineage_reason,
         }
 
 
@@ -87,7 +96,17 @@ def _build_evidence_row(
     article: ReportLinkedNewsInput,
     context: ReportLinkedNewsContext,
 ) -> ReportLinkedNewsEvidence:
-    evidence_case, operator_recommendation, recommendation_reason = _classify_evidence_case(article, context)
+    lineage_type, lineage_reason = classify_news_lineage(article)
+    if lineage_type == "independent":
+        evidence_case, operator_recommendation, recommendation_reason = _classify_evidence_case(article, context)
+    elif lineage_type == "report_recap":
+        evidence_case = "report_recap"
+        operator_recommendation = "keep_as_report_recap"
+        recommendation_reason = "리포트 재인용 가능성이 있어 독립 뉴스 근거와 분리합니다."
+    else:
+        evidence_case = "unverified_news_context"
+        operator_recommendation = "hold_until_independence_verified"
+        recommendation_reason = "출처 계보가 확인되지 않아 독립 근거로 승격하지 않습니다."
     return ReportLinkedNewsEvidence(
         target_date=context.target_date,
         stock_name=context.stock_name,
@@ -108,7 +127,36 @@ def _build_evidence_row(
         evidence_case=evidence_case,
         operator_recommendation=operator_recommendation,
         recommendation_reason=recommendation_reason,
+        canonical_url=canonicalize_news_url(article.analyzed_article.article.url),
+        lineage_type=lineage_type,
+        lineage_reason=lineage_reason,
     )
+
+
+def canonicalize_news_url(url: str) -> str:
+    parsed = urlsplit((url or "").strip())
+    query = urlencode(
+        [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if not key.lower().startswith("utm_")]
+    )
+    return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path, query, ""))
+
+
+def classify_automatic_news_lineage(analyzed_article: AnalyzedNewsArticle) -> tuple[str, str]:
+    text = f"{analyzed_article.article.title} {analyzed_article.article.summary}"
+    if any(marker in text for marker in ("리포트", "목표가", "투자의견", "애널리스트", "증권사")):
+        return "report_recap", "report_recap_language_detected"
+    return "unknown", "automatic_collection_origin_unverified"
+
+
+def classify_news_lineage(article: ReportLinkedNewsInput) -> tuple[str, str]:
+    automatic_type, automatic_reason = classify_automatic_news_lineage(article.analyzed_article)
+    if automatic_type == "report_recap":
+        return automatic_type, automatic_reason
+    explicit_type = (article.lineage_type or "").strip()
+    explicit_reason = (article.lineage_reason or "").strip()
+    if explicit_type in {"independent", "report_recap", "unknown"} and explicit_reason:
+        return explicit_type, explicit_reason
+    return automatic_type, automatic_reason
 
 
 def _classify_evidence_case(

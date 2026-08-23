@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 @dataclass(frozen=True)
@@ -465,6 +465,26 @@ TOSS_MARKET_CONTEXT_SNAPSHOT_MIGRATION = SchemaMigration(
 )
 
 
+NEWS_EVIDENCE_LINEAGE_MIGRATION = SchemaMigration(
+    version=10,
+    name="news_evidence_lineage",
+    statements=(
+        """
+        ALTER TABLE report_linked_news_evidence
+        ADD COLUMN canonical_url TEXT NOT NULL DEFAULT ''
+        """,
+        """
+        ALTER TABLE report_linked_news_evidence
+        ADD COLUMN lineage_type TEXT NOT NULL DEFAULT 'unknown'
+        """,
+        """
+        ALTER TABLE report_linked_news_evidence
+        ADD COLUMN lineage_reason TEXT NOT NULL DEFAULT 'legacy_row_unverified'
+        """,
+    ),
+)
+
+
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     KRX_MARKET_SNAPSHOT_MIGRATION,
     APP_SETTINGS_MIGRATION,
@@ -474,6 +494,7 @@ SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     NEWS_INTELLIGENCE_REFERENCE_DATES_MIGRATION,
     TOSS_PRIORITY_QUOTE_BASELINE_MIGRATION,
     TOSS_MARKET_CONTEXT_SNAPSHOT_MIGRATION,
+    NEWS_EVIDENCE_LINEAGE_MIGRATION,
 )
 
 

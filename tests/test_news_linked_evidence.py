@@ -11,7 +11,7 @@ from stock_monitor.news.models import NewsArticle
 from stock_monitor.news.report import analyze_news_article
 
 
-def _analyzed(title: str, summary: str, *, url: str) -> ReportLinkedNewsInput:
+def _analyzed(title: str, summary: str, *, url: str, verified: bool = True) -> ReportLinkedNewsInput:
     article = NewsArticle(
         title=title,
         summary=summary,
@@ -25,6 +25,8 @@ def _analyzed(title: str, summary: str, *, url: str) -> ReportLinkedNewsInput:
         relevance="direct",
         match_scope="title",
         duplicate_count=1,
+        lineage_type="independent" if verified else None,
+        lineage_reason="fixture_provenance_verified" if verified else None,
     )
 
 
@@ -106,6 +108,8 @@ def test_report_linked_evidence_classifies_report_heavy_market_context_only() ->
         relevance="market_context",
         match_scope="summary",
         duplicate_count=1,
+        lineage_type=item.lineage_type,
+        lineage_reason=item.lineage_reason,
     )
 
     rows = build_report_linked_news_evidence([item], _context(related_report_count=4))
@@ -168,9 +172,39 @@ def test_report_linked_evidence_classifies_weak_news_duplicate_context() -> None
         relevance="market_context",
         match_scope="summary",
         duplicate_count=4,
+        lineage_type=item.lineage_type,
+        lineage_reason=item.lineage_reason,
     )
 
     rows = build_report_linked_news_evidence([item], _context())
 
     assert rows[0].evidence_case == "weak_news_duplicate_context"
     assert rows[0].operator_recommendation == "downrank_duplicate_context"
+
+
+def test_automatic_news_lineage_never_promotes_unverified_article_to_independent() -> None:
+    original_news = _analyzed(
+        "삼성전자, 대규모 공급 계약 체결",
+        "회사가 신규 고객과 장기 공급 계약을 체결했다고 밝혔다.",
+        url="https://example.test/original-looking-news?utm_source=test#fragment",
+        verified=False,
+    )
+    report_recap = _analyzed(
+        "증권사 리포트로 본 삼성전자 목표가",
+        "애널리스트가 투자의견과 목표가를 상향했다는 리포트 요약이다.",
+        url="https://example.test/report-recap",
+        verified=False,
+    )
+
+    original_row, recap_row = build_report_linked_news_evidence(
+        [original_news, report_recap],
+        _context(related_report_count=2, related_report_source_ids=("r1", "r2")),
+    )
+
+    assert original_row.lineage_type == "unknown"
+    assert original_row.lineage_reason == "automatic_collection_origin_unverified"
+    assert original_row.canonical_url == "https://example.test/original-looking-news"
+    assert original_row.operator_recommendation == "hold_until_independence_verified"
+    assert recap_row.lineage_type == "report_recap"
+    assert recap_row.lineage_reason == "report_recap_language_detected"
+    assert recap_row.operator_recommendation == "keep_as_report_recap"

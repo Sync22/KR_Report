@@ -243,7 +243,7 @@ def test_format_daily_briefing_messages_builds_morning_briefing_without_recommen
         briefing_date=date(2026, 5, 14),
         quotes_by_stock_code=quotes_by_stock_code,
         market_reference_lines=[
-            "지수 참고 · 26.05.13 KRX 저장값",
+            "지수 참고 · 26.05.13 Toss 저장값",
             "- KOSPI 7,844.01 +2.63% / KOSDAQ 1,176.93 -0.20%",
         ],
         flow_reference_lines=[
@@ -260,10 +260,10 @@ def test_format_daily_briefing_messages_builds_morning_briefing_without_recommen
     message = messages[0]
 
     assert "국장 시작 전 리포트 브리핑 · 26.05.14" in message
-    assert "기준: 전일 리포트 / KRX 저장값은 항목별 기준일 표시" in message
+    assert "기준: 전일 리포트 / Toss 저장값은 항목별 기준일 표시" in message
     assert "리포트 집중" in message
     assert "- 반도체와반도체장비 4건" in message
-    assert "지수 참고 · 26.05.13 KRX 저장값" in message
+    assert "지수 참고 · 26.05.13 Toss 저장값" in message
     assert "KOSPI 7,844.01 +2.63%" in message
     assert "수급 참고 · 26.05.12 KOSPI 저장값 / 리포트일 전 최신" in message
     assert "개인 매수 우위 6.7조" in message
@@ -283,11 +283,11 @@ def test_format_market_close_briefing_message_keeps_observation_wording() -> Non
         report_count=12,
         stock_count=5,
         market_reference_lines=[
-            "지수 참고 · 26.05.14 KRX 저장값",
+            "지수 참고 · 26.05.14 Toss 저장값",
             "- KOSPI 7,844.01 +2.63% / KOSDAQ 1,176.93 -0.20%",
         ],
         turnover_reference_lines=[
-            "거래대금 참고 · 26.05.14 KRX 저장값",
+            "거래대금 참고 · 26.05.14 Toss 저장값",
             "- KOSPI: 삼성전자 2.3조 / SK하이닉스 1.9조",
         ],
         flow_reference_lines=[
@@ -301,8 +301,8 @@ def test_format_market_close_briefing_message_keeps_observation_wording() -> Non
     )
 
     assert "오늘의 시장 분위기 · 26.05.14" in message
-    assert "기준: 당일 리포트 / KRX 저장값은 항목별 기준일 표시" in message
-    assert "거래대금 참고 · 26.05.14 KRX 저장값" in message
+    assert "기준: 당일 리포트 / Toss 저장값은 항목별 기준일 표시" in message
+    assert "거래대금 참고 · 26.05.14 Toss 저장값" in message
     assert "리포트 12건 / 5종목" in message
     assert "눈에 띄는 종목" in message
     assert "확인 포인트" in message

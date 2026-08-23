@@ -112,6 +112,7 @@ def _web_view_news_evidence(
     operator_recommendation: str = "strengthen_report_candidate",
     target_date: date = date(2026, 6, 2),
     krx_reference_date: date | None = date(2026, 6, 2),
+    lineage_type: str = "independent",
 ) -> ReportLinkedNewsEvidenceRecord:
     return ReportLinkedNewsEvidenceRecord(
         run_id=run_id,
@@ -149,6 +150,9 @@ def _web_view_news_evidence(
         recommendation_reason="리포트와 뉴스가 같은 방향입니다.",
         operator_summary_snapshot="operator-only summary",
         created_at=datetime(2026, 6, 2, 10, 0, 0),
+        canonical_url=f"https://n.news.naver.com/article/015/{evidence_key}",
+        lineage_type=lineage_type,
+        lineage_reason="explicit_test_fixture",
     )
 
 
@@ -165,6 +169,38 @@ def test_web_view_host_guard_rejects_non_loopback_host() -> None:
 
 def test_web_view_host_guard_can_be_explicitly_overridden() -> None:
     cli_module._validate_web_view_host("0.0.0.0", allow_non_loopback=True)
+
+
+def test_candidate_news_badge_only_treats_verified_independent_rows_as_actionable() -> None:
+    unknown = _web_view_news_evidence(evidence_key="unknown", lineage_type="unknown")
+    independent = _web_view_news_evidence(evidence_key="independent", lineage_type="independent")
+
+    unknown_badge = cli_module._web_view_candidate_news_badge(
+        [unknown],
+        business_date=date(2026, 6, 2),
+    )
+    independent_badge = cli_module._web_view_candidate_news_badge(
+        [independent],
+        business_date=date(2026, 6, 2),
+    )
+
+    assert unknown_badge["direct_count"] == 0
+    assert unknown_badge["unknown_count"] == 1
+    assert unknown_badge["connection_label"] == "독립 근거 확인 전"
+    assert independent_badge["direct_count"] == 1
+    assert independent_badge["independent_count"] == 1
+    assert independent_badge["connection_label"] == "뉴스로 후보 강화"
+
+
+def test_web_view_news_deduplicates_tracking_variants_by_canonical_url() -> None:
+    earlier = _web_view_news_evidence(evidence_key="earlier")
+    later = replace(
+        _web_view_news_evidence(evidence_key="later"),
+        canonical_url=earlier.canonical_url,
+        created_at=datetime(2026, 6, 2, 11, 0, 0),
+    )
+
+    assert cli_module._web_view_unique_news_evidence_rows([earlier, later]) == [later]
 
 
 def test_web_view_daily_snapshot_exposes_news_observation_empty_state(tmp_path, monkeypatch) -> None:
@@ -282,9 +318,12 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
             "direct_count": 1,
             "positive_direct_count": 1,
             "primary_caution_count": 0,
-            "caution_count": 1,
-            "market_context_count": 1,
-            "krx_reference_status": "exact",
+                "caution_count": 1,
+                "market_context_count": 1,
+                "independent_count": 2,
+                "report_recap_count": 0,
+                "unknown_count": 0,
+                "krx_reference_status": "exact",
             "observed_at": "2026-06-02T10:00:00",
             "evidence_direction": "상승 근거 우세",
             "evidence_direction_reason": "직접 긍정 뉴스 1건이 직접 주의 뉴스보다 우세합니다.",
@@ -533,16 +572,20 @@ def test_web_view_candidate_evidence_projects_public_safe_news_badge(tmp_path, m
             "date": "2026-06-02",
             "stock_name": "삼성전자",
             "label": "AI 반도체 공급 계약 체결",
-            "evidence_label": "직접 근거",
-            "relevance": "direct",
+                "evidence_label": "직접 근거",
+                "lineage_type": "independent",
+                "lineage_label": "독립 확인",
+                "relevance": "direct",
             "source_lane": "mainnews",
         },
         {
             "date": "2026-06-02",
             "stock_name": "삼성전자",
             "label": "?쇱꽦?꾩옄, 蹂?숈꽦 ?뺣? 二쇱쓽",
-            "evidence_label": "시장 맥락",
-            "relevance": "market_context",
+                "evidence_label": "시장 맥락",
+                "lineage_type": "independent",
+                "lineage_label": "독립 확인",
+                "relevance": "market_context",
             "source_lane": "mainnews",
         },
     ]
@@ -770,16 +813,20 @@ def test_web_view_stock_detail_projects_public_safe_news_observation_detail(tmp_
             "date": "2026-06-02",
             "stock_name": "삼성전자",
             "label": "Samsung expands AI semiconductor supply",
-            "evidence_label": "직접 근거",
-            "relevance": "direct",
+                "evidence_label": "직접 근거",
+                "lineage_type": "independent",
+                "lineage_label": "독립 확인",
+                "relevance": "direct",
             "source_lane": "mainnews",
         },
         {
             "date": "2026-06-02",
             "stock_name": "삼성전자",
             "label": "Semiconductor volatility caution",
-            "evidence_label": "시장 맥락",
-            "relevance": "market_context",
+                "evidence_label": "시장 맥락",
+                "lineage_type": "independent",
+                "lineage_label": "독립 확인",
+                "relevance": "market_context",
             "source_lane": "mainnews",
         },
     ]
@@ -2338,6 +2385,7 @@ def test_web_view_candidate_evidence_prioritizes_backtest_supported_observation_
                 investor_type="외국인",
                 fetched_at=fetched_at,
                 net_buy_amount=1_000,
+                source="toss_openapi",
             ),
             StockInvestorFlowDaily(
                 business_date=date(2026, 5, 7),
@@ -2354,6 +2402,15 @@ def test_web_view_candidate_evidence_prioritizes_backtest_supported_observation_
                 investor_type="외국인",
                 fetched_at=fetched_at,
                 net_buy_amount=1_000,
+            ),
+            StockInvestorFlowDaily(
+                business_date=business_date,
+                stock_code="000004",
+                stock_name="FourReportFlowStreak",
+                investor_type="외국인",
+                fetched_at=fetched_at,
+                net_buy_amount=1_000,
+                source="toss_openapi",
             ),
         ]
     )
@@ -2485,6 +2542,215 @@ def test_web_view_candidate_evidence_public_missing_labels_are_stored_reference_
         "당일 Toss 저장값 없음",
         "종목 수급 데이터 없음",
     ]
+
+
+def test_candidate_flow_context_uses_toss_for_selected_date_and_krx_for_history(tmp_path) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 8)
+    repository.upsert_stock_investor_flow_daily(
+        [
+            StockInvestorFlowDaily(
+                business_date=business_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                investor_type="외국인",
+                fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                net_buy_volume=120,
+                source="toss_openapi",
+            ),
+            StockInvestorFlowDaily(
+                business_date=date(2026, 5, 7),
+                stock_code="005930",
+                stock_name="삼성전자",
+                investor_type="외국인",
+                fetched_at=datetime(2026, 5, 7, 20, 0, 0),
+                net_buy_volume=80,
+                source="krx_data_market",
+            ),
+        ]
+    )
+
+    context = cli_module._load_candidate_flow_context(
+        repository,
+        business_date=business_date,
+        stock_codes=["005930"],
+    )
+
+    assert [row.source for row in context["same_day_flow_by_code"]["005930"]] == ["toss_openapi"]
+    assert [row["source"] for row in context["flow_window_rows_by_code"]["005930"]] == ["krx_data_market"]
+
+
+def test_candidate_evidence_adds_same_source_market_relative_event_reaction(tmp_path) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 8)
+    fetched_at = datetime(2026, 5, 11, 20, 0, 0)
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="실적 확인",
+                broker_name="테스트증권",
+                published_at=datetime(2026, 5, 8, 9, 0, 0),
+                collected_at=datetime(2026, 5, 8, 9, 1, 0),
+                source_id="market-relative-reaction",
+                identity_key="market-relative-reaction",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=day,
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                fetched_at=fetched_at,
+                close_price=close_price,
+                source="krx",
+            )
+            for day, close_price in (
+                (date(2026, 5, 7), 100_000),
+                (business_date, 110_000),
+                (date(2026, 5, 11), 120_000),
+            )
+        ]
+    )
+    repository.upsert_market_index_daily(
+        [
+            MarketIndexDailySnapshot(
+                business_date=day,
+                index_series="KOSPI",
+                index_class="대표",
+                index_name="코스피",
+                fetched_at=fetched_at,
+                close_index=close_index,
+                source="krx",
+            )
+            for day, close_index in (
+                (date(2026, 5, 7), 1_000.0),
+                (business_date, 1_050.0),
+                (date(2026, 5, 11), 1_100.0),
+            )
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=1,
+    )
+
+    reaction = snapshot["rows"][0]["event_reaction"]
+    assert reaction["source"] == "krx"
+    assert reaction["historical_review"] is True
+    assert reaction["benchmark"] == "KOSPI"
+    assert reaction["affects_ordering"] is False
+    assert reaction["windows"] == [
+        {
+            "horizon": "D0",
+            "business_date": "2026-05-08",
+            "stock_return_percent": 10.0,
+            "benchmark_return_percent": 5.0,
+            "excess_return_percent": 5.0,
+        },
+        {
+            "horizon": "D+1",
+            "business_date": "2026-05-11",
+            "stock_return_percent": 20.0,
+            "benchmark_return_percent": 10.0,
+            "excess_return_percent": 10.0,
+        },
+    ]
+
+
+def test_market_relative_event_reaction_does_not_invent_d0_without_event_row() -> None:
+    fetched_at = datetime(2026, 5, 11, 20, 0, 0)
+    reaction = cli_module._web_view_market_relative_event_reaction(
+        business_date=date(2026, 5, 8),
+        stock_rows=[
+            StockMarketDailySnapshot(
+                business_date=date(2026, 5, 7),
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                fetched_at=fetched_at,
+                close_price=100_000,
+                source="krx",
+            ),
+            StockMarketDailySnapshot(
+                business_date=date(2026, 5, 11),
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                fetched_at=fetched_at,
+                close_price=110_000,
+                source="krx",
+            ),
+        ],
+        index_rows_by_series={"KOSPI": [], "KOSDAQ": []},
+    )
+
+    assert reaction["available"] is False
+    assert reaction["windows"] == []
+    assert reaction["unavailable_reason"] == "missing_event_stock_row"
+
+
+def test_market_relative_event_reaction_keeps_stock_horizon_when_benchmark_is_missing() -> None:
+    fetched_at = datetime(2026, 5, 11, 20, 0, 0)
+    stock_rows = [
+        StockMarketDailySnapshot(
+            business_date=day,
+            stock_code="005930",
+            stock_name="삼성전자",
+            market="KOSPI",
+            fetched_at=fetched_at,
+            close_price=close_price,
+            source="krx",
+        )
+        for day, close_price in (
+            (date(2026, 5, 7), 100_000),
+            (date(2026, 5, 8), 110_000),
+            (date(2026, 5, 11), 120_000),
+        )
+    ]
+    index_rows = [
+        MarketIndexDailySnapshot(
+            business_date=day,
+            index_series="KOSPI",
+            index_class="대표",
+            index_name="코스피",
+            fetched_at=fetched_at,
+            close_index=close_index,
+            source="krx",
+        )
+        for day, close_index in (
+            (date(2026, 5, 7), 1_000.0),
+            (date(2026, 5, 8), 1_050.0),
+        )
+    ]
+
+    reaction = cli_module._web_view_market_relative_event_reaction(
+        business_date=date(2026, 5, 8),
+        stock_rows=stock_rows,
+        index_rows_by_series={"KOSPI": index_rows, "KOSDAQ": []},
+    )
+
+    assert reaction["windows"][1] == {
+        "horizon": "D+1",
+        "business_date": "2026-05-11",
+        "stock_return_percent": 20.0,
+        "benchmark_return_percent": None,
+        "excess_return_percent": None,
+        "market_unavailable_reason": "missing_same_date_benchmark",
+    }
 
 
 def test_web_view_candidate_evidence_rank_reason_stays_reference_when_stock_flow_is_missing(tmp_path, monkeypatch) -> None:
@@ -2756,6 +3022,15 @@ def test_web_view_candidate_evidence_prefers_composite_flow_over_rank_without_st
                 fetched_at=fetched_at,
                 net_buy_amount=1_000,
             ),
+            StockInvestorFlowDaily(
+                business_date=business_date,
+                stock_code="000202",
+                stock_name="CompositeFlow",
+                investor_type="외국인",
+                fetched_at=fetched_at,
+                net_buy_amount=1_000,
+                source="toss_openapi",
+            ),
         ]
     )
     repository.upsert_investor_net_buy_top_daily(
@@ -2893,6 +3168,7 @@ def test_web_view_candidate_evidence_prefers_exact_flow_composite_over_rank_only
                 investor_type="외국인",
                 fetched_at=fetched_at,
                 net_buy_amount=1_000,
+                source="toss_openapi",
             )
         ]
     )
@@ -3692,15 +3968,35 @@ def test_web_view_main_has_toss_market_context_panel() -> None:
     assert "후보 수급 [12009]은 관찰 후보·종목 상세에서 확인" not in html
 
 
-def test_web_view_html_renders_toss_same_day_investor_trading_for_top_two_only() -> None:
+def test_web_view_html_labels_top_two_toss_flow_as_unstored_query_reference() -> None:
     html = cli_module._render_web_view_html()
     top_two_body = html.split("function renderTopTwoReviewCandidates(rows)", 1)[1].split(
         "function updateTossPriorityRefreshButton()", 1
     )[0]
 
-    assert "Toss 당일 수급" in top_two_body
+    assert "Toss 조회 수급 참고(미저장)" in top_two_body
+    assert "Toss 당일 수급" not in top_two_body
     assert "data-toss-investor-trading" in top_two_body
     assert "loadTossPriorityQuotes(tossPriorityDate)" in html
+
+
+def test_web_view_stock_detail_missing_toss_flow_names_selected_date_stored_scope(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+
+    context = cli_module._build_web_view_stock_investor_flow_context(
+        repository,
+        date(2026, 8, 21),
+        "388210",
+    )
+
+    assert context["available"] is False
+    assert context["data_scope"] == "stored_toss_close_priority_flow"
+    assert context["live_fetch"] is False
+    assert context["notice"] == "선택일 Toss 20:00 저장 우선 후보 수급 데이터가 없습니다."
 
 
 def test_web_view_candidate_evidence_uses_stored_toss_2000_baseline(tmp_path, monkeypatch) -> None:
@@ -3818,6 +4114,7 @@ def test_web_view_candidate_evidence_exposes_value_context_from_stored_reference
                 volume_unit="주",
                 amount_unit="원",
                 fetched_at=datetime(2026, 7, 2, 20, 1, 0),
+                source="toss_openapi",
             )
         ]
     )
@@ -4565,6 +4862,9 @@ def test_web_view_html_exposes_toss_source_and_compact_evidence_ledger() -> None
     assert "뉴스 직접 매칭 없음" in top_two_body
     assert "<b>근거 원장</b>" in stock_journey_body
     assert "리포트 근거:" in stock_journey_body
+    assert "과거 반응(KRX):" in stock_journey_body
+    assert "candidateEventReactionLine(candidate.event_reaction)" in stock_journey_body
+    assert "function candidateEventReactionLine(reaction)" in html
     assert "저장 기준:" in stock_journey_body
 
 
@@ -6205,7 +6505,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert daily_payload["public_contract"]["control_exposed"] is False
     assert "observation_summary" not in daily_payload
     assert daily_payload["observation_summary_deferred"] is True
-    assert observation_summary_payload["source"] == "stored_report_krx_observation_summary"
+    assert observation_summary_payload["source"] == "stored_report_toss_observation_summary"
     assert observation_summary_payload["read_only"] is True
     assert observation_summary_payload["live_fetch"] is False
     assert daily_payload["market_briefing"]["source"] == "stored_report_toss_market_briefing"

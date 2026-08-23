@@ -2,6 +2,14 @@
 
 Candidate evidence DTO, implementation plans, target-progress boundaries, and operator-memo work.
 
+## Current Evidence Ownership (2026-08-23)
+
+- The selected-date stored market reference is Toss 20:00 data. Live Top2 values are labeled `Toss 조회 ... (미저장)` and must not be presented as the selected date's stored fact.
+- The 20:00 capture target is every valid stock code in that date's daily summaries, requested in quote batches of at most two. A candidate is complete only when a non-null close baseline and both foreigner and institution flow values are stored.
+- KRX stock/index rows are historical review data. Event reaction uses the last common pre-event baseline and D0/D+1/D+5/D+20 stock returns; market and excess returns remain null when the same-date benchmark is absent.
+- Event reaction is labeled `과거 반응(KRX)`, never changes candidate ordering, and is not a forecast or trading call.
+- Older CE-1 planning sections below remain design history where they describe KRX as the current selected-date reference or Top2 as the persistence universe; this section is the current contract.
+
 ## Included sections
 - Candidate Evidence Contract
 - Candidate Evidence Plan

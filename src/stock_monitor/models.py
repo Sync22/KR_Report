@@ -531,6 +531,9 @@ class ReportLinkedNewsEvidenceRecord:
     recommendation_reason: str
     operator_summary_snapshot: str
     created_at: datetime
+    canonical_url: str = ""
+    lineage_type: str = "unknown"
+    lineage_reason: str = "legacy_row_unverified"
 
 
 @dataclass(frozen=True)

@@ -129,6 +129,7 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
         (7, "news_intelligence_reference_dates"),
         (8, "toss_priority_quote_baselines"),
         (9, "toss_market_context_snapshots"),
+        (10, "news_evidence_lineage"),
     ]
     assert snapshot_tables == {
         "stock_market_daily",
@@ -236,6 +237,10 @@ def test_repository_initializes_news_intelligence_observation_tables(tmp_path) -
             ).fetchall()
         }
         user_version = connection.execute("PRAGMA user_version").fetchone()[0]
+        evidence_columns = {
+            row["name"]: row["dflt_value"]
+            for row in connection.execute("PRAGMA table_info(report_linked_news_evidence)").fetchall()
+        }
 
     assert user_version == SCHEMA_VERSION
     assert "news_intelligence_runs" in tables
@@ -244,6 +249,9 @@ def test_repository_initializes_news_intelligence_observation_tables(tmp_path) -
     assert "idx_report_linked_news_target_stock" in indexes
     assert "idx_report_linked_news_report_context" in indexes
     assert "idx_report_linked_news_url" in indexes
+    assert evidence_columns["canonical_url"] == "''"
+    assert evidence_columns["lineage_type"] == "'unknown'"
+    assert evidence_columns["lineage_reason"] == "'legacy_row_unverified'"
 
 
 def test_repository_saves_and_lists_report_linked_news_evidence(tmp_path) -> None:
@@ -268,6 +276,8 @@ def test_repository_saves_and_lists_report_linked_news_evidence(tmp_path) -> Non
     assert rows[0].event_types == ("Contract", "Earnings")
     assert rows[0].krx_reference_date == date(2026, 5, 29)
     assert rows[0].krx_turnover == 1_200_000_000
+    assert rows[0].lineage_type == "unknown"
+    assert rows[0].lineage_reason == "legacy_row_unverified"
 
 
 def test_repository_news_intelligence_save_is_idempotent_within_run(tmp_path) -> None:
@@ -384,8 +394,38 @@ def test_repository_migrate_schema_reports_existing_status(tmp_path) -> None:
 
     assert status.current_version == SCHEMA_VERSION
     assert status.target_version == SCHEMA_VERSION
-    assert status.applied_versions == (1, 2, 3, 4, 5, 6, 7, 8, 9)
+    assert status.applied_versions == (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
     assert status.pending_versions == ()
+
+
+def test_repository_migrates_v9_news_evidence_without_losing_legacy_row(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+    repository.save_news_intelligence_observation(
+        _news_intelligence_run(),
+        [_news_evidence()],
+    )
+    with repository.connect() as connection:
+        with connection:
+            connection.execute("ALTER TABLE report_linked_news_evidence DROP COLUMN canonical_url")
+            connection.execute("ALTER TABLE report_linked_news_evidence DROP COLUMN lineage_type")
+            connection.execute("ALTER TABLE report_linked_news_evidence DROP COLUMN lineage_reason")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 10")
+            connection.execute("PRAGMA user_version = 9")
+
+    status = repository.migrate_schema()
+    rows = repository.list_report_linked_news_evidence(run_id="news-run-1")
+    rerun_status = repository.migrate_schema()
+
+    assert status.current_version == 10
+    assert len(rows) == 1
+    assert rows[0].title == _news_evidence().title
+    assert rows[0].url == _news_evidence().url
+    assert rows[0].canonical_url == ""
+    assert rows[0].lineage_type == "unknown"
+    assert rows[0].lineage_reason == "legacy_row_unverified"
+    assert rerun_status.current_version == 10
+    assert rerun_status.pending_versions == ()
 
 
 def test_repository_initialize_seeds_migration_history_for_existing_v1_database(tmp_path) -> None:
@@ -440,6 +480,7 @@ def test_repository_initialize_seeds_migration_history_for_existing_v1_database(
         (7, "news_intelligence_reference_dates"),
         (8, "toss_priority_quote_baselines"),
         (9, "toss_market_context_snapshots"),
+        (10, "news_evidence_lineage"),
     ]
 
 
@@ -451,7 +492,7 @@ def test_repository_initialize_is_noop_after_migration_history_seed(tmp_path) ->
     with repository.connect() as connection:
         migration_count = connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
 
-    assert migration_count == 9
+    assert migration_count == 10
 
 
 def test_krx_snapshot_tables_enforce_daily_source_keys(tmp_path) -> None:

@@ -227,8 +227,11 @@ class StockMonitorRepository:
                             operator_recommendation,
                             recommendation_reason,
                             operator_summary_snapshot,
-                            created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            created_at,
+                            canonical_url,
+                            lineage_type,
+                            lineage_reason
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             evidence.run_id,
@@ -266,6 +269,9 @@ class StockMonitorRepository:
                             evidence.recommendation_reason,
                             evidence.operator_summary_snapshot,
                             evidence.created_at.isoformat(),
+                            evidence.canonical_url,
+                            evidence.lineage_type,
+                            evidence.lineage_reason,
                         ),
                     )
 
@@ -3564,6 +3570,9 @@ class StockMonitorRepository:
             recommendation_reason=row["recommendation_reason"],
             operator_summary_snapshot=row["operator_summary_snapshot"],
             created_at=datetime.fromisoformat(row["created_at"]),
+            canonical_url=row["canonical_url"],
+            lineage_type=row["lineage_type"],
+            lineage_reason=row["lineage_reason"],
         )
 
     @staticmethod

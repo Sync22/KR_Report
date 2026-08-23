@@ -2,6 +2,13 @@
 
 Operator-only news intelligence and its future public-safe stored projection.
 
+## Current Lineage Contract (2026-08-23)
+
+- Stored article evidence carries `canonical_url`, `lineage_type`, and `lineage_reason`. Existing rows migrated from schema v9 default to `unknown` / `legacy_row_unverified` without losing the article row.
+- `lineage_type` is `independent`, `report_recap`, or `unknown`. URL/title similarity may automatically identify recaps, but it may not automatically promote an item to independent evidence.
+- Only explicitly verified `independent` evidence may strengthen a candidate or produce an actionable public badge. `report_recap` and `unknown` stay reference-only even if an older relevance or impact classifier would have promoted them.
+- This is evidence provenance, not a numeric score, investment grade, recommendation, or trading instruction.
+
 ## 2026-07-29 Daily Evidence Accumulation Plan
 
 ### Goal

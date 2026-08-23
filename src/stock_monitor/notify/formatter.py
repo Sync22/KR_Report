@@ -269,7 +269,7 @@ def format_daily_briefing_messages(
     max_chars: int = 3000,
 ) -> list[str]:
     header = f"국장 시작 전 리포트 브리핑 · {_format_short_date(briefing_date)}"
-    basis = "기준: 전일 리포트 / KRX 저장값은 항목별 기준일 표시"
+    basis = "기준: 전일 리포트 / Toss 저장값은 항목별 기준일 표시"
     if not summaries:
         return ["\n".join([header, basis, "", "리포트 집중", "- 신규 리포트 없음"])]
 
@@ -328,7 +328,7 @@ def format_market_close_briefing_message(
     check_point_lines: list[str] | None = None,
 ) -> str:
     header = f"오늘의 시장 분위기 · {_format_short_date(business_date)}"
-    basis = "기준: 당일 리포트 / KRX 저장값은 항목별 기준일 표시"
+    basis = "기준: 당일 리포트 / Toss 저장값은 항목별 기준일 표시"
     report_lines = [
         "리포트 흐름",
         f"- 리포트 {report_count}건 / {stock_count}종목",

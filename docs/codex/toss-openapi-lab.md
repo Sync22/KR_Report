@@ -2,6 +2,14 @@
 
 Read-only Toss OpenAPI boundary, official inventory, and post-key probe procedure.
 
+## Current 20:00 Persistence Contract (2026-08-23)
+
+- The approved 20:00 path persists Toss selected-date market context and the full daily-summary candidate cohort; Top2 remains only the bounded live/public projection.
+- Candidate quote requests are split into batches of at most two symbols. Completion requires a non-null close baseline plus both foreigner and institution flow values for every candidate, and a saved market-context snapshot.
+- A rerun may refresh a sparse candidate close row but must not overwrite an existing richer Toss daily snapshot with sparse quote data.
+- This persistence exception is read-only market data only. It does not approve account/order APIs, broker execution, public scores, Telegram trading calls, or arbitrary public symbol queries.
+- Older pre-key and Top2-only planning language below is historical unless it concerns the bounded live projection; this section defines the current storage contract.
+
 ## Included sections
 - Toss OpenAPI Read-Only Lab Contract
 - Toss OpenAPI Official API Inventory

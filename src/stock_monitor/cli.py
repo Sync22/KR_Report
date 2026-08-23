@@ -6456,17 +6456,17 @@ def _news_intelligence_evidence_record(
         recommendation_reason=linked.recommendation_reason,
         operator_summary_snapshot=operator_summary_snapshot,
         created_at=created_at,
+        canonical_url=linked.canonical_url,
+        lineage_type=linked.lineage_type,
+        lineage_reason=linked.lineage_reason,
     )
 
 
 def _news_intelligence_evidence_key(article: object) -> str:
-    raw = "|".join(
-        [
-            article.source_lane or "",
-            article.url,
-            article.title,
-        ]
-    )
+    from stock_monitor.news.linked_evidence import canonicalize_news_url
+
+    canonical_url = canonicalize_news_url(article.url)
+    raw = canonical_url or "|".join([article.source_lane or "", article.title])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -7772,20 +7772,14 @@ def _run_toss_priority_baseline_collect(
     else:
         repository.initialize()
 
-    evidence = build_web_view_candidate_evidence_snapshot(
-        config,
-        repository,
-        business_date=business_date,
-        limit=2,
-    )
-    candidate_rows = list(evidence.get("rows") or [])[:2]
+    candidate_rows = repository.list_daily_summaries(business_date)
     symbols = tuple(
-        str(row.get("stock_code") or "").strip()
+        str(row.stock_code or "").strip()
         for row in candidate_rows
-        if re.fullmatch(r"\d{6}", str(row.get("stock_code") or "").strip())
+        if re.fullmatch(r"\d{6}", str(row.stock_code or "").strip())
     )
     stock_names_by_code = {
-        str(row.get("stock_code") or "").strip(): str(row.get("stock_name") or "").strip() or None
+        str(row.stock_code or "").strip(): str(row.stock_name or "").strip() or None
         for row in candidate_rows
     }
     if not symbols:
@@ -7847,23 +7841,31 @@ def _run_toss_priority_baseline_collect(
             "STOCK_MONITOR_TOSS_OPENAPI_CLIENT_SECRET before using --live."
         )
     fetched_at_fallback = datetime.now(ZoneInfo(config.timezone))
-    toss_payload = run_toss_readonly_probe(
-        base_url=toss_config.base_url,
-        client_id=toss_config.client_id,
-        client_secret=toss_config.client_secret,
-        endpoint_selector="prices",
-        symbols=symbols_to_fetch,
-        query_date=None,
-        timeout_seconds=toss_config.timeout_seconds,
-        live_enabled=toss_config.live_enabled,
-        confirm_token_reissue=confirm_token_reissue,
-    )
+    toss_payloads = [
+        run_toss_readonly_probe(
+            base_url=toss_config.base_url,
+            client_id=toss_config.client_id,
+            client_secret=toss_config.client_secret,
+            endpoint_selector="prices",
+            symbols=symbols_to_fetch[offset : offset + 2],
+            query_date=None,
+            timeout_seconds=toss_config.timeout_seconds,
+            live_enabled=toss_config.live_enabled,
+            confirm_token_reissue=confirm_token_reissue,
+        )
+        for offset in range(0, len(symbols_to_fetch), 2)
+    ]
+    quote_items = [
+        item
+        for toss_payload in toss_payloads
+        for item in toss_payload.get("result") or []
+        if isinstance(item, dict)
+    ]
     rows: list[TossPriorityQuoteBaseline] = []
-    for item in toss_payload.get("result") or []:
-        if not isinstance(item, dict):
-            continue
+    for item in quote_items:
         symbol = str(item.get("symbol") or "").strip()
-        if symbol not in symbols_to_fetch:
+        last_price = _safe_optional_int(item.get("lastPrice"))
+        if symbol not in symbols_to_fetch or last_price is None:
             continue
         rows.append(
             TossPriorityQuoteBaseline(
@@ -7871,7 +7873,7 @@ def _run_toss_priority_baseline_collect(
                 stock_code=symbol,
                 stock_name=stock_names_by_code.get(symbol),
                 baseline_time=normalized_baseline_time,
-                last_price=_safe_optional_int(item.get("lastPrice")),
+                last_price=last_price,
                 currency=str(item.get("currency") or "").strip() or None,
                 source="toss_openapi",
                 fetched_at=_parse_toss_quote_timestamp(item.get("timestamp"), fetched_at_fallback),
@@ -7886,10 +7888,11 @@ def _run_toss_priority_baseline_collect(
         "writes_db": True,
         "target_symbols": list(symbols_to_fetch),
         "existing_count": len(existing_rows),
-        "quote_count": len(toss_payload.get("result") or []),
+        "quote_count": len(quote_items),
         "saved_count": len(rows),
-        "rate_limit": toss_payload.get("rate_limit"),
-        "token_expires_in": toss_payload.get("token_expires_in"),
+        "missing_count": len(symbols_to_fetch) - len({row.stock_code for row in rows}),
+        "rate_limit": toss_payloads[-1].get("rate_limit") if toss_payloads else None,
+        "token_expires_in": toss_payloads[-1].get("token_expires_in") if toss_payloads else None,
     }
     if scheduled:
         repository.record_operation_event(
@@ -7897,7 +7900,7 @@ def _run_toss_priority_baseline_collect(
                 config,
                 component="toss-priority-baseline",
                 event_type="collect",
-                status="completed" if rows else "empty",
+                status="completed" if len(rows) == len(symbols_to_fetch) else "partial" if rows else "empty",
                 business_date=business_date,
                 detail=(
                     f"baseline_time={normalized_baseline_time}; targets={len(symbols_to_fetch)}; "
@@ -7946,7 +7949,7 @@ def _run_toss_market_context_capture(
         "affects_ordering": False,
         "business_date": business_date.isoformat(),
         "source": "toss_openapi",
-        "scope": "market_close_snapshot_top20_indices_flow_and_priority_top2",
+        "scope": "market_close_snapshot_top20_indices_flow_and_daily_candidates",
         "requires_live_flag": True,
         "requires_token_reissue_confirmation": True,
         "requires_save_confirmation": True,
@@ -8018,20 +8021,20 @@ def _run_toss_market_context_capture(
             )
         provider = TossPriorityQuoteProvider(config=toss_config)
 
-    evidence = build_web_view_candidate_evidence_snapshot(config, repository, business_date=business_date, limit=2)
-    priority_rows = list(evidence.get("rows") or [])[:2]
-    priority_symbols = tuple(
-        str(row.get("stock_code") or "").strip()
-        for row in priority_rows
-        if re.fullmatch(r"\d{6}", str(row.get("stock_code") or "").strip())
+    candidate_summaries = repository.list_daily_summaries(business_date)
+    candidate_symbols = tuple(
+        stock_code
+        for stock_code in _candidate_evidence_stock_codes(candidate_summaries)
+        if re.fullmatch(r"\d{6}", stock_code)
     )
-    priority_names = {
-        str(row.get("stock_code") or "").strip(): str(row.get("stock_name") or "").strip() or None
-        for row in priority_rows
+    candidate_names = {
+        str(row.stock_code or "").strip(): str(row.stock_name or "").strip() or None
+        for row in candidate_summaries
+        if re.fullmatch(r"\d{6}", str(row.stock_code or "").strip())
     }
     market_context = provider.get_market_context(
         reference_date=business_date,
-        priority_symbols=priority_symbols,
+        priority_symbols=candidate_symbols[:2],
     )
     observed_at = _parse_toss_quote_timestamp(
         market_context.get("ranked_at"), datetime.now(ZoneInfo(config.timezone))
@@ -8153,53 +8156,108 @@ def _run_toss_market_context_capture(
             )
     repository.upsert_market_investor_flow_daily(market_flow_rows)
 
-    quote_payload = provider.get_quotes(
-        priority_date=business_date,
-        symbols=priority_symbols,
-        include_investor_trading=True,
-    ) if priority_symbols else {}
+    quote_payloads = [
+        provider.get_quotes(
+            priority_date=business_date,
+            symbols=candidate_symbols[offset : offset + 2],
+            include_investor_trading=True,
+        )
+        for offset in range(0, len(candidate_symbols), 2)
+    ]
+    quote_rows = [
+        item
+        for quote_payload in quote_payloads
+        for item in quote_payload.get("quotes") or []
+        if isinstance(item, dict)
+    ]
     baseline_rows = [
         TossPriorityQuoteBaseline(
             business_date=business_date,
             stock_code=str(item.get("symbol") or "").strip(),
-            stock_name=priority_names.get(str(item.get("symbol") or "").strip()),
+            stock_name=candidate_names.get(str(item.get("symbol") or "").strip()),
             baseline_time="20:00",
             last_price=_safe_optional_int(item.get("lastPrice")),
             currency=str(item.get("currency") or "").strip() or None,
             source="toss_openapi",
             fetched_at=_parse_toss_quote_timestamp(item.get("timestamp"), checked_at),
         )
-        for item in quote_payload.get("quotes") or []
-        if isinstance(item, dict) and str(item.get("symbol") or "").strip() in priority_symbols
+        for item in quote_rows
+        if str(item.get("symbol") or "").strip() in candidate_symbols
+        and _safe_optional_int(item.get("lastPrice")) is not None
     ]
     repository.save_toss_priority_quote_baselines(baseline_rows)
-    priority_flow_rows: list[StockInvestorFlowDaily] = []
-    investor_items = (
-        quote_payload.get("investor_trading", {}).get("items", [])
-        if isinstance(quote_payload.get("investor_trading"), dict)
-        else []
+    existing_candidate_rows = repository.list_stock_market_daily_for_codes(
+        business_date,
+        candidate_symbols,
+        source="toss_openapi",
     )
+    enriched_stock_codes = {
+        row.stock_code
+        for row in [*existing_candidate_rows, *stock_rows]
+        if any(
+            getattr(row, field_name) is not None
+            for field_name in (
+                "change_amount", "change_percent", "open_price", "high_price", "low_price",
+                "volume", "turnover", "market_cap", "listed_shares",
+            )
+        )
+    }
+    candidate_stock_rows = [
+        StockMarketDailySnapshot(
+            business_date=business_date,
+            stock_code=str(item.get("symbol") or "").strip(),
+            stock_name=candidate_names.get(str(item.get("symbol") or "").strip()) or str(item.get("symbol") or "").strip(),
+            market="KR",
+            fetched_at=_parse_toss_quote_timestamp(item.get("timestamp"), checked_at),
+            source="toss_openapi",
+            close_price=_safe_optional_int(item.get("lastPrice")),
+        )
+        for item in quote_rows
+        if str(item.get("symbol") or "").strip() in candidate_symbols
+        and str(item.get("symbol") or "").strip() not in enriched_stock_codes
+    ]
+    repository.upsert_stock_market_daily(candidate_stock_rows)
+    priority_flow_rows: list[StockInvestorFlowDaily] = []
+    investor_items = [
+        item
+        for quote_payload in quote_payloads
+        if isinstance(quote_payload.get("investor_trading"), dict)
+        for item in quote_payload["investor_trading"].get("items", [])
+    ]
     for item in investor_items:
         if not isinstance(item, dict):
             continue
         stock_code = str(item.get("symbol") or "").strip()
-        if stock_code not in priority_symbols:
+        if stock_code not in candidate_symbols:
             continue
         fetched_at = _parse_toss_quote_timestamp(item.get("updated_at"), checked_at)
         for label, field_name in (("외국인", "foreigner_net_buy_volume"), ("기관", "institution_net_buy_volume")):
+            net_buy_volume = _safe_optional_int(item.get(field_name))
+            if net_buy_volume is None:
+                continue
             priority_flow_rows.append(
                 StockInvestorFlowDaily(
                     business_date=business_date,
                     stock_code=stock_code,
-                    stock_name=priority_names.get(stock_code),
+                    stock_name=candidate_names.get(stock_code),
                     investor_type=label,
                     fetched_at=fetched_at,
-                    net_buy_volume=_safe_optional_int(item.get(field_name)),
+                    net_buy_volume=net_buy_volume,
                     volume_unit="주",
                     source="toss_openapi",
                 )
             )
     repository.upsert_stock_investor_flow_daily(priority_flow_rows)
+    baseline_codes = {row.stock_code for row in baseline_rows}
+    flow_labels_by_code: dict[str, set[str]] = {}
+    for row in priority_flow_rows:
+        flow_labels_by_code.setdefault(row.stock_code, set()).add(row.investor_type)
+    flow_codes = {
+        stock_code
+        for stock_code, labels in flow_labels_by_code.items()
+        if {"외국인", "기관"} <= labels
+    }
+    candidate_missing_codes = sorted(set(candidate_symbols) - (baseline_codes & flow_codes))
     payload = {
         **plan,
         "mode": "live",
@@ -8208,12 +8266,17 @@ def _run_toss_market_context_capture(
         "writes_db": True,
         "ranking_count": len(market_context.get("rankings") or []),
         "saved_count": len(snapshots),
-        "stock_snapshot_count": len(stock_rows),
+        "stock_snapshot_count": len(stock_rows) + len(candidate_stock_rows),
         "etf_snapshot_count": len(etf_rows),
         "market_index_count": len(index_rows),
         "market_flow_count": len(market_flow_rows),
         "priority_baseline_count": len(baseline_rows),
         "priority_investor_flow_count": len(priority_flow_rows),
+        "candidate_target_count": len(candidate_symbols),
+        "candidate_baseline_count": len(baseline_rows),
+        "candidate_flow_complete_count": len(flow_codes),
+        "candidate_missing_count": len(candidate_missing_codes),
+        "candidate_missing_codes": candidate_missing_codes,
         "observed_at": observed_at.isoformat(),
         "rate_limit": market_context.get("rate_limit"),
     }
@@ -8223,9 +8286,18 @@ def _run_toss_market_context_capture(
                 config,
                 component="toss-market-context",
                 event_type="capture",
-                status="completed" if snapshots else "empty",
+                status=(
+                    "completed"
+                    if snapshots and not candidate_missing_codes
+                    else "partial"
+                    if snapshots or baseline_rows or priority_flow_rows
+                    else "empty"
+                ),
                 business_date=business_date,
-                detail=f"ranking_count={payload['ranking_count']}; saved_count={len(snapshots)}",
+                detail=(
+                    f"ranking_count={payload['ranking_count']}; saved_count={len(snapshots)}; "
+                    f"candidate_targets={len(candidate_symbols)}; candidate_missing={len(candidate_missing_codes)}"
+                ),
             )
         )
     _print_toss_market_context_capture_payload(payload, as_json=as_json)
@@ -10538,7 +10610,7 @@ def _build_observation_summary_audit(
     ]
     return {
         "surface": "cli",
-        "source": "stored_report_krx_observation_summary",
+        "source": "stored_report_toss_observation_summary",
         "read_only": True,
         "live_fetch": False,
         "scoring": False,
@@ -10656,7 +10728,7 @@ def _run_observation_summary_preview(
     if business_date is None:
         payload = {
             "surface": "cli",
-            "source": "stored_report_krx_observation_summary",
+            "source": "stored_report_toss_observation_summary",
             "read_only": True,
             "live_fetch": False,
             "scoring": False,
@@ -10680,7 +10752,7 @@ def _run_observation_summary_preview(
     _ensure_market_briefing_message_public_safe(message)
     payload = {
         "surface": "cli",
-        "source": "stored_report_krx_observation_summary",
+        "source": "stored_report_toss_observation_summary",
         "read_only": True,
         "live_fetch": False,
         "scoring": False,
@@ -15248,7 +15320,7 @@ def _run_krx_flow_candidates(
     print("- no network call or DB write was performed")
     if not candidates:
         print("- candidates: (none)")
-        print("  Check whether daily summaries and same-date KRX snapshots exist.")
+        print("  Check whether daily summaries and same-date Toss snapshots exist.")
         return 0
 
     for index, candidate in enumerate(candidates, start=1):
@@ -15259,7 +15331,7 @@ def _run_krx_flow_candidates(
             print(f"   sector={candidate['sector_name']}")
         if candidate.get("turnover") is not None:
             print(
-                "   krx="
+                "   toss="
                 f"market={candidate.get('market') or '-'}, "
                 f"turnover={candidate['turnover']:,}, "
                 f"change={candidate.get('change_percent') if candidate.get('change_percent') is not None else '-'}%"
@@ -17714,11 +17786,15 @@ def _top_briefing_sector_focus(
 
 
 def _briefing_flow_direction_fragment(repository: StockMonitorRepository, business_date: date) -> str | None:
-    flow_dates = repository.list_recent_investor_flow_dates(on_or_before=business_date, limit=1)
+    flow_dates = repository.list_recent_market_investor_flow_dates(
+        on_or_before=business_date,
+        source="toss_openapi",
+        limit=1,
+    )
     if not flow_dates:
         return None
     flow_date = flow_dates[0]
-    market_rows = repository.list_market_investor_flow_daily(flow_date, "STK")
+    market_rows = repository.list_market_investor_flow_daily(flow_date, "KOSPI", source="toss_openapi")
     return _briefing_flow_direction_fragment_from_rows(market_rows, reference_date=flow_date, business_date=business_date)
 
 
@@ -17779,7 +17855,11 @@ def _build_daily_briefing_flow_reference_lines(
     stock_limit: int = 3,
     priority_stock_codes: tuple[str, ...] | list[str] | None = None,
 ) -> list[str]:
-    flow_dates = repository.list_recent_investor_flow_dates(on_or_before=business_date, limit=1)
+    flow_dates = repository.list_recent_market_investor_flow_dates(
+        on_or_before=business_date,
+        source="toss_openapi",
+        limit=1,
+    )
     if not flow_dates:
         return _build_stock_flow_briefing_reference_lines(
             repository,
@@ -17789,7 +17869,7 @@ def _build_daily_briefing_flow_reference_lines(
             priority_stock_codes=priority_stock_codes,
         )
     flow_date = flow_dates[0]
-    market_rows = repository.list_market_investor_flow_daily(flow_date, "STK")
+    market_rows = repository.list_market_investor_flow_daily(flow_date, "KOSPI", source="toss_openapi")
     if not market_rows:
         return _build_stock_flow_briefing_reference_lines(
             repository,
@@ -17985,9 +18065,9 @@ def _build_market_briefing_check_point_lines(
     business_date: date,
 ) -> list[str]:
     points: list[str] = []
-    snapshot_dates = repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=1)
+    snapshot_dates = repository.list_recent_toss_market_snapshot_dates(on_or_before=business_date, limit=1)
     index_basis_date = snapshot_dates[0] if snapshot_dates else business_date
-    indices = repository.list_market_index_daily(index_basis_date, limit=200)
+    indices = repository.list_market_index_daily(index_basis_date, limit=200, source="toss_openapi")
     kospi = _find_named_market_index(indices, series="KOSPI", name="코스피")
     kosdaq = _find_named_market_index(indices, series="KOSDAQ", name="코스닥")
     if kospi is not None and kosdaq is not None:
@@ -19653,7 +19733,7 @@ def _candidate_evidence_top_maturity_summary(top_rows: list[dict[str, object]]) 
     composite_count = explanation_quality_counts.get("composite_evidence", 0)
     weak_support_count = max(candidate_count - composite_count, 0)
     reason_rules = [
-        ("top_missing_krx_reference", explanation_quality_counts.get("missing_krx_reference", 0)),
+        ("top_missing_toss_reference", explanation_quality_counts.get("missing_toss_reference", 0)),
         ("top_missing_price_volume_context", explanation_quality_counts.get("missing_price_volume_context", 0)),
         ("top_missing_stock_flow_reference", explanation_quality_counts.get("missing_stock_flow_reference", 0)),
         ("top_rank_without_stock_flow", explanation_quality_counts.get("rank_without_stock_flow", 0)),
@@ -19674,7 +19754,7 @@ def _candidate_evidence_top_maturity_summary(top_rows: list[dict[str, object]]) 
         "report_only_count": explanation_quality_counts.get("report_only_candidate", 0),
         "rank_without_stock_flow_count": explanation_quality_counts.get("rank_without_stock_flow", 0),
         "missing_stock_flow_count": explanation_quality_counts.get("missing_stock_flow_reference", 0),
-        "missing_krx_count": explanation_quality_counts.get("missing_krx_reference", 0),
+        "missing_toss_count": explanation_quality_counts.get("missing_toss_reference", 0),
         "missing_price_volume_context_count": explanation_quality_counts.get("missing_price_volume_context", 0),
         "missing_52w_position_count": explanation_quality_counts.get("missing_52w_position", 0),
         "support_counts": dict(sorted(support_counts.items())),
@@ -19741,7 +19821,7 @@ def _candidate_explanation_quality_labels(row: dict[str, object]) -> list[str]:
     position_52w_available = (price_volume_reference or {}).get("close_position_52w_percent") is not None
     has_public_gap = any(
         (
-            "missing_krx_stock_snapshot" in flags,
+            "missing_toss_stock_snapshot" in flags,
             not stock_flow_available,
             not price_volume_available,
         )
@@ -19750,8 +19830,8 @@ def _candidate_explanation_quality_labels(row: dict[str, object]) -> list[str]:
     labels: list[str] = []
     if primary == ["리포트 집중"]:
         labels.append("report_only_candidate")
-    if "missing_krx_stock_snapshot" in flags or not row.get("market_reference"):
-        labels.append("missing_krx_reference")
+    if "missing_toss_stock_snapshot" in flags or not row.get("market_reference"):
+        labels.append("missing_toss_reference")
     if not stock_flow_available:
         labels.append("missing_stock_flow_reference")
     if rank_available and not stock_flow_available:
@@ -22554,8 +22634,12 @@ def _build_market_briefing_readiness_date(
         check_point_lines=check_point_lines,
     )
     issues = _collect_market_briefing_message_issues(message)
-    snapshot_dates = repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=1)
-    flow_dates = repository.list_recent_investor_flow_dates(on_or_before=business_date, limit=1)
+    snapshot_dates = repository.list_recent_toss_market_snapshot_dates(on_or_before=business_date, limit=1)
+    flow_dates = repository.list_recent_investor_flow_dates(
+        on_or_before=business_date,
+        source="toss_openapi",
+        limit=1,
+    )
     data_warnings: list[str] = []
     if not market_reference_lines:
         data_warnings.append("missing_index_reference")
@@ -22566,7 +22650,7 @@ def _build_market_briefing_readiness_date(
     if not notable_lines:
         data_warnings.append("missing_notable_stocks")
     if snapshot_dates and snapshot_dates[0] != business_date:
-        data_warnings.append(f"krx_snapshot_fallback:{snapshot_dates[0].isoformat()}")
+        data_warnings.append(f"toss_snapshot_fallback:{snapshot_dates[0].isoformat()}")
     if flow_dates and flow_dates[0] != business_date:
         data_warnings.append(f"flow_fallback:{flow_dates[0].isoformat()}")
     return {
@@ -22574,7 +22658,7 @@ def _build_market_briefing_readiness_date(
         "report_count": report_count,
         "stock_count": len(summaries),
         "message_line_count": len([line for line in message.splitlines() if line.strip()]),
-        "krx_snapshot_date": snapshot_dates[0].isoformat() if snapshot_dates else None,
+        "market_snapshot_date": snapshot_dates[0].isoformat() if snapshot_dates else None,
         "flow_reference_date": flow_dates[0].isoformat() if flow_dates else None,
         "has_market_reference": bool(market_reference_lines),
         "has_turnover_reference": bool(turnover_reference_lines),
@@ -23473,7 +23557,7 @@ def _market_briefing_source_freshness_lines(summary: dict) -> list[str]:
         if isinstance(item, dict) and item.get("key")
     }
     lines = ["데이터 기준"]
-    for key in ("reports", "krx_market", "etf_daily", "investor_flow", "toss_openapi"):
+    for key in ("reports", "toss_market", "toss_etf", "investor_flow", "toss_openapi"):
         item = items.get(key)
         if not item:
             continue
@@ -30688,6 +30772,15 @@ def _render_web_view_html() -> str:
       return `<div class="target-progress-detail"><b>저장 구간 도달 참고</b><span>${esc(parts.join(" · "))}</span></div>`;
     }
 
+    function candidateEventReactionLine(reaction) {
+      if (!reaction?.available) return reaction?.notice || "동일 날짜 KRX 종목·지수 이력 대기";
+      const windows = (reaction.windows || []).map((item) => {
+        const excess = metricPercent(item.excess_return_percent).replace("%", "%p");
+        return `${item.horizon} 종목 ${metricPercent(item.stock_return_percent)} / 시장 ${metricPercent(item.benchmark_return_percent)} / 차이 ${excess}`;
+      });
+      return `KRX ${reaction.benchmark || "시장"} 대비 · ${windows.join(" · ")}`;
+    }
+
     function renderStockCandidateJourney(data) {
       const candidate = (currentCandidateEvidenceData?.rows || []).find((item) => item?.stock_code === data?.stock_code);
       if (!candidate) return "";
@@ -30702,6 +30795,7 @@ def _render_web_view_html() -> str:
         <span>상태: ${esc(status.join(" · "))}</span>
         ${valueProfile.value_reason ? `<span>해석: ${esc(valueProfile.value_reason)}</span>` : ""}
         <span>리포트 근거: ${esc(why)}</span>
+        <span>과거 반응(KRX): ${esc(candidateEventReactionLine(candidate.event_reaction))}</span>
         <span>뉴스: ${esc(candidateNewsCompactLine(candidate.news_observation_badge))}</span>
         <span>현재가: ${esc(quote)} · ${esc(candidateIntradayReferenceLabel(candidate.intraday_reference))}</span>
         <span>저장 기준: ${esc(candidateTossBaselineCompactLine(candidate.toss_baseline_reference))}</span>
@@ -31025,7 +31119,7 @@ def _render_web_view_html() -> str:
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote-context="main" data-toss-quote="${esc(item.stock_code || "")}">${esc(tossQuote || "Toss 현재가 확인 중")}</span></b>
           <span class="muted">관찰 사유: ${esc(why)}</span>
           <span class="top-two-evidence-line"><strong>현재 근거:</strong><span class="top-two-evidence-text">${esc(currentEvidenceLine)}</span></span>
-          <span class="top-two-evidence-line"><strong>Toss 당일 수급:</strong><span class="top-two-evidence-text priority-toss-investor-trading muted" data-toss-investor-trading="${esc(item.stock_code || "")}">${esc(tossInvestorTrading || "확인 중")}</span></span>
+          <span class="top-two-evidence-line"><strong>Toss 조회 수급 참고(미저장):</strong><span class="top-two-evidence-text priority-toss-investor-trading muted" data-toss-investor-trading="${esc(item.stock_code || "")}">${esc(tossInvestorTrading || "확인 중")}</span></span>
           <span class="top-two-evidence-line"><strong>${esc(missingEvidenceLabel)}</strong><span class="top-two-evidence-text">${esc(missingEvidenceLine)}</span></span>
           <span class="target-revision-line">${esc(targetRevisionLine)}</span>
         </button>`;
@@ -31158,7 +31252,7 @@ def _render_web_view_html() -> str:
         part("외국인", item?.foreigner_net_buy_volume),
         part("기관", item?.institution_net_buy_volume)
       ].filter(Boolean);
-      if (!parts.length) return "Toss 당일 수급 없음";
+      if (!parts.length) return "Toss 조회 수급 없음";
       const checkedAt = tossQuoteTimeLabel({ timestamp: item?.updated_at }, {});
       return `${parts.join(" · ")}${checkedAt ? ` · ${checkedAt}` : ""}`;
     }
@@ -31193,7 +31287,7 @@ def _render_web_view_html() -> str:
       tossPriorityLoading = true;
       updateTossPriorityRefreshButton();
       setTossQuoteNodes("Toss 현재가 확인 중", "muted");
-      tossPriorityRows.forEach((item) => setTossInvestorTradingNode(item?.stock_code, "Toss 당일 수급 확인 중", "muted"));
+      tossPriorityRows.forEach((item) => setTossInvestorTradingNode(item?.stock_code, "Toss 조회 수급 확인 중", "muted"));
       try {
         const response = await fetch(`/api/toss-priority-quotes?date=${encodeURIComponent(date)}`, { cache: "no-store" });
         const data = await response.json();
@@ -31201,13 +31295,13 @@ def _render_web_view_html() -> str:
         updateTossSourceFreshness(data);
         if (response.status === 409) {
           setTossQuoteNodes("Toss 현재가 최신일만", "muted");
-          tossPriorityRows.forEach((item) => setTossInvestorTradingNode(item?.stock_code, "Toss 당일 수급 최신일만", "muted"));
+          tossPriorityRows.forEach((item) => setTossInvestorTradingNode(item?.stock_code, "Toss 조회 수급 최신일만", "muted"));
           return;
         }
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         if (data.configured === false) {
           setTossQuoteNodes("Toss 현재가 설정 대기", "muted");
-          tossPriorityRows.forEach((item) => setTossInvestorTradingNode(item?.stock_code, "Toss 당일 수급 설정 대기", "muted"));
+          tossPriorityRows.forEach((item) => setTossInvestorTradingNode(item?.stock_code, "Toss 조회 수급 설정 대기", "muted"));
           await loadPriorityCurrentQuotes(date);
           return;
         }
@@ -31222,7 +31316,7 @@ def _render_web_view_html() -> str:
           const investorTrading = investorBySymbol.get(code);
           setTossInvestorTradingNode(
             code,
-            investorTrading ? tossInvestorTradingLabel(investorTrading) : "Toss 당일 수급 없음",
+            investorTrading ? tossInvestorTradingLabel(investorTrading) : "Toss 조회 수급 없음",
             data.cache === "stale" ? "stale" : "",
           );
           if (!quote) {
@@ -31240,7 +31334,7 @@ def _render_web_view_html() -> str:
       } catch (error) {
         if (requestId === tossPriorityRequestId) {
           setTossQuoteNodes("Toss 현재가 확인 실패", "muted");
-          tossPriorityRows.forEach((item) => setTossInvestorTradingNode(item?.stock_code, "Toss 당일 수급 확인 실패", "muted"));
+          tossPriorityRows.forEach((item) => setTossInvestorTradingNode(item?.stock_code, "Toss 조회 수급 확인 실패", "muted"));
           await loadPriorityCurrentQuotes(date);
         }
       } finally {
@@ -31446,6 +31540,9 @@ def _render_web_view_html() -> str:
       const connectionReason = badge.connection_reason || "";
       const chips = [
         connectionLabel,
+        `독립 ${number(badge.independent_count || 0)}`,
+        `리포트 재인용 ${number(badge.report_recap_count || 0)}`,
+        `독립성 미확인 ${number(badge.unknown_count || 0)}`,
         `직접 ${number(badge.direct_count || 0)}`,
         newsCautionCountText(badge.direct_count, badge.caution_count, connectionLabel),
         `시장맥락 ${number(badge.market_context_count || 0)}`,
@@ -34657,7 +34754,7 @@ def _build_web_view_observation_summary(
     summary_line = f"리포트 {report_count}건이 {len(summaries)}종목에 모였습니다."
     observation_line = f"반복 언급 {multi_report_count}종목, 수급 참고가 붙은 관찰 종목은 {len(flow_items)}개입니다."
     return {
-        "source": "stored_report_krx_observation_summary",
+        "source": "stored_report_toss_observation_summary",
         "read_only": True,
         "live_fetch": False,
         "scoring": False,
@@ -34763,11 +34860,12 @@ def _build_web_view_news_observation_summary(
             "connection_reason": "저장 뉴스 근거가 수집되면 우선 확인 후보와 연결됩니다.",
         }
 
-    direct_count = sum(1 for row in evidence_rows if row.relevance == "direct")
-    caution_count = sum(1 for row in evidence_rows if _web_view_news_observation_is_caution(row))
-    positive_direct_count = _web_view_news_observation_positive_direct_count(evidence_rows)
-    primary_caution_count = _web_view_news_observation_primary_caution_count(evidence_rows)
-    market_context_count = sum(1 for row in evidence_rows if row.relevance == "market_context")
+    independent_rows = [row for row in evidence_rows if row.lineage_type == "independent"]
+    direct_count = sum(1 for row in independent_rows if row.relevance == "direct")
+    caution_count = sum(1 for row in independent_rows if _web_view_news_observation_is_caution(row))
+    positive_direct_count = _web_view_news_observation_positive_direct_count(independent_rows)
+    primary_caution_count = _web_view_news_observation_primary_caution_count(independent_rows)
+    market_context_count = sum(1 for row in independent_rows if row.relevance == "market_context")
     krx_reference_status = _web_view_news_observation_krx_status(evidence_rows, business_date)
     evidence_direction, evidence_direction_reason = _web_view_news_evidence_direction(
         direct_count=direct_count,
@@ -34807,6 +34905,9 @@ def _build_web_view_news_observation_summary(
             market_context_count=market_context_count,
             krx_reference_status=krx_reference_status,
         )
+        if not independent_rows:
+            display_label = "독립 근거 확인 전"
+            reason = "저장 뉴스는 있으나 리포트와 독립된 원출처 여부가 확인되지 않았습니다."
         connection_label, connection_reason = display_label, reason
         connection_note = (
             "우선 확인 후보와 겹친 뉴스 근거: " + ", ".join(candidate_overlap_names)
@@ -34829,6 +34930,9 @@ def _build_web_view_news_observation_summary(
         "primary_caution_count": primary_caution_count,
         "caution_count": caution_count,
         "market_context_count": market_context_count,
+        "independent_count": len(independent_rows),
+        "report_recap_count": sum(1 for row in evidence_rows if row.lineage_type == "report_recap"),
+        "unknown_count": sum(1 for row in evidence_rows if row.lineage_type not in {"independent", "report_recap"}),
         "krx_reference_status": krx_reference_status,
         "observed_at": max(
             [row.created_at for row in evidence_rows] + [run.created_at for run in representative_runs]
@@ -34880,6 +34984,9 @@ def _web_view_news_observation_summary_item(
         "primary_caution_count": badge["primary_caution_count"],
         "caution_count": badge["caution_count"],
         "market_context_count": badge["market_context_count"],
+        "independent_count": badge["independent_count"],
+        "report_recap_count": badge["report_recap_count"],
+        "unknown_count": badge["unknown_count"],
         "krx_reference_status": badge["krx_reference_status"],
         "observed_at": max([run.created_at, *(row.created_at for row in rows)]).isoformat(),
         "evidence_direction": badge["evidence_direction"],
@@ -36337,12 +36444,21 @@ def _web_view_news_digest_kind(row: ReportLinkedNewsEvidenceRecord) -> str:
     return "참고 뉴스"
 
 
+def _web_view_news_lineage_label(row: ReportLinkedNewsEvidenceRecord) -> str:
+    if row.lineage_type == "independent":
+        return "독립 확인"
+    if row.lineage_type == "report_recap":
+        return "리포트 재인용"
+    return "독립성 미확인"
+
+
 def _web_view_news_digest_priority(row: ReportLinkedNewsEvidenceRecord) -> int:
+    lineage_priority = 0 if row.lineage_type == "independent" else 10
     if row.relevance == "direct":
-        return 0
+        return lineage_priority
     if row.relevance == "market_context":
-        return 1
-    return 2
+        return lineage_priority + 1
+    return lineage_priority + 2
 
 
 def _web_view_news_digest_label(row: ReportLinkedNewsEvidenceRecord, *, limit: int = 44) -> str:
@@ -36381,6 +36497,8 @@ def _web_view_news_digest_items(
                 "stock_name": row.stock_name or row.stock_code or "-",
                 "label": label,
                 "evidence_label": _web_view_news_digest_kind(row),
+                "lineage_type": row.lineage_type,
+                "lineage_label": _web_view_news_lineage_label(row),
                 "relevance": row.relevance,
                 "source_lane": row.source_lane,
             }
@@ -36398,11 +36516,15 @@ def _web_view_candidate_news_badge(
     rows = _web_view_unique_news_evidence_rows(rows)
     if not rows:
         return _web_view_empty_candidate_news_badge()
-    direct_count = sum(1 for row in rows if row.relevance == "direct")
-    caution_count = sum(1 for row in rows if _web_view_news_observation_is_caution(row))
-    positive_direct_count = _web_view_news_observation_positive_direct_count(rows)
-    primary_caution_count = _web_view_news_observation_primary_caution_count(rows)
-    market_context_count = sum(1 for row in rows if row.relevance == "market_context")
+    independent_rows = [row for row in rows if row.lineage_type == "independent"]
+    direct_count = sum(1 for row in independent_rows if row.relevance == "direct")
+    caution_count = sum(1 for row in independent_rows if _web_view_news_observation_is_caution(row))
+    positive_direct_count = _web_view_news_observation_positive_direct_count(independent_rows)
+    primary_caution_count = _web_view_news_observation_primary_caution_count(independent_rows)
+    market_context_count = sum(1 for row in independent_rows if row.relevance == "market_context")
+    independent_count = len(independent_rows)
+    report_recap_count = sum(1 for row in rows if row.lineage_type == "report_recap")
+    unknown_count = len(rows) - independent_count - report_recap_count
     krx_reference_status = _web_view_news_observation_krx_status(rows, business_date)
     evidence_direction, evidence_direction_reason = _web_view_news_evidence_direction(
         direct_count=direct_count,
@@ -36417,6 +36539,9 @@ def _web_view_candidate_news_badge(
         market_context_count=market_context_count,
         krx_reference_status=krx_reference_status,
     )
+    if not independent_rows:
+        connection_label = "독립 근거 확인 전"
+        connection_reason = "저장 뉴스는 있으나 리포트와 독립된 원출처 여부가 확인되지 않았습니다."
     ordered_rows = sorted(
         rows,
         key=lambda row: (
@@ -36437,6 +36562,9 @@ def _web_view_candidate_news_badge(
         "primary_caution_count": primary_caution_count,
         "caution_count": caution_count,
         "market_context_count": market_context_count,
+        "independent_count": independent_count,
+        "report_recap_count": report_recap_count,
+        "unknown_count": unknown_count,
         "krx_reference_status": krx_reference_status,
         "observed_at": max(row.created_at for row in rows).isoformat(),
         "evidence_direction": evidence_direction,
@@ -36480,7 +36608,7 @@ def _web_view_unique_news_evidence_rows(
 ) -> list[ReportLinkedNewsEvidenceRecord]:
     latest_by_key: dict[str, ReportLinkedNewsEvidenceRecord] = {}
     for row in rows:
-        key = row.evidence_key or row.url or f"{row.stock_code}:{row.title}:{row.published_at.isoformat()}"
+        key = row.canonical_url or row.evidence_key or row.url or f"{row.stock_code}:{row.title}:{row.published_at.isoformat()}"
         previous = latest_by_key.get(key)
         if previous is None or (row.created_at, row.run_id) > (previous.created_at, previous.run_id):
             latest_by_key[key] = row
@@ -36566,6 +36694,10 @@ def _build_candidate_evidence_batch_context(
         business_date=business_date,
         stock_codes=stock_codes,
     )
+    market_index_history_by_series = _load_candidate_market_index_history_by_series(
+        repository,
+        business_date=business_date,
+    )
     first_target_dates = report_context["first_target_date_by_code"]
     baseline_market_by_code = _candidate_baseline_market_by_code(
         market_history_by_code,
@@ -36587,12 +36719,21 @@ def _build_candidate_evidence_batch_context(
         ][:252]
         for stock_code, rows in market_history_by_code.items()
     }
+    event_reaction_by_code = {
+        stock_code: _web_view_market_relative_event_reaction(
+            business_date=business_date,
+            stock_rows=rows,
+            index_rows_by_series=market_index_history_by_series,
+        )
+        for stock_code, rows in market_history_by_code.items()
+    }
     return {
         **report_context,
         **flow_context,
         "baseline_market_by_code": baseline_market_by_code,
         "market_series_by_code": market_series_by_code,
         "price_history_by_code": price_history_by_code,
+        "event_reaction_by_code": event_reaction_by_code,
     }
 
 
@@ -36725,17 +36866,20 @@ def _load_candidate_flow_context(
                 volume_unit, amount_unit, candidate_score, candidate_reasons,
                 fetched_at, source
             FROM stock_investor_flow_daily
-            WHERE business_date BETWEEN ? AND ?
-              AND stock_code IN ({placeholders})
-              AND source = 'krx_data_market'
+            WHERE stock_code IN ({placeholders})
+              AND (
+                    (source = 'krx_data_market' AND business_date BETWEEN ? AND ?)
+                 OR (source = 'toss_openapi' AND business_date = ?)
+              )
             ORDER BY stock_code ASC, business_date DESC, investor_type ASC
             """,
-            (from_date.isoformat(), business_date.isoformat(), *stock_codes),
+            (*stock_codes, from_date.isoformat(), business_date.isoformat(), business_date.isoformat()),
         ).fetchall()
     for row in rows:
         stock_code = str(row["stock_code"])
-        flow_window_rows_by_code.setdefault(stock_code, []).append(row)
-        if row["business_date"] == business_date.isoformat():
+        if row["source"] == "krx_data_market":
+            flow_window_rows_by_code.setdefault(stock_code, []).append(row)
+        elif row["business_date"] == business_date.isoformat():
             same_day_flow_by_code.setdefault(stock_code, []).append(repository._row_to_stock_investor_flow_daily(row))
     return {
         "same_day_flow_by_code": same_day_flow_by_code,
@@ -36775,6 +36919,116 @@ def _load_candidate_market_history_by_code(
         item = repository._row_to_stock_market_daily_snapshot(row)
         market_history_by_code.setdefault(item.stock_code, []).append(item)
     return market_history_by_code
+
+
+def _load_candidate_market_index_history_by_series(
+    repository: StockMonitorRepository,
+    *,
+    business_date: date,
+) -> dict[str, list[MarketIndexDailySnapshot]]:
+    rows_by_series: dict[str, list[MarketIndexDailySnapshot]] = {"KOSPI": [], "KOSDAQ": []}
+    from_date = business_date - timedelta(days=500)
+    to_date = business_date + timedelta(days=90)
+    with repository.connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                business_date, index_series, index_class, index_name,
+                close_index, change_amount, change_percent, open_index,
+                high_index, low_index, volume, turnover, market_cap,
+                fetched_at, source
+            FROM market_index_daily
+            WHERE business_date BETWEEN ? AND ?
+              AND index_series IN ('KOSPI', 'KOSDAQ')
+              AND source = 'krx'
+            ORDER BY index_series ASC, business_date ASC
+            """,
+            (from_date.isoformat(), to_date.isoformat()),
+        ).fetchall()
+    for row in rows:
+        rows_by_series[str(row["index_series"])].append(
+            repository._row_to_market_index_daily_snapshot(row)
+        )
+    return rows_by_series
+
+
+def _web_view_market_relative_event_reaction(
+    *,
+    business_date: date,
+    stock_rows: list[StockMarketDailySnapshot],
+    index_rows_by_series: dict[str, list[MarketIndexDailySnapshot]],
+) -> dict[str, object]:
+    event_row = next((row for row in stock_rows if row.business_date == business_date), None)
+    benchmark = (
+        None
+        if event_row is None
+        else "KOSDAQ"
+        if "KOSDAQ" in str(event_row.market or "").upper()
+        else "KOSPI"
+    )
+    result: dict[str, object] = {
+        "available": False,
+        "historical_review": True,
+        "source": "krx",
+        "basis": "same_date_krx_stock_and_index_history",
+        "benchmark": benchmark,
+        "affects_ordering": False,
+        "windows": [],
+        "notice": "동일 날짜 KRX 종목·지수 이력이 부족합니다.",
+    }
+    if event_row is None or event_row.close_price is None or event_row.close_price <= 0:
+        result["unavailable_reason"] = "missing_event_stock_row"
+        return result
+    stock_by_date = {
+        row.business_date: row
+        for row in stock_rows
+        if row.close_price is not None and row.close_price > 0
+    }
+    index_by_date = {
+        row.business_date: row
+        for row in index_rows_by_series.get(benchmark, [])
+        if row.close_index is not None and row.close_index > 0
+    }
+    baseline_dates = sorted(
+        day for day in stock_by_date.keys() & index_by_date.keys() if day < business_date
+    )
+    if not baseline_dates:
+        result["unavailable_reason"] = "missing_common_baseline"
+        return result
+    baseline_date = baseline_dates[-1]
+    stock_base = float(stock_by_date[baseline_date].close_price or 0)
+    index_base = float(index_by_date[baseline_date].close_index or 0)
+    event_and_after = sorted(day for day in stock_by_date if day >= business_date)
+    windows: list[dict[str, object]] = []
+    for offset, horizon in ((0, "D0"), (1, "D+1"), (5, "D+5"), (20, "D+20")):
+        if offset >= len(event_and_after):
+            continue
+        horizon_date = event_and_after[offset]
+        index_row = index_by_date.get(horizon_date)
+        stock_return = (float(stock_by_date[horizon_date].close_price or 0) / stock_base - 1) * 100
+        window: dict[str, object] = {
+            "horizon": horizon,
+            "business_date": horizon_date.isoformat(),
+            "stock_return_percent": round(stock_return, 2),
+            "benchmark_return_percent": None,
+            "excess_return_percent": None,
+        }
+        if index_row is None:
+            window["market_unavailable_reason"] = "missing_same_date_benchmark"
+        else:
+            benchmark_return = (float(index_row.close_index or 0) / index_base - 1) * 100
+            window["benchmark_return_percent"] = round(benchmark_return, 2)
+            window["excess_return_percent"] = round(stock_return - benchmark_return, 2)
+        windows.append(window)
+    if windows:
+        result.update(
+            {
+                "available": True,
+                "windows": windows,
+                "notice": "KRX 종목과 지수의 동일 날짜 누적 반응입니다.",
+            }
+        )
+    return result
 
 
 def _candidate_baseline_market_by_code(
@@ -36859,6 +37113,7 @@ def build_web_view_candidate_evidence_snapshot(
     first_target_date_by_code = batch_context["first_target_date_by_code"]
     baseline_market_by_code = batch_context["baseline_market_by_code"]
     market_series_by_code = batch_context["market_series_by_code"]
+    event_reaction_by_code = batch_context["event_reaction_by_code"]
     rows: list[dict[str, object]] = []
     for summary in summaries:
         stock_code = summary.stock_code or ""
@@ -36999,6 +37254,7 @@ def build_web_view_candidate_evidence_snapshot(
                 },
                 "news_observation_badge": news_badge,
                 "toss_baseline_reference": toss_baseline_reference,
+                "event_reaction": event_reaction_by_code.get(stock_code),
                 "quality_flags": quality_flags,
                 "evidence_notes": notes,
                 "_internal_candidate_signals": candidate_profile["internal_candidate_signals"],
@@ -38370,7 +38626,7 @@ def _build_web_view_stock_investor_flow_context(
         "notice": (
             "저장된 Toss 우선 후보 수급 참고입니다. 확정 판단은 포함하지 않습니다."
             if rows
-            else "선택 종목의 Toss 우선 후보 수급 데이터가 없습니다."
+            else "선택일 Toss 20:00 저장 우선 후보 수급 데이터가 없습니다."
         ),
         "rows": [_web_view_stock_investor_flow_item(item) for item in rows],
     }
@@ -38496,7 +38752,7 @@ def _build_web_view_stock_investor_flow_tabs(
         "notice": (
             "저장된 Toss 우선 후보 수급 기준입니다."
             if retail_rows or institution_rows
-            else "선택 종목의 Toss 우선 후보 수급 데이터가 없습니다."
+            else "선택일 Toss 20:00 저장 우선 후보 수급 데이터가 없습니다."
         ),
     }
 
