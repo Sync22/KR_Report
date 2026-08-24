@@ -174,10 +174,10 @@ WEB_VIEW_DEFAULT_HOST = "127.0.0.1"
 WEB_VIEW_DEFAULT_PORT = 87 * 100 + 80
 SCHEDULED_NOTIFY_EARLIEST_TIME = datetime_time(hour=8, minute=0)
 SCHEDULED_NOTIFY_LATEST_TIME = datetime_time(hour=8, minute=30)
-SCHEDULED_TOSS_PRIORITY_BASELINE_EARLIEST_TIME = datetime_time(hour=20, minute=0)
-SCHEDULED_TOSS_PRIORITY_BASELINE_LATEST_TIME = datetime_time(hour=20, minute=15)
-SCHEDULED_TOSS_MARKET_CONTEXT_EARLIEST_TIME = datetime_time(hour=20, minute=0)
-SCHEDULED_TOSS_MARKET_CONTEXT_LATEST_TIME = datetime_time(hour=20, minute=15)
+SCHEDULED_TOSS_PRIORITY_BASELINE_EARLIEST_TIME = datetime_time(hour=20, minute=5)
+SCHEDULED_TOSS_PRIORITY_BASELINE_LATEST_TIME = datetime_time(hour=20, minute=20)
+SCHEDULED_TOSS_MARKET_CONTEXT_EARLIEST_TIME = datetime_time(hour=20, minute=5)
+SCHEDULED_TOSS_MARKET_CONTEXT_LATEST_TIME = datetime_time(hour=20, minute=20)
 SCHEDULED_KRX_KIND_MARKET_ACTION_EARLIEST_TIME = datetime_time(hour=9, minute=0)
 SCHEDULED_KRX_KIND_MARKET_ACTION_LATEST_TIME = datetime_time(hour=15, minute=30)
 SCHEDULED_MARKET_BRIEFING_SLOT_TIMES = {
@@ -1710,7 +1710,7 @@ def build_parser() -> argparse.ArgumentParser:
     toss_priority_baseline_parser.add_argument(
         "--scheduled",
         action="store_true",
-        help="Apply the business-day and 20:00~20:15 scheduler guard.",
+        help="Apply the business-day and 20:05~20:20 scheduler guard for the 20:00 close baseline.",
     )
     toss_priority_baseline_parser.add_argument("--json", action="store_true")
 

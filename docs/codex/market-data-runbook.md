@@ -2,7 +2,7 @@
 
 ## Current Operating Source
 
-The active market-data path is one Toss OpenAPI capture at `20:00` KST on each Korean business day. It stores only the bounded values used by the web-view: KOSPI/KOSDAQ level and change, market-level individual/foreigner/institution flow, named turnover Top20 split into stocks and ETFs, and the server-derived priority Top2 quote/flow references.
+The active market-data path is one Toss OpenAPI capture at `20:05` KST on each Korean business day, after the Toss KR calendar's integrated after-market closes at `20:00`. The stored `baseline_time=20:00` denotes that market-close boundary; the actual request time remains in each row's fetched/observed timestamp. The capture stores only the bounded values used by the web-view: KOSPI/KOSDAQ level and change, market-level individual/foreigner/institution flow, named turnover Top20 split into stocks and ETFs, and the server-derived priority Top2 quote/flow references.
 
 - `StockMonitor-TossCloseSnapshot` runs the close capture through `toss-market-context-capture`.
 - KRX Open API and KRX Data Marketplace tasks are removed from normal scheduler registration.

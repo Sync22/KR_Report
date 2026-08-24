@@ -132,6 +132,7 @@ Before implementing a data or display change, verify:
 `리포트 가설`, `직접 뉴스`, `보조/시장맥락 뉴스`, `장중 반응`, `Toss 20:00 저장 기준값`, and `KRX 기준일` are separate evidence layers. Do not let one layer silently replace another.
 
 - Direct positive and direct caution news may produce `상승 근거 우세`, `하방 위험 우세`, or `직접 근거 상충` only when their respective counts are visible.
+- Before the same-day 20:05 capture run, show the Toss 20:00 close price/flow as `저장 예정`; after that run window, distinguish a missing capture from an unavailable source. Never backfill that label with a KRX value.
 - Indirect or market-context rows may add context but must not overturn direct-evidence direction by themselves.
 - The same article is counted once per candidate/date by its stored evidence key. A later completed collection with no new match must keep already stored same-date direct evidence visible and expose its later collection time separately.
 - Web-view and Telegram candidate summaries must use the same selected candidate codes and the same deduplicated evidence set. A date-wide run list must not replace a candidate-linked summary with unrelated or older empty runs.

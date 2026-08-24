@@ -9,7 +9,7 @@ param(
     [string]$MarketBriefingLunchTime = "12:00",
     [string]$MarketBriefingPrecloseTime = "15:15",
     [int]$MarketBriefingLimit = 5,
-    [string]$TossPriorityBaselineTime = "20:00",
+    [string]$TossPriorityBaselineTime = "20:05",
     [string]$TelegramCommandStart = "08:00",
     [string]$TelegramCommandEnd = "16:30",
     [int]$TelegramCommandIntervalMinutes = 1,

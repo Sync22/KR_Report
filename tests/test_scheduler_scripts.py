@@ -109,10 +109,10 @@ def test_scheduler_registration_resolves_project_venv_before_creating_tasks() ->
         assert "Resolve-StockMonitorPython" in script
 
 
-def test_register_task_scheduler_uses_toss_close_snapshot_at_2000() -> None:
+def test_register_task_scheduler_runs_toss_close_snapshot_after_2000_close() -> None:
     script = (PROJECT_ROOT / "scripts" / "register_task_scheduler_tasks.ps1").read_text(encoding="utf-8")
 
-    assert '[string]$TossPriorityBaselineTime = "20:00"' in script
+    assert '[string]$TossPriorityBaselineTime = "20:05"' in script
     assert "run_scheduled_toss_priority_baseline.ps1" in script
     assert "TossMarketContextCaptureTime" not in script
 
@@ -621,10 +621,10 @@ def test_market_briefing_slot_only_runs_its_requested_briefing() -> None:
     assert "market-research-note" not in script
 
 
-def test_register_task_scheduler_tasks_registers_toss_priority_baseline_at_2000() -> None:
+def test_register_task_scheduler_tasks_registers_toss_priority_baseline_after_2000_close() -> None:
     script = (PROJECT_ROOT / "scripts" / "register_task_scheduler_tasks.ps1").read_text(encoding="utf-8")
 
-    assert '[string]$TossPriorityBaselineTime = "20:00"' in script
+    assert '[string]$TossPriorityBaselineTime = "20:05"' in script
     assert "[switch]$SkipTossPriorityBaseline" in script
     assert "run_scheduled_toss_priority_baseline.ps1" in script
     assert "$TaskPrefix-TossCloseSnapshot" in script

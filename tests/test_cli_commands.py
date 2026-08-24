@@ -178,7 +178,13 @@ class _KrxBaselineFridayLateDateTime(datetime):
 class _TossBaselineLateDateTime(datetime):
     @classmethod
     def now(cls, tz=None):
-        return cls(2026, 5, 29, 20, 16, 0, tzinfo=tz)
+        return cls(2026, 5, 29, 20, 21, 0, tzinfo=tz)
+
+
+class _TossBaselineAtCloseDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return cls(2026, 5, 29, 20, 0, 0, tzinfo=tz)
 
 
 class _KrxMentionedFlowAllowedDateTime(datetime):
@@ -2004,6 +2010,35 @@ def test_toss_priority_baseline_collect_scheduled_late_run_skips_before_provider
 
     assert exit_code == 0
     assert "late_run" in capsys.readouterr().out
+
+
+def test_toss_priority_baseline_collect_waits_until_after_integrated_market_close(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    monkeypatch.setattr(cli_module, "datetime", _TossBaselineAtCloseDateTime)
+    monkeypatch.setattr(
+        cli_module.TossOpenApiLabConfig,
+        "from_env",
+        classmethod(lambda cls, *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("provider config must not be read"))),
+    )
+
+    exit_code = cli_module._run_toss_priority_baseline_collect(
+        config,
+        repository,
+        business_date=date(2026, 5, 29),
+        baseline_time="20:00",
+        live=True,
+        confirm_token_reissue=True,
+        confirm_save=True,
+        scheduled=True,
+        as_json=False,
+    )
+
+    assert exit_code == 0
+    assert "too_early; earliest=20:05" in capsys.readouterr().out
 
 
 def test_toss_priority_baseline_collect_skips_existing_full_candidate_cohort_before_provider_access(

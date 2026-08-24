@@ -60,7 +60,7 @@ This table is the current scheduler contract. Later KRX-specific procedures in t
 | `StockMonitor-Notify` | `08:20` KST on Korean business days. Runtime guard allows production send only from `08:00` to `08:30` unless `--allow-late` is explicit. |
 | `StockMonitor-Poll` | Every 30 minutes from `08:30` to `16:30` KST on Korean business days. |
 | `StockMonitor-MarketBriefingMood` / `Lunch` / `Preclose` | `09:15` / `12:00` / `15:15` KST operator briefing slots. |
-| `StockMonitor-TossCloseSnapshot` | `20:00` KST on Korean business days; stores the bounded Toss close snapshot used by web-view market, ETF, and flow references. |
+| `StockMonitor-TossCloseSnapshot` | `20:05` KST on Korean business days; captures the `20:00` integrated-market close baseline used by web-view market, ETF, and flow references. |
 | `StockMonitor-TelegramCommands` | Hidden worker starts at `08:00`, checks Telegram commands every 1 minute, exits at `16:30`, and skips market holidays/no-run dates. During `09:00~15:30`, it also checks the official KIND `서킷브레이커/사이드카` market-action category and sends one operator alert per official acceptance number. |
 | `StockMonitor-WebViewHourlyRestart` | Hourly restart, default first run `00:05`, for the read-only loopback `web-view` target on `{LOCAL_WEB_VIEW_TARGET}`. |
 | `StockMonitor-Shutdown` | Desktop-validation only. It is not registered by the mini-PC scheduler wrapper and should remain absent during always-on operation. |
