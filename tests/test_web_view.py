@@ -171,25 +171,43 @@ def test_web_view_host_guard_can_be_explicitly_overridden() -> None:
     cli_module._validate_web_view_host("0.0.0.0", allow_non_loopback=True)
 
 
-def test_candidate_news_badge_only_treats_verified_independent_rows_as_actionable() -> None:
-    unknown = _web_view_news_evidence(evidence_key="unknown", lineage_type="unknown")
-    independent = _web_view_news_evidence(evidence_key="independent", lineage_type="independent")
+def test_candidate_news_badge_keeps_report_recap_matches_visible() -> None:
+    report_recap = _web_view_news_evidence(evidence_key="report-recap", lineage_type="report_recap")
 
-    unknown_badge = cli_module._web_view_candidate_news_badge(
-        [unknown],
-        business_date=date(2026, 6, 2),
-    )
-    independent_badge = cli_module._web_view_candidate_news_badge(
-        [independent],
+    badge = cli_module._web_view_candidate_news_badge(
+        [report_recap],
         business_date=date(2026, 6, 2),
     )
 
-    assert unknown_badge["direct_count"] == 0
-    assert unknown_badge["unknown_count"] == 1
-    assert unknown_badge["connection_label"] == "독립 근거 확인 전"
-    assert independent_badge["direct_count"] == 1
-    assert independent_badge["independent_count"] == 1
-    assert independent_badge["connection_label"] == "뉴스로 후보 강화"
+    assert badge["direct_count"] == 1
+    assert badge["report_recap_count"] == 1
+    assert badge["connection_label"] == "리포트 재인용 매칭"
+    assert badge["evidence_direction"] == "리포트 재인용 흐름"
+    assert badge["news_digest"][0]["evidence_label"] == "종목 직접 매칭"
+    assert badge["news_digest"][0]["lineage_label"] == "리포트 재인용"
+    assert cli_module._web_view_news_collection_status(badge) == "stored_evidence"
+
+
+def test_candidate_value_profile_does_not_recast_report_recap_as_independent_direction() -> None:
+    badge = cli_module._web_view_candidate_news_badge(
+        [_web_view_news_evidence(evidence_key="report-recap-profile", lineage_type="report_recap")],
+        business_date=date(2026, 6, 2),
+    )
+
+    profile = cli_module._web_view_candidate_value_profile(
+        candidate_profile={"observation_priority": "확인 후보", "why_notable": ["리포트 집중"]},
+        news_badge=badge,
+        toss_baseline_reference={"available": False},
+        market_reference=None,
+        stock_flow_rows=[],
+        rank_reference=None,
+        current=datetime(2026, 6, 2, 12, 0, 0),
+        business_date=date(2026, 6, 2),
+    )
+
+    assert profile["observation_priority"] == "확인 후보"
+    assert profile["value_label"] == "리포트 재인용 매칭"
+    assert profile["evidence_direction"] == "리포트 재인용 흐름"
 
 
 def test_web_view_news_deduplicates_tracking_variants_by_canonical_url() -> None:
@@ -275,10 +293,10 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
 
     summary = snapshot["news_observation_summary"]
     assert summary["available"] is True
-    assert summary["display_label"] == "뉴스로 후보 강화"
-    assert summary["reason"] == "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다."
-    assert summary["connection_label"] == "뉴스로 후보 강화"
-    assert summary["connection_reason"] == "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다."
+    assert summary["display_label"] == "종목 뉴스 매칭"
+    assert summary["reason"] == "후보와 직접 매칭된 뉴스 1건이 저장돼 있습니다."
+    assert summary["connection_label"] == "종목 뉴스 매칭"
+    assert summary["connection_reason"] == "후보와 직접 매칭된 뉴스 1건이 저장돼 있습니다."
     assert summary["connection_note"] == "우선 확인 후보와 겹친 뉴스 근거: 삼성전자"
     assert summary["candidate_overlap_count"] == 1
     assert summary["candidate_overlap_names"] == ["삼성전자"]
@@ -313,7 +331,7 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
             "available": True,
             "stock_name": "삼성전자",
             "stock_code": "005930",
-                "display_label": "뉴스로 후보 강화",
+                "display_label": "종목 뉴스 매칭",
             "reason": "삼성전자, AI 반도체 공급 계약 체결",
             "direct_count": 1,
             "positive_direct_count": 1,
@@ -328,8 +346,8 @@ def test_web_view_daily_snapshot_projects_saved_news_observation_public_safe(tmp
             "evidence_direction": "상승 근거 우세",
             "evidence_direction_reason": "직접 긍정 뉴스 1건이 직접 주의 뉴스보다 우세합니다.",
             "top_title": "삼성전자, AI 반도체 공급 계약 체결",
-            "connection_label": "뉴스로 후보 강화",
-            "connection_reason": "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다.",
+            "connection_label": "종목 뉴스 매칭",
+            "connection_reason": "후보와 직접 매칭된 뉴스 1건이 저장돼 있습니다.",
         }
     ]
     assert summary["items"][0]["collection_run_count"] == 1
@@ -556,15 +574,15 @@ def test_web_view_candidate_evidence_projects_public_safe_news_badge(tmp_path, m
 
     badge = snapshot["rows"][0]["news_observation_badge"]
     assert badge["available"] is True
-    assert badge["display_label"] == "뉴스로 후보 강화"
+    assert badge["display_label"] == "종목 뉴스 매칭"
     assert badge["reason"] == direct_evidence.title
     assert badge["direct_count"] == 1
     assert badge["caution_count"] == 1
     assert badge["market_context_count"] == 1
     assert badge["krx_reference_status"] == "stale"
     assert badge["observed_at"] == "2026-06-02T10:00:00"
-    assert badge["connection_label"] == "뉴스로 후보 강화"
-    assert badge["connection_reason"] == "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다."
+    assert badge["connection_label"] == "종목 뉴스 매칭"
+    assert badge["connection_reason"] == "후보와 직접 매칭된 뉴스 1건이 저장돼 있습니다."
     assert badge["top_title"] == direct_evidence.title
     assert badge["digest_label"] == "AI 반도체 공급 계약 체결"
     assert badge["news_digest"] == [
@@ -572,7 +590,7 @@ def test_web_view_candidate_evidence_projects_public_safe_news_badge(tmp_path, m
             "date": "2026-06-02",
             "stock_name": "삼성전자",
             "label": "AI 반도체 공급 계약 체결",
-                "evidence_label": "직접 근거",
+                "evidence_label": "종목 직접 매칭",
                 "lineage_type": "independent",
                 "lineage_label": "독립 확인",
                 "relevance": "direct",
@@ -801,8 +819,8 @@ def test_web_view_stock_detail_projects_public_safe_news_observation_detail(tmp_
     assert detail["caution_count"] == 1
     assert detail["market_context_count"] == 1
     assert detail["krx_reference_status"] == "exact"
-    assert detail["connection_label"] == "뉴스로 후보 강화"
-    assert detail["connection_reason"] == "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다."
+    assert detail["connection_label"] == "종목 뉴스 매칭"
+    assert detail["connection_reason"] == "후보와 직접 매칭된 뉴스 1건이 저장돼 있습니다."
     assert detail["top_titles"] == [
         "Samsung expands AI semiconductor supply",
         "Semiconductor volatility caution",
@@ -813,7 +831,7 @@ def test_web_view_stock_detail_projects_public_safe_news_observation_detail(tmp_
             "date": "2026-06-02",
             "stock_name": "삼성전자",
             "label": "Samsung expands AI semiconductor supply",
-                "evidence_label": "직접 근거",
+                "evidence_label": "종목 직접 매칭",
                 "lineage_type": "independent",
                 "lineage_label": "독립 확인",
                 "relevance": "direct",
@@ -3196,9 +3214,9 @@ def test_web_view_candidate_evidence_prefers_exact_flow_composite_over_rank_only
 
     assert [row["stock_code"] for row in snapshot["rows"]] == ["000202", "000101"]
     assert snapshot["rows"][0]["observation_priority"] == "확인 후보"
-    assert snapshot["rows"][0]["why_notable"] == ["리포트 집중", "목표가 상향"]
+    assert snapshot["rows"][0]["why_notable"] == ["리포트 집중", "일자 집계 목표가 범위 상향"]
     assert snapshot["rows"][0]["missing_information"] == []
-    assert snapshot["rows"][1]["why_notable"] == ["리포트 집중", "목표가 상향"]
+    assert snapshot["rows"][1]["why_notable"] == ["리포트 집중", "일자 집계 목표가 범위 상향"]
     assert "외국인 순매수 상위 참고" not in snapshot["rows"][1]["evidence_layers"]["support"]
     assert snapshot["rows"][1]["missing_information"] == ["종목 수급 저장값 없음"]
 
@@ -3727,6 +3745,28 @@ def test_web_view_toss_priority_quotes_route_uses_server_derived_top_two_only(tm
                 source_id="toss-route-2",
                 identity_key="toss-route-2",
             ),
+            Report(
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="삼성전자 두 번째 점검",
+                broker_name="KB증권",
+                published_at=datetime(2026, 5, 8, 9, 40, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 5, 8, 9, 45, 0),
+                source_id="toss-route-3",
+                identity_key="toss-route-3",
+            ),
+            Report(
+                stock_name="SK하이닉스",
+                stock_code="000660",
+                title="SK하이닉스 두 번째 점검",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 5, 8, 9, 50, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 5, 8, 9, 55, 0),
+                source_id="toss-route-4",
+                identity_key="toss-route-4",
+            ),
         ]
     )
     repository.rebuild_daily_summaries(business_date)
@@ -3896,6 +3936,28 @@ def test_web_view_toss_market_context_route_uses_server_derived_top_two_only(tmp
                 collected_at=datetime(2026, 7, 10, 9, 3, 0),
                 source_id="toss-market-route-2",
                 identity_key="toss-market-route-2",
+            ),
+            Report(
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="삼성전자 추가 보고서",
+                broker_name="KB증권",
+                published_at=datetime(2026, 7, 10, 9, 4, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 7, 10, 9, 5, 0),
+                source_id="toss-market-route-3",
+                identity_key="toss-market-route-3",
+            ),
+            Report(
+                stock_name="SK하이닉스",
+                stock_code="000660",
+                title="SK하이닉스 추가 보고서",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 7, 10, 9, 6, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 7, 10, 9, 7, 0),
+                source_id="toss-market-route-4",
+                identity_key="toss-market-route-4",
             ),
         ]
     )
@@ -4216,13 +4278,13 @@ def test_web_view_news_observation_keeps_unique_direct_evidence_after_later_empt
     summary = daily["news_observation_summary"]
     assert summary["direct_count"] == 1
     assert summary["candidate_overlap_names"] == ["삼성전자"]
-    assert summary["items"][0]["display_label"] == "뉴스로 후보 강화"
+    assert summary["items"][0]["display_label"] == "종목 뉴스 매칭"
     assert summary["items"][0]["direct_count"] == 1
     assert summary["items"][0]["collection_run_count"] == 3
     assert summary["items"][0]["latest_collection_status"] == "no_match"
     assert summary["items"][0]["daily_evidence_retained"] is True
     assert candidates["rows"][0]["news_observation_badge"]["direct_count"] == 1
-    assert candidates["rows"][0]["news_observation_badge"]["display_label"] == "뉴스로 후보 강화"
+    assert candidates["rows"][0]["news_observation_badge"]["display_label"] == "종목 뉴스 매칭"
     assert candidates["rows"][0]["news_observation_badge"]["collection_run_count"] == 3
     assert candidates["rows"][0]["news_observation_badge"]["latest_collection_status"] == "no_match"
     assert candidates["rows"][0]["news_observation_badge"]["daily_evidence_retained"] is True
@@ -4552,7 +4614,7 @@ def test_web_view_stock_detail_target_revision_trail_exposes_report_timeline(tmp
                 stock_name="Alpha",
                 stock_code="000001",
                 title="Alpha target 2",
-                broker_name="BB Securities",
+                broker_name="AA Securities",
                 published_at=datetime(2026, 6, 19, 9, 0, 0),
                 business_date=date(2026, 6, 19),
                 collected_at=datetime(2026, 6, 19, 9, 5, 0),
@@ -4564,7 +4626,7 @@ def test_web_view_stock_detail_target_revision_trail_exposes_report_timeline(tmp
                 stock_name="Alpha",
                 stock_code="000001",
                 title="Alpha target 3",
-                broker_name="CC Securities",
+                broker_name="AA Securities",
                 published_at=datetime(2026, 6, 26, 9, 0, 0),
                 business_date=selected_date,
                 collected_at=datetime(2026, 6, 26, 9, 5, 0),
@@ -4605,10 +4667,59 @@ def test_web_view_stock_detail_target_revision_trail_exposes_report_timeline(tmp
     assert trail["latest_report_date"] == "2026-06-26"
     assert trail["direction_label"] == "상향"
     assert trail["attainment_percent"] == pytest.approx(92.9)
-    assert trail["items"][0]["broker_name"] == "CC Securities"
+    assert trail["items"][0]["broker_name"] == "AA Securities"
+    assert trail["items"][0]["previous_target_price_value"] == 90_000
     assert trail["items"][0]["direction_label"] == "상향"
     assert trail["items"][1]["direction_label"] == "상향"
     _assert_public_safe_payload(snapshot)
+
+
+def test_web_view_target_trail_does_not_compare_different_brokers(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 26)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="Alpha",
+                stock_code="000001",
+                title="AA target",
+                broker_name="AA Securities",
+                published_at=datetime(2026, 6, 26, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 26, 9, 5, 0),
+                target_price_value=95_000,
+                source_id="target-broker-aa",
+                identity_key="target-broker-aa",
+            ),
+            Report(
+                stock_name="Alpha",
+                stock_code="000001",
+                title="BB target",
+                broker_name="BB Securities",
+                published_at=datetime(2026, 6, 26, 9, 1, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 26, 9, 5, 0),
+                target_price_value=50_000,
+                source_id="target-broker-bb",
+                identity_key="target-broker-bb",
+            ),
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    snapshot = cli_module.build_web_view_stock_detail_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        stock_code="000001",
+    )
+
+    assert all(item["previous_target_price_value"] is None for item in snapshot["target_price_trail"]["items"])
+    assert all(item["direction_label"] is None for item in snapshot["target_price_trail"]["items"])
 
 
 def test_web_view_stock_detail_target_journey_tracks_report_target_events(tmp_path, monkeypatch) -> None:
@@ -4756,7 +4867,7 @@ def test_web_view_stock_detail_target_journey_tracks_report_target_events(tmp_pa
     in_progress = journey["items"][0]
     assert in_progress["report_date"] == "2026-06-03"
     assert in_progress["broker_name"] == "CC Securities"
-    assert in_progress["revision_direction_label"]
+    assert all(item["revision_direction_label"] is None for item in journey["items"])
     assert in_progress["current_attainment_percent"] == pytest.approx(65.0)
     assert in_progress["max_attainment_percent"] == pytest.approx(80.0)
     assert in_progress["observed_through"] == "2026-06-05"
@@ -5217,7 +5328,7 @@ def test_web_view_stock_detail_snapshot_exposes_reports_without_admin_state(tmp_
             "target_price_value": 100_000,
             "target_price_display": "목표가 100,000원",
             "opinion_normalized": "buy",
-            "opinion_display": "증권사 의견: 매수",
+            "opinion_display": "리포트 표기: 매수",
             "source_url": "https://stock.naver.com/research/company/1",
         }
     ]
@@ -5241,9 +5352,9 @@ def test_web_view_report_display_values_are_user_facing() -> None:
     assert cli_module._web_view_target_price_display(100_000) == "목표가 100,000원"
     assert cli_module._web_view_opinion_display("N/A") == "의견 없음"
     assert cli_module._web_view_opinion_display(None) == "의견 없음"
-    assert cli_module._web_view_opinion_display("buy") == "증권사 의견: 매수"
-    assert cli_module._web_view_opinion_display("neutral") == "증권사 의견: 중립"
-    assert cli_module._web_view_opinion_display("sell") == "증권사 의견: 매도"
+    assert cli_module._web_view_opinion_display("buy") == "리포트 표기: 매수"
+    assert cli_module._web_view_opinion_display("neutral") == "리포트 표기: 중립"
+    assert cli_module._web_view_opinion_display("sell") == "리포트 표기: 매도"
 
 
 def test_web_view_category_detail_snapshot_exposes_sector_stocks_without_admin_state(tmp_path, monkeypatch) -> None:
@@ -6161,7 +6272,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     )[0]
     assert "esc(valueLine)" not in top_two_body
     assert "현재 근거:" in top_two_body
-    assert "추가 확인:" in top_two_body
+    assert "저장 기준:" in top_two_body
+    assert "당일 Toss 20:00 저장 예정" in top_two_body
     assert "오늘 누적 뉴스" in html
     assert "topTwoCurrentEvidenceLine(item)" in top_two_body
     assert "topTwoMissingEvidenceLine(item, tossQuote)" in top_two_body
@@ -6178,7 +6290,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     )[0]
     assert 'document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(tossPriorityRows);' in toss_quote_body
     assert "await loadPriorityCurrentQuotes(date);" in toss_quote_body
-    priority_load_body = html.split("tossPriorityRows = priorityRows.slice(0, 2);", 1)[1].split(
+    priority_load_body = html.split("tossPriorityRows = priorityRows.filter((row) => row?.selected !== false).slice(0, 2);", 1)[1].split(
         "const renderCandidateCard", 1
     )[0]
     assert "loadTossPriorityQuotes(tossPriorityDate);" in priority_load_body
@@ -6189,6 +6301,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert 'if (!hasCurrentPrice) missing.push("현재가 확인 전");' in html
     assert 'missing.push("Toss 현재가 확인 전")' not in top_two_body
     assert 'function targetPriceRange(minimum, maximum)' in html
+    assert "목표가 범위(일자 집계)" in top_two_body
     assert '<span>뉴스 근거: ${esc(candidateNewsCompactLine(candidate.news_observation_badge))}</span>' not in html
     assert '<span>뉴스: ${esc(candidateNewsCompactLine(candidate.news_observation_badge))}</span>' in html
     assert ".candidate-news-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; border: 1px solid #e7d8bf;" in html
@@ -6413,6 +6526,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "분류 기준이 완전히 통일되기 전까지는 참고 흐름" in html
     assert "item.target_price_display || `목표가 ${price(item.target_price_value)}`" in html
     assert "item.opinion_display || opinion(item.opinion_normalized)" in html
+    assert "`리포트 표기: ${label}`" in html
     assert "data-public-category-id" in html
     assert "data-category-name" not in html
     assert "기간별 수급량" in html
@@ -7122,7 +7236,7 @@ def test_web_view_daily_snapshot_scopes_news_summary_to_top_two_candidates(tmp_p
     assert summary_codes == [("000001", "000002")]
 
 
-def test_web_view_candidate_value_profile_downgrades_target_only_no_match() -> None:
+def test_web_view_candidate_value_profile_keeps_report_basis_when_news_has_no_match() -> None:
     profile = cli_module._web_view_candidate_value_profile(
         candidate_profile={
             "observation_priority": "확인 후보",
@@ -7146,12 +7260,31 @@ def test_web_view_candidate_value_profile_downgrades_target_only_no_match() -> N
         business_date=date(2026, 6, 19),
     )
 
-    assert profile["observation_priority"] == "정보 보강"
-    assert profile["value_label"] == "정보 보강"
+    assert profile["observation_priority"] == "확인 후보"
+    assert profile["value_label"] == "리포트 기준 확인"
     assert profile["time_mode"] == "intraday"
-    assert "목표가 변화 단독" in profile["value_reason"]
+    assert profile["value_reason"] == "목표가 변화가 확인됐고 같은 날짜 뉴스 매칭은 없습니다."
     assert int(profile["sort_value_signal"]) == 3
     assert "score" not in json.dumps(profile, ensure_ascii=False).lower()
+
+
+def test_web_view_priority_selection_does_not_force_single_report_gap_candidate() -> None:
+    assert cli_module._web_view_priority_candidate_is_eligible(
+        {
+            "report_summary": {"report_count": 1},
+            "news_observation_badge": {"available": True, "direct_count": 0},
+            "stock_flow_reference": {"available": False},
+            "toss_baseline_reference": {"available": False},
+        }
+    ) is False
+    assert cli_module._web_view_priority_candidate_is_eligible(
+        {
+            "report_summary": {"report_count": 2},
+            "news_observation_badge": {"available": True, "direct_count": 0},
+            "stock_flow_reference": {"available": False},
+            "toss_baseline_reference": {"available": False},
+        }
+    ) is True
 
 
 def test_web_view_candidate_value_profile_keeps_no_match_from_reordering_supported_candidate() -> None:
@@ -7193,7 +7326,8 @@ def test_web_view_candidate_value_profile_reference_notes_are_public_facing() ->
         },
         news_badge={
             "available": True,
-            "display_label": "뉴스로 후보 강화",
+            "display_label": "종목 뉴스 매칭",
+            "independent_count": 1,
             "direct_count": 1,
             "positive_direct_count": 0,
             "primary_caution_count": 0,
@@ -7209,7 +7343,7 @@ def test_web_view_candidate_value_profile_reference_notes_are_public_facing() ->
     )
 
     assert profile["reference_notes"] == [
-        "뉴스: 후보 직접 근거 있음",
+        "뉴스: 종목 직접 매칭",
         "Toss: 선택일 저장값 없음",
         "수급: 저장값 없음",
         "20:00 저장 현재가 기준",
@@ -7231,7 +7365,8 @@ def test_web_view_candidate_value_profile_keeps_base_sort_signal_for_direct_news
         news_badge={
             "available": True,
             "display_label": "직접 뉴스",
-            "connection_label": "뉴스로 후보 강화",
+            "connection_label": "종목 뉴스 매칭",
+            "independent_count": 1,
             "direct_count": 1,
             "positive_direct_count": 1,
             "primary_caution_count": 0,
@@ -7264,7 +7399,8 @@ def test_web_view_candidate_value_profile_keeps_direct_news_ahead_of_support_cau
         news_badge={
             "available": True,
             "display_label": "직접 뉴스",
-            "connection_label": "뉴스로 후보 강화",
+            "connection_label": "종목 뉴스 매칭",
+            "independent_count": 2,
             "direct_count": 2,
             "positive_direct_count": 2,
             "primary_caution_count": 0,
@@ -7296,7 +7432,8 @@ def test_web_view_candidate_value_profile_exposes_direct_evidence_direction_with
         news_badge={
             "available": True,
             "display_label": "직접 뉴스",
-            "connection_label": "뉴스로 후보 강화",
+            "connection_label": "종목 뉴스 매칭",
+            "independent_count": 2,
             "direct_count": 2,
             "positive_direct_count": 2,
             "primary_caution_count": 0,
@@ -7332,6 +7469,7 @@ def test_web_view_candidate_value_profile_marks_conflicting_direct_evidence_with
             "available": True,
             "display_label": "직접 뉴스",
             "connection_label": "뉴스 근거 확인",
+            "independent_count": 2,
             "direct_count": 2,
             "positive_direct_count": 1,
             "primary_caution_count": 1,
@@ -7367,6 +7505,7 @@ def test_web_view_candidate_value_profile_demotes_direct_caution_evidence() -> N
             "available": True,
             "display_label": "주의 뉴스",
             "connection_label": "주의 뉴스 확인",
+            "independent_count": 1,
             "direct_count": 1,
             "positive_direct_count": 0,
             "primary_caution_count": 1,
@@ -7512,5 +7651,5 @@ def test_web_view_news_connection_does_not_present_stale_krx_as_news_evidence() 
         krx_reference_status="stale",
     )
 
-    assert label == "뉴스 근거 부족"
+    assert label == "관련 뉴스 매칭"
     assert "KRX" not in reason

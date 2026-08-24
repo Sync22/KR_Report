@@ -5076,7 +5076,7 @@ def test_news_intelligence_briefing_collect_saves_observations_for_actual_surfac
     assert "마지막 수집" in briefing_payload["message"]
     assert "뉴스 관찰" in briefing_payload["message"]
     assert "저장 관찰 2종목" in briefing_payload["message"]
-    assert "독립 근거 확인 전" in briefing_payload["message"]
+    assert "종목 뉴스 매칭" in briefing_payload["message"]
     assert "Samsung Electronics AI chip supply contract" in briefing_payload["message"]
     assert "SK Hynix expands HBM memory investment" in briefing_payload["message"]
     assert "sentiment_score" not in json.dumps(briefing_payload, ensure_ascii=False)
@@ -5090,7 +5090,7 @@ def test_news_intelligence_briefing_collect_saves_observations_for_actual_surfac
     )
     assert daily_snapshot["news_observation_summary"]["available"] is True
     assert daily_snapshot["market_briefing"]["news_observation_summary"]["available"] is True
-    assert daily_snapshot["market_briefing"]["news_observation_summary"]["direct_count"] == 0
+    assert daily_snapshot["market_briefing"]["news_observation_summary"]["direct_count"] == 2
     assert daily_snapshot["market_briefing"]["news_observation_summary"]["unknown_count"] == 2
 
 

@@ -132,6 +132,11 @@ Before implementing a data or display change, verify:
 `리포트 가설`, `직접 뉴스`, `보조/시장맥락 뉴스`, `장중 반응`, `Toss 20:00 저장 기준값`, and `KRX 기준일` are separate evidence layers. Do not let one layer silently replace another.
 
 - Direct positive and direct caution news may produce `상승 근거 우세`, `하방 위험 우세`, or `직접 근거 상충` only when their respective counts are visible.
+- Candidate matching (`direct` / `indirect` / `market_context`) and source lineage (`independent` / `report_recap` / `unknown`) are separate axes. Lineage metadata must not erase a stored candidate match.
+- The current automatic collection path may produce `report_recap` or `unknown`; therefore `independent` must not be a web-view availability gate. Show a recap as `리포트 재인용 매칭`, and do not count it again as separate independent support.
+- Show `매칭 뉴스 없음` only when the deduplicated candidate evidence set is empty.
+- Main `Top2` is a maximum, not a quota. A single-report row with no matched news, stored Toss baseline, or stock-flow evidence remains in the observation pool but is not forced into the main priority cohort.
+- Compare report target revisions only with the same broker's earlier report. A date-level range comparison must be labeled as a date aggregate and must not be presented as every broker raising or lowering its target.
 - Before the same-day 20:05 capture run, show the Toss 20:00 close price/flow as `저장 예정`; after that run window, distinguish a missing capture from an unavailable source. Never backfill that label with a KRX value.
 - Indirect or market-context rows may add context but must not overturn direct-evidence direction by themselves.
 - The same article is counted once per candidate/date by its stored evidence key. A later completed collection with no new match must keep already stored same-date direct evidence visible and expose its later collection time separately.

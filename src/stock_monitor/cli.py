@@ -25803,9 +25803,9 @@ def _make_web_view_handler(
             ).get("rows", [])
         return tuple(
             str(row.get("stock_code") or "").strip()
-            for row in priority_rows
-            if isinstance(row, dict) and re.fullmatch(r"\d{6}", str(row.get("stock_code") or "").strip())
-        )[:2]
+            for row in _web_view_selected_candidate_rows(priority_rows)
+            if re.fullmatch(r"\d{6}", str(row.get("stock_code") or "").strip())
+        )
 
     def build_daily_payload_for_route(
         business_date: date,
@@ -26083,13 +26083,15 @@ def _make_web_view_handler(
                         holiday_overrides=config.holiday_overrides,
                         priority_stock_codes=[
                             str(row.get("stock_code") or "")
-                            for row in build_web_view_candidate_evidence_snapshot(
-                                config,
-                                repository,
-                                business_date=business_date,
-                                limit=2,
-                            ).get("rows", [])
-                            if isinstance(row, dict) and str(row.get("stock_code") or "")
+                            for row in _web_view_selected_candidate_rows(
+                                build_web_view_candidate_evidence_snapshot(
+                                    config,
+                                    repository,
+                                    business_date=business_date,
+                                    limit=2,
+                                ).get("rows", [])
+                            )
+                            if str(row.get("stock_code") or "")
                         ],
                     ),
                 )
@@ -29340,7 +29342,7 @@ def _render_web_view_html() -> str:
     };
     const opinion = (value) => {
       const label = ({ buy: "매수", neutral: "중립", hold: "중립", sell: "매도", "n/a": "의견 없음" }[String(value || "").toLowerCase()] || value || "-");
-      return label && label !== "-" && label !== "의견 없음" ? `증권사 의견: ${label}` : label;
+      return label && label !== "-" && label !== "의견 없음" ? `리포트 표기: ${label}` : label;
     };
     const categoryDisplay = (value, type = "sector") => {
       if (!value || value === "N/A") return type === "sector" ? "업종 미확인" : "테마 미확인";
@@ -30142,11 +30144,14 @@ def _render_web_view_html() -> str:
 
     function newsObservationSummaryGroups(items) {
       const rows = Array.isArray(items) ? items.filter(Boolean) : [];
-      const conflict = rows.filter((item) => Number(item?.positive_direct_count || 0) > 0 && Number(item?.primary_caution_count || 0) > 0);
-      const priority = rows.filter((item) => Number(item?.positive_direct_count || 0) > 0 && !conflict.includes(item));
-      const caution = rows.filter((item) => Number(item?.primary_caution_count || 0) > 0 && !conflict.includes(item));
-      const others = rows.filter((item) => !priority.includes(item) && !caution.includes(item) && !conflict.includes(item));
+      const recap = rows.filter((item) => item?.evidence_direction === "리포트 재인용 흐름");
+      const directional = rows.filter((item) => !recap.includes(item));
+      const conflict = directional.filter((item) => Number(item?.positive_direct_count || 0) > 0 && Number(item?.primary_caution_count || 0) > 0);
+      const priority = directional.filter((item) => Number(item?.positive_direct_count || 0) > 0 && !conflict.includes(item));
+      const caution = directional.filter((item) => Number(item?.primary_caution_count || 0) > 0 && !conflict.includes(item));
+      const others = directional.filter((item) => !priority.includes(item) && !caution.includes(item) && !conflict.includes(item));
       const groups = [];
+      if (recap.length) groups.push({ title: "리포트 재인용 흐름", items: recap });
       if (priority.length) groups.push({ title: "우선 뉴스 확인", items: priority });
       if (caution.length) groups.push({ title: "주의 뉴스 확인", items: caution });
       if (conflict.length) groups.push({ title: "근거 엇갈림", items: conflict });
@@ -30847,7 +30852,7 @@ def _render_web_view_html() -> str:
       const countLine = `뉴스 근거 직접 ${number(direct)} · ${newsCautionCountText(direct, caution, detail.connection_label || detail.display_label)} · 시장맥락 ${number(marketContext)} · ${status}`;
       const digest = Array.isArray(detail.news_digest) ? detail.news_digest.slice(0, 5) : [];
       const digestList = digest.length
-        ? `<div class="stock-news-digest-list">${digest.map((item) => `<div class="stock-news-digest-item"><span class="muted">${esc(item.date || "-")}</span><span>${esc(item.stock_name || "")}${item.stock_name ? "<br>" : ""}${esc(item.label || "-")}</span><span class="news-digest-type">${esc(item.evidence_label || "참고 뉴스")}</span></div>`).join("")}</div>`
+        ? `<div class="stock-news-digest-list">${digest.map((item) => `<div class="stock-news-digest-item"><span class="muted">${esc(item.date || "-")}</span><span>${esc(item.stock_name || "")}${item.stock_name ? "<br>" : ""}${esc(item.label || "-")}</span><span class="news-digest-type">${esc([item.evidence_label || "참고 뉴스", item.lineage_label].filter(Boolean).join(" · "))}</span></div>`).join("")}</div>`
         : "";
       return `<div class="detail-item stock-news-observation-detail">
         <b>뉴스 근거 · ${esc(detail.connection_label || detail.display_label || "뉴스 근거 있음")}</b>
@@ -31013,7 +31018,7 @@ def _render_web_view_html() -> str:
         return;
       }
       const priorityRows = selectStablePriorityRows(rows, evidence?.business_date || selectedDate);
-      tossPriorityRows = priorityRows.slice(0, 2);
+      tossPriorityRows = priorityRows.filter((row) => row?.selected !== false).slice(0, 2);
       tossPriorityDate = evidence?.business_date || selectedDate;
       const nextTossCohortKey = `${tossPriorityDate || ""}:${tossPriorityRows.map((row) => String(row?.stock_code || "")).join(",")}`;
       const tossCohortChanged = nextTossCohortKey !== tossPriorityCohortKey;
@@ -31101,9 +31106,9 @@ def _render_web_view_html() -> str:
     }
 
     function renderTopTwoReviewCandidates(rows) {
-      const picked = (Array.isArray(rows) ? rows : []).slice(0, 2);
+      const picked = (Array.isArray(rows) ? rows : []).filter((item) => item?.selected !== false).slice(0, 2);
       if (!picked.length) return "";
-      return `<section class="top-two-candidates" aria-label="우선 확인 2개">${picked.map((item, index) => {
+      return `<section class="top-two-candidates" aria-label="우선 확인 ${number(picked.length)}개">${picked.map((item, index) => {
         const layers = candidateEvidenceLayers(item);
         const whyItems = candidateWhyDisplayItems(layers.primary);
         const why = whyItems.length
@@ -31114,7 +31119,7 @@ def _render_web_view_html() -> str:
         const targetRevisionLine = targetRevisionTrailLine(item);
         const currentEvidenceLine = topTwoCurrentEvidenceLine(item);
         const missingEvidenceLine = topTwoMissingEvidenceLine(item, tossQuote);
-        const missingEvidenceLabel = "추가 확인:";
+        const missingEvidenceLabel = "저장 기준:";
         return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote-context="main" data-toss-quote="${esc(item.stock_code || "")}">${esc(tossQuote || "Toss 현재가 확인 중")}</span></b>
           <span class="muted">관찰 사유: ${esc(why)}</span>
@@ -31139,7 +31144,13 @@ def _render_web_view_html() -> str:
 
     function topTwoMissingEvidenceLine(item, tossQuote) {
       const layers = candidateEvidenceLayers(item);
-      const gaps = candidateWhyDisplayItems(layers.gap);
+      const timeMode = String(item?.value_profile?.time_mode || "");
+      const gaps = candidateWhyDisplayItems(layers.gap).map((gap) => {
+        if (timeMode !== "intraday") return gap;
+        if (String(gap).includes("선택일 Toss 저장값 없음")) return "당일 Toss 20:00 저장 예정";
+        if (String(gap).includes("종목 수급 저장값 없음")) return "당일 Toss 20:00 수급 저장 예정";
+        return gap;
+      });
       const missing = [];
       const hasCurrentPrice = item?.intraday_reference?.available === true || topTwoTossQuoteIsCurrent(tossQuote);
       if (item?.news_observation_badge?.available !== true) {
@@ -31193,9 +31204,9 @@ def _render_web_view_html() -> str:
       const current = targetPriceRange(currentMin, currentMax);
       const previous = targetPriceRange(previousMin, previousMax);
       if (!current) return "최근 조정 없음";
-      if (revision.direction === "up" && previous) return `목표가 ↑ ${previous} → ${current}`;
-      if (revision.direction === "down" && previous) return `목표가 ↓ ${previous} → ${current}`;
-      if (revision.direction === "flat") return `목표가 유지 ${current}`;
+      if (revision.direction === "up" && previous) return `목표가 범위(일자 집계) ↑ ${previous} → ${current}`;
+      if (revision.direction === "down" && previous) return `목표가 범위(일자 집계) ↓ ${previous} → ${current}`;
+      if (revision.direction === "flat") return `목표가 범위(일자 집계) 유지 ${current}`;
       return "최근 조정 없음";
     }
 
@@ -31513,7 +31524,10 @@ def _render_web_view_html() -> str:
       if (!badge || badge.available !== true) return false;
       return Number(badge.direct_count || 0) > 0
         || Number(badge.caution_count || 0) > 0
-        || Number(badge.market_context_count || 0) > 0;
+        || Number(badge.market_context_count || 0) > 0
+        || Number(badge.independent_count || 0) > 0
+        || Number(badge.report_recap_count || 0) > 0
+        || Number(badge.unknown_count || 0) > 0;
     }
 
     function candidateNewsPrimaryLabel(badge) {
@@ -32894,8 +32908,8 @@ def build_web_view_daily_snapshot(
     )
     priority_stock_codes = [
         str(row.get("stock_code") or "").strip()
-        for row in list(priority_candidate_snapshot.get("rows", []))[:2]
-        if isinstance(row, dict) and str(row.get("stock_code") or "").strip()
+        for row in _web_view_selected_candidate_rows(priority_candidate_snapshot.get("rows"))
+        if str(row.get("stock_code") or "").strip()
     ]
     market_briefing = _build_web_view_market_briefing_context(
         repository,
@@ -34861,11 +34875,12 @@ def _build_web_view_news_observation_summary(
         }
 
     independent_rows = [row for row in evidence_rows if row.lineage_type == "independent"]
-    direct_count = sum(1 for row in independent_rows if row.relevance == "direct")
-    caution_count = sum(1 for row in independent_rows if _web_view_news_observation_is_caution(row))
-    positive_direct_count = _web_view_news_observation_positive_direct_count(independent_rows)
-    primary_caution_count = _web_view_news_observation_primary_caution_count(independent_rows)
-    market_context_count = sum(1 for row in independent_rows if row.relevance == "market_context")
+    report_recap_count = sum(1 for row in evidence_rows if row.lineage_type == "report_recap")
+    direct_count = sum(1 for row in evidence_rows if row.relevance == "direct")
+    caution_count = sum(1 for row in evidence_rows if _web_view_news_observation_is_caution(row))
+    positive_direct_count = _web_view_news_observation_positive_direct_count(evidence_rows)
+    primary_caution_count = _web_view_news_observation_primary_caution_count(evidence_rows)
+    market_context_count = sum(1 for row in evidence_rows if row.relevance == "market_context")
     krx_reference_status = _web_view_news_observation_krx_status(evidence_rows, business_date)
     evidence_direction, evidence_direction_reason = _web_view_news_evidence_direction(
         direct_count=direct_count,
@@ -34905,9 +34920,16 @@ def _build_web_view_news_observation_summary(
             market_context_count=market_context_count,
             krx_reference_status=krx_reference_status,
         )
-        if not independent_rows:
-            display_label = "독립 근거 확인 전"
-            reason = "저장 뉴스는 있으나 리포트와 독립된 원출처 여부가 확인되지 않았습니다."
+        if not independent_rows and report_recap_count:
+            display_label = "리포트 재인용 매칭"
+            reason = f"후보와 연결된 리포트 재인용 뉴스 {report_recap_count}건이 저장돼 있습니다."
+            evidence_direction = "리포트 재인용 흐름"
+            evidence_direction_reason = "리포트 내용을 재인용한 뉴스 흐름이며 별도 독립 근거로 중복 계산하지 않습니다."
+        elif not independent_rows:
+            display_label = "종목 뉴스 매칭"
+            reason = f"후보와 직접 매칭된 뉴스 {len(evidence_rows)}건이 저장돼 있으며 출처 계보는 확인 전입니다."
+            evidence_direction = "출처 계보 확인 전"
+            evidence_direction_reason = "종목 매칭은 확인됐고 독립 원출처 여부는 별도 메타데이터로 남깁니다."
         connection_label, connection_reason = display_label, reason
         connection_note = (
             "우선 확인 후보와 겹친 뉴스 근거: " + ", ".join(candidate_overlap_names)
@@ -34931,7 +34953,7 @@ def _build_web_view_news_observation_summary(
         "caution_count": caution_count,
         "market_context_count": market_context_count,
         "independent_count": len(independent_rows),
-        "report_recap_count": sum(1 for row in evidence_rows if row.lineage_type == "report_recap"),
+        "report_recap_count": report_recap_count,
         "unknown_count": sum(1 for row in evidence_rows if row.lineage_type not in {"independent", "report_recap"}),
         "krx_reference_status": krx_reference_status,
         "observed_at": max(
@@ -35094,14 +35116,14 @@ def _web_view_news_observation_connection(
     krx_reference_status: str,
 ) -> tuple[str, str]:
     if primary_caution_count > 0 and positive_direct_count <= 0:
-        return "주의 뉴스 확인", "주의/혼합 성격의 뉴스가 있어 리포트 근거와 함께 확인합니다."
+        return "주의 뉴스 매칭", "주의/혼합 성격의 뉴스가 후보와 직접 매칭됐습니다."
     if direct_count > 0:
-        return "뉴스로 후보 강화", "종목 직접 뉴스가 저장돼 후보 근거를 보강합니다."
+        return "종목 뉴스 매칭", f"후보와 직접 매칭된 뉴스 {direct_count}건이 저장돼 있습니다."
     if caution_count > 0:
-        return "주의 뉴스 확인", "주의/혼합 성격의 뉴스가 있어 리포트 근거와 함께 확인합니다."
+        return "주의 뉴스 매칭", "주의/혼합 성격의 뉴스가 후보와 매칭됐습니다."
     if market_context_count > 0:
         return "시장 맥락 참고", "업종/시장 맥락 뉴스라 종목 직접 근거로 과신하지 않습니다."
-    return "뉴스 근거 부족", "저장 뉴스가 있지만 후보와 직접 연결할 근거는 부족합니다."
+    return "관련 뉴스 매칭", "후보와 간접 연결된 저장 뉴스가 있습니다."
 
 
 def _web_view_unique_texts(values: list[str], *, limit: int) -> list[str]:
@@ -35978,7 +36000,11 @@ def _web_view_news_collection_status(news_reference: dict[str, object] | None) -
     direct_count = int(news_reference.get("direct_count") or 0)
     caution_count = int(news_reference.get("caution_count") or 0)
     market_context_count = int(news_reference.get("market_context_count") or 0)
-    if direct_count > 0 or caution_count > 0 or market_context_count > 0:
+    matched_count = sum(
+        int(news_reference.get(key) or 0)
+        for key in ("independent_count", "report_recap_count", "unknown_count")
+    )
+    if direct_count > 0 or caution_count > 0 or market_context_count > 0 or matched_count > 0:
         return "stored_evidence"
     return "stored_no_match"
 
@@ -36239,7 +36265,15 @@ def _build_web_view_target_journey(
     for index, report_row in enumerate(report_rows[: max(limit, 0)]):
         report_date = report_row["business_date"]
         target_price = int(report_row["target_price_value"])
-        previous_target = int(report_rows[index + 1]["target_price_value"]) if index + 1 < len(report_rows) else None
+        previous_row = next(
+            (
+                row
+                for row in report_rows[index + 1 :]
+                if row["broker_name"] == report_row["broker_name"]
+            ),
+            None,
+        )
+        previous_target = int(previous_row["target_price_value"]) if previous_row else None
         _direction, direction_label = _web_view_target_revision_direction(target_price, previous_target)
         market_series = repository.list_stock_market_daily_for_code_on_or_after(
             report_date,
@@ -36438,7 +36472,7 @@ def _web_view_collected_empty_candidate_news_badge() -> dict[str, object]:
 
 def _web_view_news_digest_kind(row: ReportLinkedNewsEvidenceRecord) -> str:
     if row.relevance == "direct":
-        return "직접 근거"
+        return "종목 직접 매칭"
     if row.relevance == "market_context":
         return "시장 맥락"
     return "참고 뉴스"
@@ -36517,11 +36551,11 @@ def _web_view_candidate_news_badge(
     if not rows:
         return _web_view_empty_candidate_news_badge()
     independent_rows = [row for row in rows if row.lineage_type == "independent"]
-    direct_count = sum(1 for row in independent_rows if row.relevance == "direct")
-    caution_count = sum(1 for row in independent_rows if _web_view_news_observation_is_caution(row))
-    positive_direct_count = _web_view_news_observation_positive_direct_count(independent_rows)
-    primary_caution_count = _web_view_news_observation_primary_caution_count(independent_rows)
-    market_context_count = sum(1 for row in independent_rows if row.relevance == "market_context")
+    direct_count = sum(1 for row in rows if row.relevance == "direct")
+    caution_count = sum(1 for row in rows if _web_view_news_observation_is_caution(row))
+    positive_direct_count = _web_view_news_observation_positive_direct_count(rows)
+    primary_caution_count = _web_view_news_observation_primary_caution_count(rows)
+    market_context_count = sum(1 for row in rows if row.relevance == "market_context")
     independent_count = len(independent_rows)
     report_recap_count = sum(1 for row in rows if row.lineage_type == "report_recap")
     unknown_count = len(rows) - independent_count - report_recap_count
@@ -36539,9 +36573,16 @@ def _web_view_candidate_news_badge(
         market_context_count=market_context_count,
         krx_reference_status=krx_reference_status,
     )
-    if not independent_rows:
-        connection_label = "독립 근거 확인 전"
-        connection_reason = "저장 뉴스는 있으나 리포트와 독립된 원출처 여부가 확인되지 않았습니다."
+    if not independent_rows and report_recap_count:
+        connection_label = "리포트 재인용 매칭"
+        connection_reason = f"후보와 연결된 리포트 재인용 뉴스 {report_recap_count}건이 저장돼 있습니다."
+        evidence_direction = "리포트 재인용 흐름"
+        evidence_direction_reason = "리포트 내용을 재인용한 뉴스 흐름이며 별도 독립 근거로 중복 계산하지 않습니다."
+    elif not independent_rows:
+        connection_label = "종목 뉴스 매칭"
+        connection_reason = f"후보와 직접 매칭된 뉴스 {len(rows)}건이 저장돼 있으며 출처 계보는 확인 전입니다."
+        evidence_direction = "출처 계보 확인 전"
+        evidence_direction_reason = "종목 매칭은 확인됐고 독립 원출처 여부는 별도 메타데이터로 남깁니다."
     ordered_rows = sorted(
         rows,
         key=lambda row: (
@@ -37266,6 +37307,7 @@ def build_web_view_candidate_evidence_snapshot(
         )
     rows.sort(
         key=lambda item: (
+            _web_view_priority_candidate_is_eligible(item),
             int(item.get("_sort_value_signal") or 0),
             int(item.get("_sort_signal") or 0),
             int(item.get("_sort_density") or 0),
@@ -37276,6 +37318,9 @@ def build_web_view_candidate_evidence_snapshot(
         ),
         reverse=True,
     )
+    selected_rows = [row for row in rows if _web_view_priority_candidate_is_eligible(row)][:2]
+    selected_row_ids = {id(row) for row in selected_rows}
+    output_rows = rows[:limit]
     picked_rows: list[dict[str, object]] = []
     internal_keys = {
         "_internal_candidate_signals",
@@ -37284,9 +37329,10 @@ def build_web_view_candidate_evidence_snapshot(
         "_sort_signal",
         "_sort_value_signal",
     }
-    for index, row in enumerate(rows[:limit]):
+    for row in output_rows:
         item = {key: value for key, value in row.items() if key not in internal_keys}
-        if index < 2:
+        item["selected"] = id(row) in selected_row_ids
+        if item["selected"]:
             item["intraday_reference"] = _web_view_candidate_intraday_reference_placeholder()
         if include_internal:
             item["internal_candidate_signals"] = row.get("_internal_candidate_signals") or []
@@ -37464,7 +37510,11 @@ def _web_view_observation_candidate_profile(
         internal_signals.append("목표가 범위")
     if target_revision.get("available"):
         direction_label = str(target_revision.get("direction_label") or "").strip()
-        revision_label = f"목표가 {direction_label}" if direction_label else "목표가 변화"
+        revision_label = (
+            f"일자 집계 목표가 범위 {direction_label}"
+            if direction_label
+            else "일자 집계 목표가 범위 변화"
+        )
         reasons.append(revision_label)
         internal_signals.append(revision_label)
     if market_reference is not None and market_reference.turnover is not None:
@@ -37512,12 +37562,7 @@ def _web_view_observation_candidate_profile(
     sort_signal = priority_signal
     if has_stock_flow and any(label != "리포트 집중" for label in reasons):
         sort_signal += 2
-    if priority_signal >= 3:
-        priority = "우선 확인"
-    elif priority_signal >= 1:
-        priority = "확인 후보"
-    else:
-        priority = "정보 보강"
+    priority = "우선 확인" if priority_signal >= 3 else "확인 후보"
     return {
         "observation_priority": priority,
         "why_notable": reasons,
@@ -37527,6 +37572,36 @@ def _web_view_observation_candidate_profile(
         "sort_density": sort_density,
         "sort_signal": sort_signal,
     }
+
+
+def _web_view_priority_candidate_is_eligible(row: dict[str, object]) -> bool:
+    report_count = int((row.get("report_summary") or {}).get("report_count") or 0)
+    news = row.get("news_observation_badge") or {}
+    matched_news_count = sum(
+        int(news.get(key) or 0)
+        for key in (
+            "direct_count",
+            "caution_count",
+            "market_context_count",
+            "independent_count",
+            "report_recap_count",
+            "unknown_count",
+        )
+    )
+    return (
+        report_count >= 2
+        or matched_news_count > 0
+        or (row.get("stock_flow_reference") or {}).get("available") is True
+        or (row.get("toss_baseline_reference") or {}).get("available") is True
+    )
+
+
+def _web_view_selected_candidate_rows(rows: object, *, limit: int = 2) -> list[dict[str, object]]:
+    return [
+        row
+        for row in (rows if isinstance(rows, list) else [])
+        if isinstance(row, dict) and row.get("selected") is not False
+    ][:limit]
 
 
 def _web_view_candidate_value_profile(
@@ -37545,10 +37620,20 @@ def _web_view_candidate_value_profile(
     primary_caution_count = int(news_badge.get("primary_caution_count") or 0)
     caution_count = int(news_badge.get("caution_count") or 0)
     market_context_count = int(news_badge.get("market_context_count") or 0)
+    independent_count = int(news_badge.get("independent_count") or 0)
+    report_recap_count = int(news_badge.get("report_recap_count") or 0)
+    unknown_count = int(news_badge.get("unknown_count") or 0)
     news_available = news_badge.get("available") is True
     news_label = str(news_badge.get("display_label") or news_badge.get("connection_label") or "").strip()
-    has_actionable_news = direct_count > 0 or caution_count > 0 or market_context_count > 0
-    news_collected_no_match = news_available and not has_actionable_news
+    has_matched_news = (
+        direct_count > 0
+        or caution_count > 0
+        or market_context_count > 0
+        or independent_count > 0
+        or report_recap_count > 0
+        or unknown_count > 0
+    )
+    news_collected_no_match = news_available and not has_matched_news
     has_market_reference = market_reference is not None
     has_stock_flow = bool(stock_flow_rows)
     has_toss_baseline = toss_baseline_reference.get("available") is True
@@ -37562,6 +37647,20 @@ def _web_view_candidate_value_profile(
         positive_direct_count=positive_direct_count,
         primary_caution_count=primary_caution_count,
     )
+    if independent_count == 0:
+        if has_matched_news:
+            evidence_direction = str(news_badge.get("evidence_direction") or news_label or "종목 뉴스 매칭")
+            evidence_direction_reason = str(
+                news_badge.get("evidence_direction_reason")
+                or news_badge.get("connection_reason")
+                or "저장 뉴스가 후보와 매칭됐습니다."
+            )
+        elif news_available:
+            evidence_direction = "뉴스 매칭 없음"
+            evidence_direction_reason = "뉴스 수집은 완료됐지만 후보와 매칭된 기사는 없습니다."
+        else:
+            evidence_direction = "뉴스 수집 전"
+            evidence_direction_reason = "후보 뉴스 수집이 아직 실행되지 않았습니다."
     same_day = business_date == current.date()
     current_time = current.time()
     if same_day and datetime_time(9, 0) <= current_time <= datetime_time(15, 30):
@@ -37573,7 +37672,10 @@ def _web_view_candidate_value_profile(
     else:
         time_mode = "stored_history"
 
-    if positive_direct_count > 0 and primary_caution_count == 0:
+    base_priority = str(candidate_profile.get("observation_priority") or "확인 후보")
+    if base_priority == "정보 보강":
+        base_priority = "확인 후보"
+    if independent_count > 0 and positive_direct_count > 0 and primary_caution_count == 0:
         observation_priority = "우선 확인"
         value_label = evidence_direction
         value_reason = evidence_direction_reason
@@ -37585,43 +37687,53 @@ def _web_view_candidate_value_profile(
                 support_parts.append(f"시장맥락 {market_context_count}건")
             support_note = " · " + " · ".join(support_parts) if support_parts else ""
             value_reason = f"{value_reason}{support_note}"
-    elif positive_direct_count > 0 and primary_caution_count > 0:
+    elif independent_count > 0 and positive_direct_count > 0 and primary_caution_count > 0:
         observation_priority = "근거 엇갈림"
         value_label = evidence_direction
         value_reason = evidence_direction_reason
-    elif primary_caution_count > 0:
+    elif independent_count > 0 and primary_caution_count > 0:
         observation_priority = "주의 확인"
         value_label = evidence_direction
         value_reason = evidence_direction_reason
-    elif direct_count > 0:
-        observation_priority = str(candidate_profile.get("observation_priority") or "확인 후보")
+    elif independent_count > 0 and direct_count > 0:
+        observation_priority = base_priority
         value_label = evidence_direction
         value_reason = evidence_direction_reason
-    elif market_context_count > 0:
-        observation_priority = str(candidate_profile.get("observation_priority") or "확인 후보")
+    elif independent_count > 0 and market_context_count > 0:
+        observation_priority = base_priority
         value_label = "시장 맥락 참고"
         value_reason = "시장맥락 뉴스는 직접 후보 판단과 분리해 확인합니다."
+    elif has_matched_news:
+        observation_priority = base_priority
+        value_label = news_label or "종목 뉴스 매칭"
+        value_reason = str(
+            news_badge.get("connection_reason")
+            or news_badge.get("evidence_direction_reason")
+            or "저장 뉴스가 후보와 매칭됐습니다."
+        )
     elif target_only and news_collected_no_match and (not has_market_reference or not has_stock_flow):
-        observation_priority = "정보 보강"
-        value_label = "정보 보강"
-        value_reason = "목표가 변화 단독이고 뉴스 매칭/Toss 저장/수급 확인이 부족합니다."
+        observation_priority = base_priority
+        value_label = "리포트 기준 확인"
+        value_reason = "목표가 변화가 확인됐고 같은 날짜 뉴스 매칭은 없습니다."
     elif news_collected_no_match:
-        observation_priority = str(candidate_profile.get("observation_priority") or "확인 후보")
+        observation_priority = base_priority
         value_label = "뉴스 매칭 없음"
         value_reason = "뉴스 수집은 완료됐지만 후보와 직접 연결된 기사는 없었습니다."
     elif not news_available and time_mode == "intraday":
-        observation_priority = str(candidate_profile.get("observation_priority") or "확인 후보")
+        observation_priority = base_priority
         value_label = "실시간 확인 대기"
         value_reason = "장중에는 뉴스/거래대금 확인 후 우선순위를 다시 봐야 합니다."
     else:
-        observation_priority = str(candidate_profile.get("observation_priority") or "확인 후보")
+        observation_priority = base_priority
         value_label = "저장 근거 확인"
         value_reason = "저장 리포트와 시장 참고값 기준 후보입니다."
 
     reference_notes: list[str] = []
-    if has_actionable_news:
-        if direct_count > 0 or caution_count > 0:
-            reference_notes.append("뉴스: 후보 직접 근거 있음")
+    if has_matched_news:
+        if report_recap_count > 0 and independent_count == 0:
+            reference_notes.append("뉴스: 리포트 재인용 매칭")
+        elif direct_count > 0 or caution_count > 0:
+            reference_notes.append("뉴스: 종목 직접 매칭")
         else:
             reference_notes.append("뉴스: 시장 맥락 근거 있음")
     elif news_available:
@@ -37641,7 +37753,7 @@ def _web_view_candidate_value_profile(
         "evidence_direction": evidence_direction,
         "evidence_direction_reason": evidence_direction_reason,
         "time_mode": time_mode,
-        "news_confirmed": has_actionable_news,
+        "news_confirmed": has_matched_news,
         "news_collected": news_available,
         "market_reference_available": has_market_reference,
         "stock_flow_available": has_stock_flow,
@@ -38251,9 +38363,18 @@ def _build_web_view_target_price_trail(
     ]
     limited_report_rows = report_rows[: max(limit, 0)]
     report_items: list[dict[str, object]] = []
-    for index, row in enumerate(limited_report_rows):
+    for row in limited_report_rows:
         current_target = int(row["target_price_value"])
-        previous_target = int(report_rows[index + 1]["target_price_value"]) if index + 1 < len(report_rows) else None
+        previous_row = next(
+            (
+                candidate
+                for candidate in report_rows
+                if candidate["broker_name"] == row["broker_name"]
+                and candidate["business_date"] < row["business_date"]
+            ),
+            None,
+        )
+        previous_target = int(previous_row["target_price_value"]) if previous_row else None
         direction, direction_label = _web_view_target_revision_direction(current_target, previous_target)
         report_items.append(
             {
@@ -38272,7 +38393,16 @@ def _build_web_view_target_price_trail(
             }
         )
     latest_target = int(report_rows[0]["target_price_value"]) if report_rows else None
-    previous_target = int(report_rows[1]["target_price_value"]) if len(report_rows) > 1 else None
+    latest_previous_row = next(
+        (
+            row
+            for row in report_rows[1:]
+            if row["broker_name"] == report_rows[0]["broker_name"]
+            and row["business_date"] < report_rows[0]["business_date"]
+        ),
+        None,
+    ) if report_rows else None
+    previous_target = int(latest_previous_row["target_price_value"]) if latest_previous_row else None
     direction, direction_label = _web_view_target_revision_direction(latest_target, previous_target)
     attainment_percent = (
         round((current_price / latest_target) * 100, 1)
@@ -38406,7 +38536,7 @@ def _web_view_opinion_display(value: str | None) -> str:
     }.get(normalized, value or "의견 없음")
     if label == "의견 없음":
         return label
-    return f"증권사 의견: {label}"
+    return f"리포트 표기: {label}"
 
 
 def _build_web_view_toss_context(
