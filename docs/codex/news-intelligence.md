@@ -127,6 +127,45 @@ Hold decision:
 - Do not implement `post-filter-v3`, political/person-name filters, or additional search-lane lab CLIs unless the lane is explicitly reopened.
 - Keep News Evidence Digest UI, existing 5-lane evidence, and the manual Top-candidate collect path as the active operating path.
 
+### Insane Search Sidecar Shadow Run (2026-08-24)
+
+The archived Naver search lane remains a production hold. A separate 12:00 and
+15:00 KST, five-business-day lab may assess Insane Search only through an append-only
+manifest at `docs/codex/operations/insane-search-shadow.jsonl`.
+
+- The runner copies the operating DB into a temporary SQLite file before it
+  calls the existing candidate-evidence builder; it never migrates or writes
+  the operating DB.
+- It freezes the builder's candidate rank and sort tuple at the cutoff, keeps
+  stored evidence as the baseline, and records only public article metadata,
+  canonical URLs, access metadata, and fail-closed lineage labels.
+- Manifest v2 also freezes the web-view `selected` state separately from the
+  full Top10 observation pool and records one search trace per searched
+  candidate even when no article link is returned.
+- Pre-contract v1 runs remain append-only audit records but do not count toward
+  the ten-run acceptance sample. Candidate metrics distinguish run observations
+  from unique `business_date + stock_code` pairs.
+- `independent` is never inferred from an unknown or recap result. A missing
+  publish time is excluded from point-in-time recovery and remains explicitly
+  retrospective/unverified.
+- The runner does not connect to scheduler state, Telegram, web-view,
+  admin-gui, or candidate ordering. Its JSONL is a lab artifact, not a source
+  of production truth.
+
+Run with the project venv and an already-isolated Insane Search runtime:
+
+```powershell
+.venv\Scripts\python.exe scripts\lab\run_insane_search_shadow.py `
+  --engine-python <isolated-insane-python> `
+  --engine-root <insane-search-engine-root>
+```
+
+After ten completed lines across five business days:
+
+```powershell
+.venv\Scripts\python.exe scripts\lab\run_insane_search_shadow.py --aggregate
+```
+
 Reopen conditions:
 
 - A clear deterministic rule set can reduce manual false positives to near zero.
