@@ -89,7 +89,7 @@ def test_shadow_run_accepts_1500_kst_slot(tmp_path: Path) -> None:
 def test_shadow_aggregate_requires_ten_runs_for_two_daily_slots(tmp_path: Path) -> None:
     output = tmp_path / "shadow.jsonl"
     run = {
-        "schema": "insane-search-shadow-run/v2",
+        "schema": "insane-search-shadow-run/v3",
         "status": "no_candidate_pool",
         "candidate_pool": [],
         "baseline": {"articles": []},
@@ -140,7 +140,7 @@ def test_shadow_aggregate_excludes_pre_contract_runs_and_counts_search_trace(tmp
         "articles": [],
     }
     current = {
-        "schema": "insane-search-shadow-run/v2",
+        "schema": "insane-search-shadow-run/v3",
         "status": "completed",
         "business_date": "2026-08-25",
         "candidate_pool": [{"stock_code": "035720", "selected": True}],
@@ -165,6 +165,51 @@ def test_shadow_aggregate_excludes_pre_contract_runs_and_counts_search_trace(tmp
     assert payload["candidate_count"] == 1
     assert payload["access_success_rate"] == 1.0
     assert payload["trace_complete"] is True
+
+
+def test_engine_fetch_does_not_require_fetch_result_elapsed_ms(tmp_path: Path) -> None:
+    shadow = _load_shadow_module()
+    engine_root = tmp_path / "engine"
+    engine_root.mkdir()
+    (engine_root / "__init__.py").write_text(
+        "class Result:\n"
+        "    ok = True\n"
+        "    verdict = 'valid_content'\n"
+        "    profile_used = 'test'\n"
+        "    summary = '\u00a9'\n"
+        "    trace = []\n"
+        "    content = '<html><title>ok</title><main id=\"main_pack\"></main></html>'\n"
+        "def fetch(*args, **kwargs):\n"
+        "    return Result()\n",
+        encoding="utf-8",
+    )
+    bs4_root = tmp_path / "bs4"
+    bs4_root.mkdir()
+    (bs4_root / "__init__.py").write_text(
+        "class BeautifulSoup:\n"
+        "    title = None\n"
+        "    def __init__(self, *args, **kwargs): pass\n"
+        "    def select(self, *args, **kwargs): return []\n"
+        "    def select_one(self, *args, **kwargs): return None\n",
+        encoding="utf-8",
+    )
+
+    payload = shadow._engine_fetch(
+        engine_python=Path(sys.executable),
+        engine_root=engine_root,
+        url="https://example.invalid/",
+        selector="#main_pack",
+    )
+
+    assert payload["ok"] is True
+    assert isinstance(payload["elapsed_ms"], float)
+
+
+def test_shadow_status_fails_when_every_search_attempt_fails() -> None:
+    shadow = _load_shadow_module()
+
+    assert shadow._shadow_status([{"stock_code": "035720"}], [{"ok": False}]) == "search_failed"
+    assert shadow._shadow_status([{"stock_code": "035720"}], [{"ok": True}]) == "completed"
 
 
 def test_scheduled_wrapper_freezes_requested_slot() -> None:

@@ -9,6 +9,7 @@ there, and writes only the lab JSONL manifest.
 
 import argparse
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -24,7 +25,7 @@ from zoneinfo import ZoneInfo
 KST = ZoneInfo("Asia/Seoul")
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = PROJECT_ROOT / "docs" / "codex" / "operations" / "insane-search-shadow.jsonl"
-CURRENT_SCHEMA = "insane-search-shadow-run/v2"
+CURRENT_SCHEMA = "insane-search-shadow-run/v3"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -70,15 +71,15 @@ def _engine_fetch(
     program = r'''
 import json, sys
 from urllib.parse import urljoin, urlparse
-from bs4 import BeautifulSoup
 from pathlib import Path
 sys.path.insert(0, str(Path(sys.argv[1]).parent))
+from bs4 import BeautifulSoup
 from engine import fetch
 result = fetch(sys.argv[2], success_selectors=[sys.argv[3]], timeout=25)
 payload = {
   "ok": bool(result.ok), "verdict": result.verdict,
   "profile_used": result.profile_used,
-  "summary": result.summary, "elapsed_ms": result.elapsed_ms,
+  "summary": result.summary,
   "trace_count": len(result.trace or []), "links": [],
   "title": None, "published_at": None, "source": None,
 }
@@ -106,6 +107,7 @@ print(json.dumps(payload, ensure_ascii=False))
         text=True,
         encoding="utf-8",
         errors="replace",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         timeout=90,
     )
     elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
@@ -167,6 +169,14 @@ def _candidate_manifest_row(rank: int, row: dict[str, object]) -> dict[str, obje
         "missing_information": row.get("missing_information"),
         "evidence_direction": news_badge.get("evidence_direction") if isinstance(news_badge, dict) else None,
     }
+
+
+def _shadow_status(candidates: list[dict[str, object]], search_attempts: list[dict[str, object]]) -> str:
+    if not candidates:
+        return "no_candidate_pool"
+    if search_attempts and not any(attempt.get("ok") is True for attempt in search_attempts):
+        return "search_failed"
+    return "completed"
 
 
 def _aggregate(output: Path) -> dict[str, object]:
@@ -412,7 +422,7 @@ def main() -> int:
             "execution_id": f"{cutoff:%Y%m%dT%H%M%S%z}",
             "cutoff": cutoff.isoformat(),
             "business_date": cutoff.date().isoformat(),
-            "status": "completed" if candidates else "no_candidate_pool",
+            "status": _shadow_status(candidates, search_attempts),
             "candidate_pool": candidates,
             "searched_candidate_count": min(len(candidates), max(0, args.search_top_n)),
             "search_attempts": search_attempts,
@@ -421,7 +431,8 @@ def main() -> int:
             "production_effects": {"writes_db": False, "registers_scheduler": False, "sends_telegram": False, "connects_web_view": False, "changes_candidate_ordering": False},
         }
     _append(args.output, payload)
-    return _emit({"status": payload["status"], "cutoff": payload["cutoff"], "manifest": str(args.output), "writes_production_db": False})
+    _emit({"status": payload["status"], "cutoff": payload["cutoff"], "manifest": str(args.output), "writes_production_db": False})
+    return 1 if payload["status"] == "search_failed" else 0
 
 
 if __name__ == "__main__":

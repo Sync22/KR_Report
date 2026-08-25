@@ -139,10 +139,11 @@ manifest at `docs/codex/operations/insane-search-shadow.jsonl`.
 - It freezes the builder's candidate rank and sort tuple at the cutoff, keeps
   stored evidence as the baseline, and records only public article metadata,
   canonical URLs, access metadata, and fail-closed lineage labels.
-- Manifest v2 also freezes the web-view `selected` state separately from the
+- Manifest v3 freezes the web-view `selected` state separately from the
   full Top10 observation pool and records one search trace per searched
-  candidate even when no article link is returned.
-- Pre-contract v1 runs remain append-only audit records but do not count toward
+  candidate even when no article link is returned. An all-failed search pass
+  returns a failed process status instead of appearing successful to Task Scheduler.
+- Pre-contract v1/v2 runs remain append-only audit records but do not count toward
   the ten-run acceptance sample. Candidate metrics distinguish run observations
   from unique `business_date + stock_code` pairs.
 - `independent` is never inferred from an unknown or recap result. A missing
