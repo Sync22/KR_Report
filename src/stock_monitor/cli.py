@@ -28862,6 +28862,9 @@ def _render_web_view_html() -> str:
     .top-two-card .priority-toss-quote { display: inline-flex; width: fit-content; border-radius: 999px; padding: 2px 7px; background: #eef7f2; color: #245746; font-size: 11px; font-weight: 900; }
     .top-two-card .priority-toss-quote.muted { background: #eef1f2; color: #5d676d; }
     .top-two-card .priority-toss-quote.stale { background: #fff0cf; color: #7a5400; }
+    .top-two-close-reassessment { margin-top: 10px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 12px; background: #f7faf8; }
+    .top-two-close-reassessment p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+    .top-two-close-reassessment-list { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 7px; font-size: 12px; }
     .candidate-card { border: 1px solid var(--line); border-radius: 18px; padding: 14px; background: #fffaf1; cursor: pointer; }
     .candidate-card:hover { border-color: var(--accent); box-shadow: inset 4px 0 0 var(--accent); }
     .candidate-card h3 { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 8px; font-size: 16px; }
@@ -31108,7 +31111,7 @@ def _render_web_view_html() -> str:
     function renderTopTwoReviewCandidates(rows) {
       const picked = (Array.isArray(rows) ? rows : []).filter((item) => item?.selected !== false).slice(0, 2);
       if (!picked.length) return "";
-      return `<section class="top-two-candidates" aria-label="우선 확인 ${number(picked.length)}개">${picked.map((item, index) => {
+      const cards = `<section class="top-two-candidates" aria-label="우선 확인 ${number(picked.length)}개">${picked.map((item, index) => {
         const layers = candidateEvidenceLayers(item);
         const whyItems = candidateWhyDisplayItems(layers.primary);
         const why = whyItems.length
@@ -31129,6 +31132,18 @@ def _render_web_view_html() -> str:
           <span class="target-revision-line">${esc(targetRevisionLine)}</span>
         </button>`;
       }).join("")}</section>`;
+      return `${cards}${renderTopTwoCloseReassessment(currentCandidateEvidenceData?.close_reassessment)}`;
+    }
+
+    function renderTopTwoCloseReassessment(reassessment) {
+      if (reassessment?.available !== true || reassessment?.changed !== true) return "";
+      const items = (Array.isArray(reassessment.rows) ? reassessment.rows : []).slice(0, 2);
+      if (!items.length) return "";
+      return `<aside class="top-two-close-reassessment"><b>종가 재평가</b><p>${esc(reassessment.notice || "정규장 Top2는 유지하고 종가 기준 변화는 다음 영업일 참고로 분리합니다.")}</p><div class="top-two-close-reassessment-list">${items.map((item) => {
+        const priceLabel = item?.last_price ? price(item.last_price) : "종가 확인 전";
+        const changeLabel = item?.change_percent === null || item?.change_percent === undefined ? "" : ` · ${percent(item.change_percent)}`;
+        return `<span>${esc(item?.stock_name || "-")} <span class="muted">${esc(item?.stock_code || "")}</span> · ${esc(priceLabel + changeLabel)}</span>`;
+      }).join("")}</div></aside>`;
     }
 
     function topTwoCurrentEvidenceLine(item) {
@@ -31139,7 +31154,18 @@ def _render_web_view_html() -> str:
       if (item?.intraday_reference?.available === true) {
         parts.push(`장중 ${candidateIntradayReferenceLabel(item.intraday_reference)}`);
       }
-      return parts.length ? parts.join(" · ") : "현재 근거 부족";
+      if (item?.toss_baseline_reference?.available === true) {
+        parts.push(`Toss 종가 ${price(item.toss_baseline_reference.last_price)}`);
+      }
+      if (item?.stock_flow_reference?.available === true) {
+        parts.push(evidenceFlowLabel(item.stock_flow_reference));
+      }
+      if (!parts.length) {
+        const reportCount = Number(item?.report_summary?.report_count || 0);
+        const primary = candidateCompactLabel(candidateWhyDisplayItems(candidateEvidenceLayers(item).primary), 2);
+        if (reportCount > 0) parts.push(`리포트 ${number(reportCount)}건${primary ? ` · ${primary}` : ""}`);
+      }
+      return parts.length ? parts.join(" · ") : "현재 근거 확인 전";
     }
 
     function topTwoMissingEvidenceLine(item, tossQuote) {
@@ -37318,9 +37344,35 @@ def build_web_view_candidate_evidence_snapshot(
         ),
         reverse=True,
     )
-    selected_rows = [row for row in rows if _web_view_priority_candidate_is_eligible(row)][:2]
+    close_ranked_rows = [row for row in rows if _web_view_priority_candidate_is_eligible(row)][:2]
+    regular_session_codes = _web_view_regular_session_candidate_codes(repository, business_date)
+    rows_by_code = {str(row.get("stock_code") or ""): row for row in rows}
+    regular_session_rows = [rows_by_code[code] for code in regular_session_codes if code in rows_by_code]
+    selected_rows = regular_session_rows or close_ranked_rows
+    selection_basis = "regular_session_news_cohort" if regular_session_rows else "stored_candidate_evidence"
     selected_row_ids = {id(row) for row in selected_rows}
-    output_rows = rows[:limit]
+    output_rows = [*selected_rows, *(row for row in rows if id(row) not in selected_row_ids)][:limit]
+    selected_codes = [str(row.get("stock_code") or "") for row in selected_rows]
+    close_codes = [str(row.get("stock_code") or "") for row in close_ranked_rows]
+    has_close_snapshot = bool(toss_baselines_by_code)
+    close_reassessment = {
+        "available": has_close_snapshot and bool(close_ranked_rows),
+        "changed": has_close_snapshot and bool(regular_session_rows) and close_codes != selected_codes,
+        "basis": "Toss 20:00 저장값",
+        "notice": "정규장 Top2는 유지하고 종가 기준 변화는 다음 영업일 참고로 분리합니다.",
+        "rows": [
+            {
+                "stock_code": str(row.get("stock_code") or ""),
+                "stock_name": str(row.get("stock_name") or ""),
+                "observation_priority": row.get("observation_priority"),
+                "why_notable": list(row.get("why_notable") or []),
+                "last_price": (row.get("toss_baseline_reference") or {}).get("last_price"),
+                "change_percent": (row.get("market_reference") or {}).get("change_percent"),
+                "stock_flow_available": (row.get("stock_flow_reference") or {}).get("available") is True,
+            }
+            for row in close_ranked_rows
+        ],
+    }
     picked_rows: list[dict[str, object]] = []
     internal_keys = {
         "_internal_candidate_signals",
@@ -37378,6 +37430,8 @@ def build_web_view_candidate_evidence_snapshot(
         "live_fetch": False,
         "scoring": False,
         "recommendation": False,
+        "selection_basis": selection_basis,
+        "close_reassessment": close_reassessment,
         "display_policy": "관찰 후보는 저장된 리포트와 Toss 저장/수급 참고값을 확인용으로 묶어 보여줍니다.",
         "notice": "오늘의 관찰 후보는 저장된 리포트와 Toss 저장 수급 참고값 기준입니다. 실시간 시세가 아닙니다.",
         "market_flow_context": [_web_view_market_investor_flow_item(item) for item in sorted(
@@ -37555,7 +37609,7 @@ def _web_view_observation_candidate_profile(
     priority_signal = 0
     if has_flow_persistence and has_stock_flow:
         priority_signal += 2
-    if target_revision.get("available"):
+    if target_revision.get("available") and target_revision.get("direction") == "up":
         priority_signal += 1
     if summary.mention_count >= 2:
         priority_signal += 1
@@ -37592,8 +37646,28 @@ def _web_view_priority_candidate_is_eligible(row: dict[str, object]) -> bool:
         report_count >= 2
         or matched_news_count > 0
         or (row.get("stock_flow_reference") or {}).get("available") is True
-        or (row.get("toss_baseline_reference") or {}).get("available") is True
     )
+
+
+def _web_view_regular_session_candidate_codes(
+    repository: StockMonitorRepository,
+    business_date: date,
+) -> list[str]:
+    events = repository.list_operation_events(
+        component="poll-news",
+        event_type="scheduled-collect",
+        business_date=business_date,
+        status="success",
+        limit=20,
+    )
+    for event in events:
+        for part in str(event.detail or "").split(";"):
+            key, separator, value = part.strip().partition("=")
+            if separator and key == "target_stock_codes":
+                codes = _unique_nonblank_stock_codes(value.split(","))
+                if codes:
+                    return codes[:2]
+    return []
 
 
 def _web_view_selected_candidate_rows(rows: object, *, limit: int = 2) -> list[dict[str, object]]:

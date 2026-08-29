@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import date, datetime, time as datetime_time
 from http import HTTPStatus
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,6 +25,7 @@ from stock_monitor.models import (
     MarketIndexDailySnapshot,
     MarketInvestorFlowDaily,
     NewsIntelligenceRun,
+    OperationEvent,
     Report,
     ReportLinkedNewsEvidenceRecord,
     StockInvestorFlowDaily,
@@ -4042,6 +4044,17 @@ def test_web_view_html_labels_top_two_toss_flow_as_unstored_query_reference() ->
     assert "loadTossPriorityQuotes(tossPriorityDate)" in html
 
 
+def test_web_view_main_separates_close_reassessment_from_regular_session_top_two() -> None:
+    html = cli_module._render_web_view_html()
+    top_two_body = html.split("function renderTopTwoReviewCandidates(rows)", 1)[1].split(
+        "function topTwoMissingEvidenceLine", 1
+    )[0]
+
+    assert "종가 재평가" in top_two_body
+    assert "Toss 종가" in top_two_body
+    assert "현재 근거 부족" not in top_two_body
+
+
 def test_web_view_stock_detail_missing_toss_flow_names_selected_date_stored_scope(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
@@ -4120,7 +4133,8 @@ def test_web_view_candidate_evidence_uses_stored_toss_2000_baseline(tmp_path, mo
         "affects_ordering": False,
         "notice": "Toss 20:00 기준 저장값",
     }
-    assert snapshot["rows"][0]["intraday_reference"]["affects_ordering"] is False
+    assert snapshot["rows"][0]["selected"] is False
+    assert "intraday_reference" not in snapshot["rows"][0]
     _assert_public_safe_payload(snapshot)
 
 
@@ -7285,6 +7299,119 @@ def test_web_view_priority_selection_does_not_force_single_report_gap_candidate(
             "toss_baseline_reference": {"available": False},
         }
     ) is True
+
+
+def test_web_view_priority_selection_ignores_non_ordering_toss_close_baseline() -> None:
+    assert cli_module._web_view_priority_candidate_is_eligible(
+        {
+            "report_summary": {"report_count": 1},
+            "news_observation_badge": {"available": True, "direct_count": 0},
+            "stock_flow_reference": {"available": False},
+            "toss_baseline_reference": {"available": True, "affects_ordering": False},
+        }
+    ) is False
+
+
+def test_web_view_target_price_decrease_does_not_raise_candidate_priority() -> None:
+    common = {
+        "summary": SimpleNamespace(mention_count=1, dominant_opinion="매수"),
+        "broker_count": 1,
+        "target_range": {"available": True},
+        "market_reference": None,
+        "stock_flow_rows": [],
+        "rank_reference": None,
+        "report_intensity": {},
+        "flow_window_reference": {"available": False},
+        "price_volume_reference": {"available": False},
+    }
+
+    upward = cli_module._web_view_observation_candidate_profile(
+        **common,
+        target_revision={"available": True, "direction": "up", "direction_label": "상향"},
+    )
+    downward = cli_module._web_view_observation_candidate_profile(
+        **common,
+        target_revision={"available": True, "direction": "down", "direction_label": "하향"},
+    )
+
+    assert upward["sort_signal"] == 1
+    assert downward["sort_signal"] == 0
+    assert downward["observation_priority"] == "확인 후보"
+
+
+def test_web_view_candidate_evidence_keeps_regular_session_cohort_and_separates_close_reassessment(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 8, 28)
+    stocks = (
+        ("000001", "Regular One"),
+        ("000002", "Regular Two"),
+        ("000003", "Close One"),
+        ("000004", "Close Two"),
+    )
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name=name,
+                stock_code=code,
+                title=f"{name} report",
+                broker_name="Test",
+                published_at=datetime(2026, 8, 28, 9, index, 0),
+                collected_at=datetime(2026, 8, 28, 9, index, 30),
+                source_id=f"close-reassessment-{code}",
+                identity_key=f"close-reassessment-{code}",
+            )
+            for index, (code, name) in enumerate(stocks)
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.record_operation_event(
+        OperationEvent(
+            event_time=datetime(2026, 8, 28, 16, 0, 0),
+            component="poll-news",
+            event_type="scheduled-collect",
+            status="success",
+            business_date=business_date,
+            detail="scheduled_run_at=2026-08-28T16:00:00+09:00; target_stock_codes=000001,000002; saved_observations=2",
+        )
+    )
+    repository.save_toss_priority_quote_baselines(
+        [
+            TossPriorityQuoteBaseline(
+                business_date=business_date,
+                stock_code="000003",
+                stock_name="Close One",
+                baseline_time="20:00",
+                last_price=30_000,
+                currency="KRW",
+                source="toss_openapi",
+                fetched_at=datetime(2026, 8, 28, 20, 5, 0),
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_web_view_priority_candidate_is_eligible",
+        lambda row: row.get("stock_code") in {"000003", "000004"},
+    )
+
+    snapshot = cli_module.build_web_view_candidate_evidence_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        limit=4,
+        now=datetime(2026, 8, 28, 20, 10, 0),
+    )
+
+    assert [row["stock_code"] for row in snapshot["rows"] if row["selected"]] == ["000001", "000002"]
+    assert snapshot["selection_basis"] == "regular_session_news_cohort"
+    assert snapshot["close_reassessment"]["changed"] is True
+    assert [row["stock_code"] for row in snapshot["close_reassessment"]["rows"]] == ["000004", "000003"]
 
 
 def test_web_view_candidate_value_profile_keeps_no_match_from_reordering_supported_candidate() -> None:
