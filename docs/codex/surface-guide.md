@@ -210,7 +210,7 @@ The current data endpoint contract is GET-only:
 | `GET /api/daily/{date}/stocks/{stock_code}` | Stock detail | Report details, same-date KRX reference, read-only stored-sample investor-flow rows when available, and stored-data-only `news_observation_detail`. |
 | `GET /api/intraday?date={date}` | Intraday history | Batch time, new report count, safe alert outcome summary. |
 | `GET /api/flow-trend?date={date}` | Investor-flow trend | Stored KRX Data Marketplace samples only; no live fetch, no public numeric scoring, no trading recommendation. |
-| `GET /api/etf-trend?date={date}` | ETF trend | Stored KRX ETF snapshots only; no live fetch, no public numeric scoring, no trading recommendation. |
+| `GET /api/etf-trend?date={date}` | ETF trend | Stored Toss ETF snapshots only; no live fetch, no public numeric scoring, no trading recommendation. |
 | `GET /api/toss-priority-quotes?date={date}` | Toss top-2 current-price and same-day provisional investor-volume reference | Latest stored business date only; server-derived top-2 candidate symbols only. The route returns only foreigner/institution net volume with provider update time; no arbitrary symbol query, account/order data, DB write, scheduler, Telegram, scoring, candidate reordering, or trading recommendation. |
 | `GET /api/toss-market-context?date={date}` | Toss latest-date Top20 market-attention reference | Fixed `tradingAmount` Top20, Top2 overlap, and bounded KOSPI/KOSDAQ aggregate context only. No arbitrary ranking query, account/order data, candidate creation/reordering, score, trading recommendation, or hidden write side effect. |
 | `GET /api/category?date={date}&type=sector|theme&name=...` | Category detail | Same-date category stock list with KRX stock references when available. |
@@ -482,7 +482,7 @@ The first version should accept a prepared list like:
 | `evidence_label` | Short text such as `리포트 4건`, `거래대금 상위`, `외국인 순매수`. |
 | `evidence_source` | `report`, `krx_turnover`, `krx_flow`, or mixed. |
 | `candidate_stocks` | Read-only stock preview rows with report count and exact-date KRX price/turnover when available. |
-| `candidate_etfs` | ETF preview rows with exact-date stored KRX ETF turnover/change evidence when an operator-managed mapping exists. |
+| `candidate_etfs` | ETF preview rows with exact-date stored Toss ETF turnover/change evidence when an active operator-managed mapping exists. |
 
 ## Exclusions
 
@@ -499,7 +499,7 @@ Future `ETF 1개 + 종목 1개` selection must stay separate from the current ov
 | --- | --- |
 | Image text mapping | Cycle image labels have a manual alias table mapped to user-facing 업종 names. |
 | Sector coordinates | The overlay coordinate map covers the target 업종 labels without mixing unrelated themes. |
-| ETF candidates | Each target 업종 has one or more ETF candidates from stored KRX ETF data or an operator-managed mapping. |
+| ETF candidates | A target 업종 may expose ETF candidates only when an active mapping and an exact-date stored Toss ETF row both exist. |
 | ETF mapping reachability | Each active ETF mapping category has a direct overlay coordinate or an active alias that points to an existing coordinate. |
 | Stock candidates | Each target 업종 has candidate stocks from report summaries, KRX stock master, and category snapshots. |
 | Evidence separation | Report count, target-price range, price/turnover, investor flow, and ETF trend are stored/displayed as separate evidence. |
@@ -531,7 +531,7 @@ First implementation should be a read-only preview table:
 ## Next Improvement
 
 - Review `data/rotation_image_aliases.json` against the actual Cycle image text before using aliases for ETF/stock candidate previews.
-- Expand `data/rotation_etf_candidates.json` only after confirming sector-to-ETF semantics from stored KRX ETF names/index names.
+- Activate `data/rotation_etf_candidates.json` entries only after confirming sector-to-ETF semantics and exact-date availability in the stored Toss ETF lane.
 - Add an operator/admin calibration screen later if the fixed image alignment needs manual tuning.
 - Expand evidence labels only after category source-date coverage and KRX flow history are stronger.
 

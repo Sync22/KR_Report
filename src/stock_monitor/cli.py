@@ -23503,8 +23503,15 @@ def _build_market_briefing_source_freshness_summary(
     summary = _build_web_view_source_freshness_summary(
         business_date=business_date,
         report_count=report_count,
-        recent_krx_snapshot_dates=repository.list_recent_krx_snapshot_dates(on_or_before=business_date, limit=1),
-        recent_flow_dates=repository.list_recent_investor_flow_dates(on_or_before=business_date, limit=1),
+        recent_toss_snapshot_dates=repository.list_recent_toss_market_snapshot_dates(
+            on_or_before=business_date, limit=1
+        ),
+        recent_toss_etf_snapshot_dates=repository.list_recent_toss_etf_snapshot_dates(
+            on_or_before=business_date, limit=1
+        ),
+        recent_flow_dates=repository.list_recent_investor_flow_dates(
+            on_or_before=business_date, source="toss_openapi", limit=1
+        ),
         investor_flow_item=(
             _build_stock_flow_source_freshness_item(
                 repository,
@@ -26817,6 +26824,7 @@ def _build_web_view_stock_related_context(
                     "category_label": category_label,
                     "display_name": rollup.display_name,
                     "category_display_name": category_display_name,
+                    "public_category_id": _web_view_public_category_id(rollup),
                     "stock_count": rollup.stock_count,
                     "report_count": rollup.report_count,
                     "snapshot_date": rollup.snapshot_date.isoformat() if rollup.snapshot_date else None,
@@ -26941,6 +26949,7 @@ def build_web_view_rotation_overlay_snapshot(
                 "category_type": item.category_type,
                 "category_label": "업종" if item.category_type == "sector" else "테마",
                 "display_name": display_name,
+                "public_category_id": _web_view_public_category_id(item),
                 "rotation_label": rotation_label,
                 "coordinate_display_name": coordinate_display_name,
                 "mapping_basis": alias["mapping_basis"] if alias else "direct_coordinate",
@@ -29004,6 +29013,7 @@ def _render_web_view_html() -> str:
     .rotation-evidence { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
     .rotation-evidence-card { border: 1px solid var(--line); border-radius: 16px; padding: 12px; background: #fffaf1; color: var(--ink); font-size: 12px; }
     .rotation-evidence-card b { display: block; margin-bottom: 6px; font-size: 13px; }
+    .rotation-category-link { border: 0; padding: 0; margin: 0 0 6px; background: transparent; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; }
     .rotation-reference-line { display: grid; gap: 2px; border-top: 1px solid var(--line); padding-top: 7px; margin-top: 7px; color: var(--ink); }
     .rotation-reference-line strong { color: var(--accent); font-size: 12px; }
     .rotation-reference-line span { color: var(--muted); font-size: 11px; line-height: 1.45; }
@@ -29241,12 +29251,12 @@ def _render_web_view_html() -> str:
       <details class="card span-12 market-reference-card" id="market-reference-card" data-view-panel="market" hidden open>
         <summary>
           <h2>시장 문맥 <span class="muted">Toss 당일 · Toss 저장</span></h2>
-          <span class="muted">현재값 우선 참고</span>
+          <span class="muted">조회값과 저장값을 구분해 표시</span>
         </summary>
         <p class="brief">시장 탭은 해석 문장이 아니라 선택 날짜의 Toss 저장/수급 근거를 확인하는 화면입니다.</p>
 
         <details class="market-reference-panel" open>
-          <summary>Toss 당일 시장 <span class="muted">실시간 집계</span></summary>
+          <summary>Toss 당일 시장 <span class="muted">요청 시 조회</span></summary>
           <div id="toss-market-context" class="intraday-overlap-panel" aria-live="polite" hidden></div>
           <p class="notice">당일 지수·시장 수급·거래대금 Top20을 우선 표시합니다. Toss 저장 이력은 아래 참고용입니다.</p>
         </details>
@@ -29394,11 +29404,6 @@ def _render_web_view_html() -> str:
     const safePublicCategoryId = (categoryType, publicCategoryId) => {
       const value = publicCategoryId || "";
       return value.startsWith(`${categoryType}|`) ? value : "";
-    };
-    const categoryRow = (item, categoryType, cells) => {
-      const displayName = item.display_name || item.sector_display_name || item.theme_display_name || item.sector_name || item.theme_name || "";
-      const publicCategoryId = safePublicCategoryId(categoryType, item.public_category_id);
-      return `<tr class="clickable-row" data-public-category-id="${esc(publicCategoryId)}" data-category-type="${esc(categoryType)}" data-category-display-name="${esc(displayName)}">${cells.map(td).join("")}</tr>`;
     };
     const empty = (span) => `<tr><td colspan="${span}" class="muted">표시할 데이터가 없습니다.</td></tr>`;
     const validDate = (value) => /^\\d{4}-\\d{2}-\\d{2}$/.test(value || "");
@@ -30577,7 +30582,7 @@ def _render_web_view_html() -> str:
         <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="순환매 참고 강조 표시">${circles}</svg>
       `;
       document.getElementById("rotation-evidence").innerHTML = highlights.map((item) =>
-        `<div class="rotation-evidence-card"><b>${esc(item.category_label)} ${esc(item.display_name)}</b>
+        `<div class="rotation-evidence-card"><button type="button" class="rotation-category-link" data-public-category-id="${esc(safePublicCategoryId(item.category_type, item.public_category_id))}" data-category-type="${esc(item.category_type || "")}" data-category-display-name="${esc(item.display_name || "")}">${esc(item.category_label)} ${esc(item.display_name)}</button>
           <span class="muted">${esc(item.rotation_label || item.label || "")} · ${esc(item.evidence_label)}</span>
           ${renderRotationCandidateStocks(item.candidate_stocks)}
           ${renderRotationCandidateEtfs(item.candidate_etfs)}
@@ -30679,7 +30684,7 @@ def _render_web_view_html() -> str:
         ? `<div class="detail-item"><b>기간별 수급량 <span class="muted">최근 31일 저장값 · 구분: 주</span></b>${flowReference}${renderInvestorFlowPeriodSummary(investorTabs.retail_foreign_institution)}${renderInvestorFlowBars(investorTabs.retail_foreign_institution)}</div>`
         : `<div class="detail-item"><span class="detail-meta">${esc(investorTabs.notice || data.investor_flow?.notice || "수급 데이터가 없습니다.")}</span></div>`;
       const targetJourneyBlock = targetJourney.available
-        ? `<div class="detail-item target-journey-section"><b>리포트 변화·도달 기록 <span class="muted">선택일 이후 저장 KRX 이력 · 고가 우선/종가 보조</span></b>${renderTargetJourney(targetJourney.items)}</div>`
+        ? `<div class="detail-item target-journey-section"><b>리포트 변화·도달 기록 <span class="muted">선택일 이후 저장 가격 이력 · 고가 우선/종가 보조</span></b>${renderTargetJourney(targetJourney.items)}</div>`
         : "";
       const targetTrailBlock = targetTrail.available
         ? `<div class="detail-item target-trail-section"><b>현재 목표가 진행 <span class="muted">선택일 Toss 저장값 기준</span></b>${targetAttainmentLine(targetTrail)}${targetProgressDetailLabel(targetProgress)}</div>`
@@ -30794,9 +30799,17 @@ def _render_web_view_html() -> str:
       if (!candidate) return "";
       const layers = candidateEvidenceLayers(candidate);
       const why = candidateCompactLabel(candidateWhyDisplayItems(layers.primary), 3) || "저장 근거 확인";
-      const quote = tossPriorityQuoteByCode.get(String(data.stock_code || "")) || "Toss 현재가 확인 전";
+      const stockCode = String(data.stock_code || "");
+      const quote = tossPriorityQuoteByCode.get(stockCode);
+      const currentQuoteLine = tossPriorityQuoteByCode.has(stockCode)
+        ? `<span>조회 현재가: ${esc(quote)}</span>`
+        : "";
       const valueProfile = candidate.value_profile || {};
       const status = [candidate.observation_priority || "확인 후보"];
+      const firstRelatedCategory = (data?.related_context?.categories || [])[0] || null;
+      const relatedCategoryAction = firstRelatedCategory
+        ? `<button class="journey-link" type="button" data-public-category-id="${esc(safePublicCategoryId(firstRelatedCategory.category_type, firstRelatedCategory.public_category_id))}" data-category-type="${esc(firstRelatedCategory.category_type || "")}" data-category-display-name="${esc(firstRelatedCategory.category_display_name || firstRelatedCategory.display_name || "")}">관련 업종/ETF 보기</button>`
+        : "";
       if (valueProfile.value_label && valueProfile.value_label !== status[0]) status.push(valueProfile.value_label);
       return `<div class="detail-item stock-observation-journey">
         <b>근거 원장</b>
@@ -30805,11 +30818,11 @@ def _render_web_view_html() -> str:
         <span>리포트 근거: ${esc(why)}</span>
         <span>과거 반응(KRX): ${esc(candidateEventReactionLine(candidate.event_reaction))}</span>
         <span>뉴스: ${esc(candidateNewsCompactLine(candidate.news_observation_badge))}</span>
-        <span>현재가: ${esc(quote)} · ${esc(candidateIntradayReferenceLabel(candidate.intraday_reference))}</span>
+        ${currentQuoteLine}
         <span>저장 기준: ${esc(candidateTossBaselineCompactLine(candidate.toss_baseline_reference))}</span>
         <div class="journey-actions">
           <button class="journey-link" type="button" data-journey-view="market">시장 기준 보기</button>
-          <button class="journey-link" type="button" data-journey-view="rotation">관련 업종/ETF 보기</button>
+          ${relatedCategoryAction}
         </div>
       </div>`;
     }
@@ -31036,62 +31049,6 @@ def _render_web_view_html() -> str:
         loadTossPriorityQuotes(tossPriorityDate);
       }
       if (activeViewTab === "market") loadTossMarketContext(tossPriorityDate);
-      const renderCandidateCard = (item, index, offset = 0) => {
-        const candidateIndex = index + offset;
-        const report = item.report_summary || {};
-        const targetMetrics = candidateTargetMetrics(report, item.target_price_progress);
-        const market = candidateMarketInline(item.market_reference);
-        const newsBadge = renderCandidateNewsBadge(item.news_observation_badge);
-        const valueProfile = item.value_profile || {};
-        const decisionLine = candidateIndex < 2 && valueProfile.value_label
-          ? `<div class="candidate-priority-line"><b>근거 상태</b><span>${esc(valueProfile.value_label)}${valueProfile.value_reason ? ` · ${esc(valueProfile.value_reason)}` : ""}</span></div>`
-          : "";
-        const intradayLine = candidateIndex < 2
-          ? `<div class="candidate-intraday-line"><b>장중 참고</b><span data-intraday-reference="${esc(item.stock_code || "")}">${esc(candidateIntradayReferenceLabel(item.intraday_reference))}</span></div>`
-          : "";
-        const tossCurrentLine = candidateIndex < 2
-          ? `<div class="candidate-priority-line"><b>Toss 현재가</b><span class="priority-toss-quote muted" data-toss-quote-context="watch" data-toss-quote="${esc(item.stock_code || "")}">확인 중</span></div>`
-          : "";
-        const tossBaselineLine = candidateIndex < 2
-          ? `<div class="candidate-priority-line"><b>Toss 20:00</b><span>${esc(candidateTossBaselineCompactLine(item.toss_baseline_reference))}</span></div>`
-          : "";
-        const turnover = item.market_reference?.turnover
-          ? compactTurnover(item.market_reference.turnover)
-          : "";
-        const flowLine = evidenceFlowLabel(item.stock_flow_reference);
-        const layers = candidateEvidenceLayers(item);
-        const whyNotable = candidateWhyDisplayItems(layers.primary);
-        const supportEvidence = candidateWhyDisplayItems(layers.support);
-        const missingInformation = candidateWhyDisplayItems(layers.gap);
-        const whyLine = whyNotable.length
-          ? renderQualityChips(whyNotable, "quality-chip--why", 2)
-          : '<span class="muted">근거 보강 필요</span>';
-        const supportLine = supportEvidence.length
-          ? renderQualityChips(supportEvidence, "quality-chip--support", 3)
-          : '<span class="muted">보조 저장 근거 없음</span>';
-        const missingLine = missingInformation.length
-          ? renderQualityChips(missingInformation, "quality-chip--missing", 1)
-          : '<span class="muted">핵심 저장 정보 있음</span>';
-        return `<article class="candidate-card" data-stock-code="${esc(item.stock_code || "")}">
-          <h3><span class="candidate-title-stock"><span class="candidate-stock-name">${esc(item.stock_name || "-")}</span><span class="candidate-stock-code">${esc(item.stock_code || "")}</span></span><span class="candidate-title-separator" aria-hidden="true"></span>${market} <span class="status-pill">${esc(item.observation_priority || "확인 후보")}</span></h3>
-          ${newsBadge}
-          ${decisionLine}
-          ${intradayLine}
-          ${tossCurrentLine}
-          ${tossBaselineLine}
-          <div class="candidate-quality-grid">
-            <div class="quality-line"><b>왜 눈에 띄는지</b>${whyLine}</div>
-            <div class="quality-line"><b>보조 근거</b>${supportLine}</div>
-            <div class="quality-line"><b>부족한 정보</b>${missingLine}</div>
-          </div>
-          <div class="candidate-evidence-grid">
-            <span><b>리포트</b>${number(report.report_count)}건</span>
-            <span><b>목표가/지표</b>${targetMetrics}</span>
-            <span><b>수급/거래대금</b>${candidateFlowMetrics(turnover, flowLine)}</span>
-          </div>
-          <button class="candidate-detail-action" type="button" data-stock-code="${esc(item.stock_code || "")}"${watchDataLoading ? " disabled" : ""}>종목 상세에서 근거 이어보기</button>
-        </article>`;
-      };
       document.getElementById("candidate-evidence-rows").innerHTML = rows.slice(0, 8).map(renderWatchCandidateRow).join("");
       refreshViewPanels();
     }
@@ -31100,7 +31057,9 @@ def _render_web_view_html() -> str:
       const layers = candidateEvidenceLayers(item);
       const primary = candidateCompactLabel(candidateWhyDisplayItems(layers.primary), 3) || "저장 근거 확인";
       const news = item?.news_observation_badge || {};
-      const newsLabel = news.connection_label || news.display_label || "저장 뉴스 없음";
+      const newsLabel = index >= 2 && news.available !== true
+        ? "Top2 뉴스 수집 대상 아님"
+        : news.connection_label || news.display_label || "저장 뉴스 없음";
       return `<button class="watch-candidate-row candidate-detail-action" type="button" data-stock-code="${esc(item?.stock_code || "")}">
         <span class="watch-candidate-head"><b>${number(index + 1)}. ${esc(item?.stock_name || "-")} <span class="muted">${esc(item?.stock_code || "")}</span></b><span class="status-pill">${esc(item?.observation_priority || "확인 후보")}</span></span>
         <span class="watch-candidate-line">${esc(primary)}</span>
@@ -31116,19 +31075,21 @@ def _render_web_view_html() -> str:
         const whyItems = candidateWhyDisplayItems(layers.primary);
         const why = whyItems.length
           ? candidateCompactLabel(whyItems, 3)
-          : "근거 보강 필요";
+          : "리포트 저장 근거";
         const tossQuote = tossPriorityQuoteByCode.get(String(item?.stock_code || ""));
         const tossInvestorTrading = tossPriorityInvestorTradingByCode.get(String(item?.stock_code || ""));
         const targetRevisionLine = targetRevisionTrailLine(item);
         const currentEvidenceLine = topTwoCurrentEvidenceLine(item);
         const missingEvidenceLine = topTwoMissingEvidenceLine(item, tossQuote);
-        const missingEvidenceLabel = "저장 기준:";
+        const missingEvidenceBlock = missingEvidenceLine === "추가 공백 없음"
+          ? ""
+          : `<span class="top-two-evidence-line"><strong>현재 미확인:</strong><span class="top-two-evidence-text">${esc(missingEvidenceLine)}</span></span>`;
         return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote-context="main" data-toss-quote="${esc(item.stock_code || "")}">${esc(tossQuote || "Toss 현재가 확인 중")}</span></b>
           <span class="muted">관찰 사유: ${esc(why)}</span>
           <span class="top-two-evidence-line"><strong>현재 근거:</strong><span class="top-two-evidence-text">${esc(currentEvidenceLine)}</span></span>
           <span class="top-two-evidence-line"><strong>Toss 조회 수급 참고(미저장):</strong><span class="top-two-evidence-text priority-toss-investor-trading muted" data-toss-investor-trading="${esc(item.stock_code || "")}">${esc(tossInvestorTrading || "확인 중")}</span></span>
-          <span class="top-two-evidence-line"><strong>${esc(missingEvidenceLabel)}</strong><span class="top-two-evidence-text">${esc(missingEvidenceLine)}</span></span>
+          ${missingEvidenceBlock}
           <span class="target-revision-line">${esc(targetRevisionLine)}</span>
         </button>`;
       }).join("")}</section>`;
@@ -31429,17 +31390,29 @@ def _render_web_view_html() -> str:
       const rankings = Array.isArray(data.rankings) ? data.rankings.slice(0, 20) : [];
       const marketPrices = Array.isArray(data.market_prices) ? data.market_prices : [];
       const overlaps = Array.isArray(data.priority_overlap_symbols) ? data.priority_overlap_symbols : [];
+      const stockNames = data.stock_names && typeof data.stock_names === "object" ? data.stock_names : {};
+      const etfSymbols = new Set(Array.isArray(data.etf_symbols) ? data.etf_symbols.map(String) : []);
+      const marketPriceChanges = data.market_price_changes && typeof data.market_price_changes === "object"
+        ? data.market_price_changes
+        : {};
       const rankedAt = tossQuoteTimeLabel({ timestamp: data.ranked_at }, data);
       const marketPriceLabel = marketPrices
         .filter((item) => item && item.symbol && item.lastPrice !== null && item.lastPrice !== undefined)
-        .map((item) => `${esc(item.symbol)} ${number(item.lastPrice)}`)
+        .map((item) => {
+          const changeRate = Number(marketPriceChanges[item.symbol]?.change_rate);
+          const changeLabel = Number.isFinite(changeRate) ? ` (${percent(changeRate * 100)})` : "";
+          return `${esc(item.symbol)} ${number(item.lastPrice)}${changeLabel}`;
+        })
         .join(" · ");
-      const rankItems = rankings.length
-        ? rankings.map((item) => `<span class="status-pill">${esc(item?.rank || "")}. ${esc(item?.symbol || "-")}</span>`).join("")
-        : '<span class="muted">Top20 집계값 없음</span>';
+      const rankingName = (item) => stockNames[String(item?.symbol || "")] || item?.symbol || "-";
+      const rankItems = (items) => items.length
+        ? items.map((item) => `<span class="status-pill">${esc(item?.rank || "")}. ${esc(rankingName(item))}</span>`).join("")
+        : '<span class="muted">집계값 없음</span>';
+      const stockRankings = rankings.filter((item) => !etfSymbols.has(String(item?.symbol || ""))).slice(0, 10);
+      const etfRankings = rankings.filter((item) => etfSymbols.has(String(item?.symbol || ""))).slice(0, 5);
       const flowLabel = (record, market) => {
         if (!record || typeof record !== "object") return `${market} 기준일 데이터 없음`;
-        const parts = [["외국인", record.foreigner], ["기관", record.institution]].flatMap(([label, amount]) => {
+        const parts = [["개인", record.individual], ["외국인", record.foreigner], ["기관", record.institution]].flatMap(([label, amount]) => {
           const buy = Number(amount?.buyAmount);
           const sell = Number(amount?.sellAmount);
           if (!Number.isFinite(buy) || !Number.isFinite(sell)) return [];
@@ -31453,10 +31426,13 @@ def _render_web_view_html() -> str:
       panel.hidden = false;
       panel.innerHTML = `
         <div class="intraday-overlap-head"><b>Toss 시장 문맥</b><span>· ${esc(rankedAt || "집계 시각 확인 필요")}</span></div>
-        <p class="intraday-overlap-summary">거래대금 Top20 · 우선 확인 겹침 ${esc(overlaps.join(", ") || "없음")}</p>
-        <div class="intraday-overlap-stocks">${rankItems}</div>
         <p class="muted">당일 지수 · ${marketPriceLabel || "지수값 확인 필요"}</p>
         <p class="muted">당일 시장 수급 잠정 · ${esc(flowLabel(flow.KOSPI, "KOSPI"))} · ${esc(flowLabel(flow.KOSDAQ, "KOSDAQ"))}</p>
+        <p class="intraday-overlap-summary">우선 확인 겹침 ${esc(overlaps.map((symbol) => stockNames[String(symbol)] || symbol).join(", ") || "없음")}</p>
+        <p class="muted"><b>Toss 거래대금 상위 Top10</b></p>
+        <div class="intraday-overlap-stocks">${rankItems(stockRankings)}</div>
+        <p class="muted"><b>Toss 거래대금 상위 ETF Top5</b></p>
+        <div class="intraday-overlap-stocks">${rankItems(etfRankings)}</div>
       `;
     }
 
@@ -31570,30 +31546,6 @@ def _render_web_view_html() -> str:
       return "뉴스 기준일 없음";
     }
 
-    function renderCandidateNewsBadge(badge) {
-      if (!badge || badge.available !== true) {
-        const label = badge?.connection_label || badge?.display_label || "뉴스 근거 수집 전";
-        const reason = badge?.connection_reason || badge?.reason || "저장 뉴스 근거를 아직 수집하지 않았습니다.";
-        return `<div class="candidate-news-badge"><span class="quality-chip quality-chip--missing">${esc(label)}</span><span>${esc(reason)}</span></div>`;
-      }
-      const connectionLabel = badge.connection_label || badge.display_label || "뉴스 근거 있음";
-      const connectionReason = badge.connection_reason || "";
-      const chips = [
-        connectionLabel,
-        `독립 ${number(badge.independent_count || 0)}`,
-        `리포트 재인용 ${number(badge.report_recap_count || 0)}`,
-        `독립성 미확인 ${number(badge.unknown_count || 0)}`,
-        `직접 ${number(badge.direct_count || 0)}`,
-        newsCautionCountText(badge.direct_count, badge.caution_count, connectionLabel),
-        `시장맥락 ${number(badge.market_context_count || 0)}`,
-        krxNewsReferenceLabel(badge.krx_reference_status)
-      ];
-      const observedAt = newsObservationTimeLabel(badge);
-      if (observedAt) chips.push(observedAt);
-      const title = badge.top_title || badge.reason || "";
-      return `<div class="candidate-news-badge">${chips.map((item) => `<span class="quality-chip">${esc(item)}</span>`).join("")}${connectionReason ? `<span><b>연결</b> ${esc(connectionReason)}</span>` : ""}${title ? `<span><b>근거</b> ${esc(title)}</span>` : ""}</div>`;
-    }
-
     function candidateIntradayReferenceLabel(reference) {
       if (!reference || reference.source_configured === false) {
         return "확인 전";
@@ -31620,60 +31572,6 @@ def _render_web_view_html() -> str:
       return `${sign}${parsed.toLocaleString("ko-KR", { maximumFractionDigits: 1 })}%`;
     }
 
-    function metricRange(minValue, maxValue) {
-      const minLabel = metricPercent(minValue);
-      const maxLabel = metricPercent(maxValue);
-      if (minLabel === "-" && maxLabel === "-") return "-";
-      if (minLabel === maxLabel || maxLabel === "-") return minLabel;
-      if (minLabel === "-") return maxLabel;
-      return `${minLabel} ~ ${maxLabel}`;
-    }
-
-    function candidateMetricLine(label, value, muted = false) {
-      return `<div class="candidate-metric-line">
-        <span class="candidate-metric-key">${esc(label)}</span>
-        <span class="candidate-metric-value${muted ? " muted" : ""}">${value}</span>
-      </div>`;
-    }
-
-    function targetReachLabel(progress) {
-      if (!progress?.validation_available) return "";
-      const parts = [];
-      if (progress.hit_min_horizon_days !== null && progress.hit_min_horizon_days !== undefined) {
-        parts.push(`하단 D+${number(progress.hit_min_horizon_days)}`);
-      }
-      if (progress.hit_max_horizon_days !== null && progress.hit_max_horizon_days !== undefined) {
-        parts.push(`상단 D+${number(progress.hit_max_horizon_days)}`);
-      }
-      return parts.length ? parts.join(" · ") : "저장 기간 내 도달 없음";
-    }
-
-    function candidateTargetMetrics(report, progress) {
-      const pieces = [
-        ["목표가", moneyRange(report.target_price_min, report.target_price_max)]
-      ];
-      if (!progress || !progress.available) {
-        pieces.push(["괴리", progress?.notice || "계산 불가"]);
-        pieces.push(["진행", "-"]);
-      } else {
-        pieces.push(
-          progress.gap_available
-            ? ["괴리", metricRange(progress.target_gap_min_percent, progress.target_gap_max_percent)]
-            : ["괴리", "-"]
-        );
-        pieces.push(
-          progress.progress_available
-            ? ["진행", metricRange(progress.progress_to_min_percent, progress.progress_to_max_percent)]
-            : ["진행", "-"]
-        );
-        const reach = targetReachLabel(progress);
-        if (reach) pieces.push(["도달", reach]);
-      }
-      return `<span class="candidate-info-grid candidate-target-grid">${pieces.map(([label, value]) => `<span><b>${esc(label)}</b><em>${esc(value)}</em></span>`).join("")}</span>`;
-    }
-
-    const QUALITY_CHIP_VISIBLE_LIMIT = 6;
-
     function candidateWhyDisplayItems(items) {
       const values = Array.isArray(items) ? items.filter(Boolean) : [];
       return values;
@@ -31693,41 +31591,6 @@ def _render_web_view_html() -> str:
       const visible = values.slice(0, limit);
       const overflowCount = Math.max(0, values.length - visible.length);
       return visible.join(" · ") + (overflowCount > 0 ? ` · +${number(overflowCount)}` : "");
-    }
-
-    function renderQualityChips(items, toneClass, visibleLimit = QUALITY_CHIP_VISIBLE_LIMIT) {
-      const values = Array.isArray(items) ? items.filter(Boolean) : [];
-      const visible = values.slice(0, visibleLimit);
-      const overflowCount = Math.max(0, values.length - visible.length);
-      const chips = visible.map((item) => `<span class="quality-chip ${esc(toneClass)}">${esc(item)}</span>`);
-      if (overflowCount > 0) {
-        chips.push(`<span class="quality-chip quality-chip-overflow">+${number(overflowCount)}</span>`);
-      }
-      return chips.join("");
-    }
-
-    function candidateFlowMetrics(turnover, flowLine) {
-      const pieces = [
-        ["외국인/기관", flowLine || "-"],
-        ["거래대금", turnover || "-"]
-      ];
-      return `<span class="candidate-info-grid candidate-flow-grid">${pieces.map(([label, value]) => {
-        const displayValue = label === "외국인/기관" ? flowValue(value) : esc(value);
-        return `<span><b>${esc(label)}</b><em>${displayValue}</em></span>`;
-      }).join("")}</span>`;
-    }
-
-    function flowValue(value) {
-      return esc(value || "-").replace(/\\s*·\\s*/g, "<br>");
-    }
-
-    function candidateMarketInline(reference) {
-      if (!reference) {
-        return '<span class="candidate-market-inline"><span>-</span><span>Toss 저장값 없음</span></span>';
-      }
-      const market = reference.market || "Toss";
-      const storedAt = reference.fetched_at ? ` · ${publishedLabel(reference.fetched_at)} 저장` : "";
-      return `<span class="candidate-market-inline"><span>${esc(price(reference.close_price))}</span><span>${esc(percent(reference.change_percent))} · ${esc(market)}${esc(storedAt)}</span></span>`;
     }
 
     function marketMoodSectorLabel(value) {
@@ -32920,6 +32783,9 @@ def build_web_view_daily_snapshot(
     mood = _build_market_mood_snapshot(business_date, summaries, sectors)
     watch_candidates = _build_web_view_watch_candidates(summaries)
     recent_toss_snapshot_dates = repository.list_recent_toss_market_snapshot_dates(on_or_before=business_date, limit=3)
+    recent_toss_etf_snapshot_dates = repository.list_recent_toss_etf_snapshot_dates(
+        on_or_before=business_date, limit=1
+    )
     recent_market_flow_dates = repository.list_recent_market_investor_flow_dates(
         on_or_before=business_date, source="toss_openapi", limit=1
     )
@@ -32995,7 +32861,8 @@ def build_web_view_daily_snapshot(
     source_freshness_summary = _build_web_view_source_freshness_summary(
         business_date=business_date,
         report_count=report_count,
-        recent_krx_snapshot_dates=recent_toss_snapshot_dates,
+        recent_toss_snapshot_dates=recent_toss_snapshot_dates,
+        recent_toss_etf_snapshot_dates=recent_toss_etf_snapshot_dates,
         recent_flow_dates=recent_flow_dates,
         toss_openapi_ready=_web_view_toss_openapi_ready(config),
         investor_flow_item=investor_flow_item,
@@ -33078,12 +32945,14 @@ def _build_web_view_source_freshness_summary(
     *,
     business_date: date,
     report_count: int,
-    recent_krx_snapshot_dates: list[date],
+    recent_toss_snapshot_dates: list[date],
+    recent_toss_etf_snapshot_dates: list[date],
     recent_flow_dates: list[date],
     toss_openapi_ready: bool = False,
     investor_flow_item: dict[str, object] | None = None,
 ) -> dict:
-    toss_reference_date = recent_krx_snapshot_dates[0] if recent_krx_snapshot_dates else None
+    toss_reference_date = recent_toss_snapshot_dates[0] if recent_toss_snapshot_dates else None
+    toss_etf_reference_date = recent_toss_etf_snapshot_dates[0] if recent_toss_etf_snapshot_dates else None
     flow_reference_date = recent_flow_dates[0] if recent_flow_dates else None
     report_reference_date = business_date if report_count > 0 else None
     return {
@@ -33119,9 +32988,9 @@ def _build_web_view_source_freshness_summary(
                 key="toss_etf",
                 label="Toss ETF",
                 source="toss_openapi",
-                reference_date=toss_reference_date,
+                reference_date=toss_etf_reference_date,
                 business_date=business_date,
-                available=toss_reference_date is not None,
+                available=toss_etf_reference_date is not None,
                 data_scope="stored_toss_close_etf_snapshot",
                 notice="Stored Toss Top20 ETF turnover reference; constituents are not loaded.",
             ),
@@ -33836,8 +33705,15 @@ def _build_decision_journal_dry_run_payload(
     source_freshness = _build_web_view_source_freshness_summary(
         business_date=resolved_date,
         report_count=report_count,
-        recent_krx_snapshot_dates=repository.list_recent_krx_snapshot_dates(on_or_before=resolved_date, limit=1),
-        recent_flow_dates=repository.list_recent_investor_flow_dates(on_or_before=resolved_date, limit=1),
+        recent_toss_snapshot_dates=repository.list_recent_toss_market_snapshot_dates(
+            on_or_before=resolved_date, limit=1
+        ),
+        recent_toss_etf_snapshot_dates=repository.list_recent_toss_etf_snapshot_dates(
+            on_or_before=resolved_date, limit=1
+        ),
+        recent_flow_dates=repository.list_recent_investor_flow_dates(
+            on_or_before=resolved_date, source="toss_openapi", limit=1
+        ),
         toss_openapi_ready=_web_view_toss_openapi_ready(config),
         investor_flow_item=_build_stock_flow_source_freshness_item(
             repository,
@@ -38693,7 +38569,7 @@ def build_web_view_etf_trend_snapshot(
     now: datetime | None = None,
 ) -> dict:
     current = now or datetime.now(ZoneInfo(config.timezone))
-    snapshot_dates = repository.list_recent_toss_market_snapshot_dates(on_or_before=business_date, limit=limit)
+    snapshot_dates = repository.list_recent_toss_etf_snapshot_dates(on_or_before=business_date, limit=limit)
     reference_date = snapshot_dates[0] if snapshot_dates else None
     reference_status = _web_view_etf_reference_status(reference_date, business_date)
     items = []

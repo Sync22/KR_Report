@@ -184,7 +184,8 @@ This document fixes which source owns each data domain and how category names sh
 Short rule:
 
 - Naver owns research reports.
-- KRX owns market reference data.
+- Toss OpenAPI owns current and newly stored web-view market reference data.
+- Existing KRX rows are retained for historical review only.
 - Industry/theme labels are a separate taxonomy layer and must stay explicitly labeled.
 
 Do not mix report collection semantics with market-data semantics.
@@ -196,12 +197,12 @@ Do not mix report collection semantics with market-data semantics.
 | Research reports | Naver Research | `reports`, `daily_stock_summaries` | Keep Naver as the report source. |
 | Report title, broker, target price, opinion | Naver Research | `reports`, summary/detail DTOs | Keep source facts from Naver; parse for aggregation, preserve detail. |
 | Intraday new-report detection | Naver Research | `intraday_alert_batches`, `intraday_alert_batch_reports` | Keep Naver as the detection source. |
-| Stock code search / name candidates | Current Naver search flow; KRX migration candidate | Telegram stock lookup DTOs | Can migrate to KRX stock master later, but not urgent. |
-| Stock price, close, change, volume, turnover, market cap | KRX Open API | `stock_market_daily`, `krx_context`, stock detail DTOs | KRX is the confirmed daily-history source. Bounded Toss current prices may lead the current top-two display but do not overwrite KRX history. |
-| Stock master, market, listed shares, listing metadata | KRX Open API | `krx_stock_metadata` | KRX should become the canonical stock master. |
-| ETF daily reference | KRX Open API | `etf_daily_snapshots`, `etf-trend` DTO | KRX only. Keep separate from company-report summaries. |
-| Market index reference | Toss Securities OpenAPI current indicator price; KRX Open API fallback/history | `web-view` Toss market context; `market_index_daily` | Toss KOSPI/KOSDAQ values lead same-day market display. KRX remains the confirmed daily archive/fallback. |
-| Investor flow | Toss aggregate market flow for current context; KRX Data Marketplace for stock history/validation | Toss market context; `stock_investor_flow_daily`, `market_investor_flow_daily`, `investor_net_buy_top_daily` | Toss same-day KOSPI/KOSDAQ amounts are provisional and show `updatedAt`. KRX `[12009]` remains stock-level history; `[12010]` is internal/history only and has no public projection. |
+| Stock code search / name candidates | Stored metadata plus Toss symbol metadata when queried | Telegram and web-view stock lookup DTOs | Keep the minimum stored code/name mapping. Do not require a renewed KRX master feed for the current product surface. |
+| Stock price, close, change, volume, turnover | Toss OpenAPI | `stock_market_daily`, Toss current quote DTOs, stock detail DTOs | Toss current queries and stored market snapshots own new web-view values. Existing KRX rows remain historical review data and must not be relabeled as current Toss values. |
+| Stock master, market, listing metadata | Existing stored metadata plus Toss symbol lookup | `stock_metadata`, provider metadata DTOs | Maintain only fields used by search, code/name display, and market classification. Existing KRX metadata is frozen history, not an active dependency. |
+| ETF daily reference | Toss OpenAPI | `etf_daily_snapshots`, `etf-trend` DTO | Availability requires actual stored Toss ETF rows. A stock or index snapshot date alone must not imply ETF availability. |
+| Market index reference | Toss OpenAPI | `web-view` Toss market context; `market_index_daily` | Toss KOSPI/KOSDAQ values and stored snapshots lead current display. Existing KRX rows are historical review only. |
+| Investor flow | Toss OpenAPI | Toss market context; `stock_investor_flow_daily`, `market_investor_flow_daily` | Toss same-day values are provisional and retain their provider timestamp. Existing KRX flow rows may be shown only as explicitly labeled historical review data. |
 | Intraday quote/turnover reference | Toss Securities OpenAPI current-price reference, Naver market-top overlap, and Naver top-two fallback quote | `web-view` top-2 priority DTOs and Toss baseline table when saved | Toss is the primary current-price reference for the server-derived top-two `우선 확인`; Naver top-two quotes run only when Toss is unavailable or incomplete. Naver market-top overlap remains a separate user-triggered turnover reference. None may affect trading-decision support, broker execution, or public trading calls. |
 | Industry / theme labels | Naver industry/theme pages plus operator-managed snapshots | `stock_metadata`, `stock_theme_memberships`, `category_master`, `category_membership_snapshots` | Keep as taxonomy data, not market reference data. Do not call it KRX-owned until a verified KRX taxonomy source exists. |
 

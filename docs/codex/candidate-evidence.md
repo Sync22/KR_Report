@@ -42,12 +42,12 @@ Approved source/persistence boundary:
 | --- | --- | --- | --- |
 | Report summary | Naver Research | `daily_stock_summaries`, `repository.list_daily_summaries(business_date)` | Primary row seed |
 | Report detail | Naver Research | `reports`, `repository.list_reports_for_business_date(business_date)` | Broker count, detail-only guard, source links |
-| Stock market reference | KRX Open API | `stock_market_daily`, `repository.list_stock_market_daily_for_codes(...)` | Exact-date price/change/volume/turnover |
-| Stock investor flow | KRX Data Marketplace `[12009]` | `stock_investor_flow_daily`, `repository.list_stock_investor_flow_daily(...)` | Stock-level flow reference when stored |
-| Market investor flow | KRX Data Marketplace `[12008]` | `market_investor_flow_daily`, `repository.list_market_investor_flow_daily(...)` | Top-level market context, not a score |
-| Net-buy ranking | KRX Data Marketplace `[12010]` | `investor_net_buy_top_daily`, `repository.list_investor_net_buy_top_daily(...)` | Rank-presence reference only |
+| Stock market reference | Toss OpenAPI stored snapshot | `stock_market_daily`, `repository.list_stock_market_daily_for_codes(..., source="toss_openapi")` | Exact-date price/change/volume/turnover when stored |
+| Stock investor flow | Toss OpenAPI | `stock_investor_flow_daily`, bounded Top2 projection | Stock-level flow reference when stored or explicitly queried; query results do not alter ordering |
+| Market investor flow | Toss OpenAPI | `market_investor_flow_daily`, Toss market context | Top-level provisional market context, not a score |
+| Legacy KRX flow/ranking | Existing stored KRX rows | historical flow tables | Historical review only; absence is not a current candidate defect |
 | Category rollup | Snapshot-aware taxonomy layer | `repository.list_category_rollups_by_display_name_for_business_date(...)` | Separate context only |
-| ETF reference | KRX Open API | `etf_daily_snapshots`, `repository.list_etf_daily_by_turnover(...)` | Not part of stock CE-1 row; used later for rotation preview |
+| ETF reference | Toss OpenAPI stored snapshot | `etf_daily_snapshots`, `repository.list_etf_daily_by_turnover(..., source="toss_openapi")` | Not part of a stock candidate row; show only when actual ETF rows exist |
 
 Out of scope for CE-1:
 

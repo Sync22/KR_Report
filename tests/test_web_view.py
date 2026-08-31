@@ -4022,6 +4022,9 @@ def test_web_view_toss_market_context_route_uses_server_derived_top_two_only(tmp
 
 def test_web_view_main_has_toss_market_context_panel() -> None:
     html = cli_module._render_web_view_html()
+    market_context_body = html.split("function renderTossMarketContext(data)", 1)[1].split(
+        "async function loadTossMarketContext", 1
+    )[0]
 
     assert 'id="toss-market-context"' in html
     assert "/api/toss-market-context" in html
@@ -4030,6 +4033,12 @@ def test_web_view_main_has_toss_market_context_panel() -> None:
     assert 'id="toss-market-context" class="intraday-overlap-panel" aria-live="polite"' in html
     assert "전일 Toss 저장값/수급/ETF는 참고 영역입니다." in html
     assert "후보 수급 [12009]은 관찰 후보·종목 상세에서 확인" not in html
+    assert "data.stock_names" in market_context_body
+    assert "data.etf_symbols" in market_context_body
+    assert "data.market_price_changes" in market_context_body
+    assert '["개인", record.individual]' in market_context_body
+    assert "Toss 거래대금 상위 Top10" in market_context_body
+    assert "Toss 거래대금 상위 ETF Top5" in market_context_body
 
 
 def test_web_view_html_labels_top_two_toss_flow_as_unstored_query_reference() -> None:
@@ -4929,7 +4938,7 @@ def test_web_view_html_renders_target_journey_in_stock_detail_only() -> None:
     assert "data.target_journey" in stock_context_body
     assert "renderTargetJourney" in stock_context_body
     assert "리포트 변화·도달 기록" in stock_context_body
-    assert "선택일 이후 저장 KRX 이력 · 고가 우선/종가 보조" in stock_context_body
+    assert "선택일 이후 저장 가격 이력 · 고가 우선/종가 보조" in stock_context_body
     assert "item.observed_through" in stock_context_body
     assert "목표가 Journey" not in stock_context_body
     assert "가격 검증 대기" in stock_context_body
@@ -4991,6 +5000,8 @@ def test_web_view_html_exposes_toss_source_and_compact_evidence_ledger() -> None
     assert "candidateEventReactionLine(candidate.event_reaction)" in stock_journey_body
     assert "function candidateEventReactionLine(reaction)" in html
     assert "저장 기준:" in stock_journey_body
+    assert "Toss 현재가 확인 전" not in stock_journey_body
+    assert "tossPriorityQuoteByCode.has" in stock_journey_body
 
 
 def test_web_view_etf_trend_snapshot_exposes_rotation_evidence_scope(tmp_path, monkeypatch) -> None:
@@ -5068,6 +5079,95 @@ def test_web_view_etf_trend_snapshot_marks_stale_reference_date(tmp_path, monkey
     assert snapshot["reference_date"] == "2026-05-07"
     assert snapshot["notice"] == "선택 날짜의 ETF 저장값이 없어 2026-05-07 기준 Toss ETF 흐름만 표시합니다."
     _assert_public_safe_payload(snapshot)
+
+
+def test_web_view_etf_trend_snapshot_does_not_claim_empty_market_dates(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=date(2026, 5, 8),
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                close_price=100_000,
+                change_percent=1.0,
+                volume=10_000,
+                turnover=500,
+                fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
+            )
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_etf_trend_snapshot(
+        config,
+        repository,
+        business_date=date(2026, 5, 8),
+        now=datetime(2026, 5, 8, 21, 0, 0),
+    )
+
+    assert snapshot["available"] is False
+    assert snapshot["reference_date"] is None
+    assert snapshot["reference_status"] == "missing"
+    assert snapshot["items"] == []
+
+
+def test_web_view_source_freshness_does_not_infer_etf_from_stock_snapshot(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 8)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="삼성전자 점검",
+                broker_name="NH투자증권",
+                published_at=datetime(2026, 5, 8, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 5, 8, 9, 5, 0),
+                source_id="no-etf-freshness-1",
+                identity_key="no-etf-freshness-1",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                close_price=100_000,
+                change_percent=1.0,
+                volume=10_000,
+                turnover=500,
+                fetched_at=datetime(2026, 5, 8, 20, 0, 0),
+                source="toss_openapi",
+            )
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_daily_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        now=datetime(2026, 5, 8, 21, 0, 0),
+    )
+    freshness = {item["key"]: item for item in snapshot["source_freshness_summary"]["items"]}
+
+    assert freshness["toss_market"]["status"] == "exact"
+    assert freshness["toss_etf"]["status"] == "missing"
+    assert freshness["toss_etf"]["reference_date"] is None
 
 
 def test_web_view_recent_toss_flow_exposes_actual_reference_date_when_fallback(tmp_path, monkeypatch) -> None:
@@ -5884,11 +5984,43 @@ def test_web_view_rotation_overlay_snapshot_uses_manual_coordinates(tmp_path, mo
     assert snapshot["read_only"] is True
     assert snapshot["image"]["path"] == "example/Cycle.jpg"
     assert snapshot["highlights"][0]["display_name"] == "우주항공과국방"
+    assert snapshot["highlights"][0]["public_category_id"] == "sector|우주항공과국방|2026-05-08"
     assert snapshot["highlights"][0]["label"] == "우주항공"
     assert snapshot["highlights"][0]["evidence_label"] == "리포트 1건 / 1종목"
     assert "추천" not in snapshot["notice"]
     assert "확정 판단" in snapshot["notice"]
     _assert_public_safe_payload(snapshot)
+
+
+def test_web_view_html_connects_rotation_and_stock_related_categories() -> None:
+    html = cli_module._render_web_view_html()
+    rotation_body = html.split("async function loadRotationOverlay(date)", 1)[1].split(
+        "function renderRotationCandidateStocks", 1
+    )[0]
+    stock_journey_body = html.split("function renderStockCandidateJourney(data)", 1)[1].split(
+        "function targetAttainmentLine", 1
+    )[0]
+
+    assert 'class="rotation-category-link"' in rotation_body
+    assert "safePublicCategoryId(item.category_type, item.public_category_id)" in rotation_body
+    assert "data-category-display-name" in rotation_body
+    assert "const firstRelatedCategory" in stock_journey_body
+    assert "safePublicCategoryId(firstRelatedCategory.category_type, firstRelatedCategory.public_category_id)" in stock_journey_body
+    assert 'data-journey-view="rotation"' not in stock_journey_body
+
+
+def test_web_view_html_uses_truthful_candidate_and_market_copy() -> None:
+    html = cli_module._render_web_view_html()
+    watch_body = html.split("function renderWatchCandidateRow(item, index)", 1)[1].split(
+        "function renderTopTwoReviewCandidates", 1
+    )[0]
+
+    assert "Top2 뉴스 수집 대상 아님" in watch_body
+    assert "index >= 2 && news.available !== true" in watch_body
+    assert "const renderCandidateCard" not in html
+    assert "현재값 우선 참고" not in html
+    assert "실시간 집계" not in html
+    assert "조회값과 저장값을 구분해 표시" in html
 
 
 def test_web_view_rotation_overlay_snapshot_uses_image_alias_layer(tmp_path, monkeypatch) -> None:
@@ -6260,16 +6392,9 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "loadTabDataForActiveView(date)" in load_daily_body
     assert "candidateDisplayFlags(item.quality_flags)" not in html
     assert 'new Set(["missing_stock_flow", "rank_not_present"])' not in html
-    assert "도달 " in html
-    assert "candidateTargetMetrics(report, item.target_price_progress)" in html
-    assert "candidateFlowMetrics(turnover, flowLine)" in html
-    assert "candidateFlowMetrics(rank, turnover, flowLine)" not in html
-    assert "candidateMarketInline(item.market_reference)" in html
     assert "candidateIntradayReferenceLabel(item.intraday_reference)" in html
-    assert "renderCandidateNewsBadge(item.news_observation_badge)" in html
     assert "function candidateNewsCompactLine(badge)" in html
     assert "function candidateNewsDigestLine(badge)" in html
-    assert "item.value_profile || {}" in html
     assert "근거 상태:" not in html
     assert "판단 상태:" not in html
     assert "topTwoIntradayReferenceForRow(row, reference, firstMarketStatus)" in html
@@ -6286,7 +6411,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     )[0]
     assert "esc(valueLine)" not in top_two_body
     assert "현재 근거:" in top_two_body
-    assert "저장 기준:" in top_two_body
+    assert "현재 미확인:" in top_two_body
     assert "당일 Toss 20:00 저장 예정" in top_two_body
     assert "오늘 누적 뉴스" in html
     assert "topTwoCurrentEvidenceLine(item)" in top_two_body
@@ -6298,14 +6423,13 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "valueProfile.value_reason" not in top_two_body
     assert "esc(newsLine)" not in top_two_body
     assert "esc(tossBaselineLine)" not in top_two_body
-    assert "candidate-news-badge" in html
     toss_quote_body = html.split("async function loadTossPriorityQuotes(date, options = {})", 1)[1].split(
         "async function loadPriorityCurrentQuotes", 1
     )[0]
     assert 'document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(tossPriorityRows);' in toss_quote_body
     assert "await loadPriorityCurrentQuotes(date);" in toss_quote_body
     priority_load_body = html.split("tossPriorityRows = priorityRows.filter((row) => row?.selected !== false).slice(0, 2);", 1)[1].split(
-        "const renderCandidateCard", 1
+        'document.getElementById("candidate-evidence-rows")', 1
     )[0]
     assert "loadTossPriorityQuotes(tossPriorityDate);" in priority_load_body
     assert "tossPriorityCohortKey" in priority_load_body
@@ -6316,26 +6440,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert 'missing.push("Toss 현재가 확인 전")' not in top_two_body
     assert 'function targetPriceRange(minimum, maximum)' in html
     assert "목표가 범위(일자 집계)" in top_two_body
-    assert '<span>뉴스 근거: ${esc(candidateNewsCompactLine(candidate.news_observation_badge))}</span>' not in html
     assert '<span>뉴스: ${esc(candidateNewsCompactLine(candidate.news_observation_badge))}</span>' in html
-    assert ".candidate-news-badge { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; border: 1px solid #e7d8bf;" in html
-    assert "candidate-intraday-line" in html
     assert "확인 전" in html
-    assert "candidate-info-grid" in html
-    assert "candidate-title-stock" in html
-    assert "candidate-stock-name" in html
-    assert "candidate-stock-code" in html
-    assert "candidate-title-separator" in html
-    assert ".candidate-title-separator { width: 1px; align-self: stretch;" in html
-    assert "candidate-quality-grid" in html
-    assert "quality-chip--why" in html
-    assert "quality-chip--support" in html
-    assert "quality-chip--missing" in html
-    assert ".candidate-quality-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, .95fr);" in html
-    assert ".candidate-quality-grid .quality-line:first-child { grid-column: span 2;" not in html
-    assert "renderQualityChips(whyNotable, \"quality-chip--why\", 2)" in html
-    assert "renderQualityChips(supportEvidence, \"quality-chip--support\", 3)" in html
-    assert "renderQualityChips(missingInformation, \"quality-chip--missing\", 1)" in html
     assert "candidateCompactLabel(whyItems, 3)" in html
     assert "candidateCompactLabel(candidateWhyDisplayItems(layers.primary), 3)" in html
     assert "candidateCompactLabel(gapItems, 1)" not in html
@@ -6344,35 +6450,13 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "return values;" in html
     assert "브로커 폭" not in html
     assert 'item !== "브로커 폭"' not in html
-    assert "quality-chip-overflow" in html
-    assert "QUALITY_CHIP_VISIBLE_LIMIT = 6" in html
-    assert ".quality-chip.quality-chip--why" in html
-    assert ".candidate-quality-grid .quality-line { display: block;" in html
-    assert ".candidate-quality-grid .quality-chip { margin: 0 6px 5px 0;" in html
-    assert "border-bottom: 1px solid rgba(222,216,204,.8)" in html
-    assert "candidate-target-grid" in html
-    assert "candidate-market-inline" in html
-    assert ".candidate-market-inline span:first-child" in html
-    assert "font-size: 18px; font-weight: 900;" in html
-    assert "candidate-flow-grid" in html
-    assert ".candidate-evidence-grid { display: grid; grid-template-columns: minmax(120px, .72fr) minmax(0, 1.14fr) minmax(0, 1.14fr);" in html
-    assert ".candidate-target-grid { grid-template-columns: repeat(3, minmax(0, 1fr));" in html
-    assert ".candidate-target-grid, .candidate-flow-grid { grid-template-columns: repeat(2, minmax(0, 1fr));" in html
-    assert ".candidate-evidence-grid { grid-template-columns: 1fr; }" in html
     assert '["의견", opinion(report.dominant_opinion)]' not in html
     assert "증권사 ${number(report.broker_count)}곳" not in html
     assert "<b>KRX</b>" not in html
     assert "renderTopTwoReviewCandidates(rows) + rows.map" not in html
     assert 'document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(priorityRows);' in html
     assert "오늘의 우선순위" in html
-    assert "${market} <span class=\"status-pill\"" in html
-    assert '["순매수", rank || "순매수 상위 없음"]' not in html
-    assert '["외국인/기관", flowLine || "-"]' in html
-    assert '["거래대금", turnover || "-"]' in html
-    assert 'replace(/\\s*·\\s*/g, "<br>")' in html
     assert 'item.observation_priority || "우선 확인"' in html
-    assert "compactTurnover(item.market_reference.turnover)" in html
-    assert "목표가/지표" in html
     assert "확인 후보" in html
     assert "추천/점수 아님" not in html
     assert "이전 날짜" not in html
@@ -6474,7 +6558,6 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "Number.isFinite" in html
     assert "const price = (value) => compactAmount(value, \"원\")" in html
     assert "const compactTurnover = (value, unit = \"원\")" in html
-    assert "compactTurnover(item.market_reference.turnover)" in html
     assert "${esc(item.evidence_label || compactTurnover(item.turnover))}</span>" in html
     assert html.count('labeled("거래대금", compactTurnover(item.turnover))') >= 3
     assert "market-etf-rows" not in html

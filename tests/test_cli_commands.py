@@ -6284,7 +6284,7 @@ def test_news_evidence_coverage_audit_json_explains_candidate_digest_gaps(
     assert payload["candidate_limit"] == 5
     assert payload["dates"] == ["2026-06-02", "2026-06-01"]
     assert payload["top2"]["candidate_count"] == 3
-    assert payload["top2"]["with_digest_count"] == 1
+    assert payload["top2"]["with_digest_count"] == 2
     assert payload["top5"]["candidate_count"] == 4
     assert payload["top5"]["with_digest_count"] == 2
     assert payload["runs"] == {
@@ -7176,7 +7176,7 @@ def test_news_evidence_run_scope_audit_json_traces_candidate_universe_gap(
     assert payload["summary"]["non_candidate_run_target_count"] == 1
     assert payload["summary"]["date_mismatch_candidate_count"] == 1
     assert payload["summary"]["candidate_not_in_scope_count"] == 2
-    assert date_row["candidate_stock_codes"] == ["000003", "000002", "000001"]
+    assert date_row["candidate_stock_codes"] == ["000001", "000003", "000002"]
     assert date_row["run_target_stock_codes"] == ["000001", "999999"]
     assert date_row["overlap_stock_codes"] == ["000001"]
     assert date_row["missing_candidate_stock_codes"] == ["000003", "000002"]
@@ -8758,7 +8758,7 @@ def test_market_briefing_preview_includes_turnover_reference(tmp_path, capsys) -
     assert "데이터 기준" in output
     assert "Naver reports: exact 26.05.14 (3건)" in output
     assert "Toss market: exact 26.05.14" in output
-    assert "Toss ETF: exact 26.05.14" in output
+    assert "Toss ETF: missing" in output
     assert "Investor flow: missing" in output
     assert "Toss OpenAPI: disabled (호출 없음)" in output
     assert "추천" not in output
@@ -9088,7 +9088,7 @@ def test_market_briefing_json_preview_includes_slot_and_public_news_observation(
     assert source_freshness_items["reports"]["status"] == "exact"
     assert source_freshness_items["reports"]["count"] == 1
     assert source_freshness_items["toss_market"]["status"] == "exact"
-    assert source_freshness_items["toss_etf"]["status"] == "exact"
+    assert source_freshness_items["toss_etf"]["status"] == "missing"
     assert source_freshness_items["investor_flow"]["status"] == "missing"
     assert source_freshness_items["toss_openapi"]["status"] == "disabled"
     assert source_freshness_items["toss_openapi"]["live_fetch"] is False

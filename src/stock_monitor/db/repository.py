@@ -3097,6 +3097,21 @@ class StockMonitorRepository:
             ).fetchall()
         return [date.fromisoformat(row["business_date"]) for row in rows]
 
+    def list_recent_toss_etf_snapshot_dates(self, *, on_or_before: date, limit: int = 5) -> list[date]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT business_date
+                FROM etf_daily_snapshots
+                WHERE business_date <= ? AND source = 'toss_openapi'
+                GROUP BY business_date
+                ORDER BY business_date DESC
+                LIMIT ?
+                """,
+                (on_or_before.isoformat(), limit),
+            ).fetchall()
+        return [date.fromisoformat(row["business_date"]) for row in rows]
+
     def list_recent_investor_flow_dates(
         self,
         *,

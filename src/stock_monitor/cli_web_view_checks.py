@@ -74,6 +74,11 @@ def _build_web_view_value_qa_payload(
             issues=issues,
             warnings=warnings,
         )
+        priority_stock_codes = {
+            str(row.get("stock_code") or "")
+            for row in list(candidate_evidence.get("rows") or [])[:2]
+            if isinstance(row, dict) and row.get("stock_code")
+        }
         backtest_observation = runtime.build_web_view_backtest_observation_snapshot(
             config,
             repository,
@@ -177,7 +182,11 @@ def _build_web_view_value_qa_payload(
                 issues=issues,
                 warnings=warnings,
             )
-            if detail.get("market_reference") is None and not toss_snapshot_not_yet_available:
+            if (
+                str(stock_code) in priority_stock_codes
+                and detail.get("market_reference") is None
+                and not toss_snapshot_not_yet_available
+            ):
                 issues.append(
                     {
                         "code": "missing_market_reference",
@@ -639,7 +648,11 @@ def _collect_web_view_browser_render_smoke_issues(
                     context = browser.new_context(viewport={"width": spec["width"], "height": spec["height"]})
                     page = context.new_page()
                     try:
-                        page.goto(base_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                        page.goto(
+                            f"{base_url}/?date={business_date.isoformat()}",
+                            wait_until="domcontentloaded",
+                            timeout=timeout_ms,
+                        )
                         page.wait_for_selector("#calendar-open", timeout=timeout_ms)
                         page.locator("#calendar-open").click(timeout=timeout_ms)
                         page.wait_for_selector("#archive-calendar", timeout=timeout_ms)
@@ -647,8 +660,15 @@ def _collect_web_view_browser_render_smoke_issues(
                             page.locator("#archive-calendar-dialog").evaluate("(node) => node.open")
                         )
                         page.locator("#calendar-close").click(timeout=timeout_ms)
-                        page.wait_for_timeout(500)
+                        page.wait_for_function(
+                            "expected => document.querySelector('#main-priority-date')?.textContent?.includes(expected)",
+                            arg=business_date.isoformat(),
+                            timeout=timeout_ms,
+                        )
                         body_text = page.locator("body").inner_text(timeout=timeout_ms)
+                        rendered_business_date = (
+                            page.locator("#main-priority-date").inner_text(timeout=timeout_ms).strip().strip("()")
+                        )
                         view_tab_locator = page.locator("[data-view-tab]")
                         tab_count = view_tab_locator.count()
                         tab_order = view_tab_locator.evaluate_all(
@@ -753,7 +773,7 @@ def _collect_web_view_browser_render_smoke_issues(
                         if candidate_action.count():
                             candidate_journey_flow["candidate_action_found"] = True
                             candidate_code = candidate_action.get_attribute("data-stock-code") or ""
-                            candidate_action.dispatch_event("click")
+                            candidate_action.click(timeout=timeout_ms)
                             if candidate_code:
                                 page.wait_for_selector("#stock-context-card:not([hidden]) #stock-context .stock-observation-journey", timeout=timeout_ms)
                             else:
@@ -777,6 +797,7 @@ def _collect_web_view_browser_render_smoke_issues(
                             "name": spec["name"],
                             "width": spec["width"],
                             "height": spec["height"],
+                            "rendered_business_date": rendered_business_date,
                             "tab_count": tab_count,
                             "tab_order": tab_order,
                             "current_tab_count": current_tab_count,
@@ -801,6 +822,17 @@ def _collect_web_view_browser_render_smoke_issues(
                             "horizontal_overflow_px": horizontal_overflow_px,
                         }
                         viewports.append(viewport_result)
+                        if rendered_business_date != business_date.isoformat():
+                            issues.append(
+                                {
+                                    "code": "rendered_business_date_mismatch",
+                                    "path": f"viewport[{spec['name']}].main",
+                                    "message": (
+                                        f"requested {business_date.isoformat()} but rendered "
+                                        f"{rendered_business_date or '-'}"
+                                    ),
+                                }
+                            )
                         for text in ("오늘 읽을 요약", "오늘의 우선순위"):
                             if text not in body_text:
                                 issues.append(
