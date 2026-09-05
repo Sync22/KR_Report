@@ -129,6 +129,79 @@ def test_candidate_manifest_row_preserves_web_view_selection_contract() -> None:
     assert row["evidence_direction"] == "리포트 재인용 흐름"
 
 
+def test_article_title_match_rechecks_effective_title_conservatively() -> None:
+    shadow = _load_shadow_module()
+
+    assert shadow._article_title_matches_candidate("카카오", "카카오, 신규 서비스 공개") is True
+    assert shadow._article_title_matches_candidate("현대건설", "대우건설, 정비사업 수주") is False
+    assert shadow._article_title_matches_candidate("LS", "LS, 전선 사업 확대") is True
+    assert shadow._article_title_matches_candidate("LS", "LS증권, 모의투자대회 개최") is False
+    assert shadow._article_title_matches_candidate("LS", "LS ELECTRIC 신규 수주") is False
+
+
+def test_shadow_aggregate_applies_title_identity_filter_to_existing_runs(tmp_path: Path) -> None:
+    output = tmp_path / "shadow.jsonl"
+    run = {
+        "schema": "insane-search-shadow-run/v3",
+        "status": "completed",
+        "business_date": "2026-08-25",
+        "candidate_pool": [{"stock_code": "035720", "selected": True}],
+        "baseline": {"articles": []},
+        "search_attempts": [{"stock_code": "035720", "ok": True, "trace_count": 1}],
+        "articles": [
+            {
+                "stock_code": "035720",
+                "stock_name": "카카오",
+                "title": "카카오, 신규 서비스 공개",
+                "canonical_url": "https://example.com/valid",
+                "classification": "unknown",
+                "point_in_time": True,
+                "status": "matched",
+                "access_attempts": [{"ok": True, "trace_count": 1}],
+                "replay_consistent": True,
+            },
+            {
+                "stock_code": "000720",
+                "stock_name": "현대건설",
+                "title": "대우건설, 정비사업 수주",
+                "canonical_url": "https://example.com/noise",
+                "classification": "unknown",
+                "point_in_time": True,
+                "status": "matched",
+                "access_attempts": [{"ok": True, "trace_count": 1}],
+                "replay_consistent": True,
+            },
+            {
+                "stock_code": "035720",
+                "stock_name": "카카오",
+                "title": "카카오 주가, 장중 3% 상승",
+                "canonical_url": "https://example.com/market-noise",
+                "classification": "unknown",
+                "point_in_time": True,
+                "status": "matched",
+                "access_attempts": [{"ok": True, "trace_count": 1}],
+                "replay_consistent": True,
+            },
+        ],
+    }
+    output.write_text(json.dumps(run) + "\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--aggregate", "--output", str(output)],
+        cwd=PROJECT_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["raw_point_in_time_additional_count"] == 3
+    assert payload["point_in_time_additional_count"] == 1
+    assert payload["point_in_time_unique_canonical_count"] == 1
+    assert payload["stock_identity_filter_rejected_count"] == 1
+    assert payload["noise_filter_rejected_count"] == 1
+
+
 def test_shadow_aggregate_excludes_pre_contract_runs_and_counts_search_trace(tmp_path: Path) -> None:
     output = tmp_path / "shadow.jsonl"
     legacy = {

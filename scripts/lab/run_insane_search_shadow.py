@@ -10,6 +10,7 @@ there, and writes only the lab JSONL manifest.
 import argparse
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -133,6 +134,31 @@ def _published_before_cutoff(value: object, cutoff: datetime) -> bool:
     return parsed.astimezone(KST) <= cutoff
 
 
+def _article_title_matches_candidate(stock_name: object, title: object) -> bool:
+    raw_name = str(stock_name or "").strip()
+    raw_title = str(title or "").strip()
+    normalized_name = re.sub(r"[^0-9a-z\uac00-\ud7a3]+", "", raw_name.casefold())
+    if not normalized_name or not raw_title:
+        return False
+    if normalized_name.isascii() and len(normalized_name) <= 3:
+        return re.search(
+            rf"(?<![0-9A-Za-z\uac00-\ud7a3]){re.escape(raw_name)}(?!\s*[0-9A-Za-z\uac00-\ud7a3])",
+            raw_title,
+            flags=re.IGNORECASE,
+        ) is not None
+    normalized_title = re.sub(r"[^0-9a-z\uac00-\ud7a3]+", "", raw_title.casefold())
+    return normalized_name in normalized_title
+
+
+def _article_noise_reason(stock_name: object, title: object) -> str | None:
+    from stock_monitor.cli import _news_search_lane_post_filter_v2_exclusion_reason
+
+    return _news_search_lane_post_filter_v2_exclusion_reason(
+        str(title or ""),
+        stock_name=str(stock_name or ""),
+    )
+
+
 def _classify_lineage(title: str) -> tuple[str, str]:
     if any(marker in title for marker in ("리포트", "목표가", "투자의견", "애널리스트", "증권사")):
         return "report_recap", "report_recap_language_detected"
@@ -201,7 +227,33 @@ def _aggregate(output: Path) -> dict[str, object]:
     articles = [
         article for run in runs for article in list(run.get("articles") or []) if isinstance(article, dict)
     ]
-    matched = [article for article in articles if article.get("status") == "matched" and article.get("point_in_time")]
+    filtered_exclusion_reasons = {
+        "stock_identity_unverified_after_fetch",
+        "market_noise",
+        "parser_artifact",
+        "false_positive",
+    }
+    raw_matched = [
+        article
+        for article in articles
+        if article.get("point_in_time")
+        and (
+            article.get("status") == "matched"
+            or article.get("exclusion_reason") in filtered_exclusion_reasons
+        )
+    ]
+    identity_matched = [
+        article
+        for article in raw_matched
+        if _article_title_matches_candidate(article.get("stock_name"), article.get("title"))
+    ]
+    matched = [
+        article
+        for article in identity_matched
+        if _article_noise_reason(article.get("stock_name"), article.get("title")) is None
+    ]
+    rejected_by_identity = len(raw_matched) - len(identity_matched)
+    rejected_as_noise = len(identity_matched) - len(matched)
     independent = [article for article in matched if article.get("classification") == "independent"]
     reviewed_independent = [
         article
@@ -227,6 +279,7 @@ def _aggregate(output: Path) -> dict[str, object]:
     access_attempts = [*search_attempts, *article_access_attempts]
     baseline_canonical = {str(article.get("canonical_url") or "") for article in baseline_articles if article.get("canonical_url")}
     discovered_canonical = {str(article.get("canonical_url") or "") for article in articles if article.get("canonical_url")}
+    matched_canonical = {str(article.get("canonical_url") or "") for article in matched if article.get("canonical_url")}
     candidate_observations = [
         (str(run.get("business_date") or ""), str(candidate.get("stock_code") or ""))
         for run in runs
@@ -244,7 +297,11 @@ def _aggregate(output: Path) -> dict[str, object]:
         "baseline_article_count_after_canonical_dedupe": len(baseline_canonical),
         "insane_discovered_count_before_canonical_dedupe": len(articles),
         "insane_discovered_count_after_canonical_dedupe": len(discovered_canonical),
+        "raw_point_in_time_additional_count": len(raw_matched),
         "point_in_time_additional_count": len(matched),
+        "point_in_time_unique_canonical_count": len(matched_canonical),
+        "stock_identity_filter_rejected_count": rejected_by_identity,
+        "noise_filter_rejected_count": rejected_as_noise,
         "independent_additional_count": len(independent),
         "independent_precision": (
             None
@@ -396,6 +453,10 @@ def main() -> int:
                     status, exclusion_reason = "excluded", "replay_inconsistent"
                 elif not point_in_time:
                     status, exclusion_reason = "excluded", "published_at_unverified_for_cutoff"
+                elif not _article_title_matches_candidate(stock_name, effective_title):
+                    status, exclusion_reason = "excluded", "stock_identity_unverified_after_fetch"
+                elif noise_reason := _article_noise_reason(stock_name, effective_title):
+                    status, exclusion_reason = "excluded", noise_reason
                 articles.append({
                     "stock_code": stock_code,
                     "stock_name": stock_name,
