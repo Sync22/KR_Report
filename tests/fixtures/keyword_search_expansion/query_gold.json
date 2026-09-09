@@ -1,0 +1,108 @@
+[
+  {
+    "document_id": "news_samsung_hbm_supply_01",
+    "keyword_values": ["HBM4", "엔비디아", "HBM4 공급 확대"],
+    "expected_queries": [
+      {"query": "삼성전자 HBM4", "strategy": "target_plus_keyword", "priority": 1},
+      {"query": "삼성전자 엔비디아 HBM4", "strategy": "target_plus_pair", "priority": 2}
+    ],
+    "forbidden_queries": ["HBM4", "삼성전자 공급", "삼성전자 AI"]
+  },
+  {
+    "document_id": "news_hanwha_poland_contract_01",
+    "keyword_values": ["K9 자주포", "폴란드 군비청", "K9 자주포 추가 수주"],
+    "expected_queries": [
+      {"query": "한화에어로스페이스 K9 자주포", "strategy": "target_plus_keyword", "priority": 1},
+      {"query": "한화에어로스페이스 폴란드 군비청 K9 자주포", "strategy": "target_plus_pair", "priority": 2}
+    ],
+    "forbidden_queries": ["K9 자주포", "한화에어로스페이스 수주"]
+  },
+  {
+    "document_id": "news_kakao_mobility_acquisition_01",
+    "keyword_values": ["로카모빌리티", "로카모빌리티 인수", "모빌리티 데이터"],
+    "expected_queries": [
+      {"query": "카카오 로카모빌리티", "strategy": "target_plus_keyword", "priority": 1},
+      {"query": "카카오 로카모빌리티 모빌리티 데이터", "strategy": "target_plus_pair", "priority": 2}
+    ],
+    "forbidden_queries": ["로카모빌리티", "카카오 인수"]
+  },
+  {
+    "document_id": "news_sk_hynix_export_rule_01",
+    "keyword_values": ["미국 반도체 수출 규제", "중국 공장 장비 반입", "첨단 반도체 장비"],
+    "expected_queries": [
+      {"query": "SK하이닉스 미국 반도체 수출 규제", "strategy": "target_plus_keyword", "priority": 1},
+      {"query": "SK하이닉스 미국 반도체 수출 규제 중국 공장 장비 반입", "strategy": "target_plus_pair", "priority": 2}
+    ],
+    "forbidden_queries": ["미국 반도체 수출 규제", "SK하이닉스 규제"]
+  },
+  {
+    "document_id": "news_posco_summary_signal_01",
+    "keyword_values": ["염수 리튬", "아르헨티나 염수 리튬 상업 생산", "리튬 가격"],
+    "expected_queries": [
+      {"query": "POSCO홀딩스 염수 리튬", "strategy": "target_plus_keyword", "priority": 1},
+      {"query": "POSCO홀딩스 염수 리튬 아르헨티나 염수 리튬 상업 생산", "strategy": "target_plus_pair", "priority": 2}
+    ],
+    "forbidden_queries": ["염수 리튬", "POSCO홀딩스 전망"]
+  },
+  {
+    "document_id": "news_naver_empty_summary_01",
+    "keyword_values": ["하이퍼클로바X", "기업용 서비스 출시"],
+    "expected_queries": [
+      {"query": "NAVER 하이퍼클로바X", "strategy": "target_plus_keyword", "priority": 1},
+      {"query": "NAVER 하이퍼클로바X 기업용 서비스 출시", "strategy": "target_plus_pair", "priority": 2}
+    ],
+    "forbidden_queries": ["하이퍼클로바X", "NAVER 서비스"]
+  },
+  {
+    "document_id": "report_samsung_hbm_outlook_01",
+    "keyword_values": ["HBM4", "메모리 업황 개선", "AI 메모리"],
+    "expected_queries": [
+      {"query": "삼성전자 HBM4", "strategy": "target_plus_keyword", "priority": 1},
+      {"query": "삼성전자 HBM4 메모리 업황 개선", "strategy": "target_plus_pair", "priority": 2}
+    ],
+    "forbidden_queries": ["HBM4", "삼성전자 점유율"]
+  },
+  {
+    "document_id": "report_lg_energy_numeric_01",
+    "keyword_values": ["북미 ESS", "ESS 수요"],
+    "expected_queries": [
+      {"query": "LG에너지솔루션 북미 ESS", "strategy": "target_plus_keyword", "priority": 1},
+      {"query": "LG에너지솔루션 북미 ESS ESS 수요", "strategy": "target_plus_pair", "priority": 2}
+    ],
+    "forbidden_queries": ["북미 ESS", "LG에너지솔루션 50만원", "LG에너지솔루션 20%"]
+  },
+  {
+    "document_id": "report_samsung_hbm_spacing_01",
+    "keyword_values": ["HBM4", "고객 인증"],
+    "expected_queries": [
+      {"query": "삼성전자 HBM4", "strategy": "target_plus_keyword", "priority": 1},
+      {"query": "삼성전자 HBM4 고객 인증", "strategy": "target_plus_pair", "priority": 2}
+    ],
+    "forbidden_queries": ["HBM 4", "삼성전자 HBM 4"]
+  },
+  {
+    "document_id": "report_naver_ai_acronym_01",
+    "keyword_values": ["AI 반도체", "하이퍼클로바X", "기업 검색"],
+    "expected_queries": [
+      {"query": "NAVER AI 반도체", "strategy": "target_plus_keyword", "priority": 1},
+      {"query": "NAVER AI 반도체 하이퍼클로바X", "strategy": "target_plus_pair", "priority": 2}
+    ],
+    "forbidden_queries": ["AI", "NAVER AI"]
+  },
+  {
+    "document_id": "report_hd_shipbuilding_cycle_01",
+    "keyword_values": ["LNG선", "메탄올 추진선", "카타르 LNG 프로젝트", "친환경 선박 사이클"],
+    "expected_queries": [
+      {"query": "HD한국조선해양 LNG선", "strategy": "target_plus_keyword", "priority": 1},
+      {"query": "HD한국조선해양 LNG선 메탄올 추진선", "strategy": "target_plus_pair", "priority": 2},
+      {"query": "HD한국조선해양 카타르 LNG 프로젝트", "strategy": "target_plus_keyword", "priority": 3}
+    ],
+    "forbidden_queries": ["LNG선", "HD한국조선해양 발주"]
+  },
+  {
+    "document_id": "report_generic_market_comment_01",
+    "keyword_values": [],
+    "expected_queries": [],
+    "forbidden_queries": ["현대차 시장", "현대차 주가", "현대차 2026년 8월 12일"]
+  }
+]

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "capture_kind": "offline_provider_capture",
+  "required_fields": ["capture_id", "captured_at", "provider", "document_id", "query", "results"],
+  "result_required_fields": ["result_id", "rank", "title", "snippet", "source", "url", "published_date"],
+  "forbidden_fields": ["relevance", "noise_reason", "duplicate_group", "reference_evidence_id", "precision_proxy", "reference_recall_proxy", "score", "recommendation"],
+  "evidence_statuses": ["no_capture", "capture_unjudged", "capture_partially_judged", "capture_evaluable"],
+  "empty_capture_status": "capture_evaluable",
+  "readiness_meaning": "Label completeness only; Stage 3 validates judgment semantics and reference universe before calculating metrics.",
+  "provenance_limit": "Metadata validation cannot authenticate provider origin. No actual provider captures are included."
+}

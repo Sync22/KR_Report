@@ -1,0 +1,146 @@
+[
+  {
+    "document_id": "news_samsung_hbm_supply_01",
+    "accepted": [
+      {"value": "HBM4", "kind": "product", "priority": 1},
+      {"value": "엔비디아", "kind": "counterparty", "priority": 2},
+      {"value": "HBM4 공급 확대", "kind": "event", "priority": 3}
+    ],
+    "rejected": [
+      {"value": "삼성전자", "reason": "target_identity"},
+      {"value": "공급", "reason": "too_generic"},
+      {"value": "AI", "reason": "ambiguous_short_token"}
+    ]
+  },
+  {
+    "document_id": "news_hanwha_poland_contract_01",
+    "accepted": [
+      {"value": "K9 자주포", "kind": "product", "priority": 1},
+      {"value": "폴란드 군비청", "kind": "counterparty", "priority": 2},
+      {"value": "K9 자주포 추가 수주", "kind": "event", "priority": 3}
+    ],
+    "rejected": [
+      {"value": "한화에어로스페이스", "reason": "target_identity"},
+      {"value": "수주", "reason": "too_generic"},
+      {"value": "계약", "reason": "too_generic"}
+    ]
+  },
+  {
+    "document_id": "news_kakao_mobility_acquisition_01",
+    "accepted": [
+      {"value": "로카모빌리티", "kind": "counterparty", "priority": 1},
+      {"value": "로카모빌리티 인수", "kind": "event", "priority": 2},
+      {"value": "모빌리티 데이터", "kind": "industry", "priority": 3}
+    ],
+    "rejected": [
+      {"value": "카카오", "reason": "target_identity"},
+      {"value": "인수", "reason": "too_generic"}
+    ]
+  },
+  {
+    "document_id": "news_sk_hynix_export_rule_01",
+    "accepted": [
+      {"value": "미국 반도체 수출 규제", "kind": "policy", "priority": 1},
+      {"value": "중국 공장 장비 반입", "kind": "event", "priority": 2},
+      {"value": "첨단 반도체 장비", "kind": "technology", "priority": 3}
+    ],
+    "rejected": [
+      {"value": "SK하이닉스", "reason": "target_identity"},
+      {"value": "규제", "reason": "too_generic"}
+    ]
+  },
+  {
+    "document_id": "news_posco_summary_signal_01",
+    "accepted": [
+      {"value": "염수 리튬", "kind": "product", "priority": 1},
+      {"value": "아르헨티나 염수 리튬 상업 생산", "kind": "event", "priority": 2},
+      {"value": "리튬 가격", "kind": "market_theme", "priority": 3}
+    ],
+    "rejected": [
+      {"value": "POSCO홀딩스", "reason": "target_identity"},
+      {"value": "전망", "reason": "too_generic"}
+    ]
+  },
+  {
+    "document_id": "news_naver_empty_summary_01",
+    "accepted": [
+      {"value": "하이퍼클로바X", "kind": "product", "priority": 1},
+      {"value": "기업용 서비스 출시", "kind": "event", "priority": 2}
+    ],
+    "rejected": [
+      {"value": "NAVER", "reason": "target_identity"},
+      {"value": "서비스", "reason": "too_generic"}
+    ]
+  },
+  {
+    "document_id": "report_samsung_hbm_outlook_01",
+    "accepted": [
+      {"value": "HBM4", "kind": "product", "priority": 1},
+      {"value": "메모리 업황 개선", "kind": "market_theme", "priority": 2},
+      {"value": "AI 메모리", "kind": "technology", "priority": 3}
+    ],
+    "rejected": [
+      {"value": "삼성전자", "reason": "target_identity"},
+      {"value": "점유율", "reason": "too_generic"}
+    ]
+  },
+  {
+    "document_id": "report_lg_energy_numeric_01",
+    "accepted": [
+      {"value": "북미 ESS", "kind": "industry", "priority": 1},
+      {"value": "ESS 수요", "kind": "market_theme", "priority": 2}
+    ],
+    "rejected": [
+      {"value": "LG에너지솔루션", "reason": "target_identity"},
+      {"value": "50만원", "reason": "numeric_noise"},
+      {"value": "20%", "reason": "numeric_noise"}
+    ]
+  },
+  {
+    "document_id": "report_samsung_hbm_spacing_01",
+    "accepted": [
+      {"value": "HBM4", "kind": "product", "priority": 1},
+      {"value": "고객 인증", "kind": "event", "priority": 2}
+    ],
+    "rejected": [
+      {"value": "삼성전자", "reason": "target_identity"},
+      {"value": "HBM 4", "reason": "duplicate"}
+    ]
+  },
+  {
+    "document_id": "report_naver_ai_acronym_01",
+    "accepted": [
+      {"value": "AI 반도체", "kind": "technology", "priority": 1},
+      {"value": "하이퍼클로바X", "kind": "product", "priority": 2},
+      {"value": "기업 검색", "kind": "product", "priority": 3}
+    ],
+    "rejected": [
+      {"value": "NAVER", "reason": "target_identity"},
+      {"value": "AI", "reason": "ambiguous_short_token"}
+    ]
+  },
+  {
+    "document_id": "report_hd_shipbuilding_cycle_01",
+    "accepted": [
+      {"value": "LNG선", "kind": "product", "priority": 1},
+      {"value": "메탄올 추진선", "kind": "technology", "priority": 2},
+      {"value": "카타르 LNG 프로젝트", "kind": "event", "priority": 3},
+      {"value": "친환경 선박 사이클", "kind": "market_theme", "priority": 4}
+    ],
+    "rejected": [
+      {"value": "HD한국조선해양", "reason": "target_identity"},
+      {"value": "발주", "reason": "too_generic"}
+    ]
+  },
+  {
+    "document_id": "report_generic_market_comment_01",
+    "accepted": [],
+    "rejected": [
+      {"value": "현대차", "reason": "target_identity"},
+      {"value": "주가", "reason": "too_generic"},
+      {"value": "시장", "reason": "too_generic"},
+      {"value": "실적", "reason": "too_generic"},
+      {"value": "2026년 8월 12일", "reason": "date_or_time"}
+    ]
+  }
+]

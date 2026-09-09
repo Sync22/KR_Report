@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "document_types": ["news", "report"],
+  "keyword_kinds": [
+    "product",
+    "technology",
+    "counterparty",
+    "event",
+    "industry",
+    "policy",
+    "market_theme"
+  ],
+  "rejection_reasons": [
+    "target_identity",
+    "too_generic",
+    "boilerplate",
+    "numeric_noise",
+    "date_or_time",
+    "duplicate",
+    "unsupported",
+    "ambiguous_short_token",
+    "search_risk"
+  ],
+  "query_strategies": ["target_plus_keyword", "target_plus_pair"],
+  "limits": {
+    "max_keywords_per_document": 5,
+    "max_queries_per_document": 3
+  },
+  "normalization": {
+    "casefold": true,
+    "remove_whitespace": true,
+    "accepted_phrase_must_exist_in_source": true,
+    "duplicate_rejection_must_match_accepted": true
+  },
+  "required_case_categories": [
+    "technology_and_counterparty",
+    "contract_award",
+    "merger_acquisition",
+    "regulation_policy",
+    "industry_cycle",
+    "analyst_report",
+    "summary_only_signal",
+    "empty_summary",
+    "normalization_duplicate",
+    "ambiguous_acronym",
+    "numeric_noise",
+    "zero_keyword"
+  ]
+}

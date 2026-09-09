@@ -1,0 +1,48 @@
+[
+  {
+    "case_id": "clean_samsung",
+    "document_id": "news_samsung_hbm_supply_01",
+    "query": "삼성전자 HBM4",
+    "results": [
+      {"result_id": "sam1", "rank": 1, "title": "삼성전자 HBM4 공급 확대", "snippet": "엔비디아 인증 대응", "source": "fixture-a", "url": "https://fixture.test/sam1", "published_date": "2026-08-01"},
+      {"result_id": "sam2", "rank": 2, "title": "삼성전자 HBM4 고객 인증", "snippet": "차세대 메모리", "source": "fixture-b", "url": "https://fixture.test/sam2", "published_date": "2026-08-02"}
+    ]
+  },
+  {
+    "case_id": "duplicate_hanwha_1",
+    "document_id": "news_hanwha_poland_contract_01",
+    "query": "한화에어로스페이스 K9 자주포",
+    "results": [
+      {"result_id": "han1", "rank": 1, "title": "한화 K9 폴란드 추가 수주", "snippet": "군비청 계약", "source": "fixture-a", "url": "https://fixture.test/han1", "published_date": "2026-08-03"},
+      {"result_id": "han2", "rank": 2, "title": "K9 수출 계약 확대", "snippet": "폴란드 군비청", "source": "fixture-c", "url": "https://fixture.test/han2", "published_date": "2026-08-03"}
+    ]
+  },
+  {
+    "case_id": "duplicate_hanwha_2",
+    "document_id": "news_hanwha_poland_contract_01",
+    "query": "한화에어로스페이스 폴란드 군비청 K9 자주포",
+    "results": [
+      {"result_id": "han3", "rank": 1, "title": "한화 K9 폴란드 추가 수주", "snippet": "동일 기사 재노출", "source": "fixture-d", "url": "https://fixture.test/han3", "published_date": "2026-08-03"},
+      {"result_id": "han4", "rank": 2, "title": "유럽 방산시장 동향", "snippet": "일반 시장 기사", "source": "fixture-e", "url": "https://fixture.test/han4", "published_date": "2026-08-04"}
+    ]
+  },
+  {
+    "case_id": "noise_naver",
+    "document_id": "report_naver_ai_acronym_01",
+    "query": "NAVER AI 반도체",
+    "results": [
+      {"result_id": "nav1", "rank": 1, "title": "NAVER AI 반도체 투자", "snippet": "기업 검색 강화", "source": "fixture-a", "url": "https://fixture.test/nav1", "published_date": "2026-08-05"},
+      {"result_id": "nav2", "rank": 2, "title": "글로벌 AI 시장", "snippet": "종목 직접 관련 없음", "source": "fixture-f", "url": "https://fixture.test/nav2", "published_date": "2026-08-05"},
+      {"result_id": "nav3", "rank": 3, "title": "과거 검색 서비스 전망", "snippet": "연관성 불확실", "source": "fixture-g", "url": "https://fixture.test/nav3", "published_date": null}
+    ]
+  },
+  {
+    "case_id": "partial_hd",
+    "document_id": "report_hd_shipbuilding_cycle_01",
+    "query": "HD한국조선해양 LNG선",
+    "results": [
+      {"result_id": "hd1", "rank": 1, "title": "HD한국조선해양 LNG선 수주", "snippet": "카타르 프로젝트", "source": "fixture-a", "url": "https://fixture.test/hd1", "published_date": "2026-08-06"},
+      {"result_id": "hd2", "rank": 2, "title": "메탄올 추진선 발주", "snippet": "친환경 선박", "source": "fixture-b", "url": "https://fixture.test/hd2", "published_date": "2026-08-07"}
+    ]
+  }
+]

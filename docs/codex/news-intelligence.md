@@ -2,6 +2,60 @@
 
 Operator-only news intelligence and its future public-safe stored projection.
 
+## Top2 확인 주제 연결 (2026-09-08)
+
+- 기존 서버 선정 Top2에만 `research_focus`를 붙여 메인 카드 아래 `더 확인할 주제`와 `관련 뉴스 찾기` 링크를 표시한다. 종목 상세 버튼과 검색 링크는 별도 클릭 대상이다.
+- 같은 날짜·종목의 저장 리포트 제목과 기존 뉴스 badge의 대표 원문 제목을 사용한다. Stage 1 핵심어가 있으면 Stage 2 검색어를 재사용하고, 없으면 `종목명 + 원문 제목`으로 명시적 fallback을 만든다. fallback은 Stage 2의 검증된 검색어라고 주장하지 않는다.
+- 주제/검색어는 최대 3개, 중복 제거, 출처 종류와 원문 제목을 보존한다. 사용자 클릭 시에만 네이버 뉴스 검색을 연다. 웹뷰 GET에서 새 provider 수집이나 DB 쓰기는 발생하지 않는다.
+- 기존 운영 briefing collector 결과에도 동일한 `research_focus`를 포함한다. 기존 종목명/코드 매칭, 5-lane 수집, 저장·scheduler·Telegram 발송 조건은 유지한다. 검색어를 종목 alias로 넣거나 자동 검색 실행으로 바꾸지 않는다.
+- 확인 주제는 미확인 질문이다. 독립 뉴스 증거·positive/caution 판단·Top2 순위에 가산하지 않는다. Stage 3/4 평가기와 합성 fixture는 운영 판단에 연결하지 않는다.
+- 최신 저장 리포트에서 기존 핵심어 규칙이 빈 결과를 낼 수 있어 제목 fallback이 필요하다. 실제 검색 품질 향상은 별도 실측 대상이다.
+- 검증: `test_candidate_research`, 전체 `test_web_view`/`test_cli_commands`, `test_intraday_empty_notification`, keyword extractor/planner 회귀에서 600 passed (186.44s). 실제 2026-09-07 저장 Top2로 만든 격리 화면을 1440/390px에서 확인했고 확인 주제 2개 카드·검색 링크 3개·가로 넘침 없음·상세 버튼 안의 링크 0개를 확인했다. 외부 요청은 화면 검증 중 차단했다.
+- 운영 반영: 기존 웹뷰 프로세스 소유권 확인 후 8780 웹뷰만 재시작, `/health` 200 확인. 인증 없는 `/`와 후보 API는 401을 유지하며, 인증 후 운영 화면의 브라우저 검증은 수행하지 않았다. 이미지 증거는 `data/reviews/top2-research-1440.png`, `data/reviews/top2-research-390.png`다.
+
+## Keyword/query Stage 0–4 평가표 (2026-09-08)
+
+평가 대상은 오프라인 키워드 추출·검색어 계획·결과 평가·캡처 입력 계층이다. 아래 기준을 먼저 고정하고 실행 결과를 기록한다. 통과는 해당 계약의 충족을 의미하며 실제 검색 품질 개선이나 투자 성과를 의미하지 않는다. 미측정 항목을 0점 또는 통과로 집계하지 않으며 종합 점수는 만들지 않는다.
+
+| ID | 평가 항목 | 통과/판정 기준 | 결과 |
+| --- | --- | --- | --- |
+| E0 | 고정 corpus 계약 | 문서·gold·분류·상한 계약 테스트 전체 통과 | 통과 |
+| E1 | 키워드 추출 | 12개 문서의 accepted/rejected 값·종류·순서가 gold와 정확히 일치 | 통과: 12/12 정확 일치 |
+| E2 | 검색어 계획 | 12개 문서의 query·strategy·priority 정확 일치, 금지 검색어 0건 | 통과: 12/12 정확 일치, 금지 0건 |
+| E3 | 합성 결과 평가 | 5개 대표 문서의 분모·중복·불확실·빈 결과·참조 커버리지 테스트 통과 | 통과: 아래 산술 결과 확인 |
+| E4 | 캡처 입력 준비 | 출처 메타데이터·시간대·ID·순위·검색어 연결·판정 완결성·원문 보존 테스트 통과 | 통과: 실제 데이터가 아닌 inline 합성 입력으로 검증 |
+| E5 | 인접 뉴스 기능 회귀 | news intelligence/quality guards/collectors/linked evidence 테스트 통과 | 통과: 지정 회귀 범위에서 실패 없음 |
+| E6 | 실제 검색 결과 품질 | 실제 provider 캡처와 별도 판정 자료가 있어야 계산 가능 | 미측정: 실제 캡처 없음 |
+| E7 | 검색어 개선 효과 | 동일 조건의 기존/신규 검색어 결과 및 독립 평가 자료 필요 | 미측정: 비교 자료 없음 |
+
+E1/E2는 구현 시 사용한 고정 사례에 대한 적합성 평가다. 미관측 문서 일반화 성능은 평가하지 않는다. E3의 합성 수치는 산술 검증용이며 provider 성능 추정치가 아니다. E4의 `capture_evaluable`은 판정 ID의 완결성만 뜻하며 판정 의미와 참조 집합 검증은 Stage 3 평가기가 담당한다. 메타데이터 검증은 실제 provider 출처 인증이 아니다.
+
+실행 결과: 아래 9개 테스트 파일을 실행해 **121 passed in 2.09s**, 종료 코드 **0**을 확인했다. 별도 메모리 내 실행으로 Stage 0 문서 → Stage 1 추출 → Stage 2 계획을 gold와 대조하고, Stage 3 평가기의 문서별 결과를 직접 산출했다. 코드·gold·운영 DB·스케줄러·Telegram은 변경하지 않았다.
+
+### 합성 fixture 산술 평가 결과
+
+입력: `tests/fixtures/query_result_evaluation/result_facts.json` 및 분리된 `judgments.json`. 5개 문서 중 4개에 검색 결과가 있으며, 총 5개 검색어 배치·11개 raw 결과다. 모든 계획 검색어를 캡처한 데이터가 아니므로 전체 검색 품질로 확대 해석하지 않는다.
+
+| 합성 사례 | raw 결과 | 중복 제거 결과 | 중복률 | 노이즈율 | precision proxy | 참조 집합 커버리지 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 삼성전자 HBM (`news_samsung_hbm_supply_01`) | 2 | 2 | 0/2 | 0/2 | 2/2 | 2/2 |
+| 한화 폴란드 계약 (`news_hanwha_poland_contract_01`) | 4 | 3 | 1/4 | 1/4 | 2/3 | 2/2 |
+| NAVER AI (`report_naver_ai_acronym_01`) | 3 | 3 | 0/3 | 1/3 | 1/2 | 1/2 |
+| HD 조선 (`report_hd_shipbuilding_cycle_01`) | 2 | 2 | 0/2 | 0/2 | 2/2 | 2/3 |
+| 일반 시장 코멘트 (`report_generic_market_comment_01`) | 0 | 0 | 미정의 | 미정의 | 미정의 | 미정의 |
+
+NAVER 사례의 불확실 판정 1건은 precision 분모에서 제외한다. 빈 결과의 비율은 `None`이며 0%가 아니다. 참조 커버리지는 고정 참조 집합 대비 값이며 인터넷 전체 recall이 아니다. 표의 분수는 반올림 오해를 피하기 위한 표시이며 실제 함수는 float 또는 None을 반환한다.
+
+캡처를 주지 않은 Stage 4 통제 실행은 `status=no_capture`, capture/result/judged/unjudged/evaluable-document count 모두 0을 반환했다. 이는 데이터 미제공 상태를 구분하는 테스트이며 실제 provider를 조회하거나 전수 조사한 결과가 아니다. 현재 이 평가에는 실제 캡처를 투입하지 않았으므로 E6/E7은 미측정으로 남긴다.
+
+**판정:** 고정 사례 적합성·합성 산술·오프라인 입력 준비는 통과했다. 실제 검색 품질과 검색어 개선 효과의 평가 완료를 뜻하지 않는다. 다음 실측에는 출처·시각·검색어가 보존된 실제 캡처와 별도 판정 자료가 필요하며, 개선 효과 비교에는 같은 조건에서 수집한 기존/신규 검색어 결과가 추가로 필요하다.
+
+재실행 명령 (프로젝트 루트, 매 실행 고유한 `--basetemp` 사용):
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp .tmp_stage04_evaluation_20260908 tests/test_keyword_search_expansion_contract.py tests/test_core_keyword_extractor.py tests/test_core_keyword_query_planner.py tests/test_query_result_evaluation.py tests/test_query_result_capture.py tests/test_news_intelligence.py tests/test_news_quality_guards.py tests/test_news_collectors.py tests/test_news_linked_evidence.py
+```
+
 ## Current Lineage Contract (2026-08-23)
 
 - Stored article evidence carries `canonical_url`, `lineage_type`, and `lineage_reason`. Existing rows migrated from schema v9 default to `unknown` / `legacy_row_unverified` without losing the article row.

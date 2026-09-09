@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "relevance_values": ["relevant", "irrelevant", "uncertain"],
+  "noise_reasons": ["off_target", "too_generic", "stale", "weak_context"],
+  "rate_denominators": {
+    "duplicate_rate": "raw_result_count",
+    "noise_rate": "raw_result_count",
+    "relevance_rate": "relevant_plus_irrelevant_rows",
+    "precision_proxy": "deduplicated_relevant_plus_irrelevant_results",
+    "reference_recall_proxy": "frozen_reference_evidence_count"
+  },
+  "undefined_rate": null,
+  "forbidden_raw_fact_fields": ["relevance", "noise_reason", "duplicate_group", "reference_evidence_id", "score", "metrics"]
+}

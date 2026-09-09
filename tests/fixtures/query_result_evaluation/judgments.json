@@ -1,0 +1,22 @@
+{
+  "result_judgments": [
+    {"result_id": "sam1", "relevance": "relevant", "noise_reason": null, "duplicate_group": null, "reference_evidence_id": "sam_supply"},
+    {"result_id": "sam2", "relevance": "relevant", "noise_reason": null, "duplicate_group": null, "reference_evidence_id": "sam_cert"},
+    {"result_id": "han1", "relevance": "relevant", "noise_reason": null, "duplicate_group": "han_story_1", "reference_evidence_id": "han_contract"},
+    {"result_id": "han2", "relevance": "relevant", "noise_reason": null, "duplicate_group": null, "reference_evidence_id": "han_export"},
+    {"result_id": "han3", "relevance": "relevant", "noise_reason": null, "duplicate_group": "han_story_1", "reference_evidence_id": "han_contract"},
+    {"result_id": "han4", "relevance": "irrelevant", "noise_reason": "too_generic", "duplicate_group": null, "reference_evidence_id": null},
+    {"result_id": "nav1", "relevance": "relevant", "noise_reason": null, "duplicate_group": null, "reference_evidence_id": "nav_ai"},
+    {"result_id": "nav2", "relevance": "irrelevant", "noise_reason": "off_target", "duplicate_group": null, "reference_evidence_id": null},
+    {"result_id": "nav3", "relevance": "uncertain", "noise_reason": null, "duplicate_group": null, "reference_evidence_id": null},
+    {"result_id": "hd1", "relevance": "relevant", "noise_reason": null, "duplicate_group": null, "reference_evidence_id": "hd_lng"},
+    {"result_id": "hd2", "relevance": "relevant", "noise_reason": null, "duplicate_group": null, "reference_evidence_id": "hd_methanol"}
+  ],
+  "reference_sets": [
+    {"document_id": "news_samsung_hbm_supply_01", "reference_evidence_ids": ["sam_supply", "sam_cert"]},
+    {"document_id": "news_hanwha_poland_contract_01", "reference_evidence_ids": ["han_contract", "han_export"]},
+    {"document_id": "report_naver_ai_acronym_01", "reference_evidence_ids": ["nav_ai", "nav_search"]},
+    {"document_id": "report_hd_shipbuilding_cycle_01", "reference_evidence_ids": ["hd_lng", "hd_methanol", "hd_cycle"]},
+    {"document_id": "report_generic_market_comment_01", "reference_evidence_ids": []}
+  ]
+}

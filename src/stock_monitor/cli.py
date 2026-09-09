@@ -4221,6 +4221,13 @@ def _run_news_intelligence_briefing_collect(
         item_payload = {
             "stock_name": summary.stock_name,
             "stock_code": summary.stock_code,
+            "research_focus": _candidate_research_focus(
+                summary.stock_name,
+                summary.stock_code or "",
+                repository.list_reports_for_stock_on_business_date(target_date, summary.stock_code)
+                if summary.stock_code else [],
+                news_titles=tuple(match.article.title for match in preview.articles[:3]),
+            ),
             "mention_count": summary.mention_count,
             "parsed_count": preview.parsed_count,
             "deduped_count": preview.deduped_count,
@@ -28858,6 +28865,11 @@ def _render_web_view_html() -> str:
     .main-priority-list:empty { display: none; }
     .main-priority-note { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
     .top-two-candidates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 4px; }
+    .top-two-entry { min-width: 0; }
+    .top-two-entry .top-two-card { width: 100%; }
+    .candidate-research-focus { padding: 10px 12px; font-size: 12px; overflow-wrap: anywhere; }
+    .candidate-research-focus p { margin: 6px 0; }
+    .candidate-research-focus a { color: var(--accent); text-decoration: underline; }
     .top-two-card { border: 1px solid var(--line); border-radius: 16px; padding: 12px; background: #fff; color: inherit; cursor: pointer; text-align: left; font: inherit; }
     .top-two-card b { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 5px; color: var(--accent); font-size: 13px; }
     .top-two-card .status-pill { font-size: 11px; padding: 2px 7px; }
@@ -31084,16 +31096,26 @@ def _render_web_view_html() -> str:
         const missingEvidenceBlock = missingEvidenceLine === "추가 공백 없음"
           ? ""
           : `<span class="top-two-evidence-line"><strong>현재 미확인:</strong><span class="top-two-evidence-text">${esc(missingEvidenceLine)}</span></span>`;
-        return `<button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
+        return `<div class="top-two-entry"><button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote-context="main" data-toss-quote="${esc(item.stock_code || "")}">${esc(tossQuote || "Toss 현재가 확인 중")}</span></b>
           <span class="muted">관찰 사유: ${esc(why)}</span>
           <span class="top-two-evidence-line"><strong>현재 근거:</strong><span class="top-two-evidence-text">${esc(currentEvidenceLine)}</span></span>
           <span class="top-two-evidence-line"><strong>Toss 조회 수급 참고(미저장):</strong><span class="top-two-evidence-text priority-toss-investor-trading muted" data-toss-investor-trading="${esc(item.stock_code || "")}">${esc(tossInvestorTrading || "확인 중")}</span></span>
           ${missingEvidenceBlock}
           <span class="target-revision-line">${esc(targetRevisionLine)}</span>
-        </button>`;
+        </button>${renderCandidateResearchFocus(item.research_focus)}</div>`;
       }).join("")}</section>`;
       return `${cards}${renderTopTwoCloseReassessment(currentCandidateEvidenceData?.close_reassessment)}`;
+    }
+
+    function renderCandidateResearchFocus(focus) {
+      const items = (Array.isArray(focus?.items) ? focus.items : []).slice(0, 3);
+      if (!items.length) return "";
+      return `<div class="candidate-research-focus"><strong>더 확인할 주제</strong>${items.map((item) => {
+        const query = String(item?.query || "");
+        const href = "https://search.naver.com/search.naver?where=news&query=" + encodeURIComponent(query);
+        return `<p><span>${esc(item.source_kind || "리포트")}: ${esc(item.topic || item.source_title || "")}</span> <a href="${esc(href)}" target="_blank" rel="noopener noreferrer">관련 뉴스 찾기</a></p>`;
+      }).join("")}<small class="muted">${esc(focus.notice || "검색 결과는 별도로 확인하세요.")}</small></div>`;
     }
 
     function renderTopTwoCloseReassessment(reassessment) {
@@ -36974,6 +36996,19 @@ def _web_view_market_relative_event_reaction(
     return result
 
 
+def _candidate_research_focus(
+    stock_name: str, stock_code: str, reports: list[Report], *, news_titles: tuple[str, ...] = (),
+) -> dict:
+    from stock_monitor.news.candidate_research import build_candidate_research_focus
+    from stock_monitor.news.core_keywords import CoreKeywordDocument
+
+    documents = tuple(
+        CoreKeywordDocument("report", stock_name, stock_code, report.title, "")
+        for report in reports if report.stock_code == stock_code
+    ) + tuple(CoreKeywordDocument("news", stock_name, stock_code, title, "") for title in news_titles)
+    return build_candidate_research_focus(stock_name, documents)
+
+
 def _candidate_baseline_market_by_code(
     market_history_by_code: dict[str, list[StockMarketDailySnapshot]],
     *,
@@ -37262,6 +37297,11 @@ def build_web_view_candidate_evidence_snapshot(
         item["selected"] = id(row) in selected_row_ids
         if item["selected"]:
             item["intraday_reference"] = _web_view_candidate_intraday_reference_placeholder()
+            item["research_focus"] = _candidate_research_focus(
+                str(item["stock_name"]), str(item["stock_code"]),
+                reports_by_code.get(str(item["stock_code"]), []),
+                news_titles=(str((item.get("news_observation_badge") or {}).get("top_title") or ""),),
+            )
         if include_internal:
             item["internal_candidate_signals"] = row.get("_internal_candidate_signals") or []
             item["internal_missing_information"] = row.get("_internal_missing_information") or []
