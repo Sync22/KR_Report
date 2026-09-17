@@ -65,7 +65,7 @@ Use official Toss Securities documents first:
 | <https://openapi.tossinvest.com/openapi-docs/latest/api-reference/README.md> | Markdown API reference index. |
 | <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json> | Canonical OpenAPI document for exact endpoints and schemas. |
 
-Observed official-doc facts as of `2026-08-12` (`1.2.14`, `33` paths, `36`
+Observed official-doc facts as of `2026-09-14` (`1.2.17`, `33` paths, `36`
 operations, `90` schemas):
 
 - Base server is `https://openapi.tossinvest.com`.
@@ -323,8 +323,8 @@ This is not an approval to call Toss runtime APIs. The active safety contract is
 
 | Item | Value |
 | --- | --- |
-| Snapshot date | `2026-08-12` |
-| Official spec version | `1.2.14` |
+| Snapshot date | `2026-09-14` |
+| Official spec version | `1.2.17` |
 | OpenAPI document version | `3.1.0` |
 | Base server | `https://openapi.tossinvest.com` |
 | Paths | 33 |
@@ -616,6 +616,12 @@ This inventory was built from official documentation endpoints only:
 - The `2026-08-12` `1.2.14` recheck kept all `33` paths, `36` operations,
   `90` schemas, and every documented method/path/operationId unchanged. No
   runtime allowlist or surface decision changed.
+- The `2026-09-09` `1.2.15` recheck kept all `33` paths, `36` operations,
+  `90` schemas, and every documented method/path/operationId unchanged. No
+  runtime allowlist or surface decision changed.
+- The `2026-09-14` `1.2.17` recheck kept all `33` paths, `36` operations,
+  `90` schemas, and every documented method/path/operationId unchanged. No
+  runtime allowlist or surface decision changed.
 
 
 <!-- Merged from: docs/codex/toss-openapi-lab.md -->
@@ -648,7 +654,7 @@ invalidates the client's previously issued token.
 
 ## Official Basis
 
-Verified on `2026-08-11` against:
+Verified on `2026-09-14` against:
 
 - <https://developers.tossinvest.com/docs>
 - <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json>
@@ -658,7 +664,7 @@ Current official spec snapshot:
 | Item | Value |
 | --- | --- |
 | OpenAPI document version | `3.1.0` |
-| Official spec version | `1.2.14` |
+| Official spec version | `1.2.17` |
 | Paths | `33` |
 | Operations | `36` |
 | Schemas | `90` |
