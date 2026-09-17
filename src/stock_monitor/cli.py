@@ -4171,6 +4171,17 @@ def _run_news_intelligence_briefing_collect(
             target_date=target_date,
         )
         preview = collect_naver_news_preview(query, transport=news_transport)
+        search_collection = None
+        search_codes = tuple(getattr(args, "search_stock_codes", ()) or ())[:2]
+        if summary.stock_code in search_codes:
+            from stock_monitor.news.top2_search import augment_preview
+
+            focus = _candidate_research_focus(
+                summary.stock_name, summary.stock_code,
+                repository.list_reports_for_stock_on_business_date(target_date, summary.stock_code),
+                news_titles=tuple(match.article.title for match in preview.articles[:3]),
+            )
+            preview, search_collection = augment_preview(preview, query, focus, news_transport)
         matched_articles = [_news_article_with_match_quality(match) for match in preview.articles]
         analyzed_articles = [
             _apply_match_quality_guard(analyze_news_article(article))
@@ -4183,6 +4194,8 @@ def _run_news_intelligence_briefing_collect(
         )
         source_coverage = _news_intelligence_source_coverage(preview.sources)
         item_warnings = [*preview.warnings]
+        if getattr(args, "observation_session", None) == "after_close":
+            item_warnings.append("top2_session: after_close")
         if source_coverage["empty_source_lanes"]:
             item_warnings.append("some source lanes produced no parsed articles for this date/mode")
         operator_decision_notes = _news_intelligence_operator_decision_notes(
@@ -4221,6 +4234,7 @@ def _run_news_intelligence_briefing_collect(
         item_payload = {
             "stock_name": summary.stock_name,
             "stock_code": summary.stock_code,
+            "search_collection": search_collection,
             "research_focus": _candidate_research_focus(
                 summary.stock_name,
                 summary.stock_code or "",
@@ -4938,6 +4952,7 @@ def _run_news_intelligence_collect_top_candidates(
     collect_args = argparse.Namespace(
         date=resolved_date,
         limit=len(targets),
+        search_stock_codes=[str(target["stock_code"]) for target in targets[:2]],
         stock_code=[str(target["stock_code"]) for target in targets if str(target.get("stock_code") or "")],
         scrapling_exe=scrapling_exe,
         db_path=config.db_path,
@@ -5345,7 +5360,10 @@ def _save_news_intelligence_observation(
         stock_name=stock_name,
         stock_code=stock_code,
         aliases=aliases,
-        source_mode="naver_5_lane_preview",
+        source_mode=("naver_5_lane_with_top2_search"
+                     if any(getattr(source.source, "value", "") == "top2_search"
+                            for source in getattr(preview, "sources", ()))
+                     else "naver_5_lane_preview"),
         page_limit=1,
         full_day_complete=False,
         live_fetch=True,
@@ -8307,8 +8325,58 @@ def _run_toss_market_context_capture(
                 ),
             )
         )
+    if scheduled:
+        payload["after_close_news"] = _collect_after_close_top2_news(
+            config, repository, business_date=business_date,
+            incomplete_codes=set(candidate_missing_codes),
+        )
     _print_toss_market_context_capture_payload(payload, as_json=as_json)
     return 0
+
+
+def _collect_after_close_top2_news(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    business_date: date,
+    incomplete_codes: set[str],
+) -> dict[str, object]:
+    """Collect the separate close cohort without writing a regular poll-news event."""
+    result: dict[str, object] = {"status": "skipped", "session": "after_close", "stock_codes": []}
+    try:
+        snapshot = build_web_view_candidate_evidence_snapshot(
+            config, repository, business_date=business_date, limit=5,
+        )
+        reassessment = snapshot.get("close_reassessment") or {}
+        codes = [str(row.get("stock_code") or "") for row in (reassessment.get("rows") or [])[:2]]
+        codes = list(dict.fromkeys(code for code in codes if re.fullmatch(r"\d{6}", code)))
+        result["stock_codes"] = codes
+        if not reassessment.get("available") or not codes or any(code in incomplete_codes for code in codes):
+            result["reason"] = "close_cohort_or_complete_snapshot_missing"
+        else:
+            args = argparse.Namespace(
+                date=business_date, limit=len(codes), stock_code=codes,
+                search_stock_codes=codes, observation_session="after_close",
+                scrapling_exe=_resolve_web_view_scrapling_exe(config), db_path=config.db_path,
+                save_observation=True, confirm_save=True, format="json",
+            )
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = _run_news_intelligence_briefing_collect(args)
+            collected = json.loads(output.getvalue())
+            items = list(collected.get("items") or [])
+            search_ok = len(items) == len(codes) and all(
+                (item.get("search_collection") or {}).get("status") == "success" for item in items
+            )
+            result.update(status="success" if code == 0 and search_ok else "failed",
+                          collector_items=items, saved_evidence_count=collected.get("saved_evidence_count", 0))
+    except Exception as exc:
+        result.update(status="failed", error=type(exc).__name__)
+    repository.record_operation_event(_operation_event(
+        config, component="after-close-news", event_type="collect", status=str(result["status"]),
+        business_date=business_date, detail=json.dumps(result, ensure_ascii=False),
+    ))
+    return result
 
 
 def _print_toss_market_context_capture_payload(payload: dict[str, object], *, as_json: bool) -> None:
@@ -34955,12 +35023,16 @@ def _web_view_news_observation_is_caution(row: ReportLinkedNewsEvidenceRecord) -
 
 
 def _web_view_news_observation_is_positive_direct(row: ReportLinkedNewsEvidenceRecord) -> bool:
+    if row.source_lane == "top2_search" and row.lineage_type != "independent":
+        return False
     return row.relevance == "direct" and (
         row.sentiment == "Positive" or row.stock_impact in {"Positive", "Strong Positive"}
     )
 
 
 def _web_view_news_observation_is_primary_caution(row: ReportLinkedNewsEvidenceRecord) -> bool:
+    if row.source_lane == "top2_search" and row.lineage_type != "independent":
+        return False
     return row.relevance == "direct" and _web_view_news_observation_is_caution(row)
 
 

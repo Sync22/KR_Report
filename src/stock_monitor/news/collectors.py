@@ -21,6 +21,7 @@ NAVER_FOCUS_NEWS_API_URL = "https://stock.naver.com/api/domestic/news/focus"
 
 
 class NewsSource(str, Enum):
+    TOP2_SEARCH = "top2_search"
     FLASHNEWS = "flashnews"
     MAINNEWS = "mainnews"
     RANKNEWS = "ranknews"

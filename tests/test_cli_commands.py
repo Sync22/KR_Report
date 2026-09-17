@@ -1699,7 +1699,19 @@ def test_toss_market_context_capture_parser_accepts_live_save_gate() -> None:
     assert args.json is True
 
 
-def test_toss_market_context_capture_saves_close_snapshot_with_fake_provider(tmp_path, capsys) -> None:
+@pytest.mark.parametrize("scheduled", [False, True])
+def test_toss_market_context_capture_saves_close_snapshot_with_fake_provider(tmp_path, capsys, monkeypatch, scheduled) -> None:
+    class CloseTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 10, 20, 5, tzinfo=tz)
+
+    monkeypatch.setattr(cli_module, "datetime", CloseTime)
+    close_calls = []
+    def collect_close(*args, **kwargs):
+        close_calls.append(kwargs)
+        return {"status": "success"}
+    monkeypatch.setattr(cli_module, "_collect_after_close_top2_news", collect_close)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
     business_date = date(2026, 7, 10)
@@ -1773,13 +1785,14 @@ def test_toss_market_context_capture_saves_close_snapshot_with_fake_provider(tmp
         live=True,
         confirm_token_reissue=True,
         confirm_save=True,
-        scheduled=False,
+        scheduled=scheduled,
         as_json=True,
         toss_provider=FakeProvider(),
     )
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
+    assert len(close_calls) == (1 if scheduled else 0)
     assert payload["saved_count"] == 2
     assert payload["stock_snapshot_count"] == 2
     assert payload["market_index_count"] == 1
