@@ -1,0 +1,290 @@
+{
+  "scope": "Unused evaluation sample from 2026-09-07 through 11; labels frozen before classifier run. Event-related reports not independent. Summary-only component evaluation, manual labels by Codex, not independent human adjudication. After inspecting results this becomes a development sample.",
+  "cases": [
+    {
+      "case_id": "H01",
+      "category": "엔진 증설",
+      "event_group": "엔진 증설",
+      "expected_directions": [
+        "SUPPORT"
+      ],
+      "input": {
+        "id": "news-2026-09-11-329180-b3941ce61176:d9f8142bf7e349c216d4535ffc12a118c72fe4ce08b1fb0c51737f006860efa3",
+        "stock_code": "329180",
+        "stock_name": "HD현대중공업",
+        "matched_alias": "HD현대중공업",
+        "title": "HD현대중공업, 중형엔진·SMR 증설…“엔진 가치 재평가 기대”-iM",
+        "summary": "변용진 iM증권 연구원은 “기다리던 엔진 증설의 세부 사항이 드디어 공개됐다”며 이같이 밝혔다. HD현대중공업은 지난 10일 총 1조722억원 규모의 중형엔진 및 SMR 시설투자를 공시했다. 이 가운데 중형엔진 관련 투자금액은 8336억원으로, 글로벌 전력 수요 증가에 따른 엔진발전 시장 확대에 대응하기...",
+        "source_lane": "top2_search",
+        "url": "https://www.edaily.co.kr/News/Read?newsId=02689606645579136&mediaCodeNo=257&utm_source=naver&utm_medium=referral&utm_campaign=news_syndication&utm_content=original_article",
+        "published_at": "2026-09-11T08:06:16.910161+09:00"
+      }
+    },
+    {
+      "case_id": "H02",
+      "category": "미국 공급계약",
+      "event_group": "미국 공급계약",
+      "expected_directions": [
+        "SUPPORT"
+      ],
+      "input": {
+        "id": "news-2026-09-09-336260-174c0e3346e2:75683b6f884c7aa70293fd6edcc199ce5504a2f326bfc76017a571a8e402b40f",
+        "stock_code": "336260",
+        "stock_name": "두산퓨얼셀",
+        "matched_alias": "두산퓨얼셀",
+        "title": "5014억원 계약으로 美 데이터센터 뚫었다…두산퓨얼셀, 내년 흑자전환 ...",
+        "summary": "두산퓨얼셀은 지난 2일 미국 자회사 하이엑시엄(HyAxiom)과 5014억원 규모의 인산형연료전지(PAFC) 시스템 공급계약을 체결했다. 제품은 국내 익산공장에서 생산해 하이엑시엄에 공급하고, 하이엑시엄이 이를 미국 내 AI 데이터센터에 납품하는 구조다. 계약 물량은 2027년 3월부터 2028년 4월까지 순차적으로...",
+        "source_lane": "top2_search",
+        "url": "https://www.thepowernews.co.kr/view.php?ud=20260909101841965de3f0aa1be_7",
+        "published_at": "2026-09-09T11:02:14.999530+09:00"
+      }
+    },
+    {
+      "case_id": "H03",
+      "category": "미국 공급계약",
+      "event_group": "미국 공급계약",
+      "expected_directions": [
+        "SUPPORT"
+      ],
+      "input": {
+        "id": "news-2026-09-09-336260-174c0e3346e2:edb522f2d19c5042429df52764544f7b2217dcd61c10c69583ddda45f1696490",
+        "stock_code": "336260",
+        "stock_name": "두산퓨얼셀",
+        "matched_alias": "두산퓨얼셀",
+        "title": "두산퓨얼셀 5만3800원, 9%대 급등…美 AI 데이터센터 수주 재평가",
+        "summary": "두산퓨얼셀이 익산공장에서 생산한 PAFC 시스템을 하이엑시엄에 납품하면 하이엑시엄이 이를 미국 내 AI 데이터센터에 공급하는 구조다. 두산퓨얼셀 입장에서는 이번 계약을 통해 미국 데이터센터 전력시장에 처음 진입했다는 의미가 있다. 최근 AI 데이터센터가 급격히 늘면서 전력 공급이 글로벌 AI...",
+        "source_lane": "top2_search",
+        "url": "https://www.job-post.co.kr/news/articleView.html?idxno=226848",
+        "published_at": "2026-09-09T15:02:14.999530+09:00"
+      }
+    },
+    {
+      "case_id": "H04",
+      "category": "공급망 수혜",
+      "event_group": "공급망 수혜",
+      "expected_directions": [
+        "SUPPORT"
+      ],
+      "input": {
+        "id": "news-2026-09-07-290550-199bb85bedc3:2586f99a1fae38532cf9fde4a099ea2ce6b807884a6333408ca6bdb277d0cc09",
+        "stock_code": "290550",
+        "stock_name": "디케이티",
+        "matched_alias": "디케이티",
+        "title": "“디케이티, 휴머노이드 탈중국 공급망 수혜…목표가 2.5만”-IBK",
+        "summary": "IBK투자증권은 7일 디케이티(290550) 에 대해 미국의 대중국 로봇 규제에 따른 북미 휴머노이드 공급망 재편의 핵심 수혜가 기대된다며 투자의견 ‘매수’와 목표주가 2만5000원을 새로 제시했다. 전 거래일 종가",
+        "source_lane": "section_company_analysis",
+        "url": "https://n.news.naver.com/mnews/article/018/0006364668?sid=101258402",
+        "published_at": "2026-09-07T08:08:12+09:00"
+      }
+    },
+    {
+      "case_id": "H05",
+      "category": "소매 실적 조정",
+      "event_group": "소매 실적 조정",
+      "expected_directions": [
+        "RISK"
+      ],
+      "input": {
+        "id": "news-2026-09-08-023530-fd747b027133:2375e57fc9bedc8b0e2ab1824105159b7473c06166e961ed8e2bbdc24cc92fdf",
+        "stock_code": "023530",
+        "stock_name": "롯데쇼핑",
+        "matched_alias": "롯데쇼핑",
+        "title": "“주식이 이런데 백화점을 어떻게 갑니까”…롯데쇼핑 목표가 하향 [오늘 나온 보고서]",
+        "summary": "키움證, 목표가 21만→19만원 증시 하락에 자산효과 축소돼 가전 할인 종료 후 매출 둔화도 키움증권이 증시 조정에 따라 국내 백화점 기존 성장률 눈높이도 낮아질 것으로 예상하며 롯데쇼핑 목표주가를 낮춰잡았다. 박상",
+        "source_lane": "section_market_outlook",
+        "url": "https://n.news.naver.com/mnews/article/009/0005731823?sid=101258401",
+        "published_at": "2026-09-08T09:32:10+09:00"
+      }
+    },
+    {
+      "case_id": "H06",
+      "category": "소매 실적 조정",
+      "event_group": "소매 실적 조정",
+      "expected_directions": [
+        "SUPPORT",
+        "RISK"
+      ],
+      "input": {
+        "id": "news-2026-09-08-023530-6bb59d804cc5:d127aab744d3304986bbf32fcdd0a26480bd4a83d823f5854cd3ee05876cb301",
+        "stock_code": "023530",
+        "stock_name": "롯데쇼핑",
+        "matched_alias": "롯데쇼핑",
+        "title": "롯데쇼핑, 할인점 호조에 3Q 영업익 31%↑ 전망…연말 기대요인 확대-키움",
+        "summary": "키움증권은 롯데쇼핑(023530)에 대해 국내 백화점 성장세는 다소 둔화했지만 할인점 실적이 예상보다 개선되면서 올해 3분기 영업이익이 전년 동기 대비 31% 증가할 것으로 전망했다. 11월 이후 백화점 기존점 매출",
+        "source_lane": "section_company_analysis",
+        "url": "https://n.news.naver.com/mnews/article/018/0006365302?sid=101258402",
+        "published_at": "2026-09-08T07:53:07+09:00"
+      }
+    },
+    {
+      "case_id": "H07",
+      "category": "소매 실적 조정",
+      "event_group": "소매 실적 조정",
+      "expected_directions": [
+        "RISK"
+      ],
+      "input": {
+        "id": "news-2026-09-08-023530-6bb59d804cc5:459bc663e44e2ffca2cb23e6764bb1884d8772aac46cc1c201e3261cf1a13b25",
+        "stock_code": "023530",
+        "stock_name": "롯데쇼핑",
+        "matched_alias": "롯데쇼핑",
+        "title": "키움증권, 롯데쇼핑 목표가↓…\"실적 3분기 주춤 가능성\"",
+        "summary": "키움증권은 롯데쇼핑의 국내 백화점 실적 성장세가 이번 3분기 다소 주춤할 수 있다며 8일 목표주가를 기존 21만원에서 19만원으로 9.5% 하향했다. 투자의견은 '매수'를 유지했다. 박상준 연구원은 \"3분기 국내 백",
+        "source_lane": "section_company_analysis",
+        "url": "https://n.news.naver.com/mnews/article/001/0016295864?sid=101258402",
+        "published_at": "2026-09-08T08:18:32+09:00"
+      }
+    },
+    {
+      "case_id": "H08",
+      "category": "백화점 수익성",
+      "event_group": "백화점 수익성",
+      "expected_directions": [
+        "SUPPORT"
+      ],
+      "input": {
+        "id": "news-2026-09-11-004170-59b4ac455e83:560cf3bfacf9da4c0478dcf76ae2a0fb42a4e8b4779568b67df8e2e38cf17e33",
+        "stock_code": "004170",
+        "stock_name": "신세계",
+        "matched_alias": "신세계",
+        "title": "신세계, 백화점 순항·면세 적자축소…10년 만의 재평가 기회-신한",
+        "summary": "신한투자증권은 신세계에 대해 최근 자산시장 조정과 원화 강세에도 백화점 실적이 양호한 흐름을 이어가고 있고 면세점 수익성 개선까지 더해질 것으로 전망했다. 내수와 인바운드 소비를 동시에 누릴 수 있는 업종 내 가장",
+        "source_lane": "section_company_analysis",
+        "url": "https://n.news.naver.com/mnews/article/018/0006367365?sid=101258402",
+        "published_at": "2026-09-11T07:50:14+09:00"
+      }
+    },
+    {
+      "case_id": "H09",
+      "category": "백화점 수익성",
+      "event_group": "백화점 수익성",
+      "expected_directions": [
+        "SUPPORT",
+        "RISK"
+      ],
+      "input": {
+        "id": "news-2026-09-11-004170-ea140557ebf5:da37c98145974836ea2b4f9b1263e5ab4d7c026688ec2e8c10492812079ef19b",
+        "stock_code": "004170",
+        "stock_name": "신세계",
+        "matched_alias": "신세계",
+        "title": "신세계, 실적보다 앞서간 우려…목표주가 70만원 유지-신한투자증권",
+        "summary": "신세계의 최근 주가 하락이 실제 실적에 대한 우려를 지나치게 반영하고 있다는 분석이 나왔다. 백화점 실적이 시장의 우려보다 양호한 흐름을 이어가고 있는 가운데 내수와 인바운드 소비 회복이 지속될 경우 주가 재평가(리레이팅) 가능성이 있다는 전망이다. 신한투자증권은 11일 신세계에 대해...",
+        "source_lane": "top2_search",
+        "url": "http://www.press9.kr/news/articleView.html?idxno=82593",
+        "published_at": "2026-09-11T09:32:19.958085+09:00"
+      }
+    },
+    {
+      "case_id": "H10",
+      "category": "MLCC 공급난 수혜",
+      "event_group": "MLCC 공급난 수혜",
+      "expected_directions": [
+        "SUPPORT"
+      ],
+      "input": {
+        "id": "news-2026-09-11-052710-2c30ebe20923:ea054cf569c6ae05c86c4229c3ec5ab17098a2d76f43ce80b9d91b971a8e6f3e",
+        "stock_code": "052710",
+        "stock_name": "아모텍",
+        "matched_alias": "아모텍",
+        "title": "'MLCC 공급부족 심화' 관련주 강세…아모텍 상한가[핫종목]",
+        "summary": "적층세라믹콘덴서(MLCC) 공급난이 심화될 것이란 전망에 아모텍(052710)이 상한가를 기록하는 등 관련주가 강세다. 11일 오전 10시153분 아모텍은 전 거래일 대비 3490원(29.98%) 오른 1만 5130",
+        "source_lane": "section_market_outlook",
+        "url": "https://n.news.naver.com/mnews/article/421/0009164561?sid=101258401",
+        "published_at": "2026-09-11T10:21:12+09:00"
+      }
+    },
+    {
+      "case_id": "H11",
+      "category": "증자 반영 가격 조정: 부정 실적으로 간주하지 않음",
+      "event_group": "증자 반영 가격 조정: 부정 실적으로 간주하지 않음",
+      "expected_directions": [],
+      "input": {
+        "id": "news-2026-09-11-052710-9393c97041e9:5406a2480d3e77abbbc3a92276097a61819943d6f5a4c092652c8e8abbce2a04",
+        "stock_code": "052710",
+        "stock_name": "아모텍",
+        "matched_alias": "아모텍",
+        "title": "IBK증권, 아모텍 목표가↓…\"MLCC 성장에 수익성은 개선 예상\"",
+        "summary": "IBK투자증권은 아모텍에 대한 목표주가를 4만2천원에서 3만원으로 하향 조정했다고 11일 밝혔다. 김운호 연구원은 \"아모텍에 대한 목표주가는 3만원으로 하향한다. 유상증자, 무상증자를 반영한 수준\"이라고 말했다. 다",
+        "source_lane": "section_company_analysis",
+        "url": "https://n.news.naver.com/mnews/article/001/0016303861?sid=101258402",
+        "published_at": "2026-09-11T08:22:16+09:00"
+      }
+    },
+    {
+      "case_id": "H12",
+      "category": "임상 실패",
+      "event_group": "임상 실패",
+      "expected_directions": [
+        "RISK"
+      ],
+      "input": {
+        "id": "news-2026-09-09-196170-6a4451e1de9e:7a3c134b1193642a38e4a9234edcbdb70fe961d36bf5e9d01cdb23ec87d7e002",
+        "stock_code": "196170",
+        "stock_name": "알테오젠",
+        "matched_alias": "알테오젠",
+        "title": "\"알테오젠, 노바티스의 임상 3상 실패 반영…목표가↓\"-신한",
+        "summary": "신한투자증권은 9일 알테오젠에 대해 파트너사인 노바티스가 개발 중이던 항체-올리고 접합체(AOC) 신약 후보물질 3종 중 1종의 임상 3상 실패를 반영한다며 목표주가를 기존 54만원에서 52만원으로 내렸다. 다만 노",
+        "source_lane": "section_company_analysis",
+        "url": "https://n.news.naver.com/mnews/article/015/0005330297?sid=101258402",
+        "published_at": "2026-09-09T08:16:26+09:00"
+      }
+    },
+    {
+      "case_id": "H13",
+      "category": "임상 실패",
+      "event_group": "임상 실패",
+      "expected_directions": [
+        "RISK"
+      ],
+      "input": {
+        "id": "news-2026-09-09-196170-b46ff38c82ca:6f644a325c2d8e9126feed04025501671b897e2665ba0d0ebd962ff87957dea8",
+        "stock_code": "196170",
+        "stock_name": "알테오젠",
+        "matched_alias": "알테오젠",
+        "title": "[클릭 e종목]\"노바티스 신약 1개 3상 실패\" 알테오젠 목표가 하향",
+        "summary": "신한투자증권은 9일 알테오젠에 대해 \"'델-데시란'(Del-desiran)의 임상 3상 실패에 따라 피하주사(SC) 전환 '확정 품목'이 3개에서 2개로 변경됐다\"며 이같이 밝혔다. 앞서 신한투자증권은 노바티스와의 4조4000억원 기술이전 계약 체결 직후인 지난 3일 3개 품목의 SC 가치를 산정해 알테오젠의 목표주가를...",
+        "source_lane": "top2_search",
+        "url": "https://view.asiae.co.kr/article/2026090909235492510",
+        "published_at": "2026-09-09T10:03:37.404502+09:00"
+      }
+    },
+    {
+      "case_id": "H14",
+      "category": "임상 실패/과거 상향",
+      "event_group": "임상 실패",
+      "expected_directions": [
+        "RISK"
+      ],
+      "input": {
+        "id": "news-2026-09-09-196170-aaf96af9d59f:f239b5e3e70a24dab9fb74c9aff3f38822a0e76f935904dbc4c0df830b62d3be",
+        "stock_code": "196170",
+        "stock_name": "알테오젠",
+        "matched_alias": "알테오젠",
+        "title": "[클릭 e종목]\"노바티스 신약 1개 3상 실패\" 알테오젠 목표가 하향",
+        "summary": "신한투자증권이 알테오젠의 목표주가를 54만원으로 상향한 지 며칠 만에 52만원으로 소폭 하향 조정했다. 신한투자증권은 9일 알테오젠에 대해 \"'델-데시란'(Del-desiran)의 임상 3상 실패에 따라 피하주사(S",
+        "source_lane": "section_company_analysis",
+        "url": "https://n.news.naver.com/mnews/article/277/0005813823?sid=101258402",
+        "published_at": "2026-09-09T09:23:54+09:00"
+      }
+    },
+    {
+      "case_id": "H15",
+      "category": "임상 실패",
+      "event_group": "임상 실패",
+      "expected_directions": [
+        "RISK"
+      ],
+      "input": {
+        "id": "news-2026-09-09-196170-bb8f9c7c6442:f3bd7b6611ff30409dcfda3e1cacc5940ea26f7eaf7976d4e30b47f5881d97c1",
+        "stock_code": "196170",
+        "stock_name": "알테오젠",
+        "matched_alias": "알테오젠",
+        "title": "신한증권, 알테오젠 목표가↓…\"노바티스 신약 1개 3상 실패\"",
+        "summary": "신한투자증권은 9일 알테오젠에 대해 \"노바티스와의 기술이전 계약 체결 시 예상된 피하주사(SC) 전환 품목이 3개에서 2개로 변경됐다\"며 목표주가를 기존 54만원에서 52만원으로 하향 조정했다. 다만, 이번 결과로",
+        "source_lane": "section_market_outlook",
+        "url": "https://n.news.naver.com/mnews/article/001/0016298677?sid=101258401",
+        "published_at": "2026-09-09T08:43:38+09:00"
+      }
+    }
+  ]
+}

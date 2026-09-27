@@ -1,0 +1,365 @@
+{
+  "scope": "Stored summary text only, not article truth or investment outcome. Labels by Codex manual review before running classifier. Purposive sample; not independent or representative accuracy.",
+  "cases": [
+    {
+      "case_id": "E01",
+      "category": "직접 위험",
+      "expected_directions": [
+        "RISK"
+      ],
+      "input": {
+        "id": "news-2026-09-15-329180-a57aee778d26:860f107c27ed4d6237413a28cc9027c8628d26c1cf636a1b1e3b9f59f9d8dffc",
+        "stock_code": "329180",
+        "stock_name": "HD현대중공업",
+        "matched_alias": "HD현대중공업",
+        "title": "HD현대중공업, 노조 파업 확대 앞두고 4%대 하락[핫종목]",
+        "summary": "HD현대중공업(329180)이 임금·단체협상 난항 속에 노동조합의 파업 확대를 앞두고 4% 넘게 하락하고 있다. 15일 오전 11시 9분 HD현대중공업은 전 거래일 대비 2만 2500원(4.70%) 내린 45만 65",
+        "source_lane": "section_market_outlook",
+        "url": "https://n.news.naver.com/mnews/article/421/0009170689?sid=101258401",
+        "published_at": "2026-09-15T11:18:22+09:00"
+      }
+    },
+    {
+      "case_id": "E02",
+      "category": "직접 긍정",
+      "expected_directions": [
+        "SUPPORT"
+      ],
+      "input": {
+        "id": "news-2026-09-15-329180-8cabd093fcc2:ad99136a0a59c24e4689c7d4ed768f91f26932280ab623327e6281782984c0d7",
+        "stock_code": "329180",
+        "stock_name": "HD현대중공업",
+        "matched_alias": "HD현대중공업",
+        "title": "HD현대중공업, 연간 수주 목표 초과 달성…목표가 84만원으로 상향-IBK",
+        "summary": "IBK투자증권은 HD현대중공업에 대해 연간 수주 목표를 초과 달성했다며 매수투자 의견과 함께 목표주가를 기존 81만6000원에서 84만원으로 상향조정한다고 15일 밝혔다. IBK투자증권에 따르면 HD현대중공업의 올해",
+        "source_lane": "section_company_analysis",
+        "url": "https://n.news.naver.com/mnews/article/008/0005413699?sid=101258402",
+        "published_at": "2026-09-15T08:05:48+09:00"
+      }
+    },
+    {
+      "case_id": "E03",
+      "category": "수주 실적/다른 회사 혼입",
+      "expected_directions": [
+        "SUPPORT"
+      ],
+      "input": {
+        "id": "news-2026-09-17-329180-b68cd481b8eb:7d77d4fc1bb604f07ba1a1c0e582283a2839250b2e537c193a7f1eb7e5be195e",
+        "stock_code": "329180",
+        "stock_name": "HD현대중공업",
+        "matched_alias": "HD현대중공업",
+        "title": "[종목이 보영] HD현대중공업, 고부가 선박에 엔진·SMR까지",
+        "summary": "힘센엔진은 HD현대중공업의 발전용 중속엔진 브랜드다. 올해 데이터센터 전력 공급 목적의 힘센엔진 기반 발전설비 수주는 2건으로, 합산계약금액은 총 1조5831억원이며 공급용량은 1684MW다. 엔진 수요 확대 흐름은 한화엔진에서도 확인된다. 한화엔진은 4행정 중속엔진 증설을 이미 마쳤고...",
+        "source_lane": "top2_search",
+        "url": "https://www.straightnews.co.kr/news/articleView.html?idxno=311479",
+        "published_at": "2026-09-17T18:06:42.324545+09:00"
+      }
+    },
+    {
+      "case_id": "E04",
+      "category": "비유와 직접 설명",
+      "expected_directions": [
+        "SUPPORT"
+      ],
+      "input": {
+        "id": "news-2026-09-15-329180-8cabd093fcc2:ee171a564238b32524f11f11ef167407c74c3d208c4eda0fa165a49874868972",
+        "stock_code": "329180",
+        "stock_name": "HD현대중공업",
+        "matched_alias": "HD현대중공업",
+        "title": "“HD현대중공업, LPG운반선이 끌고, 힘센엔진이 밀고” 목표가 ↑",
+        "summary": "IBK투자증권은 15일 HD현대중공업에 대해 “수주가 다 감당이 안 될 지경”이라며 목표주가를 기존 81만 6000원에서 84만원으로 상향 조정했다. IBK투자증권은 매수를 추천하는 이유에 대해 액화석유가스(LPG) 운반선이 끌고, 힘센엔진이 밀고 있다는 점을 꼽았다. IBK투자증권은 “기존의 수주를 바탕으로...",
+        "source_lane": "top2_search",
+        "url": "https://www.mk.co.kr/article/12152731",
+        "published_at": "2026-09-15T07:38:17.784186+09:00"
+      }
+    },
+    {
+      "case_id": "E05",
+      "category": "계열사와 모회사 구분",
+      "expected_directions": [],
+      "input": {
+        "id": "news-2026-09-15-003550-9fe38b5712fe:68e38a51fd1268096b54e3a0bd0f3864e9a3cd9749bf4a75bbf8829f62b817ce",
+        "stock_code": "003550",
+        "stock_name": "LG",
+        "matched_alias": "LG",
+        "title": "[클릭 e종목]\"LG씨엔에스, GPU 인프라 확보…AIDC 사업 본격화\"",
+        "summary": "LG씨엔에스(LGCNS)가 대규모 AI(인공지능) 인프라 투자를 바탕으로 데이터센터 영역을 넘어 GPUaaS(서비스형 GPU) 사업자로 체질 개선에 나섰다. 15일 김동우 교보증권 연구원은 \"LGCNS의 유형자산 취",
+        "source_lane": "section_company_analysis",
+        "url": "https://n.news.naver.com/mnews/article/277/0005816771?sid=101258402",
+        "published_at": "2026-09-15T18:09:00+09:00"
+      }
+    },
+    {
+      "case_id": "E06",
+      "category": "위험과 완화 해석",
+      "expected_directions": [
+        "SUPPORT",
+        "RISK"
+      ],
+      "input": {
+        "id": "news-2026-09-15-326030-70d58bc9d570:7fb3f3250f2d8541f8588289a8b29c9927c7cd0700f09c77d93c701e7a4a99de",
+        "stock_code": "326030",
+        "stock_name": "SK바이오팜",
+        "matched_alias": "SK바이오팜",
+        "title": "SK바이오팜 '오파칼림' 임상 보류 우려는 과도..목표주가 13만원",
+        "summary": "iM증권은 SK바이오팜의 오파칼림 임상 보류에 대한 시장의 우려가 과도하다며 목표주가 13만원과 투자의견 '매수'를 유지했다. 전날 종가 7만9100원 기준 목표주가까지 상승여력은 64.3%다 15일 정재원 iM증권",
+        "source_lane": "section_company_analysis",
+        "url": "https://n.news.naver.com/mnews/article/014/0005575753?sid=101258402",
+        "published_at": "2026-09-15T08:30:16+09:00"
+      }
+    },
+    {
+      "case_id": "E07",
+      "category": "사업 확대와 위험",
+      "expected_directions": [
+        "SUPPORT",
+        "RISK"
+      ],
+      "input": {
+        "id": "news-2026-09-15-326030-60728d67b8dc:dfe47b2b4e071afb13e6f16221f3f3eaf59bef106b506106d37cf3fd90ea20bd",
+        "stock_code": "326030",
+        "stock_name": "SK바이오팜",
+        "matched_alias": "SK바이오팜",
+        "title": "SK바이오팜 이동훈 사장, 자사 주식 1000주 추가 매입",
+        "summary": "SK바이오팜은 지난달 오파칼림 관련 독점적 라이선스 계약을 체결하며 세노바메이트에 이은 차세대 파이프라인 확대를 추진하고 있다. 하지만 이달 10일 오파칼림의 특정 대사체를 설치류에 투여한 비임상 독성시험에서 독성 소견이 확인돼 미국 식품의약국(FDA)으로부터 부분 임상 보류를 통보 받고...",
+        "source_lane": "top2_search",
+        "url": "https://www.etoday.co.kr/news/view/2625645",
+        "published_at": "2026-09-15T10:46:37.720388+09:00"
+      }
+    },
+    {
+      "case_id": "E08",
+      "category": "위험과 완화 해석",
+      "expected_directions": [
+        "SUPPORT",
+        "RISK"
+      ],
+      "input": {
+        "id": "news-2026-09-15-326030-7cd0d8187876:d09e6af62e798a8aac10e71f8c4b8391dae10980162152041cf1b11b5dc448d5",
+        "stock_code": "326030",
+        "stock_name": "SK바이오팜",
+        "matched_alias": "SK바이오팜",
+        "title": "SK바이오팜, 오파칼림 美 임상 일부 보류에도 목표가는 '그대로'[애널리...",
+        "summary": "SK바이오팜이 최근 도입한 뇌전증 신약 후보물질 오파칼림(BHV-7000)의 미국 임상이 일부 보류됐지만 개발 일정과 기업가치에 미치는 영향은 제한적일 것이란 분석이 나왔다. 미국 식품의약국(FDA)의 조치가 인체에서 발생한 안전성 문제보다 설치류 비임상 시험에서 확인된 특정 대사체의 독성을 추가...",
+        "source_lane": "top2_search",
+        "url": "https://www.newsway.co.kr/news/view?ud=2026091508223963408",
+        "published_at": "2026-09-15T08:44:37.325786+09:00"
+      }
+    },
+    {
+      "case_id": "E09",
+      "category": "부정 표현/위험 완화",
+      "expected_directions": [
+        "SUPPORT",
+        "RISK"
+      ],
+      "input": {
+        "id": "news-2026-09-15-326030-70d58bc9d570:93b1bc65985c63ae122b1185116b8c1afb1f05b0f27bf6675c37aacc1ddb79b1",
+        "stock_code": "326030",
+        "stock_name": "SK바이오팜",
+        "matched_alias": "SK바이오팜",
+        "title": "[클릭 e종목] \"SK바이오팜, 임상 1200명 이상반응 없어\"…목표가 16만원...",
+        "summary": "하나증권은 15일 뇌전증 치료제 개발사 SK바이오팜에 대해 투자의견 '매수'와 목표주가 16만원을 유지했다. 파트너사 바이오헤이븐(Biohaven)의 신약 후보물질 '오파칼림' 임상이 최근 미국 식품의약국(FDA)으로부터 일부 보류 통보를 받았지만, 새로운 부작용이 아니라 동물실험 소견을 추가 소명하라는...",
+        "source_lane": "top2_search",
+        "url": "https://view.asiae.co.kr/article/2026091417101240467",
+        "published_at": "2026-09-15T07:31:57.933689+09:00"
+      }
+    },
+    {
+      "case_id": "E10",
+      "category": "훼손되지 않을 전망",
+      "expected_directions": [
+        "SUPPORT",
+        "RISK"
+      ],
+      "input": {
+        "id": "news-2026-09-15-326030-60728d67b8dc:3e6c2e35f9171a562378b8583b091be8b3e8248ffa0e94937b4d9c0a4e34c992",
+        "stock_code": "326030",
+        "stock_name": "SK바이오팜",
+        "matched_alias": "SK바이오팜",
+        "title": "iM증권 \"SK바이오팜 기술도입 예정 신약 '오파칼림'의 FDA 임상보류 우려...",
+        "summary": "SK바이오팜이 도입하기로 한 뇌전증 신약 후보물질 '오파칼림'의 부분 임상보류에도 기업의 기초체력은 훼손되지 않을 것으로 전망됐다. 사진은 경기도 성남시에 있는 SK바이오팜.  14일 SK바이오팜 주가는 7만9100원에 거래를 마쳤다. 정 연구원은 \"이번 오파칼림 부분 임상보류는 효능...",
+        "source_lane": "top2_search",
+        "url": "https://www.businesspost.co.kr/BP?command=article_view&num=447214",
+        "published_at": "2026-09-15T10:40:37.720388+09:00"
+      }
+    },
+    {
+      "case_id": "E11",
+      "category": "주어 대용/주식 매입",
+      "expected_directions": [
+        "SUPPORT",
+        "RISK"
+      ],
+      "input": {
+        "id": "news-2026-09-15-326030-42321aaa1b14:3b86005165e0752a3d5d9e0d9c38dce1e817f85de05f92e89dc6f91a7aae3847",
+        "stock_code": "326030",
+        "stock_name": "SK바이오팜",
+        "matched_alias": "SK바이오팜",
+        "title": "이동훈 SK바이오팜 사장, 보름 새 3천주 매입",
+        "summary": "SK바이오팜은 지난 10일 FDA가 오파칼림 임상 2·3상에 대해 ’부분 임상 보류(Partial Clinical Hold)’를 결정했다고 공시했다. 파트너사 바이오헤이븐으로부터 관련 사실을 통보받은 데 따른 것이다. 이 사장은 바로 다음 날 1천주를 추가 매입했다. 임상 개발 과정에서 변수가 발생했지만 오파칼림을 포함한...",
+        "source_lane": "top2_search",
+        "url": "https://wemakenews.co.kr/news/view.php?no=26310",
+        "published_at": "2026-09-15T12:28:32.684301+09:00"
+      }
+    },
+    {
+      "case_id": "E12",
+      "category": "중단/불확실성",
+      "expected_directions": [
+        "RISK"
+      ],
+      "input": {
+        "id": "news-2026-09-15-326030-60728d67b8dc:ef25153d1e4d45e5c870d9250690005f63113cde925b5c1ec5884b0c171fe5be",
+        "stock_code": "326030",
+        "stock_name": "SK바이오팜",
+        "matched_alias": "SK바이오팜",
+        "title": "이동훈 SK바이오팜 사장, 자사주 1000주 추가 매입…\"기업가치 자신감\"",
+        "summary": "SK바이오팜이 최근 도입 계약을 체결한 뇌전증 신약 후보물질 '오파칼림'은 미국 식품의약국(FDA)으로부터 부분 임상 보류 조치를 받았다. 비임상 독성 소견과 관련한 추가 자료 요구에 따라 RISE2의 신규 환자 등록이 일시 중단됐다. 다만 회사는 이번 임상 보류가 오파칼림의 개발 일정에 미치는...",
+        "source_lane": "top2_search",
+        "url": "https://daily.hankooki.com/news/articleView.html?idxno=1406213",
+        "published_at": "2026-09-15T10:52:37.720388+09:00"
+      }
+    },
+    {
+      "case_id": "E13",
+      "category": "미종결 계약/예정",
+      "expected_directions": [
+        "RISK"
+      ],
+      "input": {
+        "id": "news-2026-09-15-326030-60728d67b8dc:4a8fc5f4687fad5782fc659c726b54eee139c1f5416fdb82398de74b2513fa52",
+        "stock_code": "326030",
+        "stock_name": "SK바이오팜",
+        "matched_alias": "SK바이오팜",
+        "title": "이동훈 SK바이오팜 사장, 자사주 1000주 추가 매입…보름새 3000주",
+        "summary": "바이오헤이븐은 이르면 9월 말~10월 초 FDA에 추가 비임상 자료를 제출하고 부분 임상 보류 해제를 추진할 예정이다. SK바이오팜과 바이오헤이븐 간 라이선스 계약은 아직 거래 종결(딜 클로징) 전으로, 선급금도 지급되지 않았다. 양사는 부분 임상 보류 문제를 우선 해소한 뒤 거래 종결을 추진할...",
+        "source_lane": "top2_search",
+        "url": "https://www.edaily.co.kr/News/Read?newsId=03220966645580448&mediaCodeNo=257&utm_source=naver&utm_medium=referral&utm_campaign=news_syndication&utm_content=original_article",
+        "published_at": "2026-09-15T10:47:37.720388+09:00"
+      }
+    },
+    {
+      "case_id": "E14",
+      "category": "유료 안내",
+      "expected_directions": [],
+      "input": {
+        "id": "news-2026-09-18-000150-05e6059c3c1f:b348d9a720dc496667a7a703e50d80243c4f813be4235f05807e6a040df19022",
+        "stock_code": "000150",
+        "stock_name": "두산",
+        "matched_alias": "두산",
+        "title": "두산, 호실적·주주환원에 '껑충'",
+        "summary": "한국경제신문의 투자 전문 유료 플랫폼 '한경 프리미엄9'(www.hankyung.com/premium9)에 실린 기사입니다. '한경 프리미엄9'을 구독하시면 더 많은 주식 투자 기사를 찾아볼 수 있습니다. 두산그룹",
+        "source_lane": "section_company_analysis",
+        "url": "https://n.news.naver.com/mnews/article/015/0005334002?sid=101258402",
+        "published_at": "2026-09-18T18:00:14+09:00"
+      }
+    },
+    {
+      "case_id": "E15",
+      "category": "인사 소식/계열사",
+      "expected_directions": [],
+      "input": {
+        "id": "news-2026-09-18-000150-05e6059c3c1f:c70adbe25ca7fbf7cc7acf5ffef5fd4fc9e5b2c97bcf46a3fb231830d51b7132",
+        "stock_code": "000150",
+        "stock_name": "두산",
+        "matched_alias": "두산",
+        "title": "두산로보틱스, 신임 대표에 권영민 사장",
+        "summary": "두산(000150)로보틱스는 권영민 사장을 신임 대표로 선임했다고 18일 밝혔다. 권 대표는 2000년 ㈜두산 전략기획본부에 입사한 이래 2018년부터 2020년까지 두산밥캣 최고전략책임자(CSO)를 지냈다. 202",
+        "source_lane": "section_market_outlook",
+        "url": "https://n.news.naver.com/mnews/article/011/0004663458?sid=101258401",
+        "published_at": "2026-09-18T18:06:13+09:00"
+      }
+    },
+    {
+      "case_id": "E16",
+      "category": "주어 생략/사업 확대",
+      "expected_directions": [
+        "SUPPORT"
+      ],
+      "input": {
+        "id": "news-2026-09-18-000150-05e6059c3c1f:36d2ed7d0b0f9473491ad1cee58604e9564cc85dc4bb8ca0c7885017de88e16f",
+        "stock_code": "000150",
+        "stock_name": "두산",
+        "matched_alias": "두산",
+        "title": "반도체 밸류체인 구축 … 두산그룹株 잘나가네",
+        "summary": "1조 CCL증설·웨이퍼 진출에 한달새 두산 15%·테스나 9%↑ 두산그룹이 동박적층판(CCL)부터 웨이퍼, 시스템반도체 테스트까지 반도체 사업 영역을 넓히고 있다. 인공지능(AI) 데이터센터용 CCL에 약 1조원의",
+        "source_lane": "section_market_outlook",
+        "url": "https://n.news.naver.com/mnews/article/009/0005737463?sid=101258401",
+        "published_at": "2026-09-18T17:53:13+09:00"
+      }
+    },
+    {
+      "case_id": "E17",
+      "category": "복합 기사/무관 위험",
+      "expected_directions": [
+        "SUPPORT"
+      ],
+      "input": {
+        "id": "news-2026-09-18-286940-4f1a5475ca3b:b5de715b7152954f1cddd5c5f1fb3297e92eff6e3a9bfb9b5b2213daec958eb0",
+        "stock_code": "286940",
+        "stock_name": "롯데이노베이트",
+        "matched_alias": "롯데이노베이트",
+        "title": "[Tech & Now] 롯데이노베이트, 데이터센터 DBO 성장 본격화 등",
+        "summary": "◆롯데이노베이트, AI 데이터센터 공략…DBO 매출 비중 30% 목표 IBK투자증권은 롯데이노베이트의 데이터센터 DBO(설계·시공·운영) 사업이... KMMLU, K-MMBench 등 8종의 한국어 벤치마크 평가 결과, 기본 모델 대비 성능 하락폭을 2점 이내로 방어했다. 특히 제논은 이번 초거대 모델 고도화 후학습...",
+        "source_lane": "top2_search",
+        "url": "https://www.ebn.co.kr/news/articleView.html?idxno=1724771",
+        "published_at": "2026-09-18T08:30:18.260195+09:00"
+      }
+    },
+    {
+      "case_id": "E18",
+      "category": "직접 상향",
+      "expected_directions": [
+        "SUPPORT"
+      ],
+      "input": {
+        "id": "news-2026-09-14-090430-d931842ec0e4:0a06f0a17d4b9294a6f237a0aa144f6edc464436f298cd59bd67381a8f8f3df9",
+        "stock_code": "090430",
+        "stock_name": "아모레퍼시픽",
+        "matched_alias": "아모레퍼시픽",
+        "title": "[클릭 e종목]\"아모레퍼시픽, 높아질 실적 안정성…목표가↑\"",
+        "summary": "한화투자증권은 14일 아모레퍼시픽에 대해 실적 안정성이 높아질 것으로 보고 목표주가를 기존 18만원에서 20만원으로 상향 조정했다. 투자의견은 '매수'를 유지했다. 한유정 한화투자증권 연구원은 \"이익 추정치를 상향했",
+        "source_lane": "section_company_analysis",
+        "url": "https://n.news.naver.com/mnews/article/277/0005816119?sid=101258402",
+        "published_at": "2026-09-14T17:49:00+09:00"
+      }
+    },
+    {
+      "case_id": "E19",
+      "category": "숫자 실적/간접 긍정",
+      "expected_directions": [
+        "SUPPORT"
+      ],
+      "input": {
+        "id": "news-2026-09-14-271560-b9fad7831bd2:89ac55e230a21f8a8e8c3dc2adbcd464f2a870ed86ba1a606c061b022e817b1c",
+        "stock_code": "271560",
+        "stock_name": "오리온",
+        "matched_alias": "오리온",
+        "title": "\"미국엔 꼬북칩, 러시아엔 파이…오리온, 글로벌 영토 넓히고 주가 재평...",
+        "summary": "오리온은 실적 안정성과 주주환원 확대에 힘입어 리레이팅을 기대하고 있다. DS투자증권은 14일 오리온에 대해 투자의견 '매수'와 목표주가 18만원을 유지했다. 11일 기준 오리온 주가는 11만9300원에 거래를 마쳤다. 오리온의 8월 주요 법인 합산 매출액은 전년 동기대비 9% 증가한 3010억원, 영업이익은 5...",
+        "source_lane": "top2_search",
+        "url": "https://www.newsquest.co.kr/news/articleView.html?idxno=300882",
+        "published_at": "2026-09-14T19:06:58.321140+09:00"
+      }
+    },
+    {
+      "case_id": "E20",
+      "category": "기여도/간접 긍정",
+      "expected_directions": [
+        "SUPPORT"
+      ],
+      "input": {
+        "id": "news-2026-09-17-047050-6822a4d836e2:7e9c7c65024020202522d55cd7f504cbd84f24514ecfb9f8f2c83dc6c1edfcf4",
+        "stock_code": "047050",
+        "stock_name": "포스코인터내셔널",
+        "matched_alias": "포스코인터내셔널",
+        "title": "포스코인터내셔널, 美 셰일가스에 7500억 베팅…증권가 \"LNG 밸류체인 완...",
+        "summary": "포스코인터내셔널의 대표 자원개발 사업인 미얀마 가스전 생산량의 약 25%에 해당한다. 미얀마 가스전 지분율이 51%인 데 비해 이번 미국 가스전 자산은 100% 확보한다는 점에서 실제 사업 기여도도 상당할 것으로 전망된다. 특히 이미 생산 중인 자산이어서 대규모 초기 개발비 없이 인수 직후 수익...",
+        "source_lane": "top2_search",
+        "url": "https://www.ekoreanews.co.kr/news/articleView.html?idxno=88190",
+        "published_at": "2026-09-17T18:06:02.173638+09:00"
+      }
+    }
+  ]
+}

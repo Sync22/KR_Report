@@ -1,9 +1,34 @@
-from datetime import datetime
+from datetime import datetime, time
+from types import SimpleNamespace
+
+import pytest
 
 import stock_monitor.cli as cli_module
 from stock_monitor.config import RuntimeConfig
 from stock_monitor.db.repository import StockMonitorRepository
 from stock_monitor.models import AppSetting
+
+
+@pytest.mark.parametrize("hour,minute,second,expected", [
+    (8, 29, 59, False), (8, 30, 0, True), (16, 30, 0, True),
+    (16, 30, 2, True), (16, 30, 59, True), (16, 31, 0, False),
+])
+def test_scheduled_poll_includes_entire_final_scheduled_minute(monkeypatch, hour, minute, second, expected):
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 9, 18, hour, minute, second, 516073, tzinfo=tz)
+
+    calls = []
+    monkeypatch.setattr(cli_module, "datetime", Clock)
+    monkeypatch.setattr(cli_module, "_scheduled_skip_reason", lambda *_: None)
+    monkeypatch.setattr(cli_module, "_operation_profile_skip_reason", lambda *a, **k: None)
+    monkeypatch.setattr(cli_module, "_run_manual_poll", lambda *a, **k: calls.append(k) or 0)
+    config = SimpleNamespace(timezone="Asia/Seoul", poll_start_time=time(8, 30), poll_end_time=time(16, 30))
+    repository = SimpleNamespace(initialize=lambda: None, record_operation_event=lambda _: None)
+    cli_module._run_scheduled_poll(config, repository, limit=50, dry_run=True,
+                                   headless=True, send_intraday_alert=False)
+    assert bool(calls) is expected
 
 
 class _HolidayDateTime(datetime):

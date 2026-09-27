@@ -17743,7 +17743,9 @@ def _run_scheduled_poll(
         )
         print(f"Skipping poll: {skip_reason}")
         return 0
-    if not is_within_time_window(now.timetz().replace(tzinfo=None), config.poll_start_time, config.poll_end_time):
+    # Scheduler slots and configured polling endpoints have minute precision.
+    poll_minute = now.timetz().replace(tzinfo=None, second=0, microsecond=0)
+    if not is_within_time_window(poll_minute, config.poll_start_time, config.poll_end_time):
         detail = (
             f"{now.strftime('%H:%M')} is outside the configured polling window "
             f"{config.poll_start_time.strftime('%H:%M')}~{config.poll_end_time.strftime('%H:%M')}."
