@@ -6,7 +6,7 @@ Current candidate-evidence contract, evaluation state, and selected completed im
 
 상태: **최소 구현 및 저장 사례 검증 완료 / 의도 일부 달성 (2026-09-19)**. 이후 사용자가 1차 구현과 의도 도달 여부 검증을 명시적으로 승인했다. 아래 준비 이력의 구현 대기 문구는 당시 기록이다. 참조 대화: `판단 구조 개선` (`6aae0602-20d0-83ee-956f-dc46cf694958`).
 
-DTO audit note (`2026-09-27`): the public candidate projection currently retains `value_profile.sort_value_signal`, and some source/context labels still call Toss-backed values KRX. Remove the numeric field and correct the source labels in a later implementation pass; recursive response checks are tracked under `TODO2-WV-CONTENT-QA`. This document update changes no runtime behavior.
+DTO update (`2026-09-27`): public candidate and nested daily projections now omit `value_profile.sort_value_signal`; Toss-backed date/scope labels use Toss names. Focused tests cover both response paths. Representative-date content and responsive UI QA remain under `TODO2-WV-CONTENT-QA`.
 
 ### 1차 구현 및 실제 판정 (2026-09-19)
 
@@ -63,7 +63,7 @@ DTO audit note (`2026-09-27`): the public candidate projection currently retains
 | 9/18 롯데이노베이트 286940 | 공통 3행→3묶음, 검색 16행→1기사. 요약의 다른 내용인 ‘성능 하락폭’을 RISK로 검출 | 자동 방향 추출 오탐. 유용한 반론 추출 성공으로 세지 않음 |
 | 9/18 지엔씨에너지 119850 | 공통 3행→3묶음, 검색 보충 없음 | 설명 확장 개선 미입증. 자료 없음은 부정 근거가 아님 |
 
-수동 사건 예제는 `.tmp_evidence_review/2026-09-15/reviewed-event.json` 및 `.md`에 별도 저장했다. 관계 근거는 같은 날짜의 iM증권 오파칼림 해석과 명시적 인용이며, 임상 사실을 독립 검증했다는 뜻이 아니다. 기본 실행이 이 사건을 자동 인식한 것으로 평가하지 않는다. 리포트 출처는 `https://stock.naver.com/research/company/96148`, 뉴스 출처는 Naver `014/0005575753`, `001/0016310437`이며 전체 URL/입력 ID는 산출물에 보존했다.
+수동 사건 예제는 `.tmp_evidence_review/2026-09-15/reviewed-event.json` 및 `.md`에 별도 저장했다. 관계 근거는 같은 날짜의 iM증권 오파칼림 해석과 명시적 인용이며, 임상 사실을 독립 검증했다는 뜻이 아니다. 기본 실행이 이 사건을 자동 인식한 것으로 평가하지 않는다. 리포트는 Naver Research company page, 뉴스는 Naver `014/0005575753`, `001/0016310437`에서 확인했다. 정확한 URL/입력 ID는 로컬 산출물에 보존했다.
 
 **판정:** 1차 구현으로 중복과 상반된 관점을 함께 검토하는 방식의 효용은 일부 확인했다. 다만 자동 사건 인식과 의미 기반 반론 추출은 합격하지 않았으며 운영 순위 변경 근거도 없다. 네 설명 중 두 사례에서 정리 효용을 확인했지만 소표본 관찰이므로 일반 합격률이나 정확도로 확대 해석하지 않는다. 자동화 확대보다 실제 종목에 해당하는 주장인지 구분하는 문제가 다음 판단 대상이다. 이 기록은 과거 결과이며 이후 설명 검토에 80% 보편 합격선을 요구하지 않는다.
 
@@ -140,7 +140,7 @@ OLD/NEW는 같은 날짜뿐 아니라 같은 관측 cutoff와 후보 universe를
 - A candidate close reference is complete only when its stored close baseline and required foreigner/institution flow values are present. Overall capture health also depends on indices, market flow, Top20 classification, and source metadata; those checks are tracked in `TODO2-DATA-FRESHNESS-LIVE`.
 - Live Top2 quote/flow lookups are separate, timestamped context and do not rewrite the stored 20:00 baseline or change the report-derived Top2 cohort.
 - Existing KRX stock/index/flow rows support historical review only. They do not fill missing current Toss values or count as a current candidate gap. Historical event reaction is labeled `과거 반응(KRX)` and never changes current ordering.
-- A public DTO audit found an internal numeric sort key and legacy KRX labels on Toss-backed values. Removal/renaming and recursive response checks are tracked in `TODO2-WV-CONTENT-QA`.
+- Public DTO projection now removes the internal numeric sort key and labels current Toss references accurately. Remaining multi-date/content QA is tracked in `TODO2-WV-CONTENT-QA`.
 - Older CE-1 sections below remain design history where they describe KRX as a current selected-date source or Top2 as the persistence universe; do not use them as current source instructions.
 ## Included sections
 - Candidate Evidence Contract
@@ -189,7 +189,7 @@ build_web_view_candidate_evidence_snapshot(config, repository, business_date, li
 | Field | Current contract |
 | --- | --- |
 | `surface`, `read_only`, `business_date`, `available`, `scoring`, `notice` | Fixed read-only web-view metadata; `scoring=false`. |
-| `data_scope` | The current literal `stored_report_krx_evidence` is misleading because current market fields come from Toss. Rename to a source-neutral/current description before closeout; the literal does not imply KRX data ownership. |
+| `data_scope` | Current literal is `stored_report_toss_evidence`: Naver report summaries with current stored Toss market references. Historical KRX evidence remains a separate retrospective layer. |
 | `market_flow_context` | Toss market-level flow stored for the requested date; provisional values retain provider time. |
 | `market_reference.*` | Exact-date `stock_market_daily` rows with source `toss_openapi`; missing Toss rows remain missing, with no KRX fallback. |
 | `stock_flow_reference.*` | Exact-date Toss stock-flow rows when stored; preserve source date and units. |

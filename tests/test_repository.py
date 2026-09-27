@@ -219,6 +219,71 @@ def test_repository_replays_latest_toss_market_context_snapshot(tmp_path) -> Non
     assert repository.list_latest_toss_market_context_snapshot(business_date=business_date) == rows
 
 
+def test_latest_toss_market_snapshot_date_ignores_candidate_only_rows(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+    captured_date = date(2026, 7, 9)
+    candidate_only_date = date(2026, 7, 10)
+    captured_at = datetime(2026, 7, 9, 20, 5)
+    repository.save_toss_market_context_snapshots(
+        [
+            TossMarketContextSnapshot(
+                business_date=captured_date,
+                observed_at=captured_at,
+                rank=1,
+                stock_code="005930",
+                trading_amount=1000,
+                trading_volume=100,
+                source="toss_openapi",
+                checked_at=captured_at,
+            )
+        ]
+    )
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=candidate_only_date,
+                stock_code="000660",
+                stock_name="SK하이닉스",
+                market="KOSPI",
+                close_price=180_000,
+                fetched_at=datetime(2026, 7, 10, 20, 5),
+                source="toss_openapi",
+            )
+        ]
+    )
+
+    assert repository.latest_toss_market_snapshot_date() == captured_date
+    assert repository.list_recent_toss_market_snapshot_dates(on_or_before=candidate_only_date, limit=5) == [
+        captured_date
+    ]
+
+
+def test_latest_toss_market_snapshot_date_keeps_stored_market_rows(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+    market_date = date(2026, 7, 9)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=market_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                close_price=100_000,
+                change_percent=1.2,
+                volume=1000,
+                turnover=2_300_000_000_000,
+                fetched_at=datetime(2026, 7, 9, 20, 5),
+                source="toss_openapi",
+            )
+        ]
+    )
+
+    assert repository.latest_toss_market_snapshot_date() == market_date
+    assert repository.list_recent_toss_market_snapshot_dates(on_or_before=market_date, limit=5) == [market_date]
+
+
 def test_repository_initializes_news_intelligence_observation_tables(tmp_path) -> None:
     repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
     repository.initialize()

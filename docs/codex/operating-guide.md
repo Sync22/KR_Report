@@ -10,17 +10,17 @@ Current operating state, delivery sequence, roadmap, and work board.
 <!-- Merged from: docs/codex/operating-guide.md -->
 ## Current Work
 
-### Snapshot (2026-09-27)
+### Snapshot (2026-09-28)
 
 The repository is in live-market validation and operational hardening, not initial MVP construction. This is repository-level status only; current main-PC/mini-PC scheduler registration, database freshness, and delivery are not verified here.
 
 Current contracts describe Naver report collection and summaries, Telegram paging/commands, operator-only `admin-gui`, GET-only stored-data `web-view`, and Toss 20:00 as the current stored web-view market/ETF/flow baseline. Existing KRX rows are historical analysis/recovery data only. See [AGENTS.md](../../AGENTS.md), [surface-guide.md](surface-guide.md), [data-governance.md](data-governance.md), [market-data-runbook.md](market-data-runbook.md), and [mini-pc-runbook.md](mini-pc-runbook.md).
 
-### Repository follow-up findings
+### Local implementation status (2026-09-28)
 
-1. Public candidate DTO review found an internal numeric sort key and legacy KRX labels on Toss-backed values. The plan is tracked in `TODO2-WV-CONTENT-QA`.
-2. Toss close capture needs consistent coverage, authoritative date, and operator-health reporting. The plan is tracked in `TODO2-DATA-FRESHNESS-LIVE`.
-3. Telegram retry behavior needs an explicit policy for an accepted send with a lost response. The plan is tracked in `TODO2-TG-LIVE-DRYRUN`.
+1. Candidate and nested daily DTOs now strip the internal numeric sort field and identify Toss-backed dates/scope as Toss. Representative-date content and responsive UI QA remain in `TODO2-WV-CONTENT-QA`.
+2. Local Toss capture now reports required-domain coverage, marks incomplete capture events partial/empty, preserves explicit security classification, derives snapshot dates without candidate-only quotes, exposes partial state in GET market freshness, and warns on failed/partial events or missing due events when a healthy Toss task is registered on a non-suppressed business day. Fixture verification is in progress; real host/date validation remains in `TODO2-DATA-FRESHNESS-LIVE`.
+3. Telegram retry behavior still needs an explicit policy for an accepted send with a lost response; tracked in `TODO2-TG-LIVE-DRYRUN`.
 
 These are review findings and planned work, not implementation authorization. No live host state is inferred from repository code or dated history.
 ## Work Todo Board
@@ -127,6 +127,8 @@ Use operating-like stored data to prove Telegram briefing payload quality, pagin
 **Goal:**
 Move beyond fixture smoke and verify that recent-date web-view content is usable, scan-friendly, and public-safe across desktop, tablet, and mobile.
 
+**Implementation update (2026-09-28):** public candidate and nested daily DTOs strip `sort_value_signal`; current stored value context uses Toss source/date labels. The task stays open for representative-date and responsive content QA.
+
 **Scope:**
 
 - Select several recent business dates from stored data.
@@ -156,6 +158,8 @@ Move beyond fixture smoke and verify that recent-date web-view content is usable
 
 **Goal:**
 Validate current Toss freshness and stored ETF/flow coverage on representative dates; label historical KRX and X/lab data separately.
+
+**Implementation update (2026-09-28):** local capture coverage, metadata classification, snapshot-date ownership, and operator-health propagation are implemented. This TODO remains open until representative stored dates and actual operating-host events are checked.
 
 **Scope:**
 

@@ -32,6 +32,7 @@ from stock_monitor.models import (
     StockMarketDailySnapshot,
     StockMetadata,
     StockThemeMembership,
+    TossMarketContextSnapshot,
     TossPriorityQuoteBaseline,
 )
 
@@ -73,6 +74,24 @@ def _assert_public_safe_payload(payload) -> None:
     elif isinstance(payload, list):
         for item in payload:
             _assert_public_safe_payload(item)
+
+
+def _assert_candidate_payload_has_no_internal_sort_fields(payload) -> None:
+    internal_keys = {
+        "sort_value_signal",
+        "sort_signal",
+        "sort_density",
+        "sort_tuple",
+        "rank_reference",
+        "rank_reference_available",
+    }
+    if isinstance(payload, dict):
+        assert not internal_keys.intersection(payload)
+        for value in payload.values():
+            _assert_candidate_payload_has_no_internal_sort_fields(value)
+    elif isinstance(payload, list):
+        for item in payload:
+            _assert_candidate_payload_has_no_internal_sort_fields(item)
 
 
 def _web_view_news_run(
@@ -4234,14 +4253,32 @@ def test_web_view_candidate_evidence_exposes_value_context_from_stored_reference
 
     context = snapshot["rows"][0]["value_context"]
     assert context["report_reference_date"] == "2026-07-02"
-    assert context["krx_reference_date"] == "2026-07-02"
+    assert context["toss_reference_date"] == "2026-07-02"
+    assert "krx_reference_date" not in context
     assert context["turnover_reference_date"] == "2026-07-02"
     assert context["current_price_reference_time"] == "2026-07-02T20:00:04"
     assert context["current_price_basis"] == "20:00 stored"
     assert context["investor_flow_reference_date"] == "2026-07-02"
     assert context["news_collection_status"] == "stored_no_match"
     assert context["missing_labels"] == []
+    assert snapshot["data_scope"] == "stored_report_toss_evidence"
     _assert_public_safe_payload(snapshot)
+    _assert_candidate_payload_has_no_internal_sort_fields(snapshot)
+    _assert_public_safe_payload(json.loads(json.dumps(snapshot)))
+
+    daily_snapshot = cli_module.build_web_view_daily_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        now=datetime(2026, 7, 2, 21, 0, 0),
+    )
+    daily_candidates = daily_snapshot["priority_candidate_evidence"]
+    assert daily_candidates["data_scope"] == "stored_report_toss_evidence"
+    daily_context = daily_candidates["rows"][0]["value_context"]
+    assert daily_context["toss_reference_date"] == "2026-07-02"
+    assert "krx_reference_date" not in daily_context
+    _assert_public_safe_payload(daily_candidates)
+    _assert_candidate_payload_has_no_internal_sort_fields(daily_candidates)
 
 
 def test_web_view_news_observation_keeps_unique_direct_evidence_after_later_empty_collection(
@@ -5372,7 +5409,7 @@ def test_web_view_stock_detail_snapshot_exposes_reports_without_admin_state(tmp_
     assert snapshot["market_reference"]["close_price"] == 100_000
     assert snapshot["value_context"] == {
         "report_reference_date": "2026-05-08",
-        "krx_reference_date": "2026-05-08",
+        "toss_reference_date": "2026-05-08",
         "current_price_reference_time": "2026-05-08T20:00:00",
         "current_price_basis": "Toss stored snapshot",
         "turnover_reference_date": "2026-05-08",
@@ -7863,3 +7900,110 @@ def test_web_view_news_connection_does_not_present_stale_krx_as_news_evidence() 
 
     assert label == "관련 뉴스 매칭"
     assert "KRX" not in reason
+
+
+def test_web_view_marks_partial_toss_capture_instead_of_exact_market_snapshot(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 7, 10)
+    captured_at = datetime(2026, 7, 10, 20, 5)
+    repository.save_toss_market_context_snapshots(
+        [
+            TossMarketContextSnapshot(
+                business_date=business_date,
+                observed_at=captured_at,
+                rank=1,
+                stock_code="005930",
+                trading_amount=1000,
+                trading_volume=100,
+                source="toss_openapi",
+                checked_at=captured_at,
+            )
+        ]
+    )
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                close_price=70_000,
+                change_percent=1.2,
+                volume=100,
+                turnover=1000,
+                fetched_at=captured_at,
+                source="toss_openapi",
+            )
+        ]
+    )
+    repository.record_operation_event(
+        OperationEvent(
+            event_time=captured_at,
+            component="toss-market-context",
+            event_type="capture",
+            status="partial",
+            business_date=business_date,
+            detail="missing_domains=market_indices,market_flow",
+        )
+    )
+
+    daily_snapshot = cli_module.build_web_view_daily_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        now=datetime(2026, 7, 10, 21, 0),
+    )
+    market_snapshot = cli_module.build_web_view_market_snapshot(
+        config,
+        repository,
+        now=datetime(2026, 7, 10, 21, 0),
+    )
+
+    freshness = {item["key"]: item for item in daily_snapshot["source_freshness_summary"]["items"]}
+    assert daily_snapshot["toss_context"]["capture_status"] == "partial"
+    assert daily_snapshot["toss_context"]["missing_domains"] == ["market_indices", "market_flow"]
+    assert freshness["toss_market"]["status"] == "partial"
+    assert freshness["toss_market"]["exact_date_available"] is False
+    assert market_snapshot["capture_status"] == "partial"
+    assert market_snapshot["missing_domains"] == ["market_indices", "market_flow"]
+
+
+def test_web_view_exposes_failed_toss_capture_without_new_snapshot_rows(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 7, 10)
+    repository.record_operation_event(
+        OperationEvent(
+            event_time=datetime(2026, 7, 10, 20, 5),
+            component="toss-market-context",
+            event_type="capture",
+            status="failed",
+            business_date=business_date,
+            detail="command_error=provider unavailable",
+        )
+    )
+
+    daily_snapshot = cli_module.build_web_view_daily_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        now=datetime(2026, 7, 10, 21, 0),
+    )
+    market_snapshot = cli_module.build_web_view_market_snapshot(
+        config,
+        repository,
+        now=datetime(2026, 7, 10, 21, 0),
+    )
+
+    freshness = {item["key"]: item for item in daily_snapshot["source_freshness_summary"]["items"]}
+    assert daily_snapshot["toss_context"]["capture_status"] == "failed"
+    assert daily_snapshot["toss_context"]["snapshot_date"] is None
+    assert freshness["toss_market"]["capture_status"] == "failed"
+    assert freshness["toss_market"]["status"] == "missing"
+    assert market_snapshot["latest_capture_attempt"]["status"] == "failed"
+    assert market_snapshot["snapshot_date"] is None

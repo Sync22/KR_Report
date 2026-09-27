@@ -9,6 +9,10 @@ The active market-data path is one Toss OpenAPI capture at `20:05` KST on each K
 - Existing KRX rows remain intact for historical analysis and old report windows; they are not a live fallback for the web-view.
 - The Toss snapshot is a stored close reference, not an intraday quote or execution signal.
 
+The capture event is `completed` only when all required domains are present: exactly 20 unique ranked turnover symbols with amounts, usable stock/ETF classification for each ranked symbol, both KOSPI/KOSDAQ index values and changes, six market-flow groups (three investor types for each market), and stored close quote plus foreigner/institution flow for every valid daily-summary candidate. Otherwise the event is `partial` or `empty` and names missing domains. Unclassified symbols are not persisted as stocks by default, and operator health flags partial/failed capture events. Snapshot-date lookup uses ranked capture rows, so candidate-only quote rows cannot advance the market snapshot date.
+
+The GET-only market view carries the capture status and missing domains into its stored context/freshness fields. A same-date partial capture is labeled `partial`, not `exact`; a failed attempt with no saved rows is exposed separately from the last stored snapshot date. An absent event after the scheduled window warns in operator health when the Toss task is registered and healthy and the Korean business date is not suppressed.
+
 ## Parked Proposal: KOSPI/KOSDAQ Rapid-Move Telegram Alert
 
 This older idea is outside the active TODO2 queue. Its API availability and trigger thresholds are not currently verified or approved. Reopen it as a separate planning task and check current Toss documentation before implementation.

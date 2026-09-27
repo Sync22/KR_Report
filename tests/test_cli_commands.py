@@ -1752,6 +1752,8 @@ def test_toss_market_context_capture_saves_close_snapshot_with_fake_provider(tmp
                 ],
                 "stock_names": {"005930": "삼성전자", "000660": "SK하이닉스"},
                 "stock_markets": {"005930": "KOSPI", "000660": "KOSPI"},
+                "stock_security_types": {"005930": "STOCK", "000660": "STOCK"},
+                "stock_metadata_available": True,
                 "etf_symbols": [],
                 "market_prices": [{"symbol": "KOSPI", "lastPrice": "3000.1"}],
                 "market_price_changes": {"KOSPI": {"change_rate": 0.008}},
@@ -1793,6 +1795,16 @@ def test_toss_market_context_capture_saves_close_snapshot_with_fake_provider(tmp
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert len(close_calls) == (1 if scheduled else 0)
+    assert payload["capture_status"] == "partial"
+    assert set(payload["coverage"]["missing_domains"]) == {"top20", "market_indices", "market_flow"}
+    if scheduled:
+        event = repository.list_operation_events(
+            component="toss-market-context",
+            event_type="capture",
+            business_date=business_date,
+            limit=1,
+        )[0]
+        assert event.status == "partial"
     assert payload["saved_count"] == 2
     assert payload["stock_snapshot_count"] == 2
     assert payload["market_index_count"] == 1
@@ -1828,6 +1840,281 @@ def test_toss_market_context_capture_saves_close_snapshot_with_fake_provider(tmp
             checked_at=datetime.fromisoformat("2026-07-10T15:00:03+09:00"),
         ),
     ]
+
+
+def test_toss_market_context_capture_is_completed_only_with_all_required_coverage(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    class CloseTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 10, 20, 5, tzinfo=tz)
+
+    monkeypatch.setattr(cli_module, "datetime", CloseTime)
+    monkeypatch.setattr(
+        cli_module,
+        "_collect_after_close_top2_news",
+        lambda *_args, **_kwargs: {"status": "skipped"},
+    )
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 7, 10)
+    codes = ["005930", *(f"{code:06d}" for code in range(100, 119))]
+    rankings = [
+        {
+            "rank": rank,
+            "symbol": code,
+            "tradingAmount": 2_000 - rank,
+            "tradingVolume": 100 - rank,
+            "price": {"lastPrice": 70_000, "basePrice": 69_000, "changeRate": 0.01},
+        }
+        for rank, code in enumerate(codes, start=1)
+    ]
+    investor_flow = {
+        market: {
+            investor: {"buyAmount": 100, "sellAmount": 80}
+            for investor in ("individual", "foreigner", "institution")
+        }
+        for market in ("KOSPI", "KOSDAQ")
+    }
+
+    class FakeProvider:
+        def get_market_context(self, **_kwargs) -> dict[str, object]:
+            return {
+                "live_fetch": True,
+                "ranked_at": "2026-07-10T20:00:00+09:00",
+                "fetched_at": "2026-07-10T20:00:03+09:00",
+                "rankings": rankings,
+                "stock_names": {code: f"종목{code}" for code in codes},
+                "stock_markets": {code: "KOSPI" for code in codes},
+                "stock_security_types": {
+                    code: "ETF" if rank == 2 else "STOCK"
+                    for rank, code in enumerate(codes, start=1)
+                },
+                "stock_metadata_available": True,
+                "etf_symbols": [codes[1]],
+                "market_prices": [
+                    {"symbol": "KOSPI", "lastPrice": "3000.1"},
+                    {"symbol": "KOSDAQ", "lastPrice": "900.2"},
+                ],
+                "market_price_changes": {
+                    "KOSPI": {"change_rate": 0.01},
+                    "KOSDAQ": {"change_rate": 0.02},
+                },
+                "investor_flow": investor_flow,
+            }
+
+        def get_quotes(self, *, symbols, **_kwargs) -> dict[str, object]:
+            return {
+                "quotes": [
+                    {
+                        "symbol": code,
+                        "lastPrice": 70_000,
+                        "currency": "KRW",
+                        "timestamp": "2026-07-10T20:00:00+09:00",
+                    }
+                    for code in symbols
+                ],
+                "investor_trading": {
+                    "items": [
+                        {
+                            "symbol": code,
+                            "updated_at": "2026-07-10T20:00:00+09:00",
+                            "foreigner_net_buy_volume": 120,
+                            "institution_net_buy_volume": -30,
+                        }
+                        for code in symbols
+                    ]
+                },
+            }
+
+    repository.insert_reports(
+        [
+            Report(
+                business_date=business_date,
+                stock_name="삼성전자",
+                stock_code="005930",
+                title="삼성전자 확인",
+                broker_name="테스트증권",
+                published_at=datetime(2026, 7, 10, 9, 0),
+                collected_at=datetime(2026, 7, 10, 9, 1),
+                source_id="toss-complete-capture-report",
+                identity_key="toss-complete-capture-report",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+
+    exit_code = cli_module._run_toss_market_context_capture(
+        config,
+        repository,
+        business_date=business_date,
+        live=True,
+        confirm_token_reissue=True,
+        confirm_save=True,
+        scheduled=True,
+        as_json=True,
+        toss_provider=FakeProvider(),
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["capture_status"] == "completed"
+    assert payload["coverage"]["missing_domains"] == []
+    event = repository.list_operation_events(
+        component="toss-market-context",
+        event_type="capture",
+        business_date=business_date,
+        limit=1,
+    )[0]
+    assert event.status == "completed"
+    assert payload["coverage"]["top20"]["saved"] == 20
+    assert payload["coverage"]["security_metadata"]["complete"] is True
+    assert payload["coverage"]["market_indices"]["saved"] == 2
+    assert payload["coverage"]["market_flow"]["saved"] == 6
+    assert repository.list_etf_daily_for_codes(
+        business_date,
+        [codes[1]],
+        source="toss_openapi",
+    )
+    assert repository.list_stock_market_daily_for_codes(
+        business_date,
+        [codes[1]],
+        source="toss_openapi",
+    ) == []
+
+    rankings[-1]["symbol"] = codes[0]
+    assert cli_module._run_toss_market_context_capture(
+        config,
+        repository,
+        business_date=business_date,
+        live=True,
+        confirm_token_reissue=True,
+        confirm_save=True,
+        scheduled=False,
+        as_json=True,
+        toss_provider=FakeProvider(),
+    ) == 0
+    duplicate_payload = json.loads(capsys.readouterr().out)
+    assert duplicate_payload["capture_status"] == "partial"
+    assert "top20" in duplicate_payload["coverage"]["missing_domains"]
+
+    rankings[-1]["symbol"] = codes[-1]
+    rankings.append({**rankings[0], "rank": 1})
+    assert cli_module._run_toss_market_context_capture(
+        config,
+        repository,
+        business_date=business_date,
+        live=True,
+        confirm_token_reissue=True,
+        confirm_save=True,
+        scheduled=False,
+        as_json=True,
+        toss_provider=FakeProvider(),
+    ) == 0
+    oversized_payload = json.loads(capsys.readouterr().out)
+    assert oversized_payload["capture_status"] == "partial"
+    assert "top20" in oversized_payload["coverage"]["missing_domains"]
+
+
+def test_scheduled_toss_capture_command_failure_is_recorded_for_operator_health(tmp_path, monkeypatch) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    monkeypatch.setattr(cli_module.RuntimeConfig, "from_env", lambda **_kwargs: config)
+
+    def fail_capture(*_args, **_kwargs):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(cli_module, "_run_toss_market_context_capture", fail_capture)
+
+    exit_code = cli_module.main(
+        [
+            "toss-market-context-capture",
+            "--date",
+            "2026-07-10",
+            "--live",
+            "--confirm-token-reissue",
+            "--confirm-save",
+            "--scheduled",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 1
+    events = repository.list_operation_events(
+        component="toss-market-context",
+        event_type="capture",
+        business_date=date(2026, 7, 10),
+        status="failed",
+        limit=1,
+    )
+    assert len(events) == 1
+    assert "provider unavailable" in events[0].detail
+
+
+def test_toss_capture_does_not_classify_untyped_ranked_symbols_as_stocks(tmp_path, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 7, 10)
+
+    class FakeProvider:
+        def get_market_context(self, **_kwargs) -> dict[str, object]:
+            return {
+                "live_fetch": True,
+                "ranked_at": "2026-07-10T20:00:00+09:00",
+                "fetched_at": "2026-07-10T20:00:03+09:00",
+                "rankings": [
+                    {
+                        "rank": 1,
+                        "symbol": "069500",
+                        "tradingAmount": 1000,
+                        "tradingVolume": 100,
+                        "price": {"lastPrice": 20_000},
+                    }
+                ],
+                "stock_names": {"069500": "코스피 ETF"},
+                "stock_markets": {"069500": "KOSPI"},
+                "stock_security_types": {"069500": "UNKNOWN"},
+                "stock_metadata_available": False,
+                "stock_metadata_reason": "partial_stock_metadata",
+                "etf_symbols": [],
+                "market_prices": [],
+                "market_price_changes": {},
+                "investor_flow": {},
+            }
+
+        def get_quotes(self, **_kwargs) -> dict[str, object]:
+            return {"quotes": [], "investor_trading": {"items": []}}
+
+    assert cli_module._run_toss_market_context_capture(
+        config,
+        repository,
+        business_date=business_date,
+        live=True,
+        confirm_token_reissue=True,
+        confirm_save=True,
+        scheduled=False,
+        as_json=True,
+        toss_provider=FakeProvider(),
+    ) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["capture_status"] == "partial"
+    assert "security_metadata" in payload["coverage"]["missing_domains"]
+    assert payload["coverage"]["security_metadata"]["missing_symbols"] == ["069500"]
+    assert repository.list_stock_market_daily_for_codes(
+        business_date,
+        ["069500"],
+        source="toss_openapi",
+    ) == []
+    assert repository.list_etf_daily_for_codes(
+        business_date,
+        ["069500"],
+        source="toss_openapi",
+    ) == []
 
 
 def test_toss_market_context_capture_saves_every_daily_candidate_in_two_symbol_batches(tmp_path, capsys) -> None:
@@ -11665,6 +11952,8 @@ def test_web_view_value_qa_collapses_future_toss_missing_market_reference_warnin
                 stock_name="삼성전자",
                 market="KOSPI",
                 close_price=90_000,
+                volume=1_000,
+                turnover=900_000_000_000,
                 fetched_at=datetime(2026, 5, 12, 20, 0, 0),
                 source="toss_openapi",
             )

@@ -900,6 +900,115 @@ def test_operator_status_warns_on_empty_krx_daily_backfill_event(tmp_path, monke
     assert "live_observation.krx_daily_backfill.empty" in snapshot["health"]["warning_checks"]
 
 
+def test_operator_status_warns_on_failed_poll_news_and_partial_toss_capture(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 7, 10)
+    repository.record_operation_event(
+        OperationEvent(
+            event_time=datetime(2026, 7, 10, 9, 30),
+            component="poll-news",
+            event_type="scheduled-collect",
+            status="failed",
+            business_date=business_date,
+            detail="scheduled_run_at=2026-07-10T09:30:00+09:00; provider_error",
+        )
+    )
+    repository.record_operation_event(
+        OperationEvent(
+            event_time=datetime(2026, 7, 10, 20, 5),
+            component="toss-market-context",
+            event_type="capture",
+            status="partial",
+            business_date=business_date,
+            detail="missing_domains=indices,market_flow",
+        )
+    )
+
+    snapshot = cli_module.build_operator_status_snapshot(
+        config,
+        repository,
+        limit=5,
+        now=datetime(2026, 7, 10, 20, 10),
+        scheduler_tasks=[],
+    )
+
+    components = snapshot["live_observation"]["components"]
+    assert components["poll_news"]["evidence_status"] == "failed"
+    assert components["toss_market_context"]["evidence_status"] == "attention"
+    assert "live_observation.poll_news.failed" in snapshot["health"]["warning_checks"]
+    assert "live_observation.toss_market_context.partial" in snapshot["health"]["warning_checks"]
+
+
+def test_operator_status_warns_on_failed_toss_capture_event(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 7, 10)
+    repository.record_operation_event(
+        OperationEvent(
+            event_time=datetime(2026, 7, 10, 20, 5),
+            component="toss-market-context",
+            event_type="capture",
+            status="failed",
+            business_date=business_date,
+            detail="command_error=provider unavailable",
+        )
+    )
+
+    snapshot = cli_module.build_operator_status_snapshot(
+        config,
+        repository,
+        limit=5,
+        now=datetime(2026, 7, 10, 20, 10),
+        scheduler_tasks=[],
+    )
+
+    component = snapshot["live_observation"]["components"]["toss_market_context"]
+    assert component["evidence_status"] == "failed"
+    assert "live_observation.toss_market_context.failed" in snapshot["health"]["warning_checks"]
+
+
+def test_operator_status_warns_when_scheduled_toss_capture_evidence_is_missing_after_deadline(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    scheduler_tasks = [
+        {
+            "task_name": task_name,
+            "available": True,
+            "exists": True,
+            "state": "Ready",
+            "enabled": True,
+            "next_run_time": None,
+            "last_run_time": None,
+            "last_task_result": 0,
+            "status_class": "healthy",
+            "detail": None,
+        }
+        for task_name in ("StockMonitor-Poll", "StockMonitor-TossCloseSnapshot")
+    ]
+
+    snapshot = cli_module.build_operator_status_snapshot(
+        config,
+        repository,
+        limit=5,
+        now=datetime(2026, 7, 10, 20, 10),
+        scheduler_tasks=scheduler_tasks,
+    )
+
+    component = snapshot["live_observation"]["components"]["toss_market_context"]
+    assert component["evidence_status"] == "attention"
+    assert component["attention_reason"] == "missing"
+    assert "live_observation.toss_market_context.missing" in snapshot["health"]["warning_checks"]
+
+
 def test_operator_status_live_observation_prefers_latest_krx_event(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)

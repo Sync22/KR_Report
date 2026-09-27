@@ -2189,16 +2189,35 @@ def main(argv: list[str] | None = None) -> int:
             as_json=args.json,
         )
     if args.command == "toss-market-context-capture":
-        return _run_toss_market_context_capture(
-            config,
-            repository,
-            business_date=args.date,
-            live=args.live,
-            confirm_token_reissue=args.confirm_token_reissue,
-            confirm_save=args.confirm_save,
-            scheduled=args.scheduled,
-            as_json=args.json,
-        )
+        try:
+            return _run_toss_market_context_capture(
+                config,
+                repository,
+                business_date=args.date,
+                live=args.live,
+                confirm_token_reissue=args.confirm_token_reissue,
+                confirm_save=args.confirm_save,
+                scheduled=args.scheduled,
+                as_json=args.json,
+            )
+        except Exception as exc:
+            if not args.scheduled:
+                raise
+            try:
+                repository.record_operation_event(
+                    _operation_event(
+                        config,
+                        component="toss-market-context",
+                        event_type="capture",
+                        status="failed",
+                        business_date=args.date,
+                        detail=f"command_error={exc}",
+                    )
+                )
+            except Exception:
+                pass
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
     if args.command == "db-migrate":
         return _run_db_migrate(repository, dry_run=args.dry_run)
     if args.command == "ops-sync-preview":
@@ -8066,6 +8085,7 @@ def _run_toss_market_context_capture(
     )
     checked_at = _parse_toss_quote_timestamp(market_context.get("fetched_at"), observed_at)
     snapshots: list[TossMarketContextSnapshot] = []
+    ranked_items: list[dict[str, object]] = []
     for position, item in enumerate(market_context.get("rankings") or [], start=1):
         if not isinstance(item, dict):
             continue
@@ -8087,21 +8107,37 @@ def _run_toss_market_context_capture(
                 checked_at=checked_at,
             )
         )
+        ranked_items.append(item)
     repository.save_toss_market_context_snapshots(snapshots)
     stock_names = market_context.get("stock_names") if isinstance(market_context.get("stock_names"), dict) else {}
     stock_markets = market_context.get("stock_markets") if isinstance(market_context.get("stock_markets"), dict) else {}
+    stock_security_types = (
+        market_context.get("stock_security_types")
+        if isinstance(market_context.get("stock_security_types"), dict)
+        else {}
+    )
+    stock_metadata_available = market_context.get("stock_metadata_available") is True
     etf_symbols = {str(value) for value in market_context.get("etf_symbols") or []}
     metadata_rows: list[StockMetadata] = []
     stock_rows: list[StockMarketDailySnapshot] = []
     etf_rows: list[EtfDailySnapshot] = []
-    for item in market_context.get("rankings") or []:
-        if not isinstance(item, dict):
-            continue
+    classified_ranked_symbols: set[str] = set()
+    metadata_missing_symbols: set[str] = set()
+    for item in ranked_items:
         stock_code = str(item.get("symbol") or "").strip()
-        if not re.fullmatch(r"\d{6}", stock_code):
+        security_type = str(stock_security_types.get(stock_code) or "").strip().upper()
+        stock_name = str(stock_names.get(stock_code) or "").strip()
+        market = str(stock_markets.get(stock_code) or "").strip().upper()
+        is_etf = security_type == "ETF"
+        if (
+            not stock_name
+            or security_type not in {"ETF", "STOCK"}
+            or (is_etf != (stock_code in etf_symbols))
+            or (not is_etf and market not in {"KOSPI", "KOSDAQ"})
+        ):
+            metadata_missing_symbols.add(stock_code)
             continue
-        stock_name = str(stock_names.get(stock_code) or "").strip() or stock_code
-        market = str(stock_markets.get(stock_code) or "").strip() or "KR"
+        classified_ranked_symbols.add(stock_code)
         price = item.get("price") if isinstance(item.get("price"), dict) else {}
         last_price = _safe_optional_int(price.get("lastPrice"))
         base_price = _safe_optional_int(price.get("basePrice"))
@@ -8114,7 +8150,7 @@ def _run_toss_market_context_capture(
         metadata_rows.append(
             StockMetadata(stock_code, stock_name, None, None, checked_at, source="toss_openapi")
         )
-        if stock_code in etf_symbols:
+        if is_etf:
             etf_rows.append(
                 EtfDailySnapshot(
                     business_date, stock_code, stock_name, checked_at, source="toss_openapi",
@@ -8137,6 +8173,7 @@ def _run_toss_market_context_capture(
     repository.upsert_etf_daily_snapshots(etf_rows)
 
     index_rows: list[MarketIndexDailySnapshot] = []
+    complete_index_symbols: set[str] = set()
     price_changes = market_context.get("market_price_changes") if isinstance(market_context.get("market_price_changes"), dict) else {}
     for item in market_context.get("market_prices") or []:
         if not isinstance(item, dict):
@@ -8160,11 +8197,15 @@ def _run_toss_market_context_capture(
                 source="toss_openapi", close_index=close_index, change_percent=change_percent,
             )
         )
+        if change_percent is not None:
+            complete_index_symbols.add(symbol)
     repository.upsert_market_index_daily(index_rows)
 
     market_flow_rows: list[MarketInvestorFlowDaily] = []
+    complete_market_flow_groups: set[tuple[str, str]] = set()
     for market, record in (market_context.get("investor_flow") or {}).items():
-        if not isinstance(record, dict):
+        market = str(market).strip().upper()
+        if market not in {"KOSPI", "KOSDAQ"} or not isinstance(record, dict):
             continue
         for label, item in (("개인", record.get("individual")), ("외국인", record.get("foreigner")), ("기관", record.get("institution"))):
             if not isinstance(item, dict):
@@ -8179,6 +8220,8 @@ def _run_toss_market_context_capture(
                     amount_unit="원", source="toss_openapi",
                 )
             )
+            if buy_amount is not None and sell_amount is not None:
+                complete_market_flow_groups.add((market, label))
     repository.upsert_market_investor_flow_daily(market_flow_rows)
 
     quote_payloads = [
@@ -8283,6 +8326,81 @@ def _run_toss_market_context_capture(
         if {"외국인", "기관"} <= labels
     }
     candidate_missing_codes = sorted(set(candidate_symbols) - (baseline_codes & flow_codes))
+    top20_ranks = {row.rank for row in snapshots}
+    top20_unique_symbols = {row.stock_code for row in snapshots}
+    top20_complete = (
+        len(snapshots) == 20
+        and top20_ranks == set(range(1, 21))
+        and len(top20_unique_symbols) == 20
+        and all(row.trading_amount is not None for row in snapshots)
+    )
+    ranked_symbols = {row.stock_code for row in snapshots}
+    metadata_missing_symbols.update(ranked_symbols - classified_ranked_symbols)
+    metadata_complete = stock_metadata_available and not metadata_missing_symbols
+    expected_index_symbols = {"KOSPI", "KOSDAQ"}
+    missing_index_symbols = sorted(expected_index_symbols - complete_index_symbols)
+    expected_market_flow_groups = {
+        (market, label)
+        for market in ("KOSPI", "KOSDAQ")
+        for label in ("개인", "외국인", "기관")
+    }
+    missing_market_flow_groups = sorted(
+        f"{market}:{label}"
+        for market, label in expected_market_flow_groups - complete_market_flow_groups
+    )
+    missing_domains: list[str] = []
+    if not top20_complete:
+        missing_domains.append("top20")
+    if not metadata_complete:
+        missing_domains.append("security_metadata")
+    if missing_index_symbols:
+        missing_domains.append("market_indices")
+    if missing_market_flow_groups:
+        missing_domains.append("market_flow")
+    if candidate_missing_codes:
+        missing_domains.append("candidate_close_reassessment")
+    coverage = {
+        "top20": {
+            "expected": 20,
+            "saved": len(snapshots),
+            "unique_symbols": len(top20_unique_symbols),
+            "complete": top20_complete,
+        },
+        "security_metadata": {
+            "expected": len(ranked_symbols),
+            "classified": len(classified_ranked_symbols),
+            "provider_available": stock_metadata_available,
+            "provider_reason": market_context.get("stock_metadata_reason"),
+            "missing_symbols": sorted(metadata_missing_symbols),
+            "complete": metadata_complete,
+        },
+        "market_indices": {
+            "expected": sorted(expected_index_symbols),
+            "saved": len(complete_index_symbols),
+            "missing_symbols": missing_index_symbols,
+            "complete": not missing_index_symbols,
+        },
+        "market_flow": {
+            "expected": len(expected_market_flow_groups),
+            "saved": len(complete_market_flow_groups),
+            "missing_groups": missing_market_flow_groups,
+            "complete": not missing_market_flow_groups,
+        },
+        "candidate_close_reassessment": {
+            "expected": len(candidate_symbols),
+            "saved": len(candidate_symbols) - len(candidate_missing_codes),
+            "missing_symbols": candidate_missing_codes,
+            "complete": not candidate_missing_codes,
+        },
+        "missing_domains": missing_domains,
+    }
+    has_any_data = bool(
+        snapshots or stock_rows or etf_rows or index_rows or market_flow_rows
+        or baseline_rows or priority_flow_rows
+    )
+    capture_status = (
+        "completed" if not missing_domains else "partial" if has_any_data else "empty"
+    )
     payload = {
         **plan,
         "mode": "live",
@@ -8302,6 +8420,8 @@ def _run_toss_market_context_capture(
         "candidate_flow_complete_count": len(flow_codes),
         "candidate_missing_count": len(candidate_missing_codes),
         "candidate_missing_codes": candidate_missing_codes,
+        "capture_status": capture_status,
+        "coverage": coverage,
         "observed_at": observed_at.isoformat(),
         "rate_limit": market_context.get("rate_limit"),
     }
@@ -8311,17 +8431,12 @@ def _run_toss_market_context_capture(
                 config,
                 component="toss-market-context",
                 event_type="capture",
-                status=(
-                    "completed"
-                    if snapshots and not candidate_missing_codes
-                    else "partial"
-                    if snapshots or baseline_rows or priority_flow_rows
-                    else "empty"
-                ),
+                status=capture_status,
                 business_date=business_date,
                 detail=(
                     f"ranking_count={payload['ranking_count']}; saved_count={len(snapshots)}; "
-                    f"candidate_targets={len(candidate_symbols)}; candidate_missing={len(candidate_missing_codes)}"
+                    f"candidate_targets={len(candidate_symbols)}; candidate_missing={len(candidate_missing_codes)}; "
+                    f"missing_domains={','.join(missing_domains) or '-'}"
                 ),
             )
         )
@@ -8388,6 +8503,9 @@ def _print_toss_market_context_capture_payload(payload: dict[str, object], *, as
     print(f"- business_date: {payload['business_date']}")
     print(f"- live_fetch: {str(payload['live_fetch']).lower()}")
     print(f"- writes_db: {str(payload['writes_db']).lower()}")
+    if "capture_status" in payload:
+        print(f"- capture_status: {payload['capture_status']}")
+        print(f"- missing_domains: {','.join(payload['coverage']['missing_domains']) or '-'}")
     if "saved_count" in payload:
         print(f"- saved_count: {payload['saved_count']}")
 
@@ -30809,7 +30927,7 @@ def _render_web_view_html() -> str:
       const rows = [
         ["저장 가격 기준", valueContextPriceBasis(context)],
         ["거래대금", valueContextDate(context.turnover_reference_date)],
-        ["Toss 저장 기준일", valueContextDate(context.krx_reference_date)],
+        ["Toss 저장 기준일", valueContextDate(context.toss_reference_date)],
         ["수급 기준일", valueContextDate(context.investor_flow_reference_date)],
         ["리포트", valueContextDate(context.report_reference_date)],
         ["뉴스 수집 상태", valueContextNewsStatus(context.news_collection_status)]
@@ -32875,6 +32993,8 @@ def build_web_view_daily_snapshot(
     mood = _build_market_mood_snapshot(business_date, summaries, sectors)
     watch_candidates = _build_web_view_watch_candidates(summaries)
     recent_toss_snapshot_dates = repository.list_recent_toss_market_snapshot_dates(on_or_before=business_date, limit=3)
+    toss_snapshot_date = recent_toss_snapshot_dates[0] if recent_toss_snapshot_dates else None
+    toss_capture_state = _web_view_toss_capture_state(repository, business_date)
     recent_toss_etf_snapshot_dates = repository.list_recent_toss_etf_snapshot_dates(
         on_or_before=business_date, limit=1
     )
@@ -32937,7 +33057,11 @@ def build_web_view_daily_snapshot(
     )
     market_briefing["news_observation_summary"] = news_observation_summary
     report_count = sum(summary.mention_count for summary in summaries)
-    toss_context = _build_web_view_toss_context(repository, business_date)
+    toss_context = _build_web_view_toss_context(
+        repository,
+        business_date,
+        capture_state=toss_capture_state,
+    )
     toss_recent_flow = _build_web_view_toss_recent_flow(
         repository,
         business_date,
@@ -32959,6 +33083,17 @@ def build_web_view_daily_snapshot(
         toss_openapi_ready=_web_view_toss_openapi_ready(config),
         investor_flow_item=investor_flow_item,
     )
+    if toss_capture_state:
+        toss_market_item = next(
+            item for item in source_freshness_summary["items"] if item.get("key") == "toss_market"
+        )
+        capture_status = toss_capture_state.get("status")
+        toss_market_item["capture_status"] = capture_status
+        toss_market_item["capture_date"] = toss_capture_state.get("business_date")
+        toss_market_item["missing_domains"] = list(toss_capture_state.get("missing_domains") or [])
+        if capture_status in {"partial", "empty", "failed"} and toss_snapshot_date == business_date:
+            toss_market_item["status"] = "partial" if capture_status in {"partial", "failed"} else "missing"
+            toss_market_item["exact_date_available"] = False
     return {
         "now": current.isoformat(),
         "timezone": config.timezone,
@@ -36016,8 +36151,8 @@ def _web_view_value_context(
     toss_baseline_reference: dict[str, object] | None = None,
 ) -> dict[str, object]:
     report_date = report_reference_date.isoformat() if isinstance(report_reference_date, date) else report_reference_date
-    krx_date = market_reference.business_date.isoformat() if market_reference else None
-    turnover_date = krx_date if market_reference and market_reference.turnover is not None else None
+    toss_date = market_reference.business_date.isoformat() if market_reference else None
+    turnover_date = toss_date if market_reference and market_reference.turnover is not None else None
     flow_date = str(
         (stock_flow_reference or {}).get("snapshot_date")
         or (stock_flow_reference or {}).get("reference_date")
@@ -36035,7 +36170,7 @@ def _web_view_value_context(
         current_price_basis = None
     context = {
         "report_reference_date": report_date,
-        "krx_reference_date": krx_date,
+        "toss_reference_date": toss_date,
         "current_price_reference_time": current_price_reference_time,
         "current_price_basis": current_price_basis,
         "turnover_reference_date": turnover_date,
@@ -36046,7 +36181,7 @@ def _web_view_value_context(
         label
         for label, value in (
             ("report", context["report_reference_date"]),
-            ("krx", context["krx_reference_date"]),
+            ("toss", context["toss_reference_date"]),
             ("current_price", context["current_price_reference_time"]),
             ("turnover", context["turnover_reference_date"]),
             ("investor_flow", context["investor_flow_reference_date"]),
@@ -37407,6 +37542,7 @@ def build_web_view_candidate_evidence_snapshot(
             item["target_price_revision"] = target_price_revision
             value_profile = dict(item.get("value_profile") or {})
             value_profile.pop("rank_reference_available", None)
+            value_profile.pop("sort_value_signal", None)
             item["value_profile"] = value_profile
         picked_rows.append(item)
     return {
@@ -37416,7 +37552,7 @@ def build_web_view_candidate_evidence_snapshot(
         "read_only": True,
         "business_date": business_date.isoformat(),
         "available": bool(picked_rows),
-        "data_scope": "stored_report_krx_evidence",
+        "data_scope": "stored_report_toss_evidence",
         "live_fetch": False,
         "scoring": False,
         "recommendation": False,
@@ -38603,10 +38739,51 @@ def _web_view_opinion_display(value: str | None) -> str:
     return f"리포트 표기: {label}"
 
 
+def _web_view_toss_capture_state(
+    repository: StockMonitorRepository,
+    snapshot_date: date | None,
+) -> dict[str, object] | None:
+    events = repository.list_operation_events(
+        component="toss-market-context",
+        event_type="capture",
+        business_date=snapshot_date,
+        limit=1,
+    )
+    if not events:
+        return None
+    detail = events[0].detail or ""
+    missing_raw = next(
+        (
+            part.split("=", 1)[1].strip()
+            for part in detail.split(";")
+            if part.strip().startswith("missing_domains=")
+        ),
+        "",
+    )
+    allowed_domains = {
+        "top20",
+        "security_metadata",
+        "market_indices",
+        "market_flow",
+        "candidate_close_reassessment",
+    }
+    missing_domains = [
+        value
+        for value in missing_raw.split(",")
+        if value in allowed_domains
+    ]
+    return {
+        "status": events[0].status,
+        "business_date": events[0].business_date.isoformat() if events[0].business_date else None,
+        "missing_domains": missing_domains,
+    }
+
+
 def _build_web_view_toss_context(
     repository: StockMonitorRepository,
     business_date: date,
     *,
+    capture_state: dict[str, object] | None = None,
     stock_limit: int = 5,
     etf_limit: int = 5,
     index_limit: int = 10,
@@ -38616,15 +38793,28 @@ def _build_web_view_toss_context(
     top_etfs = repository.list_etf_daily_by_turnover(business_date, limit=etf_limit, source="toss_openapi")
     indices = repository.list_market_index_daily(business_date, limit=index_limit, source="toss_openapi")
     available = bool(top_kospi or top_kosdaq or top_etfs or indices)
+    capture_status = str(capture_state.get("status") or "") if capture_state else None
+    missing_domains = list(capture_state.get("missing_domains") or []) if capture_state else []
+    if capture_status == "partial":
+        missing_label = ", ".join(str(value) for value in missing_domains) or "필수 데이터"
+        notice = f"선택 날짜의 Toss 저장 스냅샷 일부가 누락되었습니다: {missing_label}."
+    elif capture_status == "failed":
+        notice = "선택 날짜의 Toss 저장 캡처가 실패했습니다. 표시된 값은 불완전할 수 있습니다."
+    elif capture_status == "empty":
+        notice = "선택 날짜의 Toss 저장 캡처에 사용할 수 있는 데이터가 없습니다."
+    else:
+        notice = (
+            "선택 날짜의 Toss 저장 스냅샷 기준입니다. 20:00 저장을 보장하지 않으며 확정 판단은 포함하지 않습니다."
+            if available
+            else "선택 날짜의 Toss 저장 스냅샷이 없습니다. 최신 날짜 값으로 대체하지 않습니다."
+        )
     return {
         "available": available,
         "source": "toss_openapi" if available else None,
         "snapshot_date": business_date.isoformat() if available else None,
-        "notice": (
-            "선택 날짜의 Toss 저장 스냅샷 기준입니다. 20:00 저장을 보장하지 않으며 확정 판단은 포함하지 않습니다."
-            if available
-            else "선택 날짜의 Toss 저장 스냅샷이 없습니다. 최신 날짜 값으로 대체하지 않습니다."
-        ),
+        "capture_status": capture_status,
+        "missing_domains": missing_domains,
+        "notice": notice,
         "top_kospi_by_turnover": [_web_view_stock_market_item(item) for item in top_kospi],
         "top_kosdaq_by_turnover": [_web_view_stock_market_item(item) for item in top_kosdaq],
         "top_etfs_by_turnover": [_web_view_etf_item(item) for item in top_etfs],
@@ -39188,6 +39378,8 @@ def build_web_view_market_snapshot(
 ) -> dict:
     current = now or datetime.now(ZoneInfo(config.timezone))
     toss_snapshot_date = repository.latest_toss_market_snapshot_date()
+    toss_capture_state = _web_view_toss_capture_state(repository, toss_snapshot_date)
+    latest_capture_attempt = _web_view_toss_capture_state(repository, None)
     toss_top_kospi_stocks = (
         repository.list_stock_market_daily_by_turnover(
             toss_snapshot_date, market="KOSPI", limit=5, source="toss_openapi"
@@ -39219,6 +39411,9 @@ def build_web_view_market_snapshot(
         "read_only": True,
         "snapshot_source": "toss_openapi",
         "snapshot_date": toss_snapshot_date.isoformat() if toss_snapshot_date else None,
+        "capture_status": toss_capture_state.get("status") if toss_capture_state else None,
+        "missing_domains": list(toss_capture_state.get("missing_domains") or []) if toss_capture_state else [],
+        "latest_capture_attempt": latest_capture_attempt,
         "top_kospi_stocks": [_web_view_stock_market_item(item) for item in toss_top_kospi_stocks],
         "top_kosdaq_stocks": [_web_view_stock_market_item(item) for item in toss_top_kosdaq_stocks],
         "top_etfs": [_web_view_etf_item(item) for item in toss_top_etfs],
@@ -39425,11 +39620,13 @@ def _build_operator_health_snapshot(
         warning_checks.append("telegram.timeout_trace.ambiguous_send")
 
     for component_key, component in (live_observation or {}).get("components", {}).items():
-        if component.get("evidence_status") != "attention":
-            continue
-        last_event = component.get("last_event") or {}
-        reason = str(component.get("attention_reason") or last_event.get("status") or "attention")
-        warning_checks.append(f"live_observation.{component_key}.{reason}")
+        evidence_status = component.get("evidence_status")
+        if evidence_status == "attention" or (
+            evidence_status == "failed" and component_key in {"poll_news", "toss_market_context"}
+        ):
+            last_event = component.get("last_event") or {}
+            reason = str(component.get("attention_reason") or last_event.get("status") or "attention")
+            warning_checks.append(f"live_observation.{component_key}.{reason}")
 
     if (market_holiday_coverage or {}).get("renewal_required"):
         warning_checks.append("market_holidays.default_coverage_expiring")
@@ -39470,6 +39667,8 @@ def _build_live_observation_snapshot(
     specs = {
         "notify": ("notify", {"send", "fragment", "early_notify", "late_notify", "run-guard"}),
         "poll": ("poll", {"manual-poll", "time-window", "run-guard"}),
+        "poll_news": ("poll-news", {"scheduled-collect"}),
+        "toss_market_context": ("toss-market-context", {"capture", "time-window", "run-guard"}),
         "krx_daily_backfill": ("krx", {"scheduled-daily-backfill", "backfill-missing"}),
         "krx_mentioned_flow_backfill": ("krx-flow", {"scheduled-mentioned-flow-backfill"}),
         "telegram_command_loop": ("telegram-command-loop", {"time-window", "run-guard", "iteration"}),
@@ -39481,23 +39680,40 @@ def _build_live_observation_snapshot(
             events,
             component=component,
             event_types=event_types,
-            prefer_latest_time=key == "krx_daily_backfill",
+            prefer_latest_time=key in {"krx_daily_backfill", "poll_news", "toss_market_context"},
         )
         evidence_status = _live_event_evidence_status(event)
         attention_reason = None
-        if key == "krx_daily_backfill" and event and event.status in {"empty", "partial"}:
+        if key in {"krx_daily_backfill", "poll_news", "toss_market_context"} and event and event.status in {"empty", "partial"}:
             attention_reason = event.status
         elif key == "krx_daily_backfill" and _krx_daily_backfill_event_has_incomplete_snapshots(repository, event):
             evidence_status = "attention"
             attention_reason = "incomplete_snapshot"
-        if event is None and _live_observation_component_not_yet_due(config, current, key):
-            evidence_status = "pending"
+        if event is None:
+            if _live_observation_component_not_yet_due(config, current, key):
+                evidence_status = "pending"
         component_status = {
             "evidence_status": evidence_status,
             "last_event": _operation_event_to_status_dict(event) if event else None,
         }
         if attention_reason:
             component_status["attention_reason"] = attention_reason
+        if event is None and key in {"poll_news", "toss_market_context"}:
+            expected_task_key = "poll" if key == "poll_news" else "toss-market-context"
+            has_enabled_task = any(
+                _scheduler_task_key(config.scheduler_task_prefix, str(task.get("task_name") or ""))
+                == expected_task_key
+                and task.get("status_class") == "healthy"
+                for task in scheduler_tasks
+            )
+            if (
+                has_enabled_task
+                and is_business_day(current.date(), config.holiday_overrides)
+                and not _scheduled_skip_reason(config, current.date(), repository)
+                and not _live_observation_component_not_yet_due(config, current, key)
+            ):
+                component_status["evidence_status"] = "attention"
+                component_status["attention_reason"] = "missing"
         components[key] = component_status
 
     telegram_worker = worker_states.get(TELEGRAM_COMMAND_LOOP_WORKER)
@@ -39647,6 +39863,8 @@ def _live_observation_component_not_yet_due(config: RuntimeConfig, current: date
     pending_until = {
         "notify": SCHEDULED_NOTIFY_LATEST_TIME,
         "poll": config.poll_start_time,
+        "poll_news": config.poll_start_time,
+        "toss_market_context": SCHEDULED_TOSS_MARKET_CONTEXT_EARLIEST_TIME,
         "krx_daily_backfill": datetime_time(hour=8, minute=40),
         "krx_mentioned_flow_backfill": datetime_time(hour=16, minute=30),
         "telegram_command_loop": datetime_time(hour=8, minute=5),
@@ -41298,6 +41516,7 @@ def _scheduler_task_key(task_prefix: str, task_name: str) -> str:
         "marketbriefinglunch": "market-briefing-lunch",
         "marketbriefingpreclose": "market-briefing-preclose",
         "telegramcommands": "telegram-commands",
+        "tossclosesnapshot": "toss-market-context",
         "webviewhourlyrestart": "web-view-hourly-restart",
         "shutdown": "shutdown",
     }

@@ -337,7 +337,7 @@ Working-tree note:
 
 2. Repository methods open a SQLite connection per call. WAL mode, cache size, busy timeout, and recent batching reduce risk, but DTO paths should keep query-budget tests.
 
-3. The 2026-09-27 CodeGraph refresh indexes `cli.py`, `web_perf.py`, and `news/evidence_review.py`; recheck freshness after substantial source changes before using call edges for impact claims.
+3. The CodeGraph snapshot from 2026-09-27 indexed `cli.py`, `web_perf.py`, and `news/evidence_review.py`. Subsequent 2026-09-28 changes touched `cli.py` and `repository.py`, so refresh the index before using their call edges for impact claims.
 
 4. `candidate-evidence`, archive, and daily payload generation already have documented performance improvements. Future regressions should be checked with the existing web performance tests and browser smoke commands before adding more caching.
 
@@ -349,7 +349,7 @@ The path and flow tables above are the architecture map. Current role routing an
 
 The ignored `{PROJECT_ROOT}\.codegraph\codegraph.db` is local navigation data, not a product or runtime dependency.
 
-**Current local status (2026-09-27):** the parent session refreshed the index after raising `maxFileSize` to 2 MiB so the 1.88 MiB `cli.py` is indexed. The database contains 103 files, 3,831 nodes, and 8,672 edges; it includes 1,033 CLI nodes, 36 `web_perf.py` nodes, and 21 `news/evidence_review.py` nodes. `_run_scheduled_poll` resolves at line 17,723, matching current source. This runtime still has no `codegraph` executable or configured MCP, so future refreshes must be run from an environment where the existing updater is available.
+**Last index snapshot (2026-09-27):** the upper-folder session refreshed CodeGraph after raising `maxFileSize` to 2 MiB so the 1.88 MiB `cli.py` was indexed. That snapshot contains 103 files, 3,831 nodes, and 8,672 edges, including 1,033 CLI nodes, 36 `web_perf.py` nodes, and 21 `news/evidence_review.py` nodes. Since then, `cli.py` and `repository.py` changed on 2026-09-28; treat their indexed nodes and edges as stale until the existing updater runs again. This runtime has no `codegraph` executable or configured MCP, so refresh from an environment that has the updater.
 
 Treat CodeGraph as a code-navigation backend for existing agents, not as a new product dependency.
 

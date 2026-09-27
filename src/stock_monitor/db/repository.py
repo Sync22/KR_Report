@@ -2599,15 +2599,8 @@ class StockMonitorRepository:
         return [self._row_to_stock_market_daily_snapshot(row) for row in rows]
 
     def latest_toss_market_snapshot_date(self) -> date | None:
-        with self.connect() as connection:
-            row = connection.execute(
-                """
-                SELECT MAX(business_date) AS business_date
-                FROM stock_market_daily
-                WHERE source = 'toss_openapi'
-                """
-            ).fetchone()
-        return date.fromisoformat(row["business_date"]) if row and row["business_date"] else None
+        dates = self.list_recent_toss_market_snapshot_dates(on_or_before=date.max, limit=1)
+        return dates[0] if dates else None
 
     def list_stock_market_daily_for_codes(
         self,
@@ -3081,8 +3074,15 @@ class StockMonitorRepository:
                 """
                 SELECT business_date
                 FROM (
-                    SELECT business_date FROM stock_market_daily
+                    SELECT business_date FROM toss_market_context_snapshots
                     WHERE business_date <= ? AND source = 'toss_openapi' GROUP BY business_date
+                    UNION
+                    SELECT business_date FROM stock_market_daily
+                    WHERE business_date <= ? AND source = 'toss_openapi'
+                      AND (change_amount IS NOT NULL OR change_percent IS NOT NULL OR volume IS NOT NULL
+                           OR turnover IS NOT NULL OR market_cap IS NOT NULL OR listed_shares IS NOT NULL
+                           OR open_price IS NOT NULL OR high_price IS NOT NULL OR low_price IS NOT NULL)
+                    GROUP BY business_date
                     UNION
                     SELECT business_date FROM etf_daily_snapshots
                     WHERE business_date <= ? AND source = 'toss_openapi' GROUP BY business_date
@@ -3093,7 +3093,7 @@ class StockMonitorRepository:
                 ORDER BY business_date DESC
                 LIMIT ?
                 """,
-                (on_or_before.isoformat(), on_or_before.isoformat(), on_or_before.isoformat(), limit),
+                tuple(on_or_before.isoformat() for _ in range(4)) + (limit,),
             ).fetchall()
         return [date.fromisoformat(row["business_date"]) for row in rows]
 
