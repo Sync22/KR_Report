@@ -5,8 +5,8 @@ Data quality, source ownership, rebaseline process, and baseline status.
 ## Included sections
 - Data Quality Checklist
 - Data Source Policy
-- Data Rebaseline Plan
-- KRX 18-Month Backfill Analysis
+- Historical KRX boundary
+
 
 <!-- Merged from: docs/codex/data-governance.md -->
 ## Data Quality Checklist
@@ -60,11 +60,11 @@ Do not describe the current public wording limits as a permanent product ceiling
 
 | Source type | Rule | Example |
 | --- | --- | --- |
-| Official/approved API | Prefer this path when the needed field is available. | KRX Open API daily stock/ETF/index snapshots. |
-| Approved real-time reference | Use a bounded read-only projection with source and freshness labels; retain stored history separately. | Toss Securities Open API top-2 quote, KOSPI/KOSDAQ current price, provisional market flow, and Top20 market attention. |
-| Screen-backed source | Use only when the approved API does not expose the needed data. | KRX Data Marketplace `[12009]` investor flow. |
+| Historical API records | Keep existing records for historical analysis; normal refresh is disabled. | Existing KRX Open API stock/ETF/index rows. |
+| Current stored reference | Use the bounded Toss 20:00 close snapshot with source and capture/freshness labels. | Toss market indices/flow and Top20 stock/ETF references; valid daily-summary candidates also receive close-reassessment references. |
+| Historical screen-backed data | Existing samples remain available for historical review; no normal scheduled ingest. | KRX Data Marketplace `[12009]` investor-flow rows. |
 | Screen condition | Preserve and store source conditions that change output values. | Query type, date range, stock code, share unit, money unit. |
-| Source label | Store source identity separately from product display labels. | `krx_open_api` vs `krx_data_market`. |
+| Source label | Store source identity separately from product display labels. | `toss_openapi`, `krx_open_api`, and `krx_data_market` remain distinct. |
 | Fallback source | Keep fallback data clearly marked and do not mix it with primary source rows. | Naver internal trend API used only for comparison/fallback. |
 
 ## Pre-Implementation Checklist
@@ -142,14 +142,14 @@ Before implementing a data or display change, verify:
 - The same article is counted once per candidate/date by its stored evidence key. A later completed collection with no new match must keep already stored same-date direct evidence visible and expose its later collection time separately.
 - Web-view and Telegram candidate summaries must use the same selected candidate codes and the same deduplicated evidence set. A date-wide run list must not replace a candidate-linked summary with unrelated or older empty runs.
 - The top-two cohort is selected once for a response. Main-card news, a completed web-view collection response, and the matching market-briefing candidate lines must keep that same code order; a third candidate belongs in the broader `관찰` surface, not the top-two summary.
-- `종목별 [12009]` flow freshness must be calculated from the same stock-level rows shown in the detail lines. If selected candidates have different dates, show each row date and label the source as partial rather than presenting the newest row as the date of every item.
+- Existing KRX `[12009]` flow is historical-only. Any historical flow detail must use the same stock-level rows and show each row date; current stored market flow comes from Toss.
 - `Naver 거래대금 상위` overlap and a bounded top-two Naver quote are separate intraday references. A non-overlap result does not erase the candidate's price, change, turnover, market status, or checked/trade time.
-- KRX exact/stale/missing is freshness metadata, not price direction.
-- KRX freshness must not replace a news label. When a completed collection has no direct or contextual match, say `매칭 뉴스 없음`; render KRX exact/stale/missing separately as source metadata.
+- Historical KRX exact/stale/missing describes the selected analysis date only; it is not current-market freshness or price direction.
+- Historical KRX status must not replace a news label. When a completed collection has no direct or contextual match, say `매칭 뉴스 없음`; expose legacy KRX metadata only in its historical-analysis context.
 - Intraday turnover/price confirms a time-bounded market reaction only when the candidate overlaps the fetched row and the display includes market status plus trade or checked time.
 - A Toss 20:00 value is an end-of-day stored baseline. It is not a substitute for intraday confirmation or direct news evidence.
 - Toss `configured`, current quote fetched, and 20:00 baseline stored are different states. Show `configured` only for credentials/live opt-in readiness, `current` only after that request returns a quote with its checked time, and the stored baseline only with its storage time.
-- A target-price reach day is a retrospective result inside the stored post-report KRX window. Show its observed window and missing state; never present it as a promised outcome, probability, or future trading instruction.
+- A target-price reach day is a retrospective result in a stored historical KRX window. Show the observed window and missing state; never present it as a promised outcome, probability, or future trading instruction.
 - If the layers conflict or lack direct evidence, display `추가 확인` or `직접 근거 부족`; do not manufacture a stronger conclusion.
 
 Time-series validation belongs after these layers are stored consistently across multiple dates. It should test whether a declared evidence state improves later observation outcomes versus the report-only baseline; it must not be used to retrofit a single-day label.
@@ -226,9 +226,9 @@ Use these names in user-facing Korean copy:
 | `업종` | `sector` | One representative industry-style grouping for a stock. | Prefer this over `섹터` in user-facing UI. |
 | `테마` | `theme` | A many-to-many theme grouping. | A stock can belong to multiple themes. |
 | `카테고리` | `category` | Generic umbrella for 업종 + 테마. | Use only when one UI/API handles both. |
-| `시장 참고` | Toss current context + KRX confirmed history | Toss current index/market flow/Top20 leads the market tab; KRX price, volume, turnover, ETF, and historical flow are fallback/reference. | Must show source/freshness and label same-day Toss aggregate flow as provisional. |
+| `시장 참고` | Stored Toss 20:00 context | Toss index/market flow/Top20 references lead current display. Existing KRX price, volume, turnover, ETF, and flow rows are historical review only; never current fallback. | Show source/capture freshness and label same-day Toss aggregate flow provisional. |
 | `장중 참고` | approved intraday source | Bounded Toss top-two quote, market index/flow/Top20, and Naver market-top overlap. | Must show source/freshness. Market-top non-overlap is a scope result, not an absent-price result. It may affect observation priority only as observation support. |
-| `리포트 요약` | Naver report summary | Report count, broker, target price, opinion summary. | Must not imply KRX ownership. |
+| `리포트 요약` | Naver report summary | Report count, broker, target price, opinion summary. | Keep separate from market-source ownership. |
 
 Avoid these in user-facing copy unless explaining internals:
 
@@ -241,280 +241,37 @@ Avoid these in user-facing copy unless explaining internals:
 
 ## Display Labels
 
-When the page combines report data with KRX data, label them as separate evidence:
+Keep report evidence and current stored market context as separate layers. Current market cards use stored Toss references; historical KRX rows are shown only on explicitly historical review paths.
 
 | Surface | Label Pattern |
 | --- | --- |
-| Daily report rows | `리포트 요약` + `KRX 시장 참고` |
-| Stock detail | `종목명 종목코드 | KRX 현재가 · 등락률 · 시장` |
+| Daily report rows | `리포트 요약` |
+| Current market/detail | `Toss 20:00 시장 참고` with source and capture time |
+| Historical KRX analysis | `KRX 과거 참고` with the selected date |
+| Investor flow | `수급 참고`; distinguish Toss current stored flow from historical KRX samples |
+| Missing current source | Explicit missing/stale state; never substitute a KRX historical row |
 | Category rows | `업종 요약`, `테마 요약`, `업종/테마 상세` |
-| Investor flow | `수급 참고`; may support `관찰 후보 추천`, but not `수급 판단`, `매수 추천`, or `매도 추천` |
-| Future intraday reference | `장중 참고`; may support `우선 확인` order or main-card emphasis after approval, but not `매수 추천`, `매도 추천`, or execution wording |
-| Missing category | `업종 미확인` or `테마 미확인` |
 
-## Migration Direction
+## Current Source Direction
 
-Move non-report market information toward KRX in this order:
-
-1. Keep stock/ETF/index price, volume, turnover, and market cap on KRX.
-2. Prefer KRX stock master for stock code, market, listing metadata, and future search normalization.
-3. Keep Naver quote usage only as a tactical fallback until a KRX-backed replacement is implemented.
-4. Keep industry/theme taxonomy on the existing category snapshot path until a better verified taxonomy source exists.
-5. Never backfill historical category snapshots by silently copying today's mapping into old dates without explicit approval.
+The historical plan to move current market references to KRX is superseded. Stored Toss 20:00 snapshots own current web-view market, ETF, and flow references. Existing KRX rows remain historical analysis/recovery data and are not a current fallback or scheduled refresh source. Current capture operations are documented in [market-data-runbook.md](market-data-runbook.md).
 
 ## Guardrails
 
-- Do not overwrite Naver report facts with KRX market facts.
-- Do not overwrite KRX market facts with Naver quote values.
-- Do not call category labels official KRX taxonomy unless the source is verified.
-- Do not mix missing numeric markers such as `N/A`, `-`, or blank strings into ranges, ranks, or counts.
-- Do not add public numeric scoring, trading recommendation, or buy/sell judgment from these source labels alone. They may support observation-candidate ordering only when combined with other stored evidence and cautious copy.
-- Do not treat `read-only` as `ordering-disabled`. A verified source can affect `관찰 우선순위`. The approved exception to the default no-automation rule retains the existing 30-minute Poll collection/dedupe trigger but delivers the bounded Telegram market-context briefing only at `08:30`, then `09:30` through `15:30` KST after its business-day and delivery-window guards pass. `08:30` is report-first; later slots may collect and save news observations only for the server-derived current top two candidates and add compact source-labelled Toss context when available. It must not broaden the target universe, expose raw operator payloads, persist Toss/Naver quotes, emit a standalone alert, expose broker secrets, add a public score, create a trading call, or route an order.
-- Do not treat the public trading-wording ban as a permanent ban on operator decision support. If real-time data later makes trading review viable, document it as a separate operator-only decision-support/execution-lab source lane before any public or execution behavior.
-
-
-<!-- Merged from: docs/codex/data-governance.md -->
-## Data Rebaseline Plan
-
-## Purpose
-
-This document explains why and how the project will refresh non-report data before moving to the future mini PC.
-
-The goal is not to erase the MVP history.
-The goal is to separate:
-
-- early validation data used to prove KRX/API/screen behavior
-- operating reference data that should move to the mini PC
-
-## Decision
-
-Keep report and delivery data as the durable project history.
-
-Rebuild or extend market-reference data as needed because it is reproducible from approved sources.
-
-| Data Area | Mini PC Migration Policy | Reason |
-| --- | --- | --- |
-| `reports` | Keep | Naver report rows are source history and dedupe evidence. |
-| `daily_stock_summaries` | Keep, rebuildable | Derived from reports; useful for current web-view/archive continuity. |
-| delivery/run/fragment logs | Keep | Needed to explain Telegram send state and replay safety. |
-| operation events | Keep | Useful for migration/debug history unless noise becomes a problem later. |
-| KRX stock/ETF/index daily snapshots | Rebuild/extend by date | Reproducible reference data; safe to upsert missing dates. |
-| KRX stock master | Refresh latest before migration | Good candidate to become stock master/search reference. |
-| KRX investor-flow rows | Keep current validated samples; extend only through staged flow process | Broad scheduled ingest remains disabled. The narrow anchor-date report-mentioned `[12009]` recent 31-day backfill is the only automatic exception. |
-| 업종/테마 snapshots | Rebuild/extend slowly by source date | Current taxonomy is not KRX-owned and should not be silently copied backward. |
-
-## Current Baseline
-
-As of `2026-05-15`:
-
-| Area | State |
-| --- | --- |
-| DB integrity | `db-verify` passes. |
-| Schema | `5/5`, no pending migrations. |
-| KRX daily snapshot range | `2024-11-08` through `2026-05-14` for stock/ETF/index daily endpoints. |
-| Next KRX daily backfill candidate | `2026-05-15` only, pending normal latest-day Open API publication. |
-| Category snapshot status | 90 summary dates, 6 sector-dated dates, 7 theme-dated dates, 84 fallback dates. |
-| Investor-flow validation | Stage 4 complete for two dates; Stage 5 read-only display exists; broad scheduled ingest disabled. The narrow anchor-date report-mentioned `[12009]` recent 31-day backfill is the only automatic exception. |
-
-## Rebaseline Strategy
-
-Use the scheduled `08:10` KRX daily backfill for the newest previous-business-day gap, after the officially confirmed next-business-day `08:00` publication window.
-Use the manual rolling rebaseline process only for repairs or future migration checks.
-
-The current operator-approved execution order is:
-
-1. KRX daily market-reference latest-day check and repair-only rebaseline.
-2. Category snapshot fallback reduction.
-3. User `web-view` display polish.
-4. 순환매 SVG overlay first pass.
-5. Detailed-doc archive cleanup.
-
-Do not run destructive deletes as part of the normal rebaseline.
-Use upsert/backfill first.
-Only cleanup after the mini PC copy is verified and only if there is a specific reason.
-
-### Standard Loop
-
-Run this loop repeatedly:
-
-```powershell
-python -m stock_monitor db-verify
-python -m stock_monitor db-backup --tag pre-krx-rebaseline
-python -m stock_monitor krx-backfill-missing daily --lookback-days 183 --max-dates 10 --dry-run --allow-large-batch
-python -m stock_monitor krx-backfill-missing daily --lookback-days 183 --max-dates 10 --confirm --i-backed-up --allow-large-batch
-python -m stock_monitor db-verify
-```
-
-Stop when the dry-run no longer shows missing KRX daily endpoints inside the intended retention window.
-The current 18-month Open API baseline is complete through `2026-05-14`; `2026-05-15` is expected to appear only after KRX publishes the latest business-day rows.
-
-### Why `--allow-large-batch`
-
-The default real-call guard is 5 dates.
-For the rebaseline window, 10 business dates is acceptable only after:
-
-- `db-verify` passes
-- `db-backup` is created
-- dry-run output is reviewed
-- KRX request delay remains non-zero
-
-## Category Rebaseline
-
-Category data is different from KRX daily market data.
-
-It is taxonomy data, not market-reference data.
-Current source is Naver industry/theme plus operator-managed snapshots.
-
-Current limitation:
-
-- Existing sector catalog rows from `naver_quote` are display/cache metadata, not verified Naver `upjong` API codes.
-- `refresh-industries --enabled` refreshes only sector catalog rows with `source=naver_industry` or `source=naver_upjong`.
-- `naver_quote`, `operator`, and other custom sector catalog sources are not treated as Naver `upjong` API codes until separately verified.
-- Theme `505` can be refreshed as a Naver theme snapshot, but broader historical category accuracy still needs a verified source-date taxonomy plan.
-
-Use this sequence for fallback summary dates:
-
-```powershell
-python -m stock_monitor category-snapshot-status --limit 30
-python -m stock_monitor category-snapshot-plan --limit 30
-python -m stock_monitor refresh-industry UPJONG_CODE --snapshot-date SOURCE_DATE --dry-run
-python -m stock_monitor category-catalog add sector UPJONG_CODE --name "업종명" --source naver_industry
-python -m stock_monitor refresh-industries --enabled --snapshot-date SOURCE_DATE --dry-run --delay-seconds 3
-python -m stock_monitor refresh-themes --enabled --snapshot-date SOURCE_DATE --dry-run --delay-seconds 3
-```
-
-Rules:
-
-- Fill source-date snapshots only.
-- Check `category-snapshot-plan` `plan_summary` first. If `source_date_capture_allowed_count` is `0`, do not run refresh commands for older fallback dates just to reduce the fallback count.
-- Do not bulk-promote today's cache backward without explicit approval.
-- Do not run `refresh-industries` or `refresh-themes` with an old `snapshot-date` just to reduce fallback counts. `category-snapshot-plan` now emits refresh commands only when the target date is the current source date; older dates should remain labeled as latest stored category classification unless separately verified.
-- Do not use `naver_quote` sector keys as Naver `upjong` API keys.
-- Do not use `operator` or custom sector catalog keys for batch refresh unless they are re-added with a verified Naver source label.
-- Validate any newly proposed Naver upjong code with `refresh-industry UPJONG_CODE --dry-run` before adding it to the enabled sector catalog or running a confirmed snapshot refresh. The dry-run output prints the next `category-catalog add sector ... --source naver_industry` command when the code returns a usable industry name and membership count.
-- Keep user-facing labels as `업종`, `테마`, and `카테고리`.
-- Do not call current category data `KRX 업종/테마`.
-
-## KRX Stock Master Refresh
-
-Before mini PC migration, refresh latest KRX stock master separately from daily snapshots:
-
-```powershell
-python -m stock_monitor krx-fetch-snapshot stock-kospi-basic --date YYYY-MM-DD --dry-run
-python -m stock_monitor krx-fetch-snapshot stock-kosdaq-basic --date YYYY-MM-DD --dry-run
-python -m stock_monitor krx-fetch-snapshot stock-kospi-basic --date YYYY-MM-DD
-python -m stock_monitor krx-fetch-snapshot stock-kosdaq-basic --date YYYY-MM-DD
-```
-
-Use the most recent confirmed KRX business date.
-
-## Migration Explanation For Future Codex Sessions
-
-If a future mini PC session asks why data looks this way:
-
-- Reports were kept because they are original Naver research collection history.
-- KRX daily market data was expanded later in bounded batches because it is reproducible reference data.
-- Category snapshots were not blindly backfilled because industry/theme membership is a taxonomy layer and historical labels can drift.
-- Broad investor-flow scheduled ingest was intentionally not enabled. Current flow rows came from validated staged samples/manual import plus the narrow anchor-date report-mentioned `[12009]` recent 31-day automatic backfill lane.
-
-## Completion Criteria
-
-The rebaseline is ready for migration when:
-
-- `db-verify` passes.
-- KRX daily snapshots cover the intended 18-month observation window. Current status: covered from `2024-11-08` through `2026-05-14`; `2026-05-15` is the normal latest-day pending candidate.
-- The latest KRX stock master is refreshed.
-- Category fallback dates are either filled with source-date snapshots or explicitly accepted as fallback.
-- A final `db-backup --tag pre-mini-pc-migrate` exists.
-- `docs/codex/mini-pc-runbook.md` points to this plan.
-
-
-<!-- Merged from: docs/codex/data-governance.md -->
-## KRX 18-Month Backfill Analysis
-
-## Purpose
-
-This document tracks the current 18-month KRX historical baseline work.
-
-The goal is not to enable scoring, recommendations, or automated KRX Data Marketplace ingest. The goal is to build enough stored KRX market context for observation and future backtest work while keeping collection lanes, request volume, and DB safety explicit.
-
-## Current Decision
-
-| Lane | Use | Decision | Reason |
-| --- | --- | --- | --- |
-| KRX OpenAPI | Stock/ETF/index daily price, volume, turnover snapshots | Primary 18-month backfill lane | Approved API source, stable request shape, no browser session dependency. |
-| KRX Data Marketplace | Investor flow `[12008]`, `[12009]`, `[12010]` | Manual/raw-login lane; broad scheduled ingest disabled; narrow `[12009]` same-day mentioned-stock 31-day backfill is the only automatic exception | Useful for flow reference, but login/session-dependent and higher operational risk. |
-| Scrapling/browser probe | Browser-gated source/session diagnostics | Probe only | Preferred active tool for new rendered-page, browser-gated, anti-bot-sensitive, or source-comparison checks. |
-| Naver report collector | Research reports | Keep separate | Report source remains Naver; do not use KRX for report history. |
-
-## Skill And Agent Comparison
-
-| Tool/agent | Best use | Not for | Current P2 decision |
-| --- | --- | --- | --- |
-| `scrapling-official` skill | Short-lived rendered-page/browser-gated source probes, session/blocking diagnostics, source comparison | Main Naver collector, Telegram, SQLite operation, KRX OpenAPI daily snapshots | Preferred active probe tool; Botasaurus is legacy/reference-only unless explicitly restored. |
-| `market-data-engineer` | KRX/KIS/ETF/flow source fields, request limits, source-boundary decisions | UI polish or scheduler recovery implementation | Used for lane comparison and backfill limit review. |
-| `sql-pro` | DB retention, backup, row growth, migration/cleanup risk | Source semantics or browser probing | Used for 18-month DB safety and retention review. |
-| `reviewer` | Business-day rules, stale docs, regression risk | Bulk data collection | Used for holiday expansion and documentation drift review. |
-
-## Backfill Policy
-
-| Rule | Value |
-| --- | --- |
-| Scope | KRX OpenAPI stock/ETF/index daily snapshots only |
-| Lookback | `550` days |
-| Live batch size | `5` business dates |
-| Delay | `3` seconds between endpoint requests |
-| Backup | Before broad work and every 10 business dates or major boundary |
-| Verify | `db-verify` after each live batch |
-| Cleanup retention | `550` days while observation/backtest work is active |
-| Partial endpoint guard | Very small nonzero endpoint row counts are treated as incomplete and re-planned for repair |
-| Holiday guard | Built-in `2024~2026` KRX closure dates plus `STOCK_MONITOR_HOLIDAYS` additions |
-
-## Current Stored Coverage
-
-As of the latest verified baseline check:
-
-| Table group | Range | Business dates | Rows |
-| --- | --- | ---: | ---: |
-| `reports` | `2026-01-02` ~ `2026-05-15` | 90 | 4,046 |
-| `daily_stock_summaries` | `2026-01-02` ~ `2026-05-15` | 90 | 2,570 |
-| `stock_market_daily` | `2024-11-08` ~ `2026-05-14` | 367 | 999,768 |
-| `etf_daily_snapshots` | `2024-11-08` ~ `2026-05-14` | 367 | 331,347 |
-| `market_index_daily` | `2024-11-08` ~ `2026-05-14` | 367 | 45,875 |
-| `stock_investor_flow_daily` | `2026-01-05` ~ `2026-05-12` | 75 | 9,724 |
-| `market_investor_flow_daily` | `2026-01-02` ~ `2026-05-12` | 87 | 1,131 |
-| `investor_net_buy_top_daily` | `2026-01-02` ~ `2026-05-12` | 87 | 74,872 |
-
-## Current Backfill Progress
-
-| Item | Value |
-| --- | --- |
-| Analysis window | `2024-11-12` ~ `2026-05-15` |
-| Business dates in window | 366 |
-| Loaded KRX OpenAPI daily dates | 367 |
-| Missing KRX OpenAPI daily dates | `2026-05-15` only, pending latest-day publication |
-| Current earliest stock/ETF/index date | `2024-11-08` |
-| Next dry-run candidate batch | `2026-05-15` after KRX Open API rows are available |
-
-## Repeatable Commands
-
-```powershell
-python -m stock_monitor krx-baseline-analysis --lookback-days 550 --max-missing-dates 5
-python -m stock_monitor db-verify
-python -m stock_monitor db-backup --tag before_krx_18m_batch_YYYYMMDD_YYYYMMDD
-python -m stock_monitor krx-backfill-missing daily --lookback-days 550 --to-date YYYY-MM-DD --max-dates 5 --dry-run
-python -m stock_monitor krx-backfill-missing daily --lookback-days 550 --to-date YYYY-MM-DD --max-dates 5 --sleep-seconds 3 --confirm --i-backed-up
-python -m stock_monitor db-cleanup --dry-run --retention-days 550
-```
-
-## P2 Completion Criteria
-
-| Criterion | Status |
-| --- | --- |
-| Tool/agent/source comparison recorded | Done |
-| 2024~2026 holiday guard in code/tests | Done |
-| Repeatable baseline analysis command | Done |
-| Partial nonzero KRX endpoint guard | Done |
-| OpenAPI 18-month backfill completed through latest stored date | Done |
-| Data Marketplace 18-month broad flow collection | Deferred; requires separate request-volume decision. The narrow `[12009]` same-day mentioned-stock 31-day path is the only approved automatic exception. |
-| Public scoring/recommendation | Blocked |
+- Keep Naver report facts, stored Toss market snapshots, and historical KRX rows in separate source layers.
+- Do not relabel historical KRX or Naver reference values as current Toss snapshots.
+- The GET-only web-view reads stored data; collection and persistence belong to explicitly bounded scheduled/operator paths.
+- Preserve missing numeric markers and source-specific timestamps; do not turn missing values into zero or success.
+- Do not expose public numeric scoring, investment grades, trading calls, broker execution, or order routing.
+- Keep operator-only diagnostics off the friend-facing web-view.
+- Future operator decision support requires its own source, audit, permission, and safety contract; it does not change public-surface limits.
+## Historical KRX Boundary
+
+The 2026 KRX rebaseline/backfill plans are superseded as current-source guidance. Existing KRX market and investor-flow rows remain available for past-date analysis; normal KRX scheduled refresh has been removed, and KRX must not fill missing current Toss values.
+
+- Current capture operations: [market-data-runbook.md](market-data-runbook.md).
+- Current scheduler registration: [mini-pc-runbook.md](mini-pc-runbook.md).
+- Historical execution evidence: [history.md](history.md).
+- Category snapshots remain source-dated; do not copy present-day category mappings into historical dates.
+
+Any new KRX data repair/import requires a separately scoped and approved operation. Do not recreate scheduled KRX ingestion from this historical record.

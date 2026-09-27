@@ -767,32 +767,26 @@ Judgment rules:
 
 ## TODO Board Reinterpretation
 
-Existing TODO2 items should not close from one clean command run. They should close only after the 10-business-day review log shows stable product judgment.
+Use each TODO's own observable completion evidence; a single clean command does not prove live-host readiness. The shared 10-business-day review is for deciding whether a changed first-read order or scheduled message is stable in operation. It does not block local correctness fixes, focused DTO/browser QA, or no-send previews.
 
-| Todo ID | Reinterpreted completion gate |
+| Todo ID | Proportionate completion evidence |
 | --- | --- |
-| `TODO2-TG-LIVE-DRYRUN` | No-send previews must use the new order: `?ㅻ뒛 蹂?寃?-> ?꾩옱 洹쇨굅 -> ?꾩씪 李멸퀬 -> 遺議깊븳 洹쇨굅 -> 蹂듦린/?곌뎄`. Close only after several days show readable Telegram output and no real-send approval gaps. |
-| `TODO2-WV-CONTENT-QA` | Web-view QA must judge whether the first mobile viewport answers the top-2/current-evidence/gap question in 10 seconds. Browser smoke alone is not completion. |
-| `TODO2-DATA-FRESHNESS-LIVE` | Freshness is not just exact/stale/missing correctness. Close only when stale KRX/flow stops dominating primary copy and current-source gaps are explicit. |
-| `TODO2-NI-EVAL` | News quality evaluation must record whether direct/caution/no-match states changed the top-2 reading. Close only after false-positive and no-match cases are classified over operating samples. |
+| `TODO2-TG-LIVE-DRYRUN` | Compare no-send previews for representative stored dates and slots. Any real send still needs separate explicit approval; use the shared review log before calling a changed scheduled message operationally stable. |
+| `TODO2-WV-CONTENT-QA` | Review recent dates on desktop and mobile; verify that the first view explains the current candidate, available evidence, and gaps. A browser smoke alone does not establish content usefulness. |
+| `TODO2-DATA-FRESHNESS-LIVE` | Compare source/date labels across CLI, web-view, and Telegram preview; KRX remains historical-only and missing current-source values stay explicit. |
+| `TODO2-NI-EVAL` | Label sample cases as useful, neutral, misleading, or not evaluable, with a brief source-backed reason. Report the actual sample and limits; no fixed percentage is a universal pass gate. Wrong-stock attribution and false independence remain disqualifying errors for the affected claim. |
 
-New stable ID:
+| `TODO2-RT-PRUNE` | Make a focused local ordering change when a concrete first-read issue is evidenced. Use the shared review log before claiming the new ordering is stable in operation. |
 
-| Todo ID | Goal | Done when |
-| --- | --- | --- |
-| `TODO2-RT-PRUNE` | Reposition public `web-view` and Telegram around realtime/current evidence first, with stored daily/reaction/backtest lowered. | The 10-business-day log supports the new ordering, and focused web-view/Telegram tests confirm public-safe wording and no score/trading leak. |
+The shared review log can serve multiple TODO2 items; do not require a separate 10-day sample for each one.
 
 ## Smallest Implementation Sequence
 
-1. Document this plan and TODO interpretation.
-2. Run existing read-only smoke/tests to confirm no behavior changed.
-3. Over 10 business days, fill the operating checklist from previews and browser review.
-4. Only after the log shows repeated distraction from stored/fallback blocks, make the smallest UI/text edit:
-   - Rename or compress `?곗씠??湲곗?`.
-   - Move broad KRX/flow cards below top-2 current evidence.
-   - Collapse `由ы룷?????먮쫫` under `蹂듦린/?곌뎄`.
-   - Reorder Telegram sections.
-5. Add focused tests only for the exact wording/order change.
+1. Confirm the concrete issue with stored examples or a focused fixture.
+2. Make the smallest local copy/ordering change that addresses it; do not add a data lane or alter ranking policy without a separate decision.
+3. Run focused tests and representative-date DTO/browser QA.
+4. Use the shared operating review after a user-facing priority change to decide whether it is stable, not as a prerequisite for starting local work.
+5. Keep production DB writes, scheduler changes, real Telegram sends, and external sharing behind their existing approval gates.
 
 Skipped for this plan:
 

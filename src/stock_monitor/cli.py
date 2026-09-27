@@ -1725,7 +1725,7 @@ def build_parser() -> argparse.ArgumentParser:
     toss_market_context_capture_parser.add_argument(
         "--scheduled",
         action="store_true",
-        help="Apply the business-day and 15:00~15:15 scheduler guard.",
+        help="Apply the business-day and 20:05~20:20 scheduler guard for the 20:00 close baseline.",
     )
     toss_market_context_capture_parser.add_argument("--json", action="store_true")
 

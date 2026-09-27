@@ -8,8 +8,8 @@ This is the documentation skeleton. Read this file first, then open only the bra
 | --- | --- |
 | [Operating guide](operating-guide.md) | Roadmap, decision history, and next work. Verify live scheduler/source contracts in the runbooks below. |
 | [Architecture guide](architecture-guide.md) | Code map, ownership, agent use, risks, and decisions. |
-| [Data governance](data-governance.md) | Value layers, source ownership, rebaseline, and baseline coverage. |
-| [Market-data runbook](market-data-runbook.md) | Toss close snapshot operations and retained KRX historical-reference policy. |
+| [Data governance](data-governance.md) | Value layers, current source ownership, and historical KRX boundary. |
+| [Market-data runbook](market-data-runbook.md) | Toss close snapshot operations, parked proposals, and bounded KRX historical recovery policy. |
 | [Surface guide](surface-guide.md) | `admin-gui`, GET-only `web-view`, rotation, and realtime-first display policy. |
 | [Candidate evidence](candidate-evidence.md) | Candidate DTO and evidence/target-progress/operator-memo implementation rules. |
 | [News intelligence](news-intelligence.md) | Operator-only news collection and future public-safe projection boundary. |

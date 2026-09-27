@@ -137,7 +137,7 @@
   ],
   "languages": [],
   "frameworks": [],
-  "maxFileSize": 1048576,
+  "maxFileSize": 2097152,
   "extractDocstrings": true,
   "trackCallSites": true
 }

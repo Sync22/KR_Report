@@ -1,13 +1,13 @@
 # Architecture Guide
 
-System map, ownership, agent use, and decision history.
+System map, source boundaries, CodeGraph navigation, and decision history.
 
 ## Included sections
 - Project Map
 - Architecture Risk Review
-- Module Ownership
-- Agent Guide
-- Agent Reassessment
+- Current Ownership and Plan Pointer
+- CodeGraph Index
+- Current Investigation Routing
 - Decision Log
 
 <!-- Merged from: docs/codex/architecture-guide.md -->
@@ -26,7 +26,7 @@ No assumptions should be made from any path outside this folder.
 Monitor the Naver Stock research company page for the domestic stocks tab,
 store newly observed research reports during Korean business hours,
 send Telegram summaries/alerts, and provide separate local operator and read-only user surfaces
-with KRX market reference, investor-flow reference, and observation evidence.
+with Toss 20:00 stored market context, historical KRX references, and observation evidence.
 
 ## Current Structure
 
@@ -36,22 +36,22 @@ Project root:
 
 Current files:
 
-- [AGENTS.md](/AGENTS.md)
-- [README.md](/README.md)
-- [CHANGELOG.md](/CHANGELOG.md)
-- [pyproject.toml](/pyproject.toml)
-- [stock_research_monitor_mvp.md](/stock_research_monitor_mvp.md)
-- [docs/codex/architecture-guide.md](/docs/codex/architecture-guide.md)
-- [docs/codex/operating-guide.md](/docs/codex/operating-guide.md)
-- [docs/codex/documentation-index.md](/docs/codex/documentation-index.md)
-- [docs/codex/surface-guide.md](/docs/codex/surface-guide.md)
-- [docs/codex/data-governance.md](/docs/codex/data-governance.md)
-- [docs/codex/candidate-evidence.md](/docs/codex/candidate-evidence.md)
-- [docs/codex/research-notes.md](/docs/codex/research-notes.md)
-- [docs/codex/market-data-runbook.md](/docs/codex/market-data-runbook.md)
-- [docs/codex/mini-pc-runbook.md](/docs/codex/mini-pc-runbook.md)
-- [docs/codex/history.md](/docs/codex/history.md)
-- Use [docs/codex/documentation-index.md](/docs/codex/documentation-index.md) to find canonical documents and cleanup rules.
+- [AGENTS.md](../../AGENTS.md)
+- [README.md](../../README.md)
+- [CHANGELOG.md](../../CHANGELOG.md)
+- [pyproject.toml](../../pyproject.toml)
+- [stock_research_monitor_mvp.md](../../stock_research_monitor_mvp.md)
+- [docs/codex/architecture-guide.md](architecture-guide.md)
+- [docs/codex/operating-guide.md](operating-guide.md)
+- [docs/codex/documentation-index.md](documentation-index.md)
+- [docs/codex/surface-guide.md](surface-guide.md)
+- [docs/codex/data-governance.md](data-governance.md)
+- [docs/codex/candidate-evidence.md](candidate-evidence.md)
+- [docs/codex/research-notes.md](research-notes.md)
+- [docs/codex/market-data-runbook.md](market-data-runbook.md)
+- [docs/codex/mini-pc-runbook.md](mini-pc-runbook.md)
+- [docs/codex/history.md](history.md)
+- Use [docs/codex/documentation-index.md](documentation-index.md) to find canonical documents and cleanup rules.
 
 Current directories:
 
@@ -81,11 +81,8 @@ What exists now:
 - regression tests for parser, scheduler, Telegram, and summary behavior
 - regression tests for delivery fragments, operator health, scheduler classification, admin boundary, and DB hardening
 - separate GET-only user `web-view`
-- KRX Open API daily snapshot ingest/backfill for stock, ETF, and index reference data
-- KRX Data Marketplace investor-flow source plan for `[12008]`, `[12009]`, and `[12010]`
-- KRX Data Marketplace investor-flow sample capture runbook and local manifest templates
-- KRX Data Marketplace investor-flow additive schema v4 and `db-verify` quality gate
-- KRX Data Marketplace investor-flow manual backfill/read-only display path
+- Toss 20:00 stored snapshot for current web-view market, ETF, and flow references
+- Existing KRX records and schemas remain for historical analysis/recovery; no normal KRX market-data refresh or investor-flow ingest is scheduled.
 - read-only observation/backtest DTO/API and `web-view` observation tab
 - internal-only scoring-draft CLI paths with no public numeric score or trading-recommendation output
 - requirements/spec document
@@ -119,7 +116,7 @@ Current implementation layout:
 
 Local-only intake files:
 
-- [data/krx_api_intake.local.md](/data/krx_api_intake.local.md)
+- [data/krx_api_intake.local.md](../../data/krx_api_intake.local.md)
 
 Important currently observed modules:
 
@@ -166,7 +163,6 @@ Important review docs:
 - `docs/codex/surface-guide.md`
 - `docs/codex/architecture-guide.md`
 - `docs/codex/data-governance.md`
-- `docs/codex/surface-guide.md`
 - `docs/codex/operating-guide.md`
 
 ## Key Domain Objects
@@ -198,21 +194,10 @@ Current key entities and persisted state:
 - Telegram control state
 - operator memos
 
-## Recent Changed Files
+## Working-tree note
 
-Files currently known as the most recently updated within this folder:
+Use git status and git diff for the live change list; this guide records stable architecture and review findings.
 
-- `stock_research_monitor_mvp.md`
-- `docs/codex/operating-guide.md`
-- `docs/codex/operating-guide.md`
-- `docs/codex/operating-guide.md`
-- `docs/codex/architecture-guide.md`
-- `docs/codex/documentation-index.md`
-- `README.md`
-- `CHANGELOG.md`
-
-
-<!-- Merged from: docs/codex/architecture-guide.md -->
 ## Architecture Risk Review
 
 ## Purpose
@@ -226,7 +211,7 @@ Use it when starting broad investigation across:
 - `admin-gui` and read-only `web-view`
 - replay, migration, data-source, public-safe, and performance boundaries
 
-This is an investigation reference, not an implementation plan. Before changing parser, summary, notification, admin-gui, or web-view behavior, still check [data-governance.md](/docs/codex/data-governance.md), [surface-guide.md](/docs/codex/surface-guide.md), and [data-governance.md](/docs/codex/data-governance.md).
+This is an investigation reference, not an implementation plan. Before changing parser, summary, notification, admin-gui, or web-view behavior, check [data-governance.md](data-governance.md) and [surface-guide.md](surface-guide.md).
 
 ## Snapshot
 
@@ -253,74 +238,51 @@ Working-tree note:
 
 | Area | Current shape |
 | --- | --- |
-| CLI entry | `python -m stock_monitor` enters [__main__.py](/src/stock_monitor/__main__.py) and dispatches through [cli.py](/src/stock_monitor/cli.py). |
-| Fetch / parse | Naver report collection lives in [fetch/naver_research.py](/src/stock_monitor/fetch/naver_research.py). It prefers captured API items and falls back to candidate DOM rows. |
-| Persist | SQLite access is centralized in [db/repository.py](/src/stock_monitor/db/repository.py). Schema and migrations are in [db/schema.py](/src/stock_monitor/db/schema.py). |
-| Summarize | Daily report summaries are built in [summary.py](/src/stock_monitor/summary.py). |
-| Notify | Telegram formatting and control state are under [notify/](/src/stock_monitor/notify). Scheduled/manual delivery orchestration is in [cli.py](/src/stock_monitor/cli.py). |
-| Scheduler | PowerShell wrappers in [scripts/](/scripts) call CLI scheduled commands. Python-side guards enforce business-day, no-run, time-window, and operation-profile rules. |
-| Admin surface | `admin-gui` is a local/operator control surface with GET and guarded POST routes inside [cli.py](/src/stock_monitor/cli.py). |
-| User surface | `web-view` is a separate GET-only/read-only surface, with `/auth/login` as the only POST exception and all other write methods returning `405`. |
-| Market data | KRX Open API and KRX Data Marketplace fetch/parse helpers live in [fetch/krx_api.py](/src/stock_monitor/fetch/krx_api.py). KRX scheduling and display orchestration is mostly in [cli.py](/src/stock_monitor/cli.py). |
-
+| CLI entry | `python -m stock_monitor` enters [__main__.py](../../src/stock_monitor/__main__.py) and dispatches through [cli.py](../../src/stock_monitor/cli.py). |
+| Fetch / parse | Naver report collection lives in [fetch/naver_research.py](../../src/stock_monitor/fetch/naver_research.py). |
+| Persist | SQLite access is centralized in [db/repository.py](../../src/stock_monitor/db/repository.py); schema and migrations are in [db/schema.py](../../src/stock_monitor/db/schema.py). |
+| Summarize | Daily report summaries are built in [summary.py](../../src/stock_monitor/summary.py). |
+| Notify | Telegram formatting/control state are under [notify/](../../src/stock_monitor/notify); scheduled/manual orchestration is in [cli.py](../../src/stock_monitor/cli.py). |
+| Scheduler | PowerShell wrappers in [scripts/](../../scripts/) call guarded CLI commands. Current task registration is documented in [mini-pc-runbook.md](mini-pc-runbook.md). |
+| Admin surface | `admin-gui` is a local/operator control surface with guarded routes in [cli.py](../../src/stock_monitor/cli.py). |
+| User surface | `web-view` is a separate GET-only/read-only surface; `/auth/login` is its access-code POST exception. |
+| Current market data | Toss 20:00 snapshots supply stored web-view market/ETF/flow context. Existing KRX rows are historical review/recovery data only. |
 ## Key Paths
 
 | Concern | Path |
 | --- | --- |
-| Report fetch entry | [fetch/naver_research.py](/src/stock_monitor/fetch/naver_research.py) |
-| Report identity | [models.py](/src/stock_monitor/models.py) |
-| Report insert / intraday queue | [db/repository.py](/src/stock_monitor/db/repository.py) |
-| Daily summary build | [summary.py](/src/stock_monitor/summary.py) |
-| Daily delivery fragments | [db/schema.py](/src/stock_monitor/db/schema.py), [db/repository.py](/src/stock_monitor/db/repository.py) |
-| Scheduled poll / notify | [scripts/run_scheduled_poll.ps1](/scripts/run_scheduled_poll.ps1), [scripts/run_scheduled_notify.ps1](/scripts/run_scheduled_notify.ps1), [cli.py](/src/stock_monitor/cli.py) |
-| KRX daily backfill | [scripts/run_scheduled_krx_daily_backfill.ps1](/scripts/run_scheduled_krx_daily_backfill.ps1), [fetch/krx_api.py](/src/stock_monitor/fetch/krx_api.py), [cli.py](/src/stock_monitor/cli.py) |
-| KRX mentioned-stock flow | [scripts/run_scheduled_krx_mentioned_flow_backfill.ps1](/scripts/run_scheduled_krx_mentioned_flow_backfill.ps1), [cli.py](/src/stock_monitor/cli.py) |
-| Admin GUI handler | [cli.py](/src/stock_monitor/cli.py) |
-| Web-view handler / DTOs | [cli.py](/src/stock_monitor/cli.py) |
-| Public-safe smoke / QA | [tests/test_web_view.py](/tests/test_web_view.py), [tests/test_cli_commands.py](/tests/test_cli_commands.py) |
+| Report fetch entry | [fetch/naver_research.py](../../src/stock_monitor/fetch/naver_research.py) |
+| Report identity | [models.py](../../src/stock_monitor/models.py) |
+| Report insert / intraday queue | [db/repository.py](../../src/stock_monitor/db/repository.py) |
+| Daily summary build | [summary.py](../../src/stock_monitor/summary.py) |
+| Daily delivery fragments | [db/schema.py](../../src/stock_monitor/db/schema.py), [db/repository.py](../../src/stock_monitor/db/repository.py) |
+| Scheduled poll / notify | [scripts/run_scheduled_poll.ps1](../../scripts/run_scheduled_poll.ps1), [scripts/run_scheduled_notify.ps1](../../scripts/run_scheduled_notify.ps1), [cli.py](../../src/stock_monitor/cli.py) |
+| Historical KRX recovery | [scripts/run_scheduled_krx_daily_backfill.ps1](../../scripts/run_scheduled_krx_daily_backfill.ps1), [fetch/krx_api.py](../../src/stock_monitor/fetch/krx_api.py), [cli.py](../../src/stock_monitor/cli.py); not an active scheduled baseline |
+| Historical KRX mentioned-stock flow | [scripts/run_scheduled_krx_mentioned_flow_backfill.ps1](../../scripts/run_scheduled_krx_mentioned_flow_backfill.ps1), [cli.py](../../src/stock_monitor/cli.py); retained for historical/recovery use |
+| Admin GUI handler | [cli.py](../../src/stock_monitor/cli.py) |
+| Web-view handler / DTOs | [cli.py](../../src/stock_monitor/cli.py) |
+| Public-safe smoke / QA | [tests/test_web_view.py](../../tests/test_web_view.py), [tests/test_cli_commands.py](../../tests/test_cli_commands.py) |
 
 ## Confirmed Findings
 
-1. Report dedupe has multiple layers.
-
-   `reports.identity_key` is unique, `source_id` is unique when present, and a legacy visible-field unique index exists for `(stock_name, title, broker_name, published_at)`.
-
-2. Missing report values are handled correctly in the core summary path.
-
-   Target price range uses only non-`None` numeric target values. Dominant opinion excludes `N/A` from the valid vote and uses `N/A` only when no valid opinion exists.
-
-3. Daily Telegram delivery replay has durable state.
-
-   `daily_summary_delivery_runs` and `daily_summary_delivery_fragments` store summary signature, pending/failed/sent fragments, message hashes, message IDs, and error state so failed fragments can resume without resending already successful fragments.
-
-4. `admin-gui` and `web-view` are separate HTTP handlers.
-
-   `admin-gui` exposes `/api/status` and guarded POST operations. `web-view` has separate read-only JSON routes, does not expose `/api/status`, and returns `405` for write methods except the access-code login path.
-
-5. Host binding defaults are guarded.
-
-   Both `admin-gui` and `web-view` refuse non-loopback binding by default and require an explicit `--allow-non-loopback`.
-
-6. The approved automatic KRX Data Marketplace path is narrow in code and docs.
-
-   `scheduled-krx-mentioned-flow-backfill` plans calls only for report-mentioned stocks on the anchor date, uses `[12009]`, skips existing rows, honors time guards for automatic runs, and records operation events.
-
-7. Web-view performance work is already present.
-
-   Public JSON routes use a short in-process cache, optional gzip, and API performance logging. Recent docs record earlier batching work for daily, archive, market-briefing, and candidate-evidence payloads.
-
+1. Report identity and deduplication are enforced by repository constraints and indexes.
+2. Missing target prices and opinions are excluded from aggregate ranges/votes while remaining visible in detail.
+3. Telegram delivery fragments have durable status and resume support; ambiguous send outcomes still need a policy decision in the active TODO2 plan.
+4. `admin-gui` and GET-only `web-view` use separate handlers and access boundaries.
+5. Host binding defaults are guarded; non-loopback exposure requires an explicit option.
+6. Current web-view market, ETF, and flow context comes from stored Toss 20:00 snapshots. KRX backfill/import paths are historical/recovery only and are not normal scheduled sources.
+7. Web-view routes use existing caching, compression, performance logging, and query batching; preserve their regression checks when changing DTO builders.
 ## Plausible Risks
 
-| Risk | Why it matters | Suggested owner |
-| --- | --- | --- |
-| `cli.py` concentration | The file owns CLI dispatch, scheduler guards, admin server, web-view server, DTO builders, KRX orchestration, smoke checks, and rendered HTML/JS. That makes ownership and impact analysis harder. | `cli-developer`, `web-ui-engineer`, `security-hardening` |
-| CodeGraph coverage gap | The review found CodeGraph did not include `src/stock_monitor/cli.py`, which is the most important cross-boundary file. Impact checks may be incomplete until indexing is corrected. | `debugger`, `documentation-engineer` |
-| Summary uniqueness under stock-name drift | Summary rebuild groups code-first, but `daily_stock_summaries` uniqueness includes `stock_name`. A stock name or representative-name change could leave migration/rebuild edge cases worth testing. | `sql-pro`, `python-pro` |
-| Naver live reference exception | `web-view` allows the manual same-day `intraday_market_top` / Naver `priceTop` reference. This current exception is display/reference-only because it is not an approved stable real-time lane. Future approved intraday sources are different: they may affect observation priority after source-burden, freshness, and failure behavior review. | `market-data-engineer`, `security-hardening`, `web-ui-engineer` |
-| Public limit mistaken as final product goal | Current public surfaces block trading-decision wording, but the longer-term direction may include operator-only decision support or execution-lab once real-time source and safety gates are proven. Treating the current wording guard as permanent would undercut the intended path. | `reviewer`, `security-hardening`, `market-data-engineer` |
-| Free-text operation event details | `operation_events.detail` is useful for operators but should remain admin-only or be converted into public labels before any web-view exposure. | `security-hardening`, `reviewer` |
-| Dirty working tree baseline | Many files were already modified during the review. Any later conclusion should distinguish current local changes from a clean committed baseline. | `reviewer`, `documentation-engineer` |
-
+| Risk | Why it matters |
+| --- | --- |
+| `cli.py` concentration | It owns CLI dispatch, scheduler guards, both HTTP surfaces, DTO builders, source orchestration, and rendered HTML/JS. |
+| CodeGraph refresh repeatability | The index was refreshed on 2026-09-27, but this runtime lacks the updater; refresh after future source changes from an environment that has it. |
+| Summary uniqueness under stock-name drift | Rebuild groups code-first, while a uniqueness constraint includes `stock_name`; test migration/rebuild behavior if names change. |
+| Naver live reference exception | Manual same-day `priceTop` is display/reference-only and must not become an unreviewed production source lane. |
+| Public/operator boundary | Keep operator decision support separate from public `web-view` and Telegram. |
+| Free-text operation event details | Keep raw event details operator-only or project them into safe public labels before exposure. |
+| Dirty working tree baseline | Distinguish local edits from committed behavior during reviews. |
 ## Boundary And Security Candidates
 
 1. Recheck public DTO key filtering for every current `web-view` route:
@@ -362,8 +324,8 @@ Working-tree note:
 | Boundary | Current rule | Candidate check |
 | --- | --- | --- |
 | Naver reports | Naver owns report facts and report identity. | Ensure KRX values never overwrite report title, broker, target, opinion, or report date facts. |
-| KRX Open API | KRX owns stock/ETF/index daily reference values. | Ensure same-day `not_published` remains normal and does not trigger same-day probe automation or silent latest-date fallback. |
-| KRX Data Marketplace | Stored investor-flow samples and narrow `[12009]` mentioned-stock automation only. | Ensure `[12008]`, `[12010]`, market-wide, and all-stock broad scheduled ingest remain blocked without separate approval. |
+| KRX Open API | Existing rows are historical references; current stored market baseline is Toss 20:00. | Keep KRX reads out of current web-view fallback and normal refresh scheduling. |
+| KRX Data Marketplace | Existing samples are historical/recovery references; current market flow uses stored Toss 20:00 snapshots. | Do not restore KRX scheduled ingestion as part of the current source baseline. |
 | Naver `priceTop` | Manual same-day display-only web-view reference. | Ensure no DB writes, Telegram sends, scheduler changes, KRX replacement, or scoring are tied to this route. |
 | Future approved intraday source | Separate read-only lab/staging lane before public use. | If approved, it may affect top-2 `우선 확인` ordering and main-card emphasis, but must not create DB writes, Telegram/scheduler automation, broker execution, public score, or trading-call wording. |
 | Future operator decision/execution lane | Separate from public `web-view` and Telegram. | It may evaluate trading-decision support only after stable real-time data, permission, audit, failure handling, and order-safety gates are defined. |
@@ -371,207 +333,25 @@ Working-tree note:
 
 ## Performance Candidates
 
-1. Web-view daily DTO builders remain the main area to watch because one request can combine report summaries, category rollups, market briefing, KRX reference, investor flow, rotation evidence, and optional Naver intraday reference.
+1. Web-view daily DTO builders combine reports, categories, market briefing, Toss close context, rotation evidence, and optional Naver intraday reference; keep their query budget visible.
 
 2. Repository methods open a SQLite connection per call. WAL mode, cache size, busy timeout, and recent batching reduce risk, but DTO paths should keep query-budget tests.
 
-3. `src/stock_monitor/web_perf.py` and API perf logs should be included in CodeGraph once the index is refreshed.
+3. The 2026-09-27 CodeGraph refresh indexes `cli.py`, `web_perf.py`, and `news/evidence_review.py`; recheck freshness after substantial source changes before using call edges for impact claims.
 
 4. `candidate-evidence`, archive, and daily payload generation already have documented performance improvements. Future regressions should be checked with the existing web performance tests and browser smoke commands before adding more caching.
 
-## Recommended Next Investigations
+## Current Ownership and Plan Pointer
 
-| Investigation | Goal | Owner |
-| --- | --- | --- |
-| Refresh or repair CodeGraph indexing | Ensure `cli.py` and `web_perf.py` are indexed before future impact analysis. | `debugger` or `documentation-engineer` |
-| `cli.py` responsibility map | Split the file logically by command group, route handler, DTO builder, and operational guard without editing yet. | `cli-developer` |
-| Web-view public DTO audit | Confirm all public routes exclude admin/operator/secrets and blocked public wording, while preserving clear observation recommendation language where evidence supports `우선 확인`. | `security-hardening` + `web-ui-engineer` |
-| Operator decision-support boundary | Define where future trading-decision review could live without leaking into public `web-view` or automatic execution. | `market-data-engineer` + `security-hardening` + `reviewer` |
-| Summary identity/rebuild audit | Test stock-code-first grouping, representative name drift, code-missing rows, and `daily_stock_summaries` uniqueness. | `sql-pro` + `python-pro` |
-| Scheduler wrapper audit | Check scripts against Python-side guards and main-PC vs mini-PC operation profile expectations. | `cli-developer` + `debugger` |
-| KRX source boundary audit | Confirm same-day KRX Open API behavior, mentioned-stock `[12009]` limits, and manual Naver `priceTop` display-only behavior. | `market-data-engineer` |
-| Replay safety review | Recheck Telegram daily fragments, intraday alert batches, command replay side effects, and migration restore behavior. | `backend-developer` + `test-engineer` |
-| Query budget review | Measure daily, archive, candidate-evidence, and stock-detail DTO paths after current dirty changes settle. | `web-ui-engineer` + `test-engineer` |
+The path and flow tables above are the architecture map. Current role routing and project boundaries are owned by the root AGENTS.md; this guide does not maintain a second agent roster. Current follow-up tasks are owned by the active TODO2 board in [operating-guide.md](operating-guide.md).
 
-## Agent Ownership Matrix
+## CodeGraph Index
 
-| Area | Primary owner | Supporting agents |
-| --- | --- | --- |
-| Fetch -> parse -> persist -> notify | `backend-developer` | `python-pro`, `test-engineer` |
-| Summary aggregation and missing values | `python-pro` | `sql-pro`, `reviewer` |
-| Schema, replay, migration, dedupe | `sql-pro` | `backend-developer`, `test-engineer` |
-| Scheduler wrappers and CLI guards | `cli-developer` | `debugger`, `reviewer` |
-| Runtime scheduled-run failures | `debugger` | `cli-developer`, `reviewer` |
-| Admin GUI boundary | `admin-ui-engineer` | `security-hardening`, `reviewer` |
-| Web-view read-only public surface | `web-ui-engineer` | `security-hardening`, `test-engineer` |
-| Public-safe exposure and access gate | `security-hardening` | `web-ui-engineer`, `reviewer` |
-| KRX/OpenAPI/Data Marketplace/source policy | `market-data-engineer` | `sql-pro`, `debugger` |
-| Performance/query budget | `test-engineer` | `web-ui-engineer`, `python-pro` |
-| Documentation consistency | `documentation-engineer` | `reviewer` |
+The ignored `{PROJECT_ROOT}\.codegraph\codegraph.db` is local navigation data, not a product or runtime dependency.
 
+**Current local status (2026-09-27):** the parent session refreshed the index after raising `maxFileSize` to 2 MiB so the 1.88 MiB `cli.py` is indexed. The database contains 103 files, 3,831 nodes, and 8,672 edges; it includes 1,033 CLI nodes, 36 `web_perf.py` nodes, and 21 `news/evidence_review.py` nodes. `_run_scheduled_poll` resolves at line 17,723, matching current source. This runtime still has no `codegraph` executable or configured MCP, so future refreshes must be run from an environment where the existing updater is available.
 
-<!-- Merged from: docs/codex/architecture-guide.md -->
-## Module Ownership
-
-## Purpose
-
-This document proposes role boundaries for future implementation work.
-
-The project is small enough that one developer can still edit across modules, but the work axes are now distinct enough that subagents should be assigned by responsibility instead of by generic availability.
-
-## Ownership Map
-
-| Module / Axis | Primary Role | Supporting Role | Scope |
-| --- | --- | --- | --- |
-| Naver report collection | `backend-developer` | `python-pro`, `test-engineer` | Fetch, parse, normalize, dedupe, and parser drift tests. |
-| Summary aggregation | `python-pro` | `sql-pro`, `reviewer` | Daily summaries, stock-code-first grouping, target/opinion aggregation, output filters. |
-| SQLite schema/repository | `sql-pro` | `backend-developer`, `test-engineer` | Migrations, FK integrity, upserts, replay safety, backup/verify/cleanup contracts. |
-| Telegram notifications | `backend-developer` | `cli-developer`, `test-engineer` | Daily summary delivery, fragment resume, intraday outbox, command parsing, paging, memo replay safety. |
-| Scheduler/CLI operations | `cli-developer` | `debugger`, `reviewer` | Task Scheduler wrappers, `operator-status`, `operator-control`, health exits, scheduled guards. |
-| Admin GUI | `admin-ui-engineer` | `cli-developer`, `reviewer` | Local operator controls, scheduler cards, no-run calendar, safe settings, audit display, recovery controls. |
-| User web-view | `web-ui-engineer` | `backend-developer`, `test-engineer` | GET-only friend-facing page, public-safe DTOs, archive/calendar, selected-stock display, market reference UI. |
-| KRX Open API market data | `market-data-engineer` | `sql-pro`, `backend-developer` | Stock/ETF/index snapshots, field validation, backfill safety, KRX source ownership. |
-| KRX Data Marketplace flow | `market-data-engineer` | `debugger`, `sql-pro`, `test-engineer` | `[12008]`, `[12009]`, `[12010]` request validation, sample capture, import, scheduled-ingest design. |
-| Category/taxonomy | `market-data-engineer` | `sql-pro`, `web-ui-engineer` | 업종/테마 source rules, category snapshots, fallback handling, display naming. |
-| Candidate evidence | `market-data-engineer` | `sql-pro`, `web-ui-engineer`, `reviewer` | Read-only candidate evidence DTO, evidence separation, exclusion rules, no-scoring boundary. |
-| Future intraday observation reference | `market-data-engineer` | `web-ui-engineer`, `security-hardening`, `reviewer`, `test-engineer` | Lab/staging read-only quote/turnover/index source review, top-2 `우선 확인` priority impact, freshness/failure behavior, no broker execution. |
-| Future operator decision/execution lane | `market-data-engineer` + `security-hardening` | `reviewer`, `sql-pro`, `test-engineer`, `cli-developer` | Only after stable real-time source proof. Operator-only decision support and execution-lab safety; never collapse into public `web-view`. |
-| Rotation overlay | `web-ui-engineer` | `market-data-engineer`, `admin-ui-engineer` | Cycle image overlay, alias mapping, coordinate map, future calibration UI. |
-| Access gate / public-safe boundary | `security-hardening` | `web-ui-engineer`, `admin-ui-engineer`, `reviewer` | Entry-code gate, GET-only regression, admin/web-view separation, external-sharing safety checks. |
-| External sharing / mini PC | `documentation-engineer` | `reviewer`, `cli-developer` | Handoff docs, access gate, Cloudflare/Tailscale boundary, operation profile notes. |
-| Documentation consistency | `documentation-engineer` | `reviewer` | Canonical docs, roadmap/current-work sync, stale plan cleanup. |
-
-## Current Role Split Candidates
-
-| Near-Term Work | Recommended Owner | Why |
-| --- | --- | --- |
-| User web-view search bar | `web-ui-engineer` | UI/navigation change on the friend-facing surface. |
-| `candidate_evidence` DTO | `market-data-engineer` + `sql-pro` | Requires source separation and stable joins across report/KRX/flow/category data. |
-| Candidate evidence web-view preview | `web-ui-engineer` | Should preserve the no-trading-recommendation boundary and compact layout while allowing observation-candidate wording. |
-| Rotation image text alias table | `market-data-engineer` | Needs taxonomy mapping discipline before UI polish. |
-| Rotation overlay calibration UI | `admin-ui-engineer` | Calibration is operator-facing, not friend-facing. |
-| KRX scheduled-ingest design | `market-data-engineer` + `debugger` | Requires login/session, skip, retry, and audit/event thinking. |
-| Live scheduler review | `debugger` | Focus is root-cause isolation and unattended-run evidence. |
-| DB backup/restore/cleanup policy | `sql-pro` | Data safety and retention boundaries. |
-| Access-code/public sharing hardening | `security-hardening` | Should review exposed DTOs, blocked routes, and external-sharing assumptions before Cloudflare/Tailscale work. |
-
-## Module Boundaries To Preserve
-
-| Boundary | Rule |
-| --- | --- |
-| `admin-gui` vs `web-view` | Do not merge them. Admin has controls; web-view is read-only. |
-| Reports vs KRX data | Do not store market data in report tables or overwrite report facts with market facts. |
-| Category labels vs KRX market data | Do not call current 업종/테마 labels KRX-owned taxonomy unless verified. |
-| Candidate evidence vs scoring | Evidence rows and observation-candidate recommendation can be built now; public numeric scoring and trading recommendation require later policy approval. |
-| Real-time reference vs execution | Future intraday data may affect observation priority after approval, but must stay separate from broker secrets, order routing, production DB writes, and Telegram/scheduler automation until separately approved. |
-| Public observation vs operator decision | Public `web-view` can recommend what to observe. Trading-decision support, if pursued later, is operator-only and requires a separate source/audit/safety contract. |
-| Flow samples vs scheduled ingest | Manual/sample/import path exists. The only automatic flow path is the narrow anchor-date mentioned-stock `[12009]` 31-day backfill; broad scheduled ingest remains disabled until separate approval. |
-| Access gate vs real auth | Entry-code gate is a lightweight layer, not enterprise authentication. |
-
-## Escalation Points
-
-Pause and ask for user approval before:
-
-- destructive DB migration, broad deletion, or real VACUUM without explicit confirmation
-- enabling scheduled KRX Data Marketplace ingest
-- connecting a real-time/broker source to production writes, Telegram, scheduler, admin controls, broker secrets, or order routing
-- exposing `admin-gui` beyond loopback/private owner access
-- adding trading recommendation, public numeric score, investment grade, or buy/sell wording
-- silently copying today's category mapping backward into historical dates
-- storing new secret material outside `.env` or approved local files
-
-## Suggested Subagent Use
-
-Default operating rule:
-
-- Keep small and obvious single-surface edits local.
-- For non-trivial work, prefer a subagent split before implementing.
-- Use investigation -> implementation -> review as the default shape when the task touches data, DB, scheduler, Telegram, `admin-gui`, `web-view`, external sharing, or candidate evidence.
-
-| Situation | Use |
-| --- | --- |
-| UI rendering bug, layout density, public-safe copy | `web-ui-engineer` |
-| Admin controls, status cards, operator actions | `admin-ui-engineer` |
-| DB schema/upsert/verify/backup concerns | `sql-pro` |
-| Parser/runtime/typing failures | `python-pro` |
-| Scheduled run or worker heartbeat failure | `debugger` |
-| Access gate, GET-only, or public-safe exposure review | `security-hardening` |
-| KRX/ETF/flow field or source question | `market-data-engineer` |
-| Regression test expansion | `test-engineer` |
-| Design/roadmap/doc drift | `documentation-engineer` |
-| Risk review before exposing or enabling automation | `reviewer` |
-
-
-<!-- Merged from: docs/codex/architecture-guide.md -->
-## Agent Guide
-
-## Purpose
-
-This is the consolidated agent usage guide for `02.Stock_Moniter`.
-
-Use this before spawning or assigning subagents. Older agent prompt/planning files remain as reference, but this file is the active routing guide.
-
-2026-05-29 update: project-local `.codex/agents/` is intentionally absent. Use the global Codex agent/skill layer plus CodeGraph first. Role names below are ownership/routing vocabulary for prompts and reviews, not a request to recreate local TOML agents.
-
-## Default Rule
-
-For small and obvious single-surface edits, keep the work local.
-
-For non-trivial work, prefer subagent use by default. Split the task into investigation, implementation, and review when that reduces risk or gives a clearer handoff.
-
-Typical split:
-
-| Work slice | Preferred routing |
-| --- | --- |
-| Investigation / source or code boundary | `explorer`, `debugger`, `market-data-engineer`, `sql-pro`, or the relevant UI/backend specialist |
-| Implementation | `backend-developer`, `python-pro`, `cli-developer`, `web-ui-engineer`, `admin-ui-engineer`, `market-data-engineer`, or `test-engineer` |
-| Review / risk check | `reviewer`, `security-hardening`, `sql-pro`, or `test-engineer` |
-
-Do not keep agents open after their result is integrated. Close completed agents to avoid slot exhaustion.
-
-## Role Routing
-
-| Need | Preferred agent |
-| --- | --- |
-| Parser, summary, runtime Python contracts | `python-pro` |
-| Fetch, parse, persist, notify pipeline | `backend-developer` |
-| CLI, scheduler wrappers, shell-facing workflows | `cli-developer` |
-| SQLite schema, migrations, dedupe, backup/restore | `sql-pro` |
-| Regression tests and unattended-run checks | `test-engineer` |
-| PR-style risk review | `reviewer` |
-| Runtime/scheduler/Telegram failure isolation | `debugger` |
-| KRX/KIS/ETF/flow source boundaries | `market-data-engineer` |
-| Local operator UI | `admin-ui-engineer` |
-| Shared GET-only user page | `web-ui-engineer` |
-| Access gate, exposure boundary, public-safe route review | `security-hardening` |
-| Roadmap, handoff, changelog, docs | `documentation-engineer` |
-
-## Optional Global Skill
-
-`$scrapling-official` is the preferred active source-probe skill for new browser-gated, rendered-page, anti-bot-sensitive, or future-source work.
-
-If the old global skill `$botasaurus-stock-monitor` is present, treat it as legacy/archived reference only. Do not use it as an active maintained probe lane unless the user explicitly asks to restore it.
-
-If the global skill `$scrapling-official` is installed, use it as an active source-probe lane for:
-
-- rendered-page extraction where simple request or API paths return only an app shell
-- browser-gated or anti-bot-sensitive source checks
-- bounded source comparison before deciding whether a source should remain probe-only, become fallback, or be proposed for later integration
-
-For Scrapling CLI extraction commands, include `--ai-targeted`. The installed shared runtime is `{USER_HOME}\Codex\_tools\scrapling\.venv\Scripts\scrapling.exe`. Do not wire Scrapling into production DB writes, Telegram automation, scheduler tasks, `admin-gui`, or public `web-view`. KRX/Data Marketplace should still prefer existing request/login/sample validation paths first; use Scrapling only for bounded source probing when those paths are insufficient or the source is new/unstable.
-
-`$kronos-market-forecast` is not part of the current active global baseline. Treat old Kronos outputs as historical research-only references unless the user explicitly re-enables that lane. If it is re-enabled later, use it only for:
-
-- offline OHLCV forecast experiments on stored KRX data
-- comparison against backtest-observation or candidate-evidence views
-- hidden research work before any scoring policy discussion
-
-Do not use it for public numeric scores, trading recommendations, Telegram alerts, scheduler decisions, or direct product-surface changes.
-
-## CodeGraph MCP
-
-`codegraph` is available for this project and already initialized under `{PROJECT_ROOT}\.codegraph`.
-Treat it as a code-navigation backend for existing agents, not as a new product dependency.
+Treat CodeGraph as a code-navigation backend for existing agents, not as a new product dependency.
 
 Prefer it first when the task is about:
 
@@ -581,16 +361,7 @@ Prefer it first when the task is about:
 - schema / migration impact
 - deciding whether an experiment or source probe leaks into production behavior
 
-Good pairings:
-
-| Need | Preferred agent + CodeGraph use |
-| --- | --- |
-| runtime flow trace | `debugger` or `backend-developer` + callers/callees/impact |
-| source/market-data boundary trace | `market-data-engineer` + callers/callees/impact |
-| schema or replay risk | `sql-pro` + impact |
-| exposure/public-safe review | `security-hardening` or `reviewer` + route/DTO impact |
-| admin/web-view path ownership | `web-ui-engineer` or `admin-ui-engineer` + path narrowing |
-
+Use the current task-specific Luna role from the root `AGENTS.md`; CodeGraph narrows the paths and impact edges for that review.
 Do not overuse it for:
 
 - known single-file edits
@@ -599,310 +370,10 @@ Do not overuse it for:
 
 After using `codegraph`, still read the real file contents before editing or making a final claim.
 
-## Skill vs Agent Comparison
+## Current Investigation Routing
 
-Skills and agents are not interchangeable.
+Use the root AGENTS.md for current global skills, Luna roles, and project-specific safety rules. Use the CodeGraph section above for structural navigation, then inspect source files before making implementation claims. The decision log below is historical context, not a current work queue.
 
-Use a skill when the task needs a specialized workflow or tool lane. Use an agent when the task needs role-based investigation, implementation, or review inside this project.
-
-| Task type | Prefer skill | Prefer agent | Why |
-| --- | --- | --- | --- |
-| KRX Open API stock/ETF/index daily data | none | `market-data-engineer`, `backend-developer`, `sql-pro` | The approved Open API path already exists in the main codebase. No browser or anti-detect probe is needed. |
-| KRX Data Marketplace login/session/source probing | Existing request/login/sample validation first; `scrapling-official` only for bounded browser/source probes when needed | `market-data-engineer`, `debugger` | Scrapling is the active probe tool, but source semantics and production boundary still need project agents. Botasaurus is legacy reference only unless explicitly restored. |
-| KRX investor-flow schema/import/display | none by default | `market-data-engineer`, `sql-pro`, `web-ui-engineer`, `reviewer` | The data should flow through existing repository/schema/web-view contracts, not through a separate probe lane. |
-| Future real-time quote/turnover lane | source-specific skill or `scrapling-official` only for bounded reachability probes | `market-data-engineer`, `web-ui-engineer`, `security-hardening`, `reviewer`, `test-engineer` | Read-only lab/staging first. After approval, values may affect observation priority and `우선 확인`, but not broker execution, public scores, or trading calls. |
-| Future operator decision/execution lane | source/broker skills only after explicit approval | `market-data-engineer`, `security-hardening`, `reviewer`, `sql-pro`, `test-engineer`, `cli-developer` | Do not treat current public wording limits as a permanent goal. Trading-decision support is possible only as a separate operator-only/execution-lab path after real-time source, audit, permission, and order-safety gates. |
-| Naver report collection/parser | none by default; `scrapling-official` only for bounded source discovery | `backend-developer`, `python-pro`, `test-engineer` | Main Naver pipeline is production code; Scrapling probes must not replace stable request/API paths without documented evidence. |
-| Telegram/scheduler/SQLite operation | none | `cli-developer`, `debugger`, `test-engineer`, `reviewer` | Operational behavior needs CLI/DB/replay safety, not a browser skill. |
-| User `web-view` / admin UI | Browser/Chrome plugin for ordinary local inspection; Playwright MCP only for repeatable lab/E2E-style checks | `web-ui-engineer`, `admin-ui-engineer`, `security-hardening` | Browser tools verify UI, but implementation/review should stay with UI/security agents. |
-| OHLCV forecast experiment | none by default; historical Kronos lane only if explicitly re-enabled | `market-data-engineer`, `reviewer` | Keep forecast comparisons research-only; they must not feed public scoring directly. |
-| Public numeric scoring / trading recommendation | none for production | `reviewer`, `market-data-engineer`, `sql-pro`, `test-engineer` | Still blocked. Skills can support experiments only; public score requires data/holdout policy first. Observation-candidate recommendation remains a product/UI task, not a trading recommendation. |
-| Documentation/roadmap/handoff | `superpowers:writing-plans` for large implementation plans | `documentation-engineer` | The skill structures plans; the agent keeps local docs consistent. |
-
-Context7 is the preferred docs lookup for current library/framework/API documentation. HeroUI guidance is relevant only for a future React/Next rewrite, not for the current Python `admin-gui` or `web-view`.
-
-Practical rule:
-
-- If the question is "can this source be reached or probed?", consider a skill.
-- If the question is "should this become product behavior?", use agents and repository tests.
-- If the result would touch Telegram, scheduler, SQLite, `admin-gui`, or `web-view`, do not let a skill bypass the normal implementation/review path.
-
-## Required Context For Agents
-
-Always include:
-
-- Scope is only `{PROJECT_ROOT}`.
-- Read `AGENTS.md`.
-- Check [data-governance.md]({PROJECT_ROOT}/docs/codex/data-governance.md) before data-display or parsing work.
-- Preserve `admin-gui` vs `web-view` boundary from [surface-guide.md]({PROJECT_ROOT}/docs/codex/surface-guide.md).
-- Do not enable KRX Data Marketplace scheduled ingest without explicit approval.
-
-## Closure Rule
-
-After each agent task:
-
-1. Integrate or record the result.
-2. Close the agent if no follow-up is needed.
-3. Update roadmap or changelog only if the result changes project state.
-
-## Avoid
-
-- Multiple agents reviewing the same stale issue without new code context.
-- Agents holding slots after final response.
-- Agent tasks that ask broad questions instead of producing a concrete patch, finding, or decision.
-
-
-<!-- Merged from: docs/codex/architecture-guide.md -->
-## Agent Reassessment
-
-2026-05-29 decision: keep project-local `.codex/agents/` absent. The role names below remain useful ownership vocabulary, but the default execution layer is now global agents/skills plus CodeGraph. Do not recreate or bulk-restore the old local TOML agent set unless repeated Stock Monitor work proves one exact missing role.
-
-## Current work axes
-
-| Axis | Current state | Primary local evidence |
-| --- | --- | --- |
-| Live operation validation | Runnable MVP is in live-market validation and operational hardening mode. | `AGENTS.md`, `operating-guide.md` |
-| Telegram MVP | Scheduled daily summary, intraday alert, paging, memo capture, status helpers, and fragment resume exist. | `operating-guide.md`, `operating-guide.md` |
-| Admin GUI | `admin-gui` is a local control-capable operator surface. | `operating-guide.md`, `module-ownership.md` |
-| User web-view | Separate GET-only read-only `web-view` exists for friend/user information display. | `operating-guide.md`, `surface-guide.md` |
-| KRX market reference | Stock/ETF/index snapshots exist and are treated as read-only market context. | `operating-guide.md`, `data-governance.md` |
-| KRX investor flow | Data Marketplace validation/import/display paths exist, but scheduled ingest is disabled. | `operating-guide.md`, `market-data-runbook.md` |
-| Category/taxonomy | 업종/테마 are a separate taxonomy layer with category snapshots and fallback debt. | `operating-guide.md`, `data-governance.md` |
-| Candidate evidence | Read-only evidence rows can support observation-candidate recommendation; no public numeric scoring or trading recommendation. | `candidate-evidence-plan.md`, `operating-guide.md` |
-| Future operator decision lane | Not built. Possible only after stable real-time data, source freshness, failure behavior, permission, and order-safety gates are proven. | `operating-guide.md`, `operating-guide.md`, `surface-guide.md` |
-| External sharing | Optional entry-code gate exists; Cloudflare/Tailscale not configured. | `operating-guide.md`, `surface-guide.md` |
-
-## Next-phase axes
-
-| Axis | Needed work | Likely owner set |
-| --- | --- | --- |
-| Operational closeout | Scheduler/worker/delivery/DB health observation across market days. | `debugger`, `cli-developer`, `reviewer`, `test-engineer` |
-| User web-view closeout | Stock search bar, mobile QA, display cleanup, public-safe regression. | `web-ui-engineer`, `test-engineer`, `security-hardening` |
-| Candidate evidence foundation | Read-only DTO combining report/KRX/flow/category facts without score. | `market-data-engineer`, `sql-pro`, `web-ui-engineer`, `reviewer` |
-| Future operator-only decision support | Boundary design only after real-time source proof. | `market-data-engineer`, `security-hardening`, `reviewer`, `sql-pro`, `test-engineer` |
-| Rotation / ETF candidate preview | Cycle image alias mapping, 업종-to-ETF candidates, preview only. | `market-data-engineer`, `web-ui-engineer`, `admin-ui-engineer` |
-| Category snapshot cleanup | Reduce fallback dates through explicit source-date refresh and safe DB workflow. | `market-data-engineer`, `sql-pro`, `backend-developer`, `test-engineer` |
-| Mini PC / external sharing prep | Access gate, Cloudflare/Tailscale boundary, operation profile, no public admin. | `security-hardening`, `documentation-engineer`, `cli-developer`, `reviewer` |
-
-## Role Vocabulary To Keep
-
-| Role | Keep reason | Use when |
-| --- | --- | --- |
-| `backend-developer` | Still needed for production behavior across fetch, parse, store, summarize, notify. | End-to-end backend behavior changes after the boundary is known. |
-| `python-pro` | Still useful for Python runtime contracts, parsing, typing, and implementation seams. | Runtime/typing/parser bugs or Python module refactors. |
-| `cli-developer` | Required for scheduler wrappers, operator commands, safe flags, and automation-facing UX. | CLI command, exit-code, Task Scheduler wrapper, or shell workflow changes. |
-| `sql-pro` | Needed as read-only reviewer for schema/query/dedupe/migration correctness. | DB contract review before repository or migration work. |
-| `reviewer` | Needed for PR-style risk review around business days, dedupe, delivery, and missing tests. | Before/after high-risk changes or when user asks for a review. |
-| `debugger` | Needed for unattended-run, scheduler, worker heartbeat, and runtime-state failures. | When observed behavior differs from expected scheduled behavior. |
-| `test-engineer` | Needed because replay, paging, outbox, scheduler, and DTO boundaries are regression-sensitive. | Add or repair focused tests after behavior changes. |
-| `admin-ui-engineer` | Still distinct from web-view because `admin-gui` is control-capable. | Operator-facing GUI/status/control work. |
-| `web-ui-engineer` | Still distinct from admin because `web-view` is friend-facing and GET-only. | User page layout, public DTO rendering, archive/search/detail UX. |
-| `documentation-engineer` | Needed because current state is document-heavy and easy to drift. | Roadmap/current-work/handoff/surface-contract sync. |
-| `market-data-engineer` | Strongly needed for KRX/ETF/flow, category snapshots, and candidate evidence. | Source/field/schema boundary and market-data expansion. |
-| `security-hardening` | Now justified by access-code gate and future external sharing. | Entry-code gate, public-safe DTO, GET-only/admin boundary checks. |
-
-## Add
-
-No new local agent is required immediately.
-
-| Potential new agent | Decision | Reason |
-| --- | --- | --- |
-| `candidate-analytics-engineer` | Do not add now. | Candidate evidence can be covered by `market-data-engineer` + `sql-pro` + `web-ui-engineer` + `reviewer`. Adding a scoring/analytics role too early would encourage premature trading-recommendation logic. |
-| `deployment-engineer` | Do not add now. | Mini PC and Cloudflare/Tailscale are still preparation work. `security-hardening`, `cli-developer`, and `documentation-engineer` cover the current scope. |
-| `data-visualization-engineer` | Do not add now. | Rotation overlay and web-view visuals are covered by `web-ui-engineer`; calibration can use `admin-ui-engineer`. |
-
-## Merge or restore
-
-No project-local agent should be restored now.
-
-| Agents | Assessment | Action |
-| --- | --- | --- |
-| `backend-developer` / `python-pro` | Overlap exists around implementation, but boundary is manageable: backend owns product behavior, python-pro owns runtime/module contracts. | Keep both as routing vocabulary; choose one primary per task. |
-| `admin-ui-engineer` / `web-ui-engineer` | Intentional split. Admin is control-capable; web-view is public-safe read-only. | Keep both as routing vocabulary; do not merge the surfaces. |
-| `market-data-engineer` / `sql-pro` | Overlap on schema planning, but market-data owns source semantics and sql-pro owns DB correctness. | Keep both as routing vocabulary; use sql-pro as review/contract specialist. |
-| `reviewer` / `test-engineer` | Overlap on risk, but reviewer finds issues and test-engineer codifies regressions. | Keep both as routing vocabulary. |
-| `documentation-engineer` / `reviewer` | Overlap on correctness, but documentation-engineer owns doc drift while reviewer owns behavioral risk. | Keep both as routing vocabulary. |
-| `security-hardening` / `reviewer` | Overlap on risk review, but security-hardening is specifically exposure/public-surface focused. | Keep both as routing vocabulary due to access gate and future sharing. |
-
-## Why
-
-The old local agent set was broad but the role boundaries are justified by the project shape.
-
-The project is no longer only a scraper. It now has independent operating axes:
-
-- unattended scheduled operation
-- replay-safe Telegram delivery
-- SQLite schema and migration safety
-- local control-capable admin UI
-- separate friend-facing read-only web-view
-- KRX market and investor-flow data expansion
-- category/taxonomy history
-- candidate-evidence planning
-- external-sharing preparation
-
-The main risk is not missing an agent. The main risk is assigning the wrong agent to a task and blurring boundaries:
-
-- Do not let `web-ui-engineer` add control behavior to `web-view`.
-- Do not let `admin-ui-engineer` turn admin into a friend-facing surface.
-- Do not let `market-data-engineer` move from evidence to public numeric scoring or public trading recommendation without reviewer approval. Observation-candidate recommendation remains a web-view/product copy boundary. Future trading-decision support, if pursued, is operator-only and needs a separate execution-lab/source-safety contract.
-- Do not let `backend-developer` make DB-shape changes without sql/repository review.
-- Do not let `security-hardening` become broad enterprise-auth work; keep it focused on local exposure risk.
-
-When work is multi-step, cross-module, high-risk, or needs separate review, use these boundaries with the global layer and CodeGraph to split investigation, implementation, and review. Do not spawn agents for small, low-risk, single-surface edits.
-
-## Skills versus agents
-
-The current active global skill inventory exposes `scrapling-official` for this project. Older project-specific lanes remain as historical or optional references:
-
-- `scrapling-official` is active for bounded browser/source probes.
-- `botasaurus-stock-monitor` is archived legacy reference only unless explicitly restored.
-- `kronos-market-forecast` is historical research-only/hold unless explicitly re-enabled.
-
-These lanes are not replacements for repository ownership review.
-
-| Capability | Skill fit | Agent fit | Decision |
-| --- | --- | --- | --- |
-| KRX Open API stock/ETF/index backfill | No special skill needed. | `market-data-engineer`, `backend-developer`, `sql-pro` | Keep using the existing Open API CLI/repository path. |
-| KRX Data Marketplace browser/session probing | Existing request/login/sample validation first; `scrapling-official` only when a bounded browser/source probe is needed. | `market-data-engineer`, `debugger` define what success means and whether it should influence the product. | Scrapling is active tooling; Botasaurus is legacy reference only. |
-| Browser-gated rendered-page/source probing | `scrapling-official` is appropriate for bounded rendered extraction and anti-bot-sensitive source comparison. | `market-data-engineer`, `debugger`, `reviewer` decide whether the result stays probe-only, becomes fallback, or needs later integration design. | Use Scrapling as the preferred active probe tool; do not wire it into production ingest or public surfaces. |
-| KRX investor-flow import/display | No skill by default. | `market-data-engineer`, `sql-pro`, `web-ui-engineer`, `reviewer` | Use the normal DB/DTO/UI path. |
-| Stored OHLCV forecasting experiment | No active skill by default; historical Kronos results are reference-only unless explicitly re-enabled. | `market-data-engineer`, `reviewer`, `test-engineer` judge whether results are meaningful. | Keep forecast output offline and hidden. |
-| Web-view visual verification | Browser/Chrome plugin is appropriate for ordinary local UI inspection; Playwright MCP is optional for repeatable lab/E2E-style checks. | `web-ui-engineer`, `security-hardening` implement and review public-safe UI behavior. | Browser tools verify; agents own changes. |
-| Telegram/scheduler/SQLite safety | No project skill should handle this. | `cli-developer`, `debugger`, `sql-pro`, `test-engineer`, `reviewer` | Keep in local code/review workflow. |
-| Public numeric score / trading recommendation | No skill should directly produce product behavior. | `reviewer`, `market-data-engineer`, `sql-pro` must approve data/holdout policy first. | Still blocked from public surfaces; observation-candidate recommendation is allowed separately. Future operator-only decision support is a separate lane, not a skill shortcut. |
-
-The reason this comparison was not previously prominent is that the data targets overlapped: both skills and agents can touch "market data" in a broad sense. The actual boundary is narrower:
-
-- Scrapling answers browser/source-access, rendered-page extraction, anti-bot-sensitive source reachability, and source comparison questions.
-- Botasaurus remains historical reference only unless explicitly restored.
-- Kronos is not active in the current baseline; keep old offline forecast-experiment output as historical reference unless explicitly re-enabled.
-- Local agents answer product correctness, DB safety, UI boundaries, Telegram operations, and documentation consistency.
-
-## Suggested prompt examples
-
-### User web-view search
-
-```text
-Use web-ui-engineer to add the top-right stock search flow to the GET-only web-view.
-Keep admin-gui separate, do not add write/control routes, and add public-safe regression tests.
-```
-
-### Candidate evidence DTO
-
-```text
-Use market-data-engineer and sql-pro to design the first read-only candidate_evidence DTO.
-Use only stored Naver report summaries, KRX market snapshots, stored investor-flow rows, and category snapshots.
-Do not add public numeric scoring, trading-recommendation wording, Telegram alerts, or final picks. Observation-candidate wording such as `오늘의 관찰 후보` is allowed only after the UI boundary is checked.
-```
-
-### Candidate evidence UI
-
-```text
-Use web-ui-engineer to render candidate_evidence as 관찰 후보 근거 in web-view.
-Keep evidence separated by report, price/turnover, investor flow, and category context.
-Allow `오늘의 관찰 후보`, `우선 확인`, and `관찰 우선순위`; block public numeric 점수, 투자등급, 매수/매도 추천, and buy/sell wording.
-```
-
-### KRX Data Marketplace scheduled ingest design
-
-```text
-Use market-data-engineer and debugger to draft Stage 6 scheduled-ingest design for KRX Data Marketplace flow.
-Focus on login/session checks, LOGOUT skip behavior, retry, operation events, backup/verify prerequisites, and disabled-by-default scheduling.
-Do not enable the scheduler.
-```
-
-### DB migration or repository change
-
-```text
-Use sql-pro to review the proposed schema/repository change first, then use backend-developer or python-pro for implementation.
-Preserve migration-runner discipline, foreign keys, idempotent upserts, and db-verify coverage.
-```
-
-### Admin GUI operation control
-
-```text
-Use admin-ui-engineer to improve the local admin-gui operator flow.
-Keep it loopback/operator-only, preserve confirmation text for risky controls, and do not expose admin behavior through web-view.
-```
-
-### External sharing hardening
-
-```text
-Use security-hardening to review access-code gate behavior and web-view public-safe responses before Cloudflare Tunnel setup.
-Confirm admin-gui, scheduler controls, settings, DB paths, .env, Telegram token/chat id, and audit logs are not exposed.
-```
-
-### Live scheduler issue
-
-```text
-Use debugger to isolate the scheduled-run failure.
-Compare expected task window, operator profile, business-day guard, worker heartbeat, operation events, and delivery/outbox state.
-Return confirmed evidence separately from hypotheses.
-```
-
-### Documentation drift
-
-```text
-Use documentation-engineer to reconcile AGENTS.md, current-work, next-phase, module-ownership, and execution-roadmap with current implementation.
-Do not add a new planning document unless the content cannot fit an existing canonical doc.
-```
-
-## External reference assessment
-
-External references reviewed on `2026-05-11`:
-
-- `Vibe-Trading`
-- `spec-kit`
-- `lightweight-charts`
-
-### What to take
-
-- `Vibe-Trading`
-  - Reinforces keeping security/public-surface boundaries explicit before broader sharing.
-  - Confirms the value of dedicated source/tool/domain roles rather than one generic implementation agent.
-- `spec-kit`
-  - Reinforces the existing document-first flow around `current-work`, `next-phase`, `module-ownership`, `surface-contract`, and `candidate-evidence-plan`.
-- `lightweight-charts`
-  - Useful as a future implementation library candidate if `web-view` later needs interactive market charts.
-
-### What not to take now
-
-- `Vibe-Trading` trading-strategy, backtest, portfolio, swarm-finance roles
-  - Too broad and too domain-specific for the current Stock Monitor scope.
-- `spec-kit` as a new dedicated agent
-  - Current `documentation-engineer` plus existing docs already cover the immediate need.
-- `lightweight-charts`-driven chart agent
-  - The next-phase docs emphasize search, candidate evidence, public-safe DTOs, and sharing boundaries before charts.
-
-## Final keep / add / merge-remove
-
-### Keep
-
-- `backend-developer`
-- `python-pro`
-- `cli-developer`
-- `sql-pro`
-- `reviewer`
-- `debugger`
-- `test-engineer`
-- `admin-ui-engineer`
-- `web-ui-engineer`
-- `documentation-engineer`
-- `market-data-engineer`
-- `security-hardening`
-
-### Add
-
-- none now
-
-### Merge or remove
-
-- none now
-
-The external references did not justify another immediate local agent beyond the already-added `security-hardening`.
-
-
-<!-- Merged from: docs/codex/architecture-guide.md -->
 ## Decision Log
 
 ## Scope Constraint
@@ -926,7 +397,7 @@ The external references did not justify another immediate local agent beyond the
 ### Polling Window
 
 - Poll every 30 minutes from `08:30` to `16:30` KST.
-- This window intentionally covers the current desktop-validation monitoring window and is separate from the `08:10` KRX Open API backfill after the official next-business-day `08:00` publication window and the `08:20` daily briefing sequence.
+- At that time, this window covered desktop-validation polling and was separate from the then-scheduled KRX backfill and daily briefing.
 - Polling hours remain configurable through environment variables and task registration arguments.
 
 ### Business-Day Rule
@@ -987,7 +458,7 @@ The external references did not justify another immediate local agent beyond the
 - Report identity is based on `source_id` or `identity_key`, not display text.
 - `broker_display` is display-only derived text; do not parse it back as canonical broker data.
 - `published_at`, `business_date`, and `collected_at` have separate meanings; archive and summary grouping use `business_date`.
-- The persistent checklist is [data-governance.md](/docs/codex/data-governance.md).
+- The persistent checklist is [data-governance.md](data-governance.md).
 
 ### Technical Direction
 

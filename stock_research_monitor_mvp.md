@@ -13,12 +13,12 @@ SQLite에 저장한 뒤 Telegram, 관리자 화면, 사용자용 웹뷰로 읽�
 - Windows Task Scheduler 기반 운영
 - 로컬 운영자용 `admin-gui`
 - 친구 공유 후보인 GET-only 사용자용 `web-view`
-- KRX Open API 기반 가격/거래량/ETF/지수 참고 데이터
-- KRX Data Marketplace 기반 투자자 수급 참고 데이터
+- Toss 20:00 저장 종가 스냅샷 기반 웹뷰 시장/ETF/수급 참고값
+- 기존 KRX 저장 행의 과거 분석/복기 지원
 - 관찰탭 기반 read-only 백테스트/후보 근거 검토
 - 저장 데이터 기반 관찰 후보 추천, 우선 확인, 관심도 높은 흐름 정렬
 
-현재 public/user-facing 기능은 매매 추천을 하지 않지만 관찰 대상을 추천한다. 사용자-facing 기능은 `오늘의 관찰 후보`, `우선 확인`, `관심도 높은 흐름`, `왜 눈에 띄는지`처럼 저장 데이터 근거를 정렬해 보여줄 수 있다. 금지되는 것은 현재 public `web-view`나 Telegram에 `매수 추천`, `매도 추천`, `진입가`, `청산가`, `익절가`, `목표 수익률`, `확신도`, `투자등급`, `오를 종목` 단정 같은 투자 의사결정 문구를 내보내는 것이다.
+public/user-facing surface는 저장 데이터 근거로 관찰 대상을 정렬할 수 있지만 매매 판단이나 주문 기능을 제공하지 않는다. 현재 금지 문구와 surface 경계는 [surface-guide.md](docs/codex/surface-guide.md)에 따른다.
 
 실시간 데이터가 나중에 안정적으로 붙으면 그것도 같은 기준을 따른다. 실시간 값은 매매 실행 신호가 아니라 `우선 확인`, `관찰 우선순위`, 메인 카드 강조를 더 강하게 만드는 관찰 추천 입력이다. `read-only`는 DB write, Telegram/scheduler 자동화, broker secret, 주문 실행 금지를 뜻하며, 검증된 실시간 참고값이 관찰 순서에 영향을 주지 말아야 한다는 뜻이 아니다.
 
@@ -29,30 +29,17 @@ SQLite에 저장한 뒤 Telegram, 관리자 화면, 사용자용 웹뷰로 읽�
 | 영역 | 기준 소스 | 사용 목적 |
 | --- | --- | --- |
 | 리포트 | Naver Stock `research/company` 국내종목 | 종목별 리포트, 발행사, 목표가, 의견, 발행일시 |
-| 주가/거래량/거래대금 | KRX Open API | 선택일 기준 시장 참고값, 웹뷰 현재가/거래량/ETF/지수 표시 |
-| ETF/지수 | KRX Open API | ETF 흐름, 주요 지수, 시장 참고 카드 |
-| 투자자 수급 | KRX Data Marketplace `[12008]`, `[12009]`, `[12010]` | 시장/종목/순매수 상위 수급 참고 |
-| 향후 실시간 참고 | Toss Securities Open API 등 별도 lab/staging lane | 검증 후 top-2 `우선 확인` 장중 관찰 순서 조정. 매매 실행/주문 연결 아님 |
+| 현재 웹뷰 시장/ETF/수급 참고 | Toss OpenAPI 저장 종가 스냅샷 | Toss 20:00 기준 시장, ETF, 거래대금 Top20 및 수급 표시 |
+| 과거 가격/거래량/거래대금/ETF/지수/수급 | 기존 KRX Open API 및 Data Marketplace 행 | 과거 분석/복기 전용; 현재 웹뷰 값이나 fallback으로 사용하지 않음 |
+| 향후 승인된 장중 참고 | 현재 20:00 저장 캡처와 구분되는 별도 lab/staging lane | 승인·검증 후 top-2 `우선 확인` 장중 관찰 순서 조정. 매매 실행/주문 연결 아님 |
 | 업종/테마 | 별도 taxonomy/cache/snapshot layer | 화면 분류와 순환매 참고. KRX 공식 taxonomy로 부르지 않는다. |
 
-리포트 원본은 Naver가 소유하고, 가격/거래대금/ETF/지수는 KRX가 소유한다.
+리포트 원본은 Naver가 소유하고, 현재 웹뷰 시장 참고값은 Toss OpenAPI가 소유한다. 기존 KRX 행은 역사적 데이터로 유지한다. 상세 source/value 규칙은 [data-governance.md](docs/codex/data-governance.md)를 따른다.
 업종/테마는 현재 프로젝트의 표시/분류 계층으로 관리한다.
 
 ## 현재 운영 스케줄
 
-시간대는 `Asia/Seoul (KST)`이다.
-
-| 작업 | 현재 계약 |
-| --- | --- |
-| `StockMonitor-KrxDailyBackfill` | 한국 영업일 `08:10`. 전 영업일 또는 최근 누락 KRX Open API snapshot 보강 |
-| `StockMonitor-Notify` | 한국 영업일 `08:20`. `08:10` KRX 보강 이후 전 영업일 briefing 요약을 Telegram으로 발송 |
-| `StockMonitor-Poll` | 한국 영업일 `08:30~16:30`, 30분 간격 |
-| `StockMonitor-TelegramCommands` | 한국 영업일 `08:00` 시작, `16:30`까지 1분 간격 명령 확인 |
-| `StockMonitor-KrxFlowLoginReminder` | KRX 수급 검증일 전용 선택 작업. 기본 운영에서는 비활성 |
-| `StockMonitor-Shutdown` | desktop-validation 기간 `17:10`, 내부 영업일 가드 적용 |
-
-`operation_profile`은 `desktop-validation`, `mini-pc`, `manual-only`를 지원한다.
-미니 PC 이전 전까지는 shutdown 정책과 외부공유 정책을 별도로 확인해야 한다.
+시간대는 `Asia/Seoul (KST)`이다. 최신 task 이름과 시간은 [mini-pc-runbook.md](docs/codex/mini-pc-runbook.md)의 Current Operating Contract를 기준으로 한다. KRX Open API와 Data Marketplace task는 정상 스케줄에서 제거되었으며, 기존 KRX 관련 절차는 과거 데이터 검토/복구용이다. Toss 20:00 저장 종가 캡처를 현재 웹뷰 시장/ETF/수급 기준으로 사용한다. Source 운영 절차는 [market-data-runbook.md](docs/codex/market-data-runbook.md)를 따른다.
 
 ## 수집 및 저장 요구사항
 
@@ -81,22 +68,20 @@ SQLite에 저장한 뒤 Telegram, 관리자 화면, 사용자용 웹뷰로 읽�
 - 수집 시각
 - source URL 또는 source id
 
-### KRX Open API
+### Historical KRX records
 
-KRX 일별 snapshot은 stock/ETF/index reference layer로 저장한다.
-자동 scheduled path는 이전 영업일 또는 최근 누락일만 대상으로 하며, 대량 재기준화는 `db-verify`, `db-backup`, `--dry-run`, `--confirm`, `--i-backed-up` 절차를 거친다.
+기존 KRX 일별 snapshot은 과거 분석/복기용으로 보존하며 정상 운영에서 refresh하지 않는다. KRX 행은 현재 웹뷰 시장값의 fallback으로 사용하지 않는다. 명시적으로 승인된 historical recovery/backfill은 `db-verify`, `db-backup`, `--dry-run`, `--confirm`, `--i-backed-up` 절차와 [market-data-runbook.md](docs/codex/market-data-runbook.md)를 따른다.
 
 ### KRX Data Marketplace 수급
 
-수급 데이터는 아직 scheduled ingest를 켜지 않는다.
-현재는 검증된 로그인/샘플/수동 backfill/read-only 표시 경로만 사용한다.
+KRX Data Marketplace 수급은 과거/sample 데이터 검토용이며 현재 scheduled ingest 경로가 아니다. 현재 웹뷰 시장 수급 기준은 저장 Toss 20:00 snapshot이다.
 
 수급은 다음 원칙을 따른다.
 
 - `[12008]`: 시장 투자자별 거래실적
 - `[12009]`: 개별종목 투자자별 거래실적
 - `[12010]`: 투자자별 순매수 상위종목
-- 저장된 값만 웹뷰에 표시
+- Toss 20:00 저장 snapshot만 현재 웹뷰 시장/수급 기준값으로 표시; 기존 KRX 수급은 과거 자료로만 취급
 - 현재 public `web-view`에서는 실시간 호출, 매매 추천, 공개 숫자 점수화, Telegram 매매 후보 알림과 연결하지 않음
 
 ## 집계 및 표시 요구사항
@@ -165,8 +150,7 @@ Telegram은 개인 운영용 알림과 명령 처리 채널이다.
 
 ## 사용자용 web-view 요구사항
 
-`web-view`는 별도 GET-only/read-only 사용자 화면이다.
-`admin-gui`의 read-only mode가 아니라 독립 surface로 유지한다.
+`web-view`는 별도 GET-only/read-only 사용자 화면이다. `admin-gui`의 read-only mode가 아니라 독립 surface로 유지한다. 구체적인 surface 계약은 [surface-guide.md](docs/codex/surface-guide.md)를 따른다.
 
 `web-view`의 목적은 저장 근거와 검증된 참고값을 바탕으로 무엇을 먼저 볼지 추천하는 것이다. 현재는 stored-data 기반이지만, 향후 승인된 실시간 source가 붙으면 top-2 `우선 확인`과 메인 노출 강도에 반영할 수 있다. 현재 public `web-view`에서 금지되는 것은 매매 판단/주문 실행이지 관찰 우선순위 추천이 아니다. 매매 판단으로 확장하는 작업은 public `web-view`가 아니라 별도 operator-only decision-support 또는 execution-lab에서 다룬다.
 
@@ -178,7 +162,8 @@ Telegram은 개인 운영용 알림과 명령 처리 채널이다.
 - 선택 종목 리포트
 - 업종/테마 참고
 - ETF/시장 참고
-- 저장된 KRX 가격/거래량/수급 참고
+- Toss 20:00 저장 시장/ETF/수급 참고
+- KRX 과거 행은 현재 웹뷰 값이나 fallback으로 사용하지 않음
 - 관찰탭의 read-only 반응/근거 값
 - 순환매 이미지 및 overlay 참고
 
@@ -228,24 +213,24 @@ Telegram은 개인 운영용 알림과 명령 처리 채널이다.
 - Telegram 매매 후보 알림
 - public scored investment ranking
 
-Operator-only news intelligence is allowed as a recommendation-draft input when it stays outside public `web-view`, Telegram sends, scheduler automation, and broker/execution paths. The v1 default preview is no-write JSON; only an explicit operator `--save-observation` run may write operator-only observation rows. Its sentiment score and impact labels are internal review aids, not public numeric scores or trading calls.
+Full news-analysis payloads, sentiment scores, impact labels, and operator judgments remain private. The bounded scheduled Top2 collector is an approved exception: it saves existing observation/evidence rows and exposes only compact public-safe labels/counts through stored-data projections. Loading the `web-view` remains GET-only and never runs collection or saves rows; no raw sentiment/impact score, trading alert, broker action, or broad search lane is exposed. See [news-intelligence.md](docs/codex/news-intelligence.md) and [surface-guide.md](docs/codex/surface-guide.md) for the current contract.
 
-Saved news observations should not remain invisible once they are useful enough to explain a candidate. The intended visible product step is a stored-data-only `web-view` summary that hides numeric sentiment/impact and shows only compact labels, counts, KRX exact/stale/missing status, and a few article titles. Low coverage, indirect-only, or market-context-heavy results should be shown as `참고` / `추가 확인 필요` instead of being hidden until the rule engine is perfect.
+Saved news observations may be shown as compact labels, counts, and a few article titles when their candidate linkage and source/freshness state are clear. Missing, indirect-only, or market-context-heavy evidence is shown as `참고` / `추가 확인 필요`; KRX is historical-only and is not a current-source status fallback.
 
-Future Toss Securities Open API or another approved intraday source can make this news layer more useful by confirming quote/turnover freshness around the same candidate. That synergy should strengthen observation priority and visible reasoning, not create public trading calls, broker execution, or order paths.
+The approved bounded Toss references already provide stored close context and limited Top2 current-price/same-day flow context. Any broader live source lane needs its own source/failure review; these references may support observation priority only, never public trading calls, broker execution, or order paths.
 
 내부 scoring draft CLI는 research-only이며 public surface와 연결하지 않는다. 장기적으로 매매 판단까지 가려면 scoring draft가 아니라 별도 operator-only decision-support lane, source freshness 검증, 실패 처리, broker/execution-lab 안전장치가 먼저 필요하다.
 
 ## 데이터 품질 규칙
 
-모든 변경은 raw/source, parsed/storage, aggregate, display 값을 분리한다.
+모든 변경은 raw/source, parsed/storage, aggregate, display 값을 분리한다. 세부 규칙은 [data-governance.md](docs/codex/data-governance.md)를 따른다.
 
 - 원본 결측값은 원본으로 보존 가능
 - 계산에는 유효 숫자만 사용
 - 표시값은 사용자 문맥에 맞게 정제
 - fallback은 반드시 fallback임을 표시
 - 최신값을 과거 날짜에 조용히 섞지 않음
-- KRX snapshot이 없는 선택일은 최신값으로 대체하지 않음
+- Toss 20:00 snapshot이 없는 선택일은 최신값이나 KRX 과거 행으로 대체하지 않음
 
 ## 보안 및 외부 공유
 
@@ -272,7 +257,7 @@ Future Toss Securities Open API or another approved intraday source can make thi
 - Telegram timeout-after-send residual duplicate risk 추적
 - 웹뷰 표시값 QA 지속
 - category snapshot fallback 축소
-- KRX Data Marketplace broad scheduled ingest는 별도 승인 전까지 비활성
+- KRX market-data scheduled refresh는 제거됨; 기존 KRX 행은 과거 분석/복기 전용 ([market-data-runbook.md](docs/codex/market-data-runbook.md))
 - 외부 공유는 Cloudflare/Tailscale provider binding과 최종 shared-URL smoke 전까지 보류
 - 2027년 이후 한국 휴장일 유지보수
 

@@ -808,3 +808,9 @@ operating-guide.md, operating-guide.md, operating-guide.md, documentation-index.
 주의:
 문서 이동은 구현보다 링크 안정성이 중요하다. 실제 파일 이동은 내가 별도로 승인하기 전에는 하지 마.
 ```
+
+## Operating-PC Sync and Readiness Closeout (2026-06-05)
+
+- The operating-PC sync finished at `dev` commit `2fa1efc`; read-only `ops-sync-preview`, `db-verify`, and migration rehearsal passed after the configured `2026-06-03` holiday handling was corrected.
+- No real schema migration, scheduler change, Telegram send, or admin-GUI process action was performed in that closeout.
+- This is historical host evidence, not a statement about the current main-PC or mini-PC state; verify present state from current runbooks and operation events.

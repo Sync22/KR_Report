@@ -1,6 +1,6 @@
 # News Intelligence
 
-Operator-only news intelligence and its future public-safe stored projection.
+Operator review data, bounded Top2 collection, and its public-safe stored projection.
 
 ## Top2 자동 검색 최소 운영 (2026-09-09)
 
@@ -17,6 +17,7 @@ Operator-only news intelligence and its future public-safe stored projection.
 - 118행 모두 제목에 대상 종목명이 있고 저장 게시일과 기준일이 일치한다. 수동 검토상 종목 혼동 0건. 고유 계보는 unknown 19건, report_recap 7건, independent 0건이다. 상대시각은 수집 당시 추정값이며 실제 원문 게시일 인증으로 확대 해석하지 않는다.
 - 장후 cohort와 추가 기사: 9/11 HD현대중공업 2·씨에스윈드 0, 9/14 아모레퍼시픽 1·오리온 3, 9/15 LG 0·HD현대중공업 1. 장후 이벤트는 `after-close-news`로 분리되어 있다. 정규장 기록을 장후 성공 건수로 대체하지 않았다.
 - 초기 기준 대조: 실행 80% 이상 충족, 수동 유효성 80% 이상 충족, 고유 표본 10건 이상 충족, 기존 5-lane 밖 유효 기사 1건 이상 충족, 종목 혼동·독립 승격 0건 충족. 다만 운영 누락 예외 조건 때문에 **완전 합격 아님**이다. 16:30 경계 정리 후 해당 마지막 슬롯을 포함한 추가 관찰을 권고하며, 이 평가에서 코드·운영 설정·수집 일정은 변경하지 않았다.
+- 위 80%와 10건은 이 3일 실험의 초기 비교 기준이지 이후 모든 작업의 영구 통과선이 아니다. 잘못된 종목 귀속과 미확인 자료의 독립 승격 금지는 유지하며, 수집 구간의 운영 누락은 기사 품질 점수와 별도로 기록한다.
 - 표본은 SK바이오팜 17/26건에 집중되고 동일 임상/매입 사건의 여러 매체 재보도가 포함된다. 일부 제목 앞 두 단어 fallback은 검색 결과가 없었다. 전체 종목 일반화, 검색어 개선 효과, 독립 증거 증가, 투자 성과는 이번 평가로 입증하지 않는다. 기존 한도의 참고 수집을 유지하고 확장은 하지 않는 것이 적절하다.
 - 근거: 운영 DB `news_intelligence_runs`, `report_linked_news_evidence`, `operation_events`의 위 3개 기준일 조회 및 `data/reviews/top2-search-20260909/`의 기존 일자별 기록. Windows 계정·비밀번호와 Telegram은 이번 작업 범위에 포함하지 않았다.
 
@@ -47,7 +48,7 @@ Operator-only news intelligence and its future public-safe stored projection.
 - 회귀 610 passed, 마지막 parser/연결 보정 후 집중 검증 22 passed. `git diff --check` 통과. 전체 회귀와 집중 검증은 겹치는 테스트이므로 합산하지 않는다. 별도 리뷰 agent는 사용량 제한으로 실행되지 않아 직접 검토했다.
 - 증거: `data/reviews/top2-search-20260909/temporary-test-result.json`, `temporary-replay-result.json`, `live-06-top2_search.txt`, `live-12-top2_search.txt`, `run_temporary_test.py`.
 - 실제 검증은 heartbeat `top2-3`에 등록했다. **9/10 사용자 요청으로 16:40 정규장 수집 점검 + 20:40 장후 종가 재평가 점검(KST)**으로 조정했다. 남은 9/11·9/14에 두 차례씩 점검하고 9/14 장후 최종 판단한다. 정규장 Top2와 별도 `close_reassessment`를 구분하고 운영 수집 스케줄은 바꾸지 않는다. 9/10 21:55 확인에서는 예약 검증 완료 기록이 없고 수집도 11:01까지만 있어 불완전 관찰일이다. 검색 12회 성공/추가 기사 0건으로 품질은 미측정이며 합격 처리하지 않는다. 상세는 `data/reviews/top2-search-20260909/2026-09-10-review.md`에 남겼다.
-- 초기 합격선: 3영업일 실행 성공률 **80% 이상**, 중복 제거한 저장 표본의 수동 유효성 **80% 이상**, 기존 5-lane에 없던 유효 기사 **1건 이상**. 종목 혼동 및 미확인 근거의 독립 승격은 **0건**이어야 한다. 고유 표본이 10건 미만이면 불합격으로 몰지 않고 관찰을 연장한다. 당일 임시 테스트만으로 3영업일 검증을 통과 처리하지 않는다.
+- 해당 3영업일 실험의 초기 합격선(영구 기준 아님): 실행 성공률 **80% 이상**, 중복 제거한 저장 표본의 수동 유효성 **80% 이상**, 기존 5-lane 밖 유효 기사 **1건 이상**. 종목 혼동과 미확인 근거의 독립 승격은 계속 허용하지 않는다. 초기 실험의 표본/예약 부족은 당시 `완전 합격 아님` 사유였으며, 다른 이후 작업에 보편적 80% gate로 적용하지 않는다.
 
 ## Top2 확인 주제 연결 (2026-09-08)
 
@@ -155,7 +156,7 @@ Allowed in v1:
 
 Blocked by default in v1:
 
-- Automatic live news crawling or provider smoke.
+- Unbounded/general automatic live news crawling or provider smoke. The approved scheduled Top2 exception is described below.
 - SQLite writes or migrations unless the operator explicitly passes `--save-observation` for the operator-only observation tables.
 - Generic scheduler registration, unbounded unattended collection, or source-wide crawling. The bounded `scheduled-poll` Top2 collection exception is documented below.
 - Telegram send or Telegram candidate alerts.
@@ -165,7 +166,7 @@ Blocked by default in v1:
 
 ## Collection Boundary
 
-The v1 source lane is Naver stock news, but collection stays operator-only and disconnected from production surfaces.
+Full search results and analysis remain operator-review data. The bounded scheduled Top2 path recorded above is the only production collection exception: it reuses the existing collector and stored observation/evidence rows, then exposes only compact approved summaries. Loading the web-view itself remains GET-only and does not collect or save news.
 
 Supported source lanes:
 
@@ -213,20 +214,20 @@ These readback and audit commands are operator-only and read-only. They compare 
 
 ### Naver Search Lane Lab Status
 
-The Naver search lane is archived/hold as of `2026-07-03 KST`. It is not a production source lane and must not be connected to DB writes, matching logic, web-view output, scheduler automation, or News Evidence Digest projection.
+The broader Naver search-expansion lane reviewed on `2026-07-03 KST` remains archived/hold. This historical hold does not apply to the separately approved, bounded scheduled Top2 supplement documented at the top of this file (`2026-09-09`); it still prohibits unbounded crawling, broad post-filter expansion, and promotion of raw search results into public output.
 
 Lab result summary:
 
 - Strict-only QA over recent 3 business days / Top5 candidates selected 22 titles. Automatic labels were `usable_digest=21` and `report_rehash=1`, but human review judged only about 8-10 titles as clearly digest-safe.
 - `post-filter-v2` reduced selected titles to 18, removed one parser artifact, two false positives, and one duplicate topic, and separated weak labels as `report_rehash=1`, `esg_pr=4`, and `corporate_notice=2`.
-- Final `post-filter-v2` usable ratio was `11/18 = 61.1%`, which barely clears the numeric threshold but still fails the false-positive quality gate.
+- Final `post-filter-v2` usable ratio was `11/18 = 61.1%`; this historical broad-search sample does not clear its then-used false-positive review gate. It is not the quality result of the later bounded scheduled Top2 supplement.
 - Remaining risk: political/policy/person indirect mentions can still look like stock evidence, and search results can mix report rehash, PR, and unrelated lifestyle/news fragments into a Digest candidate list.
 
 Hold decision:
 
-- Do not add a production search lane.
+- Do not widen the approved scheduled Top2 supplement into a general production search lane.
 - Do not implement `post-filter-v3`, political/person-name filters, or additional search-lane lab CLIs unless the lane is explicitly reopened.
-- Keep News Evidence Digest UI, existing 5-lane evidence, and the manual Top-candidate collect path as the active operating path.
+- Keep the bounded scheduled Top2 supplement, existing 5-lane evidence, and the manual Top-candidate collect path within their documented scopes.
 
 ### Insane Search Sidecar Shadow Run (2026-08-24)
 

@@ -6,7 +6,7 @@
 ![Playwright](https://img.shields.io/badge/Playwright-browser%20smoke-2EAD33?logo=playwright&logoColor=white)
 ![Surface](https://img.shields.io/badge/web--view-GET--only-success)
 
-국내 리서치 리포트와 저장된 KRX 기준 데이터를 묶어, 매일 확인할 종목과 시장 흐름을 읽기 쉽게 정리하는 개인용 Python/SQLite MVP입니다.
+국내 리서치 리포트와 저장 Toss 20:00 시장 종가 스냅샷을 묶어, 매일 확인할 종목과 시장 흐름을 읽기 쉽게 정리하는 개인용 Python/SQLite MVP입니다.
 
 이 프로젝트는 자동매매나 투자 판단 시스템이 아닙니다. 공개 화면과 알림은 리포트, 시장 참고값, 후보 근거를 정리해 보여주는 용도이며, 공개 숫자 점수, 투자 등급, 매수/매도 지시, 진입/청산가, 주문 라우팅, 브로커 실행 연동은 제공하지 않습니다.
 
@@ -14,8 +14,7 @@
 
 - Naver 국내종목 리서치 리포트를 장중 수집하고 SQLite에 저장합니다.
 - 전영업일 요약, 장중 신규 리포트, 운영 상태를 Telegram으로 확인합니다.
-- KRX Open API 일별 주식/ETF/지수 snapshot을 저장 데이터 기준으로 보강합니다.
-- KRX Data Marketplace `[12009]` 투자자 수급은 리포트 언급 종목 + 최근 31일 창으로만 제한 활용합니다.
+- `web-view` 시장/ETF/수급 참고값은 저장된 Toss 20:00 종가 스냅샷을 사용합니다. 기존 KRX 행은 과거 분석/복기 전용입니다.
 - `web-view`는 친구 공유 후보가 되는 GET-only/read-only 정보 화면입니다.
 - `admin-gui`는 로컬 운영자 전용 콘솔로, 공유 화면과 분리됩니다.
 
@@ -27,8 +26,8 @@
 | --- | --- |
 | Reports | 일간 리포트 개요, 종목별 리포트 상세, 목표가 변화 |
 | Candidate evidence | `오늘의 관찰 후보`, `우선 확인`, `왜 눈에 띄는지`, 부족한 정보 |
-| Market reference | 저장된 KRX 가격, 거래량, 거래대금, ETF, 지수 참고값 |
-| Flow reference | 승인된 범위의 저장 투자자 수급 참고 |
+| Market reference | 저장된 Toss 20:00 시장/ETF/거래대금 참고값 |
+| Flow reference | 저장된 Toss 시장 및 후보 종목 수급 참고값 |
 | Rotation context | 업종/테마/ETF 순환매 참고와 저장 근거 |
 | Operations | DB 검증, 스케줄러 상태, Telegram worker, admin audit |
 
@@ -47,8 +46,8 @@
 flowchart LR
     A["Naver research reports"] --> B["collector / parser"]
     B --> C["SQLite repository"]
-    D["KRX daily snapshots"] --> C
-    E["Stored investor-flow samples"] --> C
+    D["Toss 20:00 close snapshot"] --> C
+    E["Historical KRX rows"] --> C
     C --> F["daily summaries"]
     C --> G["candidate evidence"]
     F --> H["Telegram briefing"]
@@ -61,7 +60,7 @@ flowchart LR
 Source ownership stays explicit:
 
 - Naver owns research reports.
-- KRX owns stock, ETF, index, turnover, and investor-flow reference data.
+- Toss OpenAPI owns current and newly stored `web-view` market references; existing KRX rows are retained for historical analysis only.
 - 업종/테마 are a project taxonomy/display layer, not a KRX official taxonomy.
 - User-facing surfaces show stored-data references unless a manual reference check is clearly labeled.
 
@@ -95,7 +94,6 @@ python -m stock_monitor db-verify --json
 python -m stock_monitor candidate-evidence-readiness --recent-report-dates 5 --stock-limit 20 --json
 python -m stock_monitor web-view-value-qa --recent-business-days 4 --stock-limit 20 --json
 python -m stock_monitor web-view-browser-smoke --date latest --json
-python -m stock_monitor krx-baseline-analysis --json
 python -m stock_monitor market-day-observation --date YYYY-MM-DD --json
 ```
 
@@ -125,14 +123,14 @@ python -m stock_monitor web-view --no-open
 python -m stock_monitor admin-gui --no-open
 ```
 
-KRX and evidence review:
+Historical KRX reference review (not an active market-data refresh workflow):
 
 ```powershell
 python -m stock_monitor krx-openapi-availability-probe --date latest --endpoint daily --json
 python -m stock_monitor krx-backfill-missing daily --lookback-days 90 --max-dates 5 --dry-run
 ```
 
-Provider 호출, Telegram 발송, 스케줄러 변경, DB write가 있는 명령은 관련 문서를 먼저 확인하고 의도한 confirmation flag로만 실행합니다.
+기존 KRX 행의 조회/복구 절차는 [market-data-runbook.md](docs/codex/market-data-runbook.md)를 따릅니다. Provider 호출, Telegram 발송, 스케줄러 변경, DB write가 있는 명령은 관련 문서를 먼저 확인하고 의도한 confirmation flag로만 실행합니다.
 
 ## Project Layout
 
@@ -152,7 +150,8 @@ The current document map is [docs/codex/documentation-index.md](docs/codex/docum
 Key references:
 
 - [stock_research_monitor_mvp.md](stock_research_monitor_mvp.md): product requirements
-- [surface-guide.md](docs/codex/surface-guide.md): `admin-gui` and `web-view` boundary
+- [surface-guide.md](docs/codex/surface-guide.md): `admin-gui` and GET-only `web-view` contract
 - [operating-guide.md](docs/codex/operating-guide.md): current state, open blockers, and execution criteria
-- [data-governance.md](docs/codex/data-governance.md): value rules and source ownership
-- [market-data-runbook.md](docs/codex/market-data-runbook.md): KRX, ETF, and investor-flow rules
+- [data-governance.md](docs/codex/data-governance.md): value rules and current source ownership
+- [market-data-runbook.md](docs/codex/market-data-runbook.md): Toss 20:00 baseline and retained KRX historical-reference procedures
+- [mini-pc-runbook.md](docs/codex/mini-pc-runbook.md): current scheduler names and timings
