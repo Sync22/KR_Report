@@ -12,17 +12,17 @@ Current operating state, delivery sequence, roadmap, and work board.
 
 ### Snapshot (2026-09-28)
 
-The repository is in live-market validation and operational hardening, not initial MVP construction. This is repository-level status only; current main-PC/mini-PC scheduler registration, database freshness, and delivery are not verified here.
+The repository is in live-market validation and operational hardening, not initial MVP construction. A read-only operator-status snapshot from this Windows work environment at 2026-09-28 09:01 KST showed `StockMonitor-TossCloseSnapshot` healthy, capture pending before 20:05, and no health warnings. This does not identify the environment as the designated main PC or mini PC, or verify today's close capture and Telegram delivery.
 
 Current contracts describe Naver report collection and summaries, Telegram paging/commands, operator-only `admin-gui`, GET-only stored-data `web-view`, and Toss 20:00 as the current stored web-view market/ETF/flow baseline. Existing KRX rows are historical analysis/recovery data only. See [AGENTS.md](../../AGENTS.md), [surface-guide.md](surface-guide.md), [data-governance.md](data-governance.md), [market-data-runbook.md](market-data-runbook.md), and [mini-pc-runbook.md](mini-pc-runbook.md).
 
 ### Local implementation status (2026-09-28)
 
-1. Candidate and nested daily DTOs now strip the internal numeric sort field and identify Toss-backed dates/scope as Toss. Representative-date content and responsive UI QA remain in `TODO2-WV-CONTENT-QA`.
-2. Local Toss capture now reports required-domain coverage, marks incomplete capture events partial/empty, preserves explicit security classification, derives snapshot dates without candidate-only quotes, exposes partial state in GET market freshness, and warns on failed/partial events or missing due events when a healthy Toss task is registered on a non-suppressed business day. Fixture verification is in progress; real host/date validation remains in `TODO2-DATA-FRESHNESS-LIVE`.
+1. Candidate and nested daily DTOs strip the internal numeric sort field and identify Toss-backed dates/scope as Toss. `TODO2-WV-CONTENT-QA` completed on 2026-09-28; see its recent-date and responsive smoke evidence below.
+2. Local Toss capture reports required-domain coverage, marks incomplete events partial/empty, preserves explicit security classification, and excludes candidate-only rows from snapshot dates. Web-view and market-briefing freshness carry partial status/missing domains; operator status warns when a healthy Toss task lacks a due capture; mini-PC preflight includes that task and no longer requires retired KRX backfill tasks. A late skipped capture warns as missing, while suppression and a prior successful capture remain non-alerting. Focused regression set: 470 passed. Real host/date validation remains in `TODO2-DATA-FRESHNESS-LIVE`.
 3. Telegram retry behavior still needs an explicit policy for an accepted send with a lost response; tracked in `TODO2-TG-LIVE-DRYRUN`.
 
-These are review findings and planned work, not implementation authorization. No live host state is inferred from repository code or dated history.
+These code, test, and documentation changes are local only. No live host state or Telegram delivery is inferred from repository code or dated history.
 ## Work Todo Board
 
 ## Purpose
@@ -43,11 +43,10 @@ These are review findings and planned work, not implementation authorization. No
 
 | Order | Todo ID | Why Now |
 | --- | --- | --- |
-| 1 | TODO2-WV-CONTENT-QA | Close the public DTO numeric-sort leak, then review recent-date content on representative desktop/mobile views. |
-| 2 | TODO2-DATA-FRESHNESS-LIVE | Align Toss capture completeness, authoritative snapshot date, operator health, and freshness labels. |
-| 3 | TODO2-TG-LIVE-DRYRUN | Review paging/retry/outbox behavior, including ambiguous send outcomes, in no-send/fake-transport paths. |
-| 4 | TODO2-RT-PRUNE | Use the shared operating review to decide whether current evidence should move higher in the first-read path. |
-| 5 | TODO2-NI-EVAL | Judge explanation usefulness on real stored samples without converting a small sample into a quality score. |
+| 1 | TODO2-DATA-FRESHNESS-LIVE | Validate current Toss freshness and capture/health/freshness agreement on representative dates and the operating host. |
+| 2 | TODO2-TG-LIVE-DRYRUN | Review paging/retry/outbox behavior; ambiguous-send retry changes await the policy choice. |
+| 3 | TODO2-RT-PRUNE | Use the shared operating review to decide whether current evidence should move higher in the first-read path. |
+| 4 | TODO2-NI-EVAL | Judge explanation usefulness on real stored samples without converting a small sample into a quality score. |
 
 ## Completed Work Record (Historical)
 
@@ -122,12 +121,12 @@ Use operating-like stored data to prove Telegram briefing payload quality, pagin
 - `docs/codex/surface-guide.md`
 - `docs/codex/news-intelligence.md`
 
-### [ ] TODO2-WV-CONTENT-QA: Web-View Recent-Date Content QA
+### [x] TODO2-WV-CONTENT-QA: Web-View Recent-Date Content QA
 
 **Goal:**
 Move beyond fixture smoke and verify that recent-date web-view content is usable, scan-friendly, and public-safe across desktop, tablet, and mobile.
 
-**Implementation update (2026-09-28):** public candidate and nested daily DTOs strip `sort_value_signal`; current stored value context uses Toss source/date labels. The task stays open for representative-date and responsive content QA.
+**Completed (2026-09-28):** `web-view-value-qa --recent-business-days 4 --stock-limit 20 --json` scanned 2026-09-28, 2026-09-23, 2026-09-22, and 2026-09-21 with 0 issues; its one warning was the expected not-yet-due 2026-09-28 Toss 20:00 capture. Browser smoke passed for 2026-09-21, 22, 23, and latest 2026-09-28: 0 issues, correct five-tab flow, no horizontal overflow at desktop/tablet/large-mobile/mobile, GET APIs 200, POST 405, and `/api/status` 404. Manual first-read review of 9/21–23 found candidate reasons, evidence, missing states, and source/date labels understandable; no content fix was evidenced. The internal sort field remained absent and candidate order unchanged.
 
 **Scope:**
 
@@ -159,7 +158,7 @@ Move beyond fixture smoke and verify that recent-date web-view content is usable
 **Goal:**
 Validate current Toss freshness and stored ETF/flow coverage on representative dates; label historical KRX and X/lab data separately.
 
-**Implementation update (2026-09-28):** local capture coverage, metadata classification, snapshot-date ownership, and operator-health propagation are implemented. This TODO remains open until representative stored dates and actual operating-host events are checked.
+**Implementation update (2026-09-28):** local capture coverage, metadata classification, snapshot-date ownership, and operator-health propagation are implemented. Operator status now queries the Toss close task and treats an overdue skipped capture as missing; web-view and market-briefing freshness share partial-capture status and missing domains. A read-only 2026-09-28 sample showed reports exact for 9/28, Toss market stale at 9/23, ETF missing, and investor flow stale at 9/17 in both stored-data views. The latest stored 9/23 capture event was `completed` with `candidate_missing=0`, so these states reflect age/coverage for the 9/28 candidates rather than a failed 9/23 capture. The no-send market-briefing preview separately labeled its Top2 Toss quote current at 08:49; web-view remained stored-only (`configured`, no live fetch). At 09:01, the Toss close task was healthy and capture was pending before 20:05. This TODO remains open until after-close capture evidence and additional operating dates are checked.
 
 **Scope:**
 

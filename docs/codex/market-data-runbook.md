@@ -2,16 +2,27 @@
 
 ## Current Operating Source
 
-The active market-data path is one Toss OpenAPI capture at `20:05` KST on each Korean business day, after the Toss KR calendar's integrated after-market closes at `20:00`. The stored `baseline_time=20:00` denotes that market-close boundary; the actual request time remains in each row's fetched/observed timestamp. The capture stores the bounded web-view values: KOSPI/KOSDAQ level and change, market-level individual/foreigner/institution flow, and named turnover Top20 split into stocks and ETFs. To calculate next-day close reassessment, it also requests available quote and flow references for every valid daily-summary candidate in batches of at most two symbols; the public priority projection remains Top2.
+The active market-data path is one Toss OpenAPI capture at `20:05` KST on each Korean business day, after the Toss KR calendar's integrated after-market closes at `20:00`. The stored `baseline_time=20:00` denotes that market-close boundary; the actual request time remains in each row's fetched/observed timestamp. The capture stores the bounded web-view values: KOSPI/KOSDAQ level and change, market-level individual/foreigner/institution flow, and named turnover Top20 split into stocks and ETFs. It also refreshes the full KR listing cache from fixed `KOSPI`, `KOSDAQ`, and `KR_ETC` `stocks/all` calls; stored search reads this cache without calling Toss. To calculate next-day close reassessment, it requests available quote and flow references for every valid daily-summary candidate in batches of at most two symbols; the public priority projection remains Top2.
 
 - `StockMonitor-TossCloseSnapshot` runs the close capture through `toss-market-context-capture`.
 - KRX Open API and KRX Data Marketplace tasks are removed from normal scheduler registration.
 - Existing KRX rows remain intact for historical analysis and old report windows; they are not a live fallback for the web-view.
 - The Toss snapshot is a stored close reference, not an intraday quote or execution signal.
 
-The capture event is `completed` only when all required domains are present: exactly 20 unique ranked turnover symbols with amounts, usable stock/ETF classification for each ranked symbol, both KOSPI/KOSDAQ index values and changes, six market-flow groups (three investor types for each market), and stored close quote plus foreigner/institution flow for every valid daily-summary candidate. Otherwise the event is `partial` or `empty` and names missing domains. Unclassified symbols are not persisted as stocks by default, and operator health flags partial/failed capture events. Snapshot-date lookup uses ranked capture rows, so candidate-only quote rows cannot advance the market snapshot date.
+The capture event is `completed` only when all required domains are present: exactly 20 unique ranked turnover symbols with amounts, usable stock/ETF classification for each ranked symbol, both KOSPI/KOSDAQ index values and changes, six market-flow groups (three investor types for each market), a complete stock-universe response, and stored close quote plus foreigner/institution flow for every valid daily-summary candidate. Otherwise the event is `partial` or `empty` and names missing domains. Incomplete stock-universe responses do not replace the last complete cache. Unclassified symbols are not persisted as stocks by default, and operator health flags partial/failed capture events. Snapshot-date lookup uses ranked capture rows, so candidate-only quote rows cannot advance the market snapshot date.
 
 The GET-only market view carries the capture status and missing domains into its stored context/freshness fields. A same-date partial capture is labeled `partial`, not `exact`; a failed attempt with no saved rows is exposed separately from the last stored snapshot date. An absent event after the scheduled window warns in operator health when the Toss task is registered and healthy and the Korean business date is not suppressed.
+
+## KR Calendar Cross-Check
+
+Use the operator command when checking a proposed observation schedule or test window. It reads the Toss KR calendar, compares explicit dates with local weekday/holiday rules, and never changes either source of scheduling authority:
+
+```powershell
+python -m stock_monitor toss-market-calendar-check --date 2026-10-01 --date 2026-10-02 --json
+python -m stock_monitor toss-market-calendar-check --date 2026-10-01 --date 2026-10-02 --live --confirm-token-reissue --json
+```
+
+Plan mode makes no network request. Live mode reports each match, mismatch, or unverified date; any mismatch or unknown result exits nonzero. The command performs no DB write and adds no scheduled task. The existing 20:05 capture requires the stock-universe cache schema to be current before its next scheduled run.
 
 ## Parked Proposal: KOSPI/KOSDAQ Rapid-Move Telegram Alert
 

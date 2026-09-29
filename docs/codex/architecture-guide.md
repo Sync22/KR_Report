@@ -473,12 +473,16 @@ Use the root AGENTS.md for current global skills, Luna roles, and project-specif
 
 ### Notification Modes
 
-- There are two intended notification modes:
+- There are two report-notification modes:
 - next-business-day daily summary
-- intraday monitoring during the configured poll window
+- scheduled intraday briefing
 
-- Intraday alerts are emitted per polling batch of newly inserted reports.
+- Scheduled polling collects and deduplicates reports every 30 minutes; it does not send a Telegram message at every poll.
+- Intraday delivery is limited to `08:30`, then hourly from `09:30` through `15:30` KST. Merge current-business-date batches into one message at the next delivery slot.
+- After a successful scheduled poll, if a delivery slot has no current-business-date batch, send the existing `0건` notice. Leave prior-date batches pending for operator recovery; they must not suppress the current-date empty notice or be relabeled as current reports.
+- Later non-empty briefings may append the bounded Toss context; the report batch remains the candidate seed and ordering source.
 - Intraday alert delivery is backed by a durable outbox so failed sends can be retried on the next processing run.
+- The separate `09:15` / `12:00` / `15:15` `market-briefing` schedule is independent of report count and has additional live-send readiness guards; see the mini-PC runbook.
 
 ### Telegram Command Surface
 

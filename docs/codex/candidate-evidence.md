@@ -142,6 +142,35 @@ OLD/NEW는 같은 날짜뿐 아니라 같은 관측 cutoff와 후보 universe를
 - Existing KRX stock/index/flow rows support historical review only. They do not fill missing current Toss values or count as a current candidate gap. Historical event reaction is labeled `과거 반응(KRX)` and never changes current ordering.
 - Public DTO projection now removes the internal numeric sort key and labels current Toss references accurately. Remaining multi-date/content QA is tracked in `TODO2-WV-CONTENT-QA`.
 - Older CE-1 sections below remain design history where they describe KRX as a current selected-date source or Top2 as the persistence universe; do not use them as current source instructions.
+
+## Top2 Weight And News Scope — User Decision (2026-09-29)
+
+Status: **the user selected A for both items; current selector and news behavior remain unchanged**.
+
+- The current selector is implemented in `cli.py`; it is not a document-only design. Candidates require at least two reports, a matched-news record, or stored stock flow, then sort by fixed internal signals, evidence density, report count, broker count, and stored turnover. The public result remains at most two rows.
+- The signal constants are hardcoded in Python, not managed through operator settings. The current source applies `+2` for persistent flow with stock flow, `+1` for upward target revision, `+1` for at least two reports, and a separate `+2` stock-flow condition. `sort_value_signal` currently mirrors `sort_signal`; neither is a news-derived numeric value. Tests protect the current baseline, but do not validate that the weights improve later outcomes.
+- Scheduled news collection targets the selected Top2. Saved news may satisfy candidate eligibility and change evidence labels; it does not add a continuous score. In a regular session, the latest successful `poll-news` cohort is preferred while those symbols remain candidates.
+- Top2 news is a two-stock, candidate-biased sample. It can explain those candidates, but does not establish market-wide sector attention. The main sector/theme rollups come from report categories, not an aggregation of Top2 news.
+- The earlier 180-minute intraday chart was removed. The approved daily chart now offers 30/90/180 trading days of adjusted price history ending on the Top2 business date, with month boundaries highlighted. It does not change candidate eligibility/order or news weighting; see [Toss OpenAPI Lab](toss-openapi-lab.md).
+
+### Selected A/B options
+
+#### Top2 weighting policy
+
+| Choice | Direction | Benefit | Cost / limitation | State |
+|---|---|---|---|---|
+| **A — selected** | Keep the current fixed heuristic as the baseline; compare its selections across representative dates before any later weight change. | Preserves explainability and gives a measured baseline without adding settings. | Weights stay hardcoded; evaluation takes multiple dates and outcomes. | Selected by user; formula unchanged. |
+| **B** | Make weights operator-configurable now. | Makes later tuning easier and allows controlled operator experiments. | Adds a settings surface and rollback burden before evidence shows which signals help; increases overfit risk. | Not selected. |
+
+#### News scope
+
+| Choice | Direction | Benefit | Cost / limitation | State |
+|---|---|---|---|---|
+| **A — selected** | Keep news as candidate-level Top2 evidence only; do not infer market-wide sector attention or add numeric news weights. | Matches the bounded collector and current source/lineage confidence. | Cannot answer which sector has the broadest market attention. | Selected by user; behavior unchanged. |
+| **B** | Add a broader news universe, sector mapping, independent-source/recap lineage rules, and an explicit comparison denominator before making sector-level summaries. | Could support a defensible sector-attention view if coverage and classification are reliable. | Requires broader collection, taxonomy maintenance, coverage QA, and bias controls; two Top2 stocks alone are insufficient. | Not selected. |
+
+The selected A options confirm existing behavior. They do not approve a ranking formula change, new scoring surface, or wider news collector. The daily chart remains factual price/volume context only.
+
 ## Included sections
 - Candidate Evidence Contract
 - Candidate Evidence Plan

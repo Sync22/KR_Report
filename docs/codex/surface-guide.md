@@ -31,7 +31,7 @@ This is a permission and API boundary, not just a visual layout boundary.
 | Surface | Audience | Purpose | Network boundary | HTTP methods | Capability |
 | --- | --- | --- | --- | --- | --- |
 | `admin-gui` | Operator only | Run operations status, local controls, recovery, settings, and audit | Loopback/local by default | `GET` + guarded `POST` | Scheduler, no-run dates, worker/status, recovery controls, safe settings, admin audit |
-| `web-view` | Trusted friends or external read-only viewers | Consume public-safe stored-data projections | Loopback by default; shared read-only only through reviewed tunnel/access path | `GET` only, except `/auth/login` | Archive, daily summaries, dated categories, ETF/flow references, market mood, intraday history, public-safe candidate/news summaries |
+| `web-view` | Trusted friends or external read-only viewers | Consume public-safe stored-data projections | Loopback by default; shared read-only only through reviewed tunnel/access path | `GET` only, except `/auth/login` | Archive, daily summaries, dated categories, ETF/flow references, market mood, bounded Top2 daily candles, public-safe candidate/news summaries |
 | `operator-review` | Operator only | Future private review of raw judgment and linked evidence | Not implemented; define separately before use | TBD, preferably read-only first | Raw news observation review, candidate linkage review, internal labels, evidence comparison |
 
 ## Non-Negotiable Rules
@@ -45,7 +45,7 @@ This is a permission and API boundary, not just a visual layout boundary.
 - `web-view` must be implemented with a separate handler/router and a separate read-only DTO contract.
 - Shared DB/repository code is allowed. Shared HTTP control handlers are not allowed.
 - Broker or execution API work, including all Toss Securities OpenAPI capabilities outside the approved bounded projections, must not be connected to `admin-gui`, unapproved production DB writes, broker secrets, or order routing. Account, asset, order, broad polling, and execution capabilities remain separate lab/hold lanes.
-- Toss OpenAPI is approved only for server-derived latest-date Top2 current-price and same-day provisional investor-volume references, plus the fixed latest-date `tradingAmount` Top20 market-context projection with Top2 overlap. The public `web-view` routes remain GET-only and accept no arbitrary symbols. The approved Telegram delivery target is `08:30`, then `09:30` through `15:30` KST through the existing poll trigger; `08:30` is report-first and later slots may include available bounded context. This target does not add a scheduler task, persist current quotes, affect report ordering, or send a standalone trading instruction.
+- Toss OpenAPI public reads are limited to server-derived Top2 current-price/same-day flow, fixed latest-date Top20 market context, and the on-demand Top2 `1d` chart at the selected Top2 business date with `adjusted=true` and a 30/90/180-trading-day window. The web-view remains GET-only and accepts no arbitrary symbols. The candle projection does not persist data, run on a scheduler, or affect candidate ordering. The approved Telegram delivery target remains `08:30`, then `09:30` through `15:30` KST through the existing poll trigger; it does not gain a standalone trading instruction.
 - Stored web-view market, ETF, and flow sections use the bounded Toss `20:00` close snapshot. Existing KRX rows remain historical drilldown data and are not a current market fallback.
 - The current public `web-view` trading-wording ban is not a permanent denial of the product's long-term direction. Trading-decision support belongs in a future operator-only decision-support lane after stable real-time data, permissions, failure handling, and execution safety are proven.
 - External sharing candidates are limited to Tailscale for owner-only remote operation and Cloudflare Tunnel for a future friend-facing read-only `web-view` URL.
@@ -108,11 +108,11 @@ This surface is not implemented yet. Before implementation, define its route, ac
 - stored-sample investor-flow trend views
 - stored ETF trend views
 - stored news-observation summary labels, archive counts, candidate badges, and stock-detail news context when they are public-safe and score-free
-- bounded read-only Toss Top2 current-price/same-day provisional investor-volume reference and latest-date Top20 market-context overlap, each with source and freshness labels
+- bounded read-only Toss Top2 current-price/same-day provisional investor-volume reference, selected-date Top2 daily candles, and latest-date Top20 market-context overlap, each with source/date/freshness labels
 
 `web-view` should not show raw operational internals unless they are intentionally converted into simple public freshness labels.
 
-Current screen organization keeps stock-level daily summary in the `stock` tab, keeps the full candidate-evidence lane in the `watch` tab, keeps broad KOSPI/KOSDAQ/index and investor-flow references in the `market` tab, and keeps ETF/rotation evidence in the `rotation` tab. This is React-ready information architecture, but the current implementation remains the Python-rendered static page until a separate frontend build decision is made.
+Current screen organization keeps `메인`, `관찰`, and `종목` as top-level tabs. Dated market references and ETF/category reference details are collapsed under Main; selected category details open under Stock. This is React-ready information architecture, but the current implementation remains the Python-rendered static page until a separate frontend build decision is made.
 
 The shared page must preserve the user journey across those tabs. A selected observation candidate may carry its public-safe observation state, report reason, direct/supporting news summary, intraday-reference label, Toss current-price label, and Toss 20:00 baseline into stock detail. Detail may link onward to stored `시장` and `순환매` context. These links remain navigation over existing read-only data; they do not create a live fetch, DB write, Telegram action, scheduler action, order route, or public trading instruction.
 
@@ -184,7 +184,7 @@ Source ownership and Korean display naming are fixed in [data-governance.md](dat
 
 The first `web-view` should prefer clarity over trading interpretation. It can say what was observed, identify what is still missing, and recommend what to check first, but should avoid unsupported scoring.
 
-Broker-origin data is currently allowed only for the bounded Toss Top2 current-price and same-day provisional investor-volume reference, plus fixed latest-date Top20 market context. Each projection must be labeled with source and checked time; KRX/report/flow values remain dated stored references, and neither projection may imply a trading decision or reorder report candidates.
+Broker-origin data is currently allowed for the bounded Toss Top2 current-price and same-day provisional investor-volume reference, fixed latest-date Top20 market context, and the on-demand Top2 daily-candle view. Each projection must be labeled with source and checked time; daily candles end on the Top2 business date, remain historical price/volume context, and do not imply a trading decision or reorder report candidates.
 
 When that future lane is approved, `read-only` still means no DB write, no Telegram/scheduler automation, no admin control path, no broker secret exposure, and no order routing. It does not mean the intraday reference is forbidden from changing `우선 확인`, `관찰 우선순위`, or main-card emphasis.
 
@@ -212,6 +212,7 @@ The current data endpoint contract is GET-only:
 | `GET /api/flow-trend?date={date}` | Investor-flow trend | Stored KRX Data Marketplace samples only; no live fetch, no public numeric scoring, no trading recommendation. |
 | `GET /api/etf-trend?date={date}` | ETF trend | Stored Toss ETF snapshots only; no live fetch, no public numeric scoring, no trading recommendation. |
 | `GET /api/toss-priority-quotes?date={date}` | Toss top-2 current-price and same-day provisional investor-volume reference | Latest stored business date only; server-derived top-2 candidate symbols only. The route returns only foreigner/institution net volume with provider update time; no arbitrary symbol query, account/order data, DB write, scheduler, Telegram, scoring, candidate reordering, or trading recommendation. |
+| `GET /api/toss-priority-daily-candles?date={date}&days={30,90,180}` | Top2 historical daily candle chart | Server-derived Top2 for `{date}` only; `1d`, `adjusted=true`, with an inclusive end-of-date bound. On-demand, GET-only, no storage, arbitrary symbol, ordering, score, or trading call. |
 | `GET /api/toss-market-context?date={date}` | Toss latest-date Top20 market-attention reference | Fixed `tradingAmount` Top20, Top2 overlap, and bounded KOSPI/KOSDAQ aggregate context only. No arbitrary ranking query, account/order data, candidate creation/reordering, score, trading recommendation, or hidden write side effect. |
 | `GET /api/category?date={date}&type=sector|theme&name=...` | Category detail | Same-date category stock list with KRX stock references when available. |
 | `GET /api/category-trend?type=sector|theme&name=...` | Category trend | Recent category report/stock counts, descriptive only; dated snapshot per date when available, latest stored category classification otherwise. |
@@ -345,7 +346,7 @@ Cloudflare Tunnel rule:
 - Missing category placeholders such as internal `N/A` must use public labels in the user page.
 - Stored news-observation projection must remain public-safe: visible DTO/DOM output hides internal sentiment scores, numeric impact values, raw `stock_impact`, operator recommendation-support fields, and raw warnings. It may show the derived direct-evidence direction only with its count, reason, source scope, and freshness state. Collection remains outside the web-view.
 - Public wording QA is evidence-based, not a mechanical forbidden-word filter. It must reject unsupported certainty, hidden scoring, fabricated action instructions, and any broker/order action. It may show attributed report opinion, a source-labelled directional assessment, and terms such as `상승 근거 우세`, `하방 위험 우세`, or `직접 근거 상충` when those labels are reproducible from stored direct evidence and do not conceal conflicting evidence.
-- `web-view-browser-smoke` must pass before treating mobile/browser review as locally clean: desktop/tablet/large-mobile/mobile render without major horizontal overflow, the exact top-tab order is `메인`/`관찰`/`종목`/`시장`/`순환매`, each non-main tab opens its representative panel, stock search exists, write methods stay blocked, and `/api/status` remains unavailable. The `/v2` preview route should be browser-checked separately while it is experimental.
+- `web-view-browser-smoke` must pass before treating mobile/browser review as locally clean: desktop/tablet/large-mobile/mobile render without major horizontal overflow, the exact top-tab order is `메인`/`관찰`/`종목`, Main's market and industry/ETF disclosures open, stock search works, write methods stay blocked, and `/api/status` remains unavailable. The `/v2` preview route should be browser-checked separately while it is experimental.
 - `external-web-view-smoke --record-success` must pass against the final Cloudflare/Tailscale URL before the URL is shared. If the access-code or Cloudflare Access gate blocks unauthenticated user data routes with `401`/`403` or a recognizable Cloudflare Access HTML/login page, that is acceptable; `/api/status` and admin scheduler/operator/settings POST routes must never return a public admin/control payload.
 
 
@@ -837,3 +838,32 @@ Refine the public `web-view` main page into a faster briefing surface without ch
 - Implemented in `src/stock_monitor/cli.py`.
 - Regression coverage updated in `tests/test_web_view.py`.
 - Local `web-view` was restarted on `{LOCAL_WEB_VIEW_TARGET}` after verification.
+
+## User Review: Web-View Information Value (2026-09-29)
+
+Status: **the user-approved tab and information layout was implemented on 2026-09-29**. The external morning-briefing source remains unidentified and unintegrated.
+
+### Observed problems
+
+- `오늘 읽을 요약` currently leads with a report/stock count, then generic check-point chips, freshness, news, turnover, and flow blocks. It does not synthesize what changed or why the Top2 is worth checking. A 2026-09-29 stored-data sample had 27 reports across 21 stocks, only two multi-report stocks, Toss market data from 9/28, investor flow from 9/23, no ETF snapshot, and no same-day stock-price references for the 21 rows. The stale values appear beside the selected date, which weakens the summary's usefulness.
+- The same sample's Top2 news badge had no independently classified article evidence; stored news was recap/unknown lineage. Candidate-level titles and labels still add context, but that sample does not support a sector-interest conclusion.
+- `종목` hides one-report rows whenever any multi-report row exists. On the sample date this hid 19 of 21 stocks. The user confirmed this is intentional noise filtering, not a defect; retain the default and keep the `1건 포함` path clear. Exact-date Toss price/flow absence is a separate freshness state.
+- `시장` contains user-triggered live Toss indices, market flow, and Top20 plus stored-date reference tables/trends. Selecting the tab invokes a live market-context request, so moving that panel to the default Main view must not cause an automatic live fetch on every page load. The user also mentioned a separately scheduled web morning briefing that may already consume these values, but it was not found in the accessible project/local automation inventory: local Codex automations are `stock-monitor-toss-2` and `top2-3`, while the project scheduler docs list Telegram slots. A separate ChatGPT/cloud job remains unverified; identify its source/data contract before deciding to duplicate or relocate content.
+- `순환매` is a report-category rollup drawn over a manually mapped image, with optional manually mapped ETFs when exact-date ETF rows exist. It does not calculate capital rotation or sector flows. The 9/29 sample had no theme rollups and no stored ETF snapshot.
+
+These are point-in-time observations, not permanent source guarantees. During the earlier DTO inspection, SQLite was opened in its default read/write mode but only read methods were called; the DB file modification time changed and the cause is unknown. No write command, live Toss call, Telegram action, or scheduler change was issued during that assessment.
+
+### Implemented layout and behavior
+
+- **Main summary:** `오늘의 우선순위` is first in both visual and document order. `오늘 읽을 요약` uses one market-mood headline, report concentration, source freshness, and candidate-level news; Top2 names appear only in the priority cards. Main typography uses 18px section titles, 18px lead text, 14px body text, and 12px supporting status text.
+- **Main market panel:** current Toss indices and aggregate market flow appear only after the user presses `지수 · 수급 확인`. The request is latest-business-day-only; if no latest stored date exists, it is rejected. The index response time and each flow record's business date are shown separately. It does not store values, affect Top2 ordering, or run on page entry. Stale cached results are labeled with their original response time. The panel omits turnover Top20 and ETF Top5. Historical stored market tables remain collapsed under Main.
+- **관찰:** candidate cards use two columns above 840px and one column at narrower widths.
+- **종목:** the intentional `2건 이상` default remains. The page shows the number of hidden one-report stocks and keeps the `1건 포함` toggle.
+- **Navigation:** top-level tabs are `메인`, `관찰`, and `종목`. Dated market history is collapsed under Main. Former Rotation content is a collapsed `업종 · ETF 참고` section, not a capital-rotation calculation. Selecting a category opens related detail under Stock.
+- **Top2 chart:** the 180-minute chart was removed. The approved daily chart offers 30/90/180 trading-day windows, adjusted prices, and an end date matching the Top2 business date; month boundaries are marked. Its controls are grouped by live market references and chart period. It remains on-demand, non-persistent factual context, not a trend signal.
+
+### Remaining decision
+
+**Morning briefing integration: HOLD per user.** The separately scheduled web morning briefing was not found in the accessible project scheduler or local Codex automation inventory. It has not been duplicated or integrated. When the user revisits it, identify its product/source and schedule or provide its output/schema to compare fields and date basis. The current Main market request remains manual and latest-day-only until then.
+
+The user selected A for Top2 weighting (keep the fixed heuristic) and A for news scope (candidate-level evidence only); the current code already matches, so no ranking or news change was made. These selections and why B was not chosen are in [Candidate Evidence](candidate-evidence.md). The daily-chart choices B/A/A are implemented as recorded in [Toss OpenAPI Lab](toss-openapi-lab.md). Multi-date/content QA remains tracked by `TODO2-WV-CONTENT-QA`. Older CE-1 sections remain design history where they describe KRX as a current selected-date source or Top2 as the persistence universe; do not use them as current source instructions.

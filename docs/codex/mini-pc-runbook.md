@@ -58,9 +58,9 @@ This table is the current scheduler contract. Later KRX-specific procedures in t
 | Task | Contract |
 | --- | --- |
 | `StockMonitor-Notify` | `08:20` KST on Korean business days. Runtime guard allows production send only from `08:00` to `08:30` unless `--allow-late` is explicit. |
-| `StockMonitor-Poll` | Every 30 minutes from `08:30` to `16:30` KST on Korean business days. |
-| `StockMonitor-MarketBriefingMood` / `Lunch` / `Preclose` | `09:15` / `12:00` / `15:15` KST operator briefing slots. |
-| `StockMonitor-TossCloseSnapshot` | `20:05` KST on Korean business days; captures the `20:00` integrated-market close baseline used by web-view market, ETF, and flow references. |
+| `StockMonitor-Poll` | Collects every 30 minutes from `08:30` to `16:30` KST. Telegram report briefings send at `08:30`, then hourly from `09:30` through `15:30`; after a successful poll, a slot with no current-day batch sends a `0건` notice. Prior-date pending batches remain for operator recovery and must not suppress today's empty notice. The `16:00` and `16:30` polls collect without Telegram delivery. |
+| `StockMonitor-MarketBriefingMood` / `Lunch` / `Preclose` | Independent report-count market-briefing slots at `09:15` / `12:00` / `15:15` KST. Scheduled live sends require `market_briefing_phone_review_accepted=true` and manual Telegram review sends on at least three distinct business dates; this counts matching review records across the full delivery history, not the most recent 200 unrelated deliveries. A scheduler result of `0` can mean the slot was skipped by a guard; confirm a sent delivery record. |
+| `StockMonitor-TossCloseSnapshot` | `20:05` KST on Korean business days; captures the `20:00` integrated-market close baseline, Top20 market context, and fixed-market Toss listing cache used by stored lookups. Requires the current DB schema. |
 | `StockMonitor-TelegramCommands` | Hidden worker starts at `08:00`, checks Telegram commands every 1 minute, exits at `16:30`, and skips market holidays/no-run dates. During `09:00~15:30`, it also checks the official KIND `서킷브레이커/사이드카` market-action category and sends one operator alert per official acceptance number. |
 | `StockMonitor-WebViewHourlyRestart` | Hourly restart, default first run `00:05`, for the read-only loopback `web-view` target on `{LOCAL_WEB_VIEW_TARGET}`. |
 | `StockMonitor-Shutdown` | Desktop-validation only. It is not registered by the mini-PC scheduler wrapper and should remain absent during always-on operation. |
