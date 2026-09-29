@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 @dataclass(frozen=True)
@@ -485,6 +485,32 @@ NEWS_EVIDENCE_LINEAGE_MIGRATION = SchemaMigration(
 )
 
 
+TOSS_STOCK_UNIVERSE_CACHE_MIGRATION = SchemaMigration(
+    version=11,
+    name="toss_stock_universe_cache",
+    statements=(
+        """
+        CREATE TABLE IF NOT EXISTS toss_stock_universe_cache (
+            market TEXT NOT NULL,
+            stock_code TEXT NOT NULL,
+            stock_name TEXT NOT NULL,
+            security_type TEXT NOT NULL,
+            is_common_share INTEGER NOT NULL,
+            isin_code TEXT NOT NULL,
+            business_date TEXT NOT NULL,
+            fetched_at TEXT NOT NULL,
+            source TEXT NOT NULL,
+            PRIMARY KEY (market, stock_code)
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_toss_stock_universe_cache_snapshot_lookup
+        ON toss_stock_universe_cache (business_date, stock_name COLLATE NOCASE, stock_code)
+        """,
+    ),
+)
+
+
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     KRX_MARKET_SNAPSHOT_MIGRATION,
     APP_SETTINGS_MIGRATION,
@@ -495,6 +521,7 @@ SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     TOSS_PRIORITY_QUOTE_BASELINE_MIGRATION,
     TOSS_MARKET_CONTEXT_SNAPSHOT_MIGRATION,
     NEWS_EVIDENCE_LINEAGE_MIGRATION,
+    TOSS_STOCK_UNIVERSE_CACHE_MIGRATION,
 )
 
 

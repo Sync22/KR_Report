@@ -50,6 +50,7 @@ from stock_monitor.models import (
     ThemeDailyRollup,
     TossMarketContextSnapshot,
     TossPriorityQuoteBaseline,
+    TossStockUniverseEntry,
     WorkerState,
 )
 from stock_monitor.summary import build_daily_summaries
@@ -480,8 +481,127 @@ class StockMonitorRepository:
                 ORDER BY rank ASC, stock_code ASC
                 """,
                 (business_date.isoformat(), business_date.isoformat()),
-            ).fetchall()
+        ).fetchall()
         return [self._row_to_toss_market_context_snapshot(row) for row in rows]
+
+    def upsert_toss_stock_universe_cache(self, rows: list[TossStockUniverseEntry]) -> int:
+        if not rows:
+            return 0
+        snapshot_dates = {row.business_date for row in rows}
+        if len(snapshot_dates) != 1:
+            raise ValueError("Toss stock-universe cache rows must share one business date.")
+        with self.connect() as connection:
+            changes_before = connection.total_changes
+            with connection:
+                latest = connection.execute(
+                    "SELECT MAX(business_date) AS business_date FROM toss_stock_universe_cache"
+                ).fetchone()
+                requested_date = next(iter(snapshot_dates)).isoformat()
+                if latest and latest["business_date"] and requested_date < latest["business_date"]:
+                    return 0
+                connection.executemany(
+                    """
+                    INSERT INTO toss_stock_universe_cache (
+                        market, stock_code, stock_name, security_type, is_common_share,
+                        isin_code, business_date, fetched_at, source
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(market, stock_code) DO UPDATE SET
+                        stock_name = excluded.stock_name,
+                        security_type = excluded.security_type,
+                        is_common_share = excluded.is_common_share,
+                        isin_code = excluded.isin_code,
+                        business_date = excluded.business_date,
+                        fetched_at = excluded.fetched_at,
+                        source = excluded.source
+                    WHERE excluded.business_date >= toss_stock_universe_cache.business_date
+                    """,
+                    [
+                        (
+                            row.market,
+                            row.stock_code,
+                            row.stock_name,
+                            row.security_type,
+                            int(row.is_common_share),
+                            row.isin_code,
+                            row.business_date.isoformat(),
+                            row.fetched_at.isoformat(),
+                            row.source,
+                        )
+                        for row in rows
+                    ],
+                )
+            return connection.total_changes - changes_before
+
+    def latest_toss_stock_universe_snapshot_date(self) -> date | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT MAX(business_date) AS business_date FROM toss_stock_universe_cache"
+            ).fetchone()
+        return date.fromisoformat(row["business_date"]) if row and row["business_date"] else None
+
+    def search_toss_stock_universe(
+        self,
+        query: str,
+        *,
+        as_of_date: date | None = None,
+        limit: int = 10,
+    ) -> list[TossStockUniverseEntry]:
+        normalized_query = query.strip()
+        if not normalized_query or limit < 1:
+            return []
+        with self.connect() as connection:
+            latest = connection.execute(
+                "SELECT MAX(business_date) AS business_date FROM toss_stock_universe_cache"
+            ).fetchone()
+            snapshot_date_text = latest["business_date"] if latest else None
+            if not snapshot_date_text:
+                return []
+            snapshot_date = date.fromisoformat(snapshot_date_text)
+            if as_of_date is not None and snapshot_date > as_of_date:
+                return []
+            pattern = f"%{normalized_query}%"
+            rows = connection.execute(
+                """
+                SELECT market, stock_code, stock_name, security_type, is_common_share,
+                       isin_code, business_date, fetched_at, source
+                FROM toss_stock_universe_cache
+                WHERE business_date = ?
+                  AND (stock_code LIKE ? COLLATE NOCASE OR stock_name LIKE ? COLLATE NOCASE)
+                ORDER BY
+                    CASE WHEN stock_code = ? COLLATE NOCASE THEN 0
+                         WHEN stock_name = ? COLLATE NOCASE THEN 1
+                         WHEN stock_code LIKE ? COLLATE NOCASE THEN 2
+                         WHEN stock_name LIKE ? COLLATE NOCASE THEN 3
+                         ELSE 4 END,
+                    stock_name COLLATE NOCASE ASC,
+                    stock_code ASC
+                LIMIT ?
+                """,
+                (
+                    snapshot_date_text,
+                    pattern,
+                    pattern,
+                    normalized_query,
+                    normalized_query,
+                    f"{normalized_query}%",
+                    f"{normalized_query}%",
+                    limit,
+                ),
+            ).fetchall()
+        return [
+            TossStockUniverseEntry(
+                business_date=date.fromisoformat(row["business_date"]),
+                market=row["market"],
+                stock_code=row["stock_code"],
+                stock_name=row["stock_name"],
+                security_type=row["security_type"],
+                is_common_share=bool(row["is_common_share"]),
+                isin_code=row["isin_code"],
+                fetched_at=datetime.fromisoformat(row["fetched_at"]),
+                source=row["source"],
+            )
+            for row in rows
+        ]
 
     def insert_reports(self, reports: list[Report], *, queue_intraday_alerts: bool = False) -> InsertResult:
         normalized = [report.with_identity() for report in reports]

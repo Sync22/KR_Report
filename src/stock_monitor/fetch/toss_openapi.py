@@ -4,7 +4,8 @@ import json
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import MappingProxyType
 from urllib import error, parse, request
@@ -36,6 +37,8 @@ _STOCK_FIELDS = frozenset(
         "koreanMarketDetail",
     }
 )
+_LISTED_STOCK_FIELDS = frozenset({"symbol", "name", "securityType", "isCommonShare", "isinCode"})
+TOSS_KR_STOCK_UNIVERSE_MARKETS = ("KOSPI", "KOSDAQ", "KR_ETC")
 _KR_MARKET_DETAIL_FIELDS = frozenset(
     {"liquidationTrading", "nxtSupported", "krxTradingSuspended", "nxtTradingSuspended"}
 )
@@ -51,8 +54,9 @@ _RANKING_PRICE_FIELDS = frozenset({"lastPrice", "basePrice", "changeRate"})
 _MARKET_INDICATOR_PRICE_FIELDS = frozenset({"symbol", "timestamp", "lastPrice"})
 _MARKET_INDICATOR_CANDLE_PAGE_FIELDS = frozenset({"candles", "nextBefore"})
 _MARKET_INDICATOR_CANDLE_FIELDS = frozenset(
-    {"timestamp", "openPrice", "highPrice", "lowPrice", "closePrice", "volume"}
+    {"timestamp", "openPrice", "highPrice", "lowPrice", "closePrice", "volume", "currency"}
 )
+TOSS_PRIORITY_DAILY_CANDLE_COUNTS = frozenset({30, 90, 180})
 _INVESTOR_TRADING_RESPONSE_FIELDS = frozenset({"nextUntil", "records"})
 _INVESTOR_TRADING_RECORD_FIELDS = frozenset(
     {"date", "updatedAt", "individual", "foreigner", "institution", "otherCorporation"}
@@ -220,7 +224,28 @@ _MARKET_CONTEXT_ENDPOINTS = (
         path_symbol=True,
     ),
 )
-_FIXED_READONLY_ENDPOINTS = _PROBE_READONLY_ENDPOINTS + _MARKET_CONTEXT_ENDPOINTS
+_PRIORITY_STOCK_DAILY_CANDLES_ENDPOINT = TossReadonlyEndpoint(
+    "priority-stock-daily-candles",
+    "getCandles",
+    "/api/v1/candles",
+    "MARKET_DATA_CHART",
+)
+_STOCK_UNIVERSE_ENDPOINTS = tuple(
+    TossReadonlyEndpoint(
+        f"stock-universe-{market.lower().replace('_', '-')}",
+        "listStocks",
+        "/api/v1/stocks/all",
+        "STOCK_ALL",
+        fixed_params=(("market", market),),
+    )
+    for market in TOSS_KR_STOCK_UNIVERSE_MARKETS
+)
+_FIXED_READONLY_ENDPOINTS = (
+    _PROBE_READONLY_ENDPOINTS
+    + _MARKET_CONTEXT_ENDPOINTS
+    + (_PRIORITY_STOCK_DAILY_CANDLES_ENDPOINT,)
+    + _STOCK_UNIVERSE_ENDPOINTS
+)
 TOSS_READONLY_ENDPOINTS: Mapping[str, TossReadonlyEndpoint] = MappingProxyType(
     {endpoint.key: endpoint for endpoint in _PROBE_READONLY_ENDPOINTS}
 )
@@ -258,6 +283,21 @@ def resolve_toss_market_context_endpoint(selector: str) -> TossReadonlyEndpoint:
     if endpoint is None:
         raise TossOpenApiSafetyError(f"Toss market-context endpoint '{selector}' is not allowed.")
     return endpoint
+
+
+def resolve_toss_stock_universe_endpoint(market: str) -> TossReadonlyEndpoint:
+    normalized_market = market.strip().upper()
+    endpoint = next(
+        (candidate for candidate in _STOCK_UNIVERSE_ENDPOINTS if dict(candidate.fixed_params).get("market") == normalized_market),
+        None,
+    )
+    if endpoint is None:
+        raise TossOpenApiSafetyError(f"Toss stock-universe market '{normalized_market}' is not allowed.")
+    return endpoint
+
+
+def resolve_toss_priority_daily_candles_endpoint() -> TossReadonlyEndpoint:
+    return _PRIORITY_STOCK_DAILY_CANDLES_ENDPOINT
 
 
 def build_toss_readonly_probe_plan(
@@ -394,15 +434,17 @@ def fetch_toss_readonly_endpoint(
         "market-investor-kosdaq",
         "market-indicator-kospi-daily-candles",
         "market-indicator-kosdaq-daily-candles",
+        "priority-stock-daily-candles",
         "priority-investor-trading",
     } else list
     if not isinstance(result, expected_type):
         raise RuntimeError(f"Toss OpenAPI {endpoint.key} response had an unexpected shape.")
-    _validate_readonly_result(endpoint, result)
+    _validate_readonly_result(endpoint, result, params=params)
+    row_count = len(result) if isinstance(result, list) else 1
     return TossReadonlyResponse(
         endpoint=endpoint,
         result=result,
-        row_count=len(result) if isinstance(result, list) else 1,
+        row_count=row_count,
         rate_limit=rate_limit,
     )
 
@@ -495,6 +537,29 @@ def _build_readonly_params(
 
 
 def _validate_fetch_params(endpoint: TossReadonlyEndpoint, params: dict[str, str]) -> None:
+    if endpoint.key == "priority-stock-daily-candles":
+        if set(params) != {"symbol", "interval", "count", "before", "adjusted"}:
+            raise TossOpenApiSafetyError("Toss priority daily candles require the fixed bounded query fields.")
+        if any(not isinstance(value, str) for value in params.values()):
+            raise TossOpenApiSafetyError("Toss priority daily candle query values must be strings.")
+        symbol = params["symbol"]
+        if not isinstance(symbol, str) or not _SYMBOL_PATTERN.fullmatch(symbol):
+            raise TossOpenApiSafetyError("Toss priority daily candles accept only six-digit Korean stock codes.")
+        if params["interval"] != "1d":
+            raise TossOpenApiSafetyError("Toss priority daily candles allow only the daily interval.")
+        if params["count"] not in {str(count) for count in TOSS_PRIORITY_DAILY_CANDLE_COUNTS}:
+            raise TossOpenApiSafetyError("Toss priority daily candles allow only 30, 90, or 180 rows.")
+        if params["adjusted"] != "true":
+            raise TossOpenApiSafetyError("Toss priority daily candles require adjusted prices.")
+        try:
+            before = datetime.fromisoformat(params["before"])
+        except (TypeError, ValueError):
+            raise TossOpenApiSafetyError("Toss priority daily candles require an ISO timestamp with timezone.") from None
+        if before.tzinfo is None or before.utcoffset() is None or before.microsecond:
+            raise TossOpenApiSafetyError("Toss priority daily candles require a second-precision timezone-aware timestamp.")
+        if before.isoformat(timespec="seconds") != params["before"]:
+            raise TossOpenApiSafetyError("Toss priority daily candles require a canonical ISO timestamp.")
+        return
     if endpoint.fixed_params:
         expected = dict(endpoint.fixed_params)
         if endpoint.key.startswith("market-investor-"):
@@ -532,11 +597,24 @@ def _validate_fetch_params(endpoint: TossReadonlyEndpoint, params: dict[str, str
         raise TossOpenApiSafetyError(f"Toss endpoint '{endpoint.key}' received noncanonical query parameters.")
 
 
-def _validate_readonly_result(endpoint: TossReadonlyEndpoint, result: object) -> None:
+def _validate_readonly_result(
+    endpoint: TossReadonlyEndpoint,
+    result: object,
+    *,
+    params: dict[str, str],
+) -> None:
     if endpoint.key == "prices":
         rows = _validate_object_list(result, allowed=_PRICE_FIELDS, label="prices")
         for row in rows:
             _validate_scalar_values(row, nested_fields=frozenset(), label="prices item")
+        return
+    if endpoint.key.startswith("stock-universe-"):
+        rows = _validate_object_list(result, allowed=_LISTED_STOCK_FIELDS, label="stock universe")
+        required = _LISTED_STOCK_FIELDS
+        for row in rows:
+            if not required.issubset(row):
+                raise RuntimeError("Toss OpenAPI stock universe item omitted required fields.")
+            _validate_scalar_values(row, nested_fields=frozenset(), label="stock universe item")
         return
     if endpoint.key == "ranking-kr-top20":
         ranking = _validate_object(result, allowed=_RANKING_RESPONSE_FIELDS, label="ranking")
@@ -613,6 +691,22 @@ def _validate_readonly_result(endpoint: TossReadonlyEndpoint, result: object) ->
             raise RuntimeError("Toss OpenAPI market indicator context exceeded the fixed two-symbol limit.")
         for row in rows:
             _validate_scalar_values(row, nested_fields=frozenset(), label="market indicator price")
+        return
+    if endpoint.key == "priority-stock-daily-candles":
+        page = _validate_object(result, allowed=_MARKET_INDICATOR_CANDLE_PAGE_FIELDS, label="priority stock daily candles")
+        candles = _validate_object_list(
+            page.get("candles"),
+            allowed=_MARKET_INDICATOR_CANDLE_FIELDS,
+            label="priority stock daily candles",
+        )
+        if len(candles) > int(params["count"]):
+            raise RuntimeError("Toss OpenAPI priority daily candle response exceeded the requested row count.")
+        if page.get("nextBefore") is not None and not isinstance(page.get("nextBefore"), str):
+            raise RuntimeError("Toss OpenAPI priority daily candle nextBefore had an unexpected shape.")
+        for candle in candles:
+            if not _MARKET_INDICATOR_CANDLE_FIELDS.issubset(candle) or not isinstance(candle.get("timestamp"), str):
+                raise RuntimeError("Toss OpenAPI priority daily candle omitted a required field.")
+            _validate_scalar_values(candle, nested_fields=frozenset(), label="priority stock daily candle")
         return
     if endpoint.key.endswith("-daily-candles"):
         page = _validate_object(result, allowed=_MARKET_INDICATOR_CANDLE_PAGE_FIELDS, label="market indicator candles")

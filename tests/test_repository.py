@@ -24,6 +24,7 @@ from stock_monitor.models import (
     StockThemeMembership,
     TossPriorityQuoteBaseline,
     TossMarketContextSnapshot,
+    TossStockUniverseEntry,
     WorkerState,
 )
 
@@ -105,9 +106,10 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
                       'market_investor_flow_daily',
                       'investor_net_buy_top_daily',
                       'category_master',
-                      'category_membership_snapshots',
+                          'category_membership_snapshots',
                           'toss_priority_quote_baselines',
-                          'toss_market_context_snapshots'
+                          'toss_market_context_snapshots',
+                          'toss_stock_universe_cache'
                   )
                 """
             ).fetchall()
@@ -130,6 +132,7 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
         (8, "toss_priority_quote_baselines"),
         (9, "toss_market_context_snapshots"),
         (10, "news_evidence_lineage"),
+        (11, "toss_stock_universe_cache"),
     ]
     assert snapshot_tables == {
         "stock_market_daily",
@@ -145,6 +148,7 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
         "category_membership_snapshots",
         "toss_priority_quote_baselines",
         "toss_market_context_snapshots",
+        "toss_stock_universe_cache",
     }
 
 
@@ -217,6 +221,65 @@ def test_repository_replays_latest_toss_market_context_snapshot(tmp_path) -> Non
     )
 
     assert repository.list_latest_toss_market_context_snapshot(business_date=business_date) == rows
+
+
+def test_repository_searches_only_latest_toss_stock_universe_snapshot(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+    first_date = date(2026, 9, 28)
+    second_date = date(2026, 9, 29)
+    first_rows = [
+        TossStockUniverseEntry(
+            business_date=first_date,
+            market="KOSPI",
+            stock_code="005930",
+            stock_name="삼성전자",
+            security_type="STOCK",
+            is_common_share=True,
+            isin_code="KR7005930003",
+            fetched_at=datetime(2026, 9, 28, 20, 5),
+        ),
+        TossStockUniverseEntry(
+            business_date=first_date,
+            market="KOSPI",
+            stock_code="069500",
+            stock_name="KODEX 200",
+            security_type="ETF",
+            is_common_share=False,
+            isin_code="KR7069500007",
+            fetched_at=datetime(2026, 9, 28, 20, 5),
+        ),
+    ]
+    repository.upsert_toss_stock_universe_cache(first_rows)
+    assert repository.latest_toss_stock_universe_snapshot_date() == first_date
+    assert [row.stock_code for row in repository.search_toss_stock_universe("KODEX")] == ["069500"]
+
+    repository.upsert_toss_stock_universe_cache(
+        [
+            TossStockUniverseEntry(
+                business_date=second_date,
+                market="KOSPI",
+                stock_code="005930",
+                stock_name="삼성전자",
+                security_type="STOCK",
+                is_common_share=True,
+                isin_code="KR7005930003",
+                fetched_at=datetime(2026, 9, 29, 20, 5),
+            )
+        ]
+    )
+
+    assert repository.latest_toss_stock_universe_snapshot_date() == second_date
+    assert repository.search_toss_stock_universe("KODEX") == []
+    assert repository.search_toss_stock_universe("삼성", as_of_date=first_date) == []
+    assert [row.stock_code for row in repository.search_toss_stock_universe("삼성", as_of_date=second_date)] == [
+        "005930"
+    ]
+
+    stale_write_count = repository.upsert_toss_stock_universe_cache(first_rows)
+    assert stale_write_count == 0
+    assert repository.latest_toss_stock_universe_snapshot_date() == second_date
+    assert repository.search_toss_stock_universe("KODEX") == []
 
 
 def test_latest_toss_market_snapshot_date_ignores_candidate_only_rows(tmp_path) -> None:
@@ -459,7 +522,7 @@ def test_repository_migrate_schema_reports_existing_status(tmp_path) -> None:
 
     assert status.current_version == SCHEMA_VERSION
     assert status.target_version == SCHEMA_VERSION
-    assert status.applied_versions == (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+    assert status.applied_versions == tuple(range(1, SCHEMA_VERSION + 1))
     assert status.pending_versions == ()
 
 
@@ -482,14 +545,14 @@ def test_repository_migrates_v9_news_evidence_without_losing_legacy_row(tmp_path
     rows = repository.list_report_linked_news_evidence(run_id="news-run-1")
     rerun_status = repository.migrate_schema()
 
-    assert status.current_version == 10
+    assert status.current_version == SCHEMA_VERSION
     assert len(rows) == 1
     assert rows[0].title == _news_evidence().title
     assert rows[0].url == _news_evidence().url
     assert rows[0].canonical_url == ""
     assert rows[0].lineage_type == "unknown"
     assert rows[0].lineage_reason == "legacy_row_unverified"
-    assert rerun_status.current_version == 10
+    assert rerun_status.current_version == SCHEMA_VERSION
     assert rerun_status.pending_versions == ()
 
 
@@ -546,6 +609,7 @@ def test_repository_initialize_seeds_migration_history_for_existing_v1_database(
         (8, "toss_priority_quote_baselines"),
         (9, "toss_market_context_snapshots"),
         (10, "news_evidence_lineage"),
+        (11, "toss_stock_universe_cache"),
     ]
 
 
@@ -557,7 +621,7 @@ def test_repository_initialize_is_noop_after_migration_history_seed(tmp_path) ->
     with repository.connect() as connection:
         migration_count = connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
 
-    assert migration_count == 10
+    assert migration_count == 11
 
 
 def test_krx_snapshot_tables_enforce_daily_source_keys(tmp_path) -> None:

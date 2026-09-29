@@ -11,10 +11,14 @@ from stock_monitor.fetch.toss_openapi import (
     TossOpenApiSafetyError,
     TossReadonlyEndpoint,
     TossReadonlyResponse,
+    TOSS_PRIORITY_DAILY_CANDLE_COUNTS,
     fetch_toss_readonly_endpoint,
     issue_toss_access_token,
     resolve_toss_market_context_endpoint,
     resolve_toss_readonly_endpoint,
+    resolve_toss_priority_daily_candles_endpoint,
+    resolve_toss_stock_universe_endpoint,
+    TOSS_KR_STOCK_UNIVERSE_MARKETS,
 )
 
 
@@ -221,6 +225,134 @@ class TossPriorityQuoteProvider:
             "cache": "disabled",
             "reason": "not_configured",
         }
+
+    def get_market_calendar(self, *, query_date: date) -> dict[str, object]:
+        if not self.configured:
+            raise RuntimeError("Toss OpenAPI is not configured for a live market-calendar check.")
+        endpoint = resolve_toss_readonly_endpoint("market-calendar-kr")
+        response = self._fetch_endpoint_with_token_recovery(
+            endpoint=endpoint,
+            params={"date": query_date.isoformat()},
+        )
+        return response.result if isinstance(response.result, dict) else {}
+
+    def get_stock_universe(self) -> dict[str, object]:
+        if not self.configured:
+            return {
+                "surface": "toss-stock-universe",
+                "read_only": True,
+                "configured": False,
+                "live_fetch": False,
+                "available": False,
+                "items": [],
+                "market_counts": {},
+                "rate_limit": {},
+                "reason": "not_configured",
+            }
+
+        items: list[dict[str, object]] = []
+        market_counts: dict[str, int] = {}
+        rate_limit: dict[str, dict[str, str]] = {}
+        for market in TOSS_KR_STOCK_UNIVERSE_MARKETS:
+            endpoint = resolve_toss_stock_universe_endpoint(market)
+            response = self._fetch_endpoint_with_token_recovery(
+                endpoint=endpoint,
+                params=dict(endpoint.fixed_params),
+            )
+            rows = response.result if isinstance(response.result, list) else []
+            market_counts[market] = len(rows)
+            rate_limit[endpoint.key] = response.rate_limit
+            items.extend({**row, "market": market} for row in rows if isinstance(row, dict))
+        return {
+            "surface": "toss-stock-universe",
+            "read_only": True,
+            "configured": True,
+            "live_fetch": True,
+            "available": True,
+            "checked_at": datetime.now().astimezone().isoformat(),
+            "markets": list(TOSS_KR_STOCK_UNIVERSE_MARKETS),
+            "market_counts": market_counts,
+            "items": items,
+            "rate_limit": rate_limit,
+        }
+
+    def get_priority_stock_daily_candles(
+        self,
+        *,
+        priority_symbols: tuple[str, ...],
+        before: datetime,
+        count: int,
+    ) -> dict[str, object]:
+        if not isinstance(count, int) or isinstance(count, bool) or count not in TOSS_PRIORITY_DAILY_CANDLE_COUNTS:
+            raise TossOpenApiSafetyError("Priority stock chart count must be 30, 90, or 180 trading-day bars.")
+        if not isinstance(before, datetime) or before.tzinfo is None or before.utcoffset() is None:
+            raise TossOpenApiSafetyError("Priority stock chart before must be timezone-aware.")
+        if before.microsecond:
+            raise TossOpenApiSafetyError("Priority stock chart before must use second precision.")
+        if not isinstance(priority_symbols, tuple) or any(not isinstance(symbol, str) for symbol in priority_symbols):
+            raise TossOpenApiSafetyError("Priority stock charts require server-supplied stock symbols.")
+
+        symbols = tuple(dict.fromkeys(symbol.strip() for symbol in priority_symbols if symbol.strip()))
+        if len(symbols) > 2 or any(len(symbol) != 6 or not symbol.isdigit() for symbol in symbols):
+            raise TossOpenApiSafetyError("Priority stock charts accept at most two six-digit Korean stock codes.")
+
+        before_text = before.isoformat(timespec="seconds")
+        payload: dict[str, object] = {
+            "surface": "web-view-toss-priority-daily-candles",
+            "read_only": True,
+            "configured": self.configured,
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "affects_ordering": False,
+            "priority_date": before.date().isoformat(),
+            "before": before_text,
+            "interval": "1d",
+            "count": count,
+            "adjusted": True,
+            "symbols": list(symbols),
+            "items": [],
+            "rate_limit": {},
+            "cache": "disabled" if not self.configured else "empty" if not symbols else "miss",
+            "available": False,
+        }
+        if not self.configured:
+            payload["reason"] = "not_configured"
+            return payload
+        if not symbols:
+            payload["reason"] = "no_priority_symbols"
+            return payload
+
+        endpoint = resolve_toss_priority_daily_candles_endpoint()
+        items: list[dict[str, object]] = []
+        rate_limit: dict[str, dict[str, str]] = {}
+        for symbol in symbols:
+            response = self._fetch_endpoint_with_token_recovery(
+                endpoint=endpoint,
+                params={
+                    "symbol": symbol,
+                    "interval": "1d",
+                    "count": str(count),
+                    "before": before_text,
+                    "adjusted": "true",
+                },
+            )
+            page = response.result if isinstance(response.result, dict) else {}
+            candles = page.get("candles") if isinstance(page.get("candles"), list) else []
+            items.append({"symbol": symbol, "candles": candles})
+            rate_limit[symbol] = response.rate_limit
+
+        payload.update(
+            {
+                "live_fetch": True,
+                "items": items,
+                "rate_limit": rate_limit,
+                "fetched_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "available": any(item["candles"] for item in items),
+            }
+        )
+        return payload
 
     def get_market_context(
         self,

@@ -1,13 +1,15 @@
 import io
+import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
-from urllib import error
+from urllib import error, parse
 
 import pytest
 
+import stock_monitor.fetch.toss_openapi as toss_openapi_module
 from stock_monitor.fetch.toss_openapi import (
     TOSS_OPENAPI_BASE_URL,
     TOSS_READONLY_ENDPOINTS,
@@ -109,6 +111,354 @@ def test_toss_market_context_endpoints_are_fixed_and_not_probe_selectors() -> No
     assert priority_investor.rate_group == "STOCK_TRADING_TREND"
     with pytest.raises(TossOpenApiSafetyError, match="not allowed"):
         resolve_toss_readonly_endpoint("ranking-kr-top20")
+
+
+def test_toss_stock_universe_endpoints_are_fixed_to_korean_markets() -> None:
+    for market in ("KOSPI", "KOSDAQ", "KR_ETC"):
+        endpoint = toss_openapi_module.resolve_toss_stock_universe_endpoint(market)
+        assert endpoint.path == "/api/v1/stocks/all"
+        assert endpoint.operation_id == "listStocks"
+        assert endpoint.rate_group == "STOCK_ALL"
+        assert endpoint.fixed_params == (("market", market),)
+
+    with pytest.raises(TossOpenApiSafetyError, match="not allowed"):
+        toss_openapi_module.resolve_toss_stock_universe_endpoint("NASDAQ")
+
+
+def test_toss_stock_universe_endpoint_validates_required_listing_fields() -> None:
+    endpoint = toss_openapi_module.resolve_toss_stock_universe_endpoint("KOSPI")
+    body = (
+        b'{"result":[{"symbol":"005930","name":"Samsung Electronics",'
+        b'"securityType":"STOCK","isCommonShare":true,"isinCode":"KR7005930003"}]}'
+    )
+    response = fetch_toss_readonly_endpoint(
+        base_url=TOSS_OPENAPI_BASE_URL,
+        access_token="token-value",
+        endpoint=endpoint,
+        params=dict(endpoint.fixed_params),
+        timeout_seconds=1,
+        live_enabled=True,
+        urlopen=lambda *_args, **_kwargs: FakeResponse(body),
+    )
+
+    assert response.row_count == 1
+    assert response.result[0]["securityType"] == "STOCK"
+
+    missing_isin = b'{"result":[{"symbol":"005930","name":"Samsung",' \
+        b'"securityType":"STOCK","isCommonShare":true}]}'
+    with pytest.raises(RuntimeError, match="required"):
+        fetch_toss_readonly_endpoint(
+            base_url=TOSS_OPENAPI_BASE_URL,
+            access_token="token-value",
+            endpoint=endpoint,
+            params=dict(endpoint.fixed_params),
+            timeout_seconds=1,
+            live_enabled=True,
+            urlopen=lambda *_args, **_kwargs: FakeResponse(missing_isin),
+        )
+
+
+def test_toss_priority_provider_reads_fixed_kr_universes_and_tags_market() -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    calls: list[tuple[str, dict[str, str]]] = []
+    rows_by_market = {
+        "KOSPI": [{"symbol": "005930", "name": "삼성전자", "securityType": "STOCK", "isCommonShare": True, "isinCode": "KR7005930003"}],
+        "KOSDAQ": [{"symbol": "069500", "name": "KODEX 200", "securityType": "ETF", "isCommonShare": False, "isinCode": "KR7069500007"}],
+        "KR_ETC": [],
+    }
+
+    def fetch(**kwargs):
+        endpoint = kwargs["endpoint"]
+        params = kwargs["params"]
+        calls.append((endpoint.key, params))
+        market = params["market"]
+        return SimpleNamespace(result=rows_by_market[market], rate_limit={"remaining": "10"})
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch,
+    )
+
+    result = provider.get_stock_universe()
+
+    assert calls == [
+        ("stock-universe-kospi", {"market": "KOSPI"}),
+        ("stock-universe-kosdaq", {"market": "KOSDAQ"}),
+        ("stock-universe-kr-etc", {"market": "KR_ETC"}),
+    ]
+    assert result["available"] is True
+    assert result["market_counts"] == {"KOSPI": 1, "KOSDAQ": 1, "KR_ETC": 0}
+    assert [item["market"] for item in result["items"]] == ["KOSPI", "KOSDAQ"]
+    assert result["items"][1]["securityType"] == "ETF"
+
+
+def test_toss_priority_provider_gets_market_calendar_for_explicit_date() -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    calls: list[tuple[str, dict[str, str]]] = []
+    calendar = {
+        "today": {"date": "2026-09-29", "integrated": {"regularMarket": {"startTime": "2026-09-29T09:00:00+09:00", "endTime": "2026-09-29T15:30:00+09:00"}}},
+        "previousBusinessDay": {"date": "2026-09-28", "integrated": {"regularMarket": {"startTime": "2026-09-28T09:00:00+09:00", "endTime": "2026-09-28T15:30:00+09:00"}}},
+        "nextBusinessDay": {"date": "2026-09-30", "integrated": {"regularMarket": {"startTime": "2026-09-30T09:00:00+09:00", "endTime": "2026-09-30T15:30:00+09:00"}}},
+    }
+
+    def fetch(**kwargs):
+        calls.append((kwargs["endpoint"].key, kwargs["params"]))
+        return SimpleNamespace(result=calendar, rate_limit={})
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch,
+    )
+
+    result = provider.get_market_calendar(query_date=date(2026, 9, 29))
+
+    assert calls == [("market-calendar-kr", {"date": "2026-09-29"})]
+    assert result["today"]["date"] == "2026-09-29"
+
+
+def test_priority_daily_candle_fetch_uses_fixed_adjusted_query_and_validates_result() -> None:
+    endpoint = toss_openapi_module.resolve_toss_priority_daily_candles_endpoint()
+    urls: list[str] = []
+    body = json.dumps(
+        {
+            "result": {
+                "candles": [
+                    {
+                        "timestamp": "2026-09-29T00:00:00+09:00",
+                        "openPrice": "70000",
+                        "highPrice": "71000",
+                        "lowPrice": "69000",
+                        "closePrice": "70500",
+                        "volume": "100",
+                        "currency": "KRW",
+                    }
+                ],
+                "nextBefore": "2026-08-01T23:59:59+09:00",
+            }
+        }
+    ).encode()
+
+    response = fetch_toss_readonly_endpoint(
+        base_url=TOSS_OPENAPI_BASE_URL,
+        access_token="token-value",
+        endpoint=endpoint,
+        params={
+            "symbol": "005930",
+            "interval": "1d",
+            "count": "90",
+            "before": "2026-09-29T23:59:59+09:00",
+            "adjusted": "true",
+        },
+        timeout_seconds=1,
+        live_enabled=True,
+        urlopen=lambda http_request, **_kwargs: (urls.append(http_request.full_url) or FakeResponse(body)),
+    )
+
+    assert endpoint.rate_group == "MARKET_DATA_CHART"
+    assert response.row_count == 1
+    assert response.result["candles"][0]["closePrice"] == "70500"
+    assert response.result["candles"][0]["currency"] == "KRW"
+    assert parse.parse_qs(parse.urlsplit(urls[0]).query) == {
+        "symbol": ["005930"],
+        "interval": ["1d"],
+        "count": ["90"],
+        "before": ["2026-09-29T23:59:59+09:00"],
+        "adjusted": ["true"],
+    }
+
+
+def test_priority_daily_candle_fetch_rejects_unbounded_or_unadjusted_queries() -> None:
+    endpoint = toss_openapi_module.resolve_toss_priority_daily_candles_endpoint()
+    calls = 0
+
+    def urlopen(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return FakeResponse(b'{"result":{"candles":[]}}')
+
+    for changes in (
+        {"count": "200"},
+        {"interval": "1m"},
+        {"adjusted": "false"},
+        {"before": "2026-09-29T23:59:59"},
+        {"symbol": "AAPL"},
+    ):
+        params = {
+            "symbol": "005930",
+            "interval": "1d",
+            "count": "90",
+            "before": "2026-09-29T23:59:59+09:00",
+            "adjusted": "true",
+        }
+        params.update(changes)
+        with pytest.raises(TossOpenApiSafetyError):
+            fetch_toss_readonly_endpoint(
+                base_url=TOSS_OPENAPI_BASE_URL,
+                access_token="token-value",
+                endpoint=endpoint,
+                params=params,
+                timeout_seconds=1,
+                live_enabled=True,
+                urlopen=urlopen,
+            )
+
+    assert calls == 0
+
+
+def test_priority_daily_candle_provider_fetches_only_server_supplied_top_two() -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    before = datetime(2026, 9, 29, 23, 59, 59, tzinfo=timezone(timedelta(hours=9)))
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    def fetch(**kwargs):
+        endpoint = kwargs["endpoint"]
+        params = kwargs["params"]
+        calls.append((endpoint.key, params))
+        return SimpleNamespace(
+            result={
+                "candles": [
+                    {
+                        "timestamp": "2026-09-29T00:00:00+09:00",
+                        "openPrice": "70000",
+                        "highPrice": "71000",
+                        "lowPrice": "69000",
+                        "closePrice": "70500",
+                        "volume": "100",
+                    }
+                ],
+                "nextBefore": None,
+            },
+            rate_limit={"remaining": "10"},
+        )
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch,
+    )
+
+    result = provider.get_priority_stock_daily_candles(
+        priority_symbols=("005930", "000660"),
+        before=before,
+        count=90,
+    )
+
+    assert calls == [
+        (
+            "priority-stock-daily-candles",
+            {
+                "symbol": "005930",
+                "interval": "1d",
+                "count": "90",
+                "before": "2026-09-29T23:59:59+09:00",
+                "adjusted": "true",
+            },
+        ),
+        (
+            "priority-stock-daily-candles",
+            {
+                "symbol": "000660",
+                "interval": "1d",
+                "count": "90",
+                "before": "2026-09-29T23:59:59+09:00",
+                "adjusted": "true",
+            },
+        ),
+    ]
+    assert result["priority_date"] == "2026-09-29"
+    assert result["count"] == 90
+    assert result["adjusted"] is True
+    assert result["items"] == [
+        {
+            "symbol": "005930",
+            "candles": [
+                {
+                    "timestamp": "2026-09-29T00:00:00+09:00",
+                    "openPrice": "70000",
+                    "highPrice": "71000",
+                    "lowPrice": "69000",
+                    "closePrice": "70500",
+                    "volume": "100",
+                }
+            ],
+        },
+        {
+            "symbol": "000660",
+            "candles": [
+                {
+                    "timestamp": "2026-09-29T00:00:00+09:00",
+                    "openPrice": "70000",
+                    "highPrice": "71000",
+                    "lowPrice": "69000",
+                    "closePrice": "70500",
+                    "volume": "100",
+                }
+            ],
+        },
+    ]
+    assert result["rate_limit"] == {"005930": {"remaining": "10"}, "000660": {"remaining": "10"}}
+
+
+@pytest.mark.parametrize(
+    ("priority_symbols", "before", "count"),
+    [
+        (("005930",), datetime(2026, 9, 29, 23, 59, 59), 90),
+        (("005930",), datetime(2026, 9, 29, 23, 59, 59, tzinfo=timezone.utc), 60),
+        (("AAPL",), datetime(2026, 9, 29, 23, 59, 59, tzinfo=timezone.utc), 90),
+        (("005930", "000660", "035420"), datetime(2026, 9, 29, 23, 59, 59, tzinfo=timezone.utc), 90),
+    ],
+)
+def test_priority_daily_candle_provider_rejects_unbounded_inputs_before_fetch(
+    priority_symbols: tuple[str, ...], before: datetime, count: int
+) -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    called = False
+
+    def fetch(**_kwargs):
+        nonlocal called
+        called = True
+        return SimpleNamespace(result={"candles": []}, rate_limit={})
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch,
+    )
+
+    with pytest.raises(TossOpenApiSafetyError):
+        provider.get_priority_stock_daily_candles(
+            priority_symbols=priority_symbols,
+            before=before,
+            count=count,
+        )
+
+    assert called is False
 
 
 def test_toss_priority_quote_provider_adds_same_day_investor_trading_context() -> None:

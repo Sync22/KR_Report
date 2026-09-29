@@ -549,6 +549,19 @@ class TossPriorityQuoteBaseline:
 
 
 @dataclass(frozen=True)
+class TossStockUniverseEntry:
+    business_date: date
+    market: str
+    stock_code: str
+    stock_name: str
+    security_type: str
+    is_common_share: bool
+    isin_code: str
+    fetched_at: datetime
+    source: str = "toss_openapi"
+
+
+@dataclass(frozen=True)
 class TossMarketContextSnapshot:
     business_date: date
     observed_at: datetime
