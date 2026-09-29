@@ -171,7 +171,6 @@ def load_control_state(path: Path) -> TelegramControlState:
             if isinstance(item, dict)
             and item.get("stock_code")
             and item.get("stock_name")
-            and item.get("source_url")
         )
         expires_at_raw = pending_payload.get("expires_at")
         if candidates and isinstance(expires_at_raw, str):

@@ -3447,6 +3447,27 @@ class StockMonitorRepository:
             for row in rows
         ]
 
+    def list_distinct_delivery_dates(
+        self,
+        *,
+        channel: str,
+        status: str,
+        detail_contains: str | None = None,
+    ) -> list[date]:
+        query = """
+            SELECT DISTINCT business_date
+            FROM delivery_log
+            WHERE channel = ? AND status = ?
+        """
+        params: list[str] = [channel, status]
+        if detail_contains is not None:
+            query += " AND instr(COALESCE(detail, ''), ?) > 0"
+            params.append(detail_contains)
+        query += " ORDER BY business_date DESC"
+        with self.connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [date.fromisoformat(row["business_date"]) for row in rows]
+
     def count_reports_by_business_date(self, *, limit: int = 5) -> list[tuple[date, int]]:
         return self._count_by_business_date("reports", limit=limit)
 

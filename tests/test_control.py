@@ -42,6 +42,30 @@ def test_control_state_tracks_pending_stock_selection() -> None:
     assert state.pending_stock_selection.candidates[0].stock_code == "005930"
 
 
+def test_control_state_persists_stock_selection_without_source_url(tmp_path) -> None:
+    path = tmp_path / "telegram_control.json"
+    state = TelegramControlState()
+    state.set_pending_stock_selection(
+        query="테스트바이오",
+        command_name="stock_lookup",
+        candidates=[
+            PendingStockSelectionCandidate(
+                stock_code="123456",
+                stock_name="테스트바이오",
+                market_type="코스닥 · 주식",
+                source_url="",
+            )
+        ],
+        expires_at=datetime(2026, 9, 29, 20, 15),
+    )
+
+    save_control_state(path, state)
+    loaded = load_control_state(path)
+
+    assert loaded.pending_stock_selection is not None
+    assert loaded.pending_stock_selection.candidates[0].stock_code == "123456"
+
+
 def test_control_state_tracks_active_intraday_delivery() -> None:
     state = TelegramControlState()
     created_at = datetime(2026, 4, 27, 12, 0, 0)
