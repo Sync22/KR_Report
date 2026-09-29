@@ -34,6 +34,7 @@ from stock_monitor.models import (
     StockThemeMembership,
     TossMarketContextSnapshot,
     TossPriorityQuoteBaseline,
+    TossStockUniverseEntry,
 )
 
 
@@ -4037,6 +4038,211 @@ def test_web_view_toss_market_context_route_uses_server_derived_top_two_only(tmp
     assert payload["priority_overlap_symbols"] == ["005930"]
     assert provider.symbols == ("005930", "000660")
     _assert_public_safe_payload(payload)
+def test_web_view_toss_market_context_rejects_when_latest_date_is_unavailable(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+
+    class FakeTossProvider:
+        configured = True
+        calls = 0
+
+        def get_market_context(self, *, reference_date: date, priority_symbols: tuple[str, ...]) -> dict[str, object]:
+            self.calls += 1
+            raise AssertionError("must not call provider without a stored latest date")
+
+    provider = FakeTossProvider()
+    server = cli_module.create_web_view_server(
+        config,
+        repository,
+        host="127.0.0.1",
+        port=0,
+        limit=5,
+        toss_quote_provider=provider,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            urllib.request.urlopen(base_url + "/api/toss-market-context?date=2026-07-10", timeout=5)
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            payload = json.loads(exc.read().decode("utf-8"))
+        else:
+            status = 200
+            payload = {}
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert status == 409
+    assert payload["latest_business_date"] is None
+    assert payload["reason"] == "latest_business_date_unavailable"
+    assert provider.calls == 0
+
+
+def test_web_view_daily_top_two_candles_use_selected_date_and_allowed_window(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    selected_date = date(2026, 7, 10)
+    later_date = date(2026, 7, 13)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name=name,
+                stock_code=code,
+                title=f"{name} report {suffix}",
+                broker_name=broker,
+                published_at=datetime(2026, 7, 10, 9, minute, 0),
+                business_date=selected_date,
+                collected_at=datetime(2026, 7, 10, 9, minute + 1, 0),
+                source_id=f"daily-candle-{code}-{suffix}",
+                identity_key=f"daily-candle-{code}-{suffix}",
+            )
+            for name, code, broker, minute, suffix in (
+                ("삼성전자", "005930", "NH투자증권", 0, 1),
+                ("SK하이닉스", "000660", "KB증권", 2, 1),
+                ("삼성전자", "005930", "KB증권", 4, 2),
+                ("SK하이닉스", "000660", "NH투자증권", 6, 2),
+            )
+        ]
+        + [
+            Report(
+                stock_name="NAVER",
+                stock_code="035420",
+                title="NAVER later report",
+                broker_name="신한투자증권",
+                published_at=datetime(2026, 7, 13, 9, 0, 0),
+                business_date=later_date,
+                collected_at=datetime(2026, 7, 13, 9, 1, 0),
+                source_id="daily-candle-later",
+                identity_key="daily-candle-later",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(selected_date)
+    repository.rebuild_daily_summaries(later_date)
+
+    class FakeTossProvider:
+        configured = True
+        calls: list[tuple[tuple[str, ...], datetime, int]] = []
+        raise_error = False
+
+        def get_priority_stock_daily_candles(
+            self,
+            *,
+            priority_symbols: tuple[str, ...],
+            before: datetime,
+            count: int,
+        ) -> dict[str, object]:
+            self.calls.append((priority_symbols, before, count))
+            if self.raise_error:
+                error = RuntimeError("safe provider error")
+                error.status_code = 404
+                error.provider_code = "symbol-not-found"
+                raise error
+            return {
+                "surface": "toss-priority-stock-daily-candles",
+                "read_only": True,
+                "configured": True,
+                "live_fetch": True,
+                "interval": "1d",
+                "requested_count": count,
+                "adjusted": True,
+                "fetched_at": "2026-07-13T10:00:00+09:00",
+                "items": [
+                    {
+                        "symbol": symbol,
+                        "candles": [
+                            {
+                                "timestamp": "2026-07-10T00:00:00+09:00",
+                                "openPrice": "70000",
+                                "highPrice": "70100",
+                                "lowPrice": "69900",
+                                "closePrice": "70050",
+                                "volume": "100",
+                            },
+                            {
+                                "timestamp": "2026-07-13T00:00:00+09:00",
+                                "openPrice": "70100",
+                                "highPrice": "70200",
+                                "lowPrice": "70050",
+                                "closePrice": "70150",
+                                "volume": "120",
+                            },
+                        ],
+                        "next_before": None,
+                    }
+                    for symbol in priority_symbols
+                ],
+                "rate_limit": {},
+            }
+
+    provider = FakeTossProvider()
+    server = cli_module.create_web_view_server(
+        config,
+        repository,
+        host="127.0.0.1",
+        port=0,
+        limit=5,
+        toss_quote_provider=provider,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        with urllib.request.urlopen(
+            base_url + "/api/toss-priority-daily-candles?date=2026-07-10&days=90&symbols=999999",
+            timeout=5,
+        ) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        try:
+            urllib.request.urlopen(base_url + "/api/toss-priority-daily-candles?date=2026-07-10&days=60", timeout=5)
+        except urllib.error.HTTPError as exc:
+            invalid_window_status = exc.code
+        else:
+            invalid_window_status = 200
+        provider.raise_error = True
+        try:
+            urllib.request.urlopen(base_url + "/api/toss-priority-daily-candles?date=2026-07-10&days=90", timeout=5)
+        except urllib.error.HTTPError as exc:
+            upstream_failure_status = exc.code
+            upstream_failure_payload = json.loads(exc.read().decode("utf-8"))
+        else:
+            upstream_failure_status = 200
+            upstream_failure_payload = {}
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert payload["business_date"] == selected_date.isoformat()
+    assert payload["requested_count"] == 90
+    assert payload["adjusted"] is True
+    assert [item["symbol"] for item in payload["items"]] == ["005930", "000660"]
+    assert all(
+        candle["timestamp"].startswith("2026-07-10")
+        for item in payload["items"]
+        for candle in item["candles"]
+    )
+    assert all(item["excluded_candle_count"] == 1 for item in payload["items"])
+    assert len(provider.calls) == 2
+    assert provider.calls[0][0] == ("005930", "000660")
+    assert provider.calls[0][1].isoformat() == "2026-07-10T23:59:59+09:00"
+    assert provider.calls[0][2] == 90
+    assert invalid_window_status == 400
+    assert upstream_failure_status == 502
+    assert upstream_failure_payload["upstream_status"] == 404
+    assert upstream_failure_payload["provider_code"] == "symbol-not-found"
+    _assert_public_safe_payload(payload)
+    _assert_public_safe_payload(upstream_failure_payload)
 
 
 def test_web_view_main_has_toss_market_context_panel() -> None:
@@ -4044,20 +4250,57 @@ def test_web_view_main_has_toss_market_context_panel() -> None:
     market_context_body = html.split("function renderTossMarketContext(data)", 1)[1].split(
         "async function loadTossMarketContext", 1
     )[0]
+    briefing_body = html.split("function renderDailyBriefing(data)", 1)[1].split(
+        "function renderSourceFreshnessSummary", 1
+    )[0]
+    active_tab_body = html.split("async function loadTabDataForActiveView(date)", 1)[1].split(
+        "async function loadDaily(date, options = {})", 1
+    )[0]
 
     assert 'id="toss-market-context"' in html
     assert "/api/toss-market-context" in html
-    assert "Toss 시장 문맥 확인 중" in html
-    assert "당일 지수" in html
+    assert "지수와 시장 수급을 확인 중입니다." in html
+    assert "당일 시장 · 수급" in html
     assert 'id="toss-market-context" class="intraday-overlap-panel" aria-live="polite"' in html
-    assert "전일 Toss 저장값/수급/ETF는 참고 영역입니다." in html
+    assert "전일 Toss 저장값/수급/ETF는 참고 영역입니다." not in html
     assert "후보 수급 [12009]은 관찰 후보·종목 상세에서 확인" not in html
-    assert "data.stock_names" in market_context_body
-    assert "data.etf_symbols" in market_context_body
+    assert "data.stock_names" not in market_context_body
+    assert "data.etf_symbols" not in market_context_body
     assert "data.market_price_changes" in market_context_body
     assert '["개인", record.individual]' in market_context_body
-    assert "Toss 거래대금 상위 Top10" in market_context_body
-    assert "Toss 거래대금 상위 ETF Top5" in market_context_body
+    assert 'data.cache === "stale"' in market_context_body
+    assert '["hit", "shared"].includes(data.cache)' in market_context_body
+    assert "Toss 거래대금 상위 Top10" not in market_context_body
+    assert "Toss 거래대금 상위 ETF Top5" not in market_context_body
+    assert "시장 수급 · 잠정" in market_context_body
+    assert 'id="main-market-context-card" data-view-panel="main"' in html
+    assert 'id="toss-market-refresh"' in html
+    assert 'id="market-reference-card" data-view-panel="main"' in html
+    assert 'data-view-tab="market"' not in html
+    assert 'data-view-tab="rotation"' not in html
+    assert "toss-priority-candles" not in html
+    assert 'id="top2-daily-range"' in html
+    assert '<option value="30">30거래일</option>' in html
+    assert '<option value="90" selected>90거래일</option>' in html
+    assert '<option value="180">180거래일</option>' in html
+    assert "/api/toss-priority-daily-candles" in html
+    assert "function renderDailyCandleChart" in html
+    assert "daily-candle-month-boundary" in html
+    assert "수정주가" in html
+    daily_chart_body = html.split("function renderDailyCandleChart(candles", 1)[1].split(
+        "function renderDailyCandlePanels", 1
+    )[0]
+    assert 'String(item.timestamp || "").slice(0, 7)' in daily_chart_body
+    assert "month !== previousMonth" in daily_chart_body
+    assert "loadTopTwoDailyCandles" not in active_tab_body
+    assert 'loadTopTwoDailyCandles(selectedDate);' in html
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in html
+    assert "moodCard.headline" in briefing_body
+    assert "priorityNames" not in briefing_body
+    assert "2건 이상" in briefing_body
+    assert "freshnessItems" not in briefing_body
+    assert "loadTossMarketContext" not in active_tab_body
+    assert 'loadTossMarketContext(selectedDate);' in html
 
 
 def test_web_view_html_labels_top_two_toss_flow_as_unstored_query_reference() -> None:
@@ -4066,9 +4309,10 @@ def test_web_view_html_labels_top_two_toss_flow_as_unstored_query_reference() ->
         "function updateTossPriorityRefreshButton()", 1
     )[0]
 
-    assert "Toss 조회 수급 참고(미저장)" in top_two_body
+    assert "Toss 조회 수급 참고(미저장)" not in top_two_body
     assert "Toss 당일 수급" not in top_two_body
     assert "data-toss-investor-trading" in top_two_body
+    assert '<strong>수급</strong>' in top_two_body
     assert "loadTossPriorityQuotes(tossPriorityDate)" in html
 
 
@@ -4279,6 +4523,68 @@ def test_web_view_candidate_evidence_exposes_value_context_from_stored_reference
     assert "krx_reference_date" not in daily_context
     _assert_public_safe_payload(daily_candidates)
     _assert_candidate_payload_has_no_internal_sort_fields(daily_candidates)
+
+
+def test_web_view_stock_search_uses_cached_toss_stock_universe(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 2)
+    repository.upsert_toss_stock_universe_cache(
+        [
+            TossStockUniverseEntry(
+                business_date=business_date,
+                market="KOSDAQ",
+                stock_code="123456",
+                stock_name="테스트바이오",
+                security_type="STOCK",
+                is_common_share=True,
+                isin_code="KR7123456000",
+                fetched_at=datetime(2026, 6, 2, 20, 5),
+            )
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_stock_search_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        query="테스트바이오",
+        now=datetime(2026, 6, 2, 20, 10),
+    )
+
+    assert snapshot["available"] is True
+    assert snapshot["items"][0]["stock_code"] == "123456"
+    assert snapshot["items"][0]["stock_name"] == "테스트바이오"
+    assert snapshot["items"][0]["market"] == "KOSDAQ"
+    assert snapshot["items"][0]["has_selected_date_report"] is False
+    assert snapshot["stock_universe_reference_date"] == business_date.isoformat()
+    _assert_public_safe_payload(snapshot)
+
+    repository.upsert_toss_stock_universe_cache(
+        [
+            TossStockUniverseEntry(
+                business_date=date(2026, 6, 3),
+                market="KOSPI",
+                stock_code="234567",
+                stock_name="다음날상장",
+                security_type="STOCK",
+                is_common_share=True,
+                isin_code="KR7234567000",
+                fetched_at=datetime(2026, 6, 3, 20, 5),
+            )
+        ]
+    )
+    historical_snapshot = cli_module.build_web_view_stock_search_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        query="테스트바이오",
+        now=datetime(2026, 6, 3, 20, 10),
+    )
+    assert historical_snapshot["available"] is False
+    assert historical_snapshot["stock_universe_reference_date"] is None
 
 
 def test_web_view_news_observation_keeps_unique_direct_evidence_after_later_empty_collection(
@@ -5075,7 +5381,7 @@ def test_web_view_etf_trend_snapshot_exposes_rotation_evidence_scope(tmp_path, m
     assert snapshot["basis"] == "Toss 거래대금 상위 ETF"
     assert snapshot["constituents_available"] is False
     assert snapshot["composition_scope"] == "구성종목 미포함"
-    assert snapshot["display_label"] == "ETF 순환매 참고"
+    assert snapshot["display_label"] == "ETF 저장 참고"
     first = snapshot["items"][0]["top_etfs_by_turnover"][0]
     assert first["evidence_label"] == "거래대금 988억 · NAV 12,400.5 · 기초지수 FnGuide 반도체 TOP10"
     assert first["rotation_reference"] == "저장 ETF 거래대금/NAV/기초지수 기준"
@@ -6348,10 +6654,12 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
         thread.join(timeout=5)
 
     assert "<h1>KR-Stock</h1>" in html
-    assert "Daily Report" in html
+    assert "일일 리포트" in html
     assert 'class="hero-title-row"' in html
     assert 'id="calendar-open" class="calendar-trigger"' in html
     assert 'id="calendar-selected-date" class="calendar-selected-date"' in html
+    assert 'id="main-priority-date"' not in html
+    assert 'id="daily-briefing-date"' not in html
     assert 'id="archive-calendar-dialog" class="calendar-dialog"' in html
     assert 'id="calendar-close" class="dialog-close"' in html
     assert 'selectedDate ? `(${selectedDate})` : ""' in html
@@ -6361,12 +6669,10 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert 'data-view-tab="main"' in html
     assert 'data-view-tab="watch"' in html
     assert 'data-view-tab="stock"' in html
-    assert 'data-view-tab="market"' in html
-    assert 'data-view-tab="rotation"' in html
+    assert 'data-view-tab="market"' not in html
+    assert 'data-view-tab="rotation"' not in html
     assert html.index('data-view-tab="main"') < html.index('data-view-tab="watch"')
     assert html.index('data-view-tab="watch"') < html.index('data-view-tab="stock"')
-    assert html.index('data-view-tab="stock"') < html.index('data-view-tab="market"')
-    assert html.index('data-view-tab="market"') < html.index('data-view-tab="rotation"')
     assert 'data-view-tab="main" aria-current="page" aria-pressed="true"' in html
     assert 'data-view-tab="watch" aria-current="false" aria-pressed="false"' in html
     assert 'button.setAttribute("aria-current", isActive ? "page" : "false");' in html
@@ -6374,10 +6680,12 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "moveViewTabFromKeyboard" in html
     assert '["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)' in html
     assert 'page.keyboard.press("ArrowRight")' not in html
-    assert 'class="card span-12 market-reference-card" id="market-reference-card" data-view-panel="market" hidden open' in html
-    assert 'document.getElementById("market-reference-card").open = true' in html
+    assert 'class="card span-12 market-reference-card" id="market-reference-card" data-view-panel="main"' in html
+    assert 'document.getElementById("market-reference-card").open = true' not in html
+    assert 'id="main-market-context-card" data-view-panel="main"' in html
+    assert 'id="toss-market-refresh"' in html
     assert "눈에 띄는 종목" in html
-    assert 'item.turnover_display || compactAmount(item.turnover, "원")' in html
+    assert 'labeled("거래대금", compactTurnover(item.turnover))' in html
     assert "<th>D+1</th><th>D+5</th><th>D+10</th><th>D+20</th>" not in html
     assert 'colspan="8"' not in html
     assert "관찰 후보 근거" not in html
@@ -6388,17 +6696,26 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
         'class="card span-12 main-priority-card" id="main-priority-card" '
         'data-view-panel="main"'
     ) in html
-    assert ".main-priority-card { order: -1; }" in html
+    assert ".main-priority-card { order: -1; }" not in html
+    assert html.index('id="main-priority-card"') < html.index('class="card span-12 daily-briefing"')
     main_priority_body = html.split('id="main-priority-card"', 1)[1].split(
-        'id="candidate-evidence-card"', 1
+        'class="card span-12 daily-briefing"', 1
+    )[0]
+    daily_candle_query_body = html.split("async function loadTopTwoDailyCandles(date)", 1)[1].split(
+        "function renderTopTwoReviewCandidates", 1
     )[0]
     daily_briefing_body = html.split('class="card span-12 daily-briefing"', 1)[1].split(
-        'id="main-priority-card"', 1
+        'id="main-market-context-card"', 1
     )[0]
-    assert "오늘 볼 것: Top2 후보와 현재 확인 가능한 근거만 먼저 봅니다. 전일 Toss 저장값/수급/ETF는 참고 영역입니다." in main_priority_body
     assert 'id="intraday-market-top-check"' in main_priority_body
     assert 'id="intraday-market-top-status"' in main_priority_body
     assert 'id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden' in main_priority_body
+    assert 'id="top2-daily-candle-status"' in main_priority_body
+    assert 'class="main-priority-controls"' in main_priority_body
+    assert 'HTTP ${response.status}' in daily_candle_query_body
+    assert 'data.upstream_status' in daily_candle_query_body
+    assert 'data.provider_code' in daily_candle_query_body
+    assert "no_candles_before_top2_business_date" in daily_candle_query_body
     assert "메인은 오늘 먼저 볼 2종만 압축합니다." not in html
     assert 'class="live-source-pill"' not in main_priority_body
     assert ".live-source-pill" not in html
@@ -6447,8 +6764,12 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
         "function updateTossPriorityRefreshButton", 1
     )[0]
     assert "esc(valueLine)" not in top_two_body
-    assert "현재 근거:" in top_two_body
-    assert "현재 미확인:" in top_two_body
+    assert "현재 근거:" not in top_two_body
+    assert "현재 미확인:" not in top_two_body
+    assert "<strong>근거</strong>" in top_two_body
+    assert "<strong>확인 필요</strong>" in top_two_body
+    assert 'targetRevisionLine === "최근 조정 없음"' in top_two_body
+    assert '<details class="candidate-research-focus">' in top_two_body
     assert "당일 Toss 20:00 저장 예정" in top_two_body
     assert "오늘 누적 뉴스" in html
     assert "topTwoCurrentEvidenceLine(item)" in top_two_body
@@ -6534,45 +6855,41 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "오늘 읽을 요약" in html
     assert "daily-briefing-headline" in html
     assert "briefing-report-flow" not in html
-    assert "briefing-turnover" in html
-    assert "briefing-investor-flow" in html
+    assert "briefing-turnover" not in html
+    assert "briefing-investor-flow" not in html
     assert "briefing-market-index" not in html
     assert "briefing-market-index-title" not in html
-    assert "briefing-turnover-title" in html
-    assert "시장 참고" in html
-    assert "briefing-reference-head" in html
-    assert "briefing-reference-title" in html
-    assert "briefingReferenceTitle" in html
+    assert "briefing-turnover-title" not in html
+    assert "briefing-saved-market-details" not in html
     assert "briefingIndexPair" not in html
-    assert "briefing-box span:empty" in html
-    assert "briefingPairTitle" in html
-    assert 'label: ""' in html
-    assert "briefing-investor-flow-sub" in html
-    assert "briefing-market-row" in html
-    assert "briefing-reference-card" in html
-    assert "briefing-reference-divider" in html
-    assert "briefing-card-lines" in html
-    assert "briefing-flow-lines" in html
-    assert "briefing-detail-flow" in html
-    assert "setBriefingPairValue" in html
+    assert "briefing-box span:empty" not in html
+    assert "briefingPairTitle" not in html
+    assert "briefing-investor-flow-sub" not in html
+    assert "briefing-market-row" not in html
+    assert "briefing-reference-card" not in html
+    assert "briefing-reference-divider" not in html
+    assert "briefing-card-lines" not in html
+    assert "briefing-flow-lines" not in html
+    assert "briefing-detail-flow" not in html
+    assert "setBriefingPairValue" not in html
     assert "눈에 띄는 업종" not in html
     assert "briefing-watch-chips" not in html
     assert "briefing-check-points" in html
     assert "renderBriefingCheckPoints" in html
     assert "reportFlowPoint" not in html
-    assert "briefingTurnoverPair" in html
-    assert "top_items" in html
+    assert "briefingTurnoverPair" not in html
+    assert "top_items" not in html
     assert 'items.map((item) => `${esc(item.stock_name' not in html
     assert 'indices.map((item) => `${esc(item.index_series' not in html
     assert "renderDailyBriefing(data)" in html
-    assert html.index('id="news-observation-summary"') < html.index('id="main-priority-card"')
+    assert html.index('id="main-priority-card"') < html.index('id="news-observation-summary"')
     assert "item?.data_scope" not in html
     assert '${actionableItems.length ? "" : `<p class="news-observation-summary-connection">' in html
     assert "date-calendar-cell" in html
     assert "class=\"weekday\"" not in html
-    assert "Toss 당일 시장" in html
+    assert "당일 시장 · 수급" in html
     assert "선택 날짜 Toss 저장 기준" in html
-    assert html.index("Toss 당일 시장") < html.index("선택 날짜 Toss 저장 기준")
+    assert html.index("당일 시장 · 수급") < html.index("선택 날짜 Toss 저장 기준")
     assert "현재 선택" not in html
     assert "선택 상태" not in html
     assert "stock-single-toggle" in html
@@ -6599,8 +6916,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert html.count('labeled("거래대금", compactTurnover(item.turnover))') >= 3
     assert "market-etf-rows" not in html
     assert "ETF 거래대금 상위" not in html
-    assert "ETF는 순환매 탭에서 봅니다." in html
-    assert "ETF는 순환매 탭에서 봅니다." in html
+    assert "ETF는 메인의 업종·ETF 참고에서 확인합니다." in html
+    assert "ETF는 메인의 업종·ETF 참고에서 확인합니다." in html
     assert 'labeled("거래대금", compactAmount(item.turnover))' not in html
     assert "${compactTurnover(item.turnover)} · ${percent(item.change_percent)}" in html
     assert 'String(flow?.notice || "저장된 ETF 데이터 기준입니다.")' in html
@@ -6700,23 +7017,23 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "<b>${esc(data.stock_name || \"-\")} ${esc(data.stock_code || \"\")} | ${market}</b>" in html
     assert "brokerDisplay(item.broker_display)" in html
     assert "시장 문맥" in html
-    assert "시장 탭은 해석 문장이 아니라 선택 날짜의 Toss 저장/수급 근거를 확인하는 화면입니다." in html
+    assert "선택 날짜의 Toss 저장 시장·수급 근거를 확인합니다. 최신 당일 조회는 메인 탭의 명시적 요청으로 제공합니다." in html
     assert "Toss 저장 최근 흐름" in html
     assert "주기 데이터 점검" not in html
     assert "저장된 테마 구성 종목 중 선택 날짜에 리포트가 나온 종목" not in html
     assert "투자자 수급 참고" in html
     assert "수급 흐름" in html
-    assert "순환매 참고" in html
-    assert "순환매 탭은 업종/테마 흐름과 ETF 참고를 같은 보조 관찰 축으로 묶어 봅니다." in html
-    assert "rotation-details" in html
-    assert 'document.getElementById("rotation-details").open = true' in html
+    assert "순환매 참고" not in html
+    assert "리포트 분류와 저장 ETF 값의 참고 화면입니다. 실제 자금 순환을 계산하지 않습니다." in html
+    assert 'id="industry-etf-details" data-view-panel="main"' in html
+    assert 'document.getElementById("industry-etf-details").open = true' not in html
     assert "renderRotationCandidateStocks(item.candidate_stocks)" in html
     assert "renderRotationCandidateEtfs(item.candidate_etfs)" in html
-    assert "순환매 참고 종목" in html
-    assert "순환매 참고 ETF" in html
+    assert "업종 참고 종목" in html
+    assert "ETF 참고" in html
     assert "category-trend-details" in html
-    assert "업종 기준 좌표" in html
-    assert "펼치면 순환매 참고 이미지를 불러옵니다" in html
+    assert "수동 좌표가 있는 항목만 예시 이미지에 표시합니다." in html
+    assert "펼치면 업종·테마 참고를 불러옵니다" in html
     assert "safePublicCategoryId" in html
     assert 'value.startsWith(`${categoryType}|`)' in html
     assert "syncCategoryFromStock" in html

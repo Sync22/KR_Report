@@ -291,15 +291,16 @@ def _run_web_view_browser_smoke(
     print(f"- issues: {payload['issue_count']}")
     for viewport in payload["viewports"]:
         tab_order = "/".join(viewport.get("tab_order") or [])
-        panel_state = (
+        section_state = (
             f"watch={viewport.get('watch_panel_clickable')} "
             f"stock_waiting_for_selection={viewport.get('stock_panel_hidden_before_selection')} "
-            f"market={viewport.get('market_panel_clickable')} "
-            f"rotation={viewport.get('rotation_panel_clickable')}"
+            f"market_details={viewport.get('market_details_open')} "
+            f"market_reference={viewport.get('market_reference_open')} "
+            f"rotation_details={viewport.get('rotation_details_open')}"
         )
         print(
             f"- viewport | {viewport['name']} | {viewport['width']}x{viewport['height']} | "
-            f"tabs={viewport['tab_count']} | order={tab_order} | panels={panel_state} | "
+            f"tabs={viewport['tab_count']} | order={tab_order} | sections={section_state} | "
             f"overflow={viewport['horizontal_overflow_px']}px"
         )
     for check in payload["api_checks"]:
@@ -676,22 +677,11 @@ def _collect_web_view_browser_render_smoke_issues(
                         )
                         current_tab_count = page.locator('[data-view-tab][aria-current="page"]').count()
                         search_count = page.locator("#stock-search-input").count()
+                        search_input_visible = page.locator("#stock-search-input").is_visible()
+                        search_input_enabled = page.locator("#stock-search-input").is_enabled()
                         intraday_button_visible = page.locator("#intraday-market-top-check").is_visible()
                         intraday_overlap_count = page.locator("#intraday-market-top-overlap").count()
                         candidate_count = page.locator("#main-priority-rows").count()
-                        horizontal_overflow_px = int(
-                            page.evaluate(
-                                """
-                                () => Math.max(
-                                  0,
-                                  Math.max(
-                                    document.documentElement.scrollWidth,
-                                    document.body ? document.body.scrollWidth : 0
-                                  ) - document.documentElement.clientWidth
-                                )
-                                """
-                            )
-                        )
                         candidate_panel_visible = page.locator("#main-priority-rows").is_visible()
                         intraday_overlap_initial_visible = page.locator("#intraday-market-top-overlap").is_visible()
                         page.locator('[data-view-tab="watch"]').click(timeout=timeout_ms)
@@ -781,18 +771,35 @@ def _collect_web_view_browser_render_smoke_issues(
                             candidate_journey_flow["stock_observation_journey_visible"] = page.locator(
                                 "#stock-context .stock-observation-journey"
                             ).is_visible()
-                        page.locator('[data-view-tab="market"]').click(timeout=timeout_ms)
-                        page.wait_for_timeout(250)
-                        market_panel_visible = page.locator("#market-reference-card").is_visible()
-                        market_tab_current = page.locator('[data-view-tab="market"]').get_attribute("aria-current") == "page"
-                        page.locator('[data-view-tab="rotation"]').click(timeout=timeout_ms)
-                        page.wait_for_timeout(250)
-                        rotation_panel_visible = page.locator("#rotation-details").is_visible()
-                        rotation_tab_current = page.locator('[data-view-tab="rotation"]').get_attribute("aria-current") == "page"
-                        page.locator('[data-view-tab="stock"]').focus(timeout=timeout_ms)
+                        page.locator('[data-view-tab="main"]').click(timeout=timeout_ms)
+                        market_details = page.locator("#market-reference-card")
+                        market_details.locator(":scope > summary").click(timeout=timeout_ms)
+                        market_details_open = bool(market_details.evaluate("(node) => node.open"))
+                        market_reference = page.locator("#market-reference-card .market-reference-panel").first
+                        market_reference.locator(":scope > summary").click(timeout=timeout_ms)
+                        market_reference_open = bool(market_reference.evaluate("(node) => node.open"))
+                        page.locator("#market-notice").wait_for(state="visible", timeout=timeout_ms)
+                        rotation_details = page.locator("#industry-etf-details")
+                        rotation_details.locator(":scope > summary").click(timeout=timeout_ms)
+                        rotation_details_open = bool(rotation_details.evaluate("(node) => node.open"))
+                        page.locator("#rotation-overlay").wait_for(state="visible", timeout=timeout_ms)
+                        horizontal_overflow_px = int(
+                            page.evaluate(
+                                """
+                                () => Math.max(
+                                  0,
+                                  Math.max(
+                                    document.documentElement.scrollWidth,
+                                    document.body ? document.body.scrollWidth : 0
+                                  ) - document.documentElement.clientWidth
+                                )
+                                """
+                            )
+                        )
+                        page.locator('[data-view-tab="main"]').focus(timeout=timeout_ms)
                         page.keyboard.press("ArrowRight")
                         page.wait_for_timeout(250)
-                        keyboard_market_current = page.locator('[data-view-tab="market"]').get_attribute("aria-current") == "page"
+                        keyboard_watch_current = page.locator('[data-view-tab="watch"]').get_attribute("aria-current") == "page"
                         viewport_result = {
                             "name": spec["name"],
                             "width": spec["width"],
@@ -802,6 +809,8 @@ def _collect_web_view_browser_render_smoke_issues(
                             "tab_order": tab_order,
                             "current_tab_count": current_tab_count,
                             "search_input": bool(search_count),
+                            "search_input_visible": search_input_visible,
+                            "search_input_enabled": search_input_enabled,
                             "calendar_dialog_open": calendar_dialog_open,
                             "intraday_button": intraday_button_visible,
                             "intraday_overlap_panel": bool(intraday_overlap_count),
@@ -812,13 +821,12 @@ def _collect_web_view_browser_render_smoke_issues(
                             "stock_panel_hidden_before_selection": stock_panel_hidden_before_selection,
                             "stock_search_flow": stock_search_flow,
                             "candidate_journey_flow": candidate_journey_flow,
-                            "market_panel_clickable": market_panel_visible,
-                            "rotation_panel_clickable": rotation_panel_visible,
+                            "market_details_open": market_details_open,
+                            "market_reference_open": market_reference_open,
+                            "rotation_details_open": rotation_details_open,
                             "watch_tab_current": watch_tab_current,
                             "stock_tab_current": stock_tab_current,
-                            "market_tab_current": market_tab_current,
-                            "rotation_tab_current": rotation_tab_current,
-                            "keyboard_market_current": keyboard_market_current,
+                            "keyboard_watch_current": keyboard_watch_current,
                             "horizontal_overflow_px": horizontal_overflow_px,
                         }
                         viewports.append(viewport_result)
@@ -842,7 +850,7 @@ def _collect_web_view_browser_render_smoke_issues(
                                         "message": f"required visible text is missing: {text}",
                                     }
                                 )
-                        expected_tab_order = ["main", "watch", "stock", "market", "rotation"]
+                        expected_tab_order = ["main", "watch", "stock"]
                         if tab_count != len(expected_tab_order):
                             issues.append(
                                 {
@@ -856,7 +864,7 @@ def _collect_web_view_browser_render_smoke_issues(
                                 {
                                     "code": "invalid_view_tab_order",
                                     "path": f"viewport[{spec['name']}].tabs",
-                                    "message": "expected view tab order main/watch/stock/market/rotation",
+                                    "message": "expected view tab order main/watch/stock",
                                 }
                             )
                         if current_tab_count != 1:
@@ -873,6 +881,14 @@ def _collect_web_view_browser_render_smoke_issues(
                                     "code": "missing_stock_search",
                                     "path": f"viewport[{spec['name']}].search",
                                     "message": "stock search input is missing",
+                                }
+                            )
+                        if not search_input_visible or not search_input_enabled:
+                            issues.append(
+                                {
+                                    "code": "stock_search_not_ready",
+                                    "path": f"viewport[{spec['name']}].search",
+                                    "message": "stock search input is not visible and enabled for the selected date",
                                 }
                             )
                         if not intraday_button_visible:
@@ -973,44 +989,36 @@ def _collect_web_view_browser_render_smoke_issues(
                                     "message": "stored no-report stock search flow did not render the selected-date empty state",
                                 }
                             )
-                        if not market_panel_visible:
+                        if not market_details_open:
                             issues.append(
                                 {
-                                    "code": "market_tab_not_clickable",
-                                    "path": f"viewport[{spec['name']}].market_tab",
-                                    "message": "market tab did not expose market reference panel",
+                                    "code": "market_details_not_openable",
+                                    "path": f"viewport[{spec['name']}].market_details",
+                                    "message": "main view did not open its market reference disclosure",
                                 }
                             )
-                        if not market_tab_current:
+                        if not market_reference_open:
                             issues.append(
                                 {
-                                    "code": "market_tab_current_state_missing",
-                                    "path": f"viewport[{spec['name']}].market_tab",
-                                    "message": "market tab did not expose current state after click",
+                                    "code": "market_reference_not_openable",
+                                    "path": f"viewport[{spec['name']}].market_reference",
+                                    "message": "market reference details did not open inside its main-view disclosure",
                                 }
                             )
-                        if not rotation_panel_visible:
+                        if not rotation_details_open:
                             issues.append(
                                 {
-                                    "code": "rotation_tab_not_clickable",
-                                    "path": f"viewport[{spec['name']}].rotation_tab",
-                                    "message": "rotation tab did not expose rotation reference panel",
+                                    "code": "rotation_details_not_openable",
+                                    "path": f"viewport[{spec['name']}].rotation_details",
+                                    "message": "main view did not open its industry/ETF reference disclosure",
                                 }
                             )
-                        if not rotation_tab_current:
-                            issues.append(
-                                {
-                                    "code": "rotation_tab_current_state_missing",
-                                    "path": f"viewport[{spec['name']}].rotation_tab",
-                                    "message": "rotation tab did not expose current state after click",
-                                }
-                            )
-                        if not keyboard_market_current:
+                        if not keyboard_watch_current:
                             issues.append(
                                 {
                                     "code": "top_tab_keyboard_navigation_failed",
                                     "path": f"viewport[{spec['name']}].tabs",
-                                    "message": "ArrowRight from stock tab did not move current state to market tab",
+                                    "message": "ArrowRight from main tab did not move current state to watch tab",
                                 }
                             )
                         if not intraday_overlap_count:

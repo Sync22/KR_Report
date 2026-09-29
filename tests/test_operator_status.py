@@ -1009,6 +1009,152 @@ def test_operator_status_warns_when_scheduled_toss_capture_evidence_is_missing_a
     assert "live_observation.toss_market_context.missing" in snapshot["health"]["warning_checks"]
 
 
+def test_operator_status_warns_when_toss_capture_was_skipped_after_deadline(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 7, 10)
+    repository.record_operation_event(
+        OperationEvent(
+            event_time=datetime(2026, 7, 10, 20, 21),
+            component="toss-market-context",
+            event_type="time-window",
+            status="skipped",
+            business_date=business_date,
+            detail="late_run; latest=20:20",
+        )
+    )
+    scheduler_tasks = [
+        {
+            "task_name": "StockMonitor-TossCloseSnapshot",
+            "available": True,
+            "exists": True,
+            "state": "Ready",
+            "enabled": True,
+            "next_run_time": None,
+            "last_run_time": None,
+            "last_task_result": 0,
+            "status_class": "healthy",
+            "detail": None,
+        }
+    ]
+
+    snapshot = cli_module.build_operator_status_snapshot(
+        config,
+        repository,
+        limit=5,
+        now=datetime(2026, 7, 10, 20, 22),
+        scheduler_tasks=scheduler_tasks,
+    )
+
+    component = snapshot["live_observation"]["components"]["toss_market_context"]
+    assert component["evidence_status"] == "attention"
+    assert component["attention_reason"] == "missing"
+    assert "live_observation.toss_market_context.missing" in snapshot["health"]["warning_checks"]
+
+
+def test_operator_status_does_not_warn_for_suppressed_toss_capture_skip(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 7, 10)
+    repository.add_run_suppressed_date(
+        business_date,
+        updated_at=datetime(2026, 7, 10, 19, 0),
+        detail="operator no-run",
+    )
+    repository.record_operation_event(
+        OperationEvent(
+            event_time=datetime(2026, 7, 10, 20, 5),
+            component="toss-market-context",
+            event_type="run-guard",
+            status="skipped",
+            business_date=business_date,
+            detail="2026-07-10 is configured as an operator no-run date.",
+        )
+    )
+    scheduler_tasks = [
+        {
+            "task_name": "StockMonitor-TossCloseSnapshot",
+            "available": True,
+            "exists": True,
+            "state": "Ready",
+            "enabled": True,
+            "next_run_time": None,
+            "last_run_time": None,
+            "last_task_result": 0,
+            "status_class": "healthy",
+            "detail": None,
+        }
+    ]
+
+    snapshot = cli_module.build_operator_status_snapshot(
+        config,
+        repository,
+        limit=5,
+        now=datetime(2026, 7, 10, 20, 22),
+        scheduler_tasks=scheduler_tasks,
+    )
+
+    assert "live_observation.toss_market_context.missing" not in snapshot["health"]["warning_checks"]
+
+
+def test_operator_status_keeps_successful_toss_capture_after_late_skip_event(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 7, 10)
+    repository.record_operation_event(
+        OperationEvent(
+            event_time=datetime(2026, 7, 10, 20, 5),
+            component="toss-market-context",
+            event_type="capture",
+            status="completed",
+            business_date=business_date,
+            detail="missing_domains=-",
+        )
+    )
+    repository.record_operation_event(
+        OperationEvent(
+            event_time=datetime(2026, 7, 10, 20, 21),
+            component="toss-market-context",
+            event_type="time-window",
+            status="skipped",
+            business_date=business_date,
+            detail="late_run; latest=20:20",
+        )
+    )
+    scheduler_tasks = [
+        {
+            "task_name": "StockMonitor-TossCloseSnapshot",
+            "available": True,
+            "exists": True,
+            "state": "Ready",
+            "enabled": True,
+            "next_run_time": None,
+            "last_run_time": None,
+            "last_task_result": 0,
+            "status_class": "healthy",
+            "detail": None,
+        }
+    ]
+
+    snapshot = cli_module.build_operator_status_snapshot(
+        config,
+        repository,
+        limit=5,
+        now=datetime(2026, 7, 10, 20, 22),
+        scheduler_tasks=scheduler_tasks,
+    )
+
+    component = snapshot["live_observation"]["components"]["toss_market_context"]
+    assert component["evidence_status"] == "observed"
+    assert "live_observation.toss_market_context.missing" not in snapshot["health"]["warning_checks"]
+
+
 def test_operator_status_live_observation_prefers_latest_krx_event(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)

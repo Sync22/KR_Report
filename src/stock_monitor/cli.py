@@ -87,6 +87,7 @@ from stock_monitor.fetch.naver_stock_theme import (
     fetch_stock_theme_memberships,
 )
 from stock_monitor.fetch.toss_openapi import (
+    TOSS_KR_STOCK_UNIVERSE_MARKETS,
     TossOpenApiLabConfig,
     build_toss_readonly_probe_plan,
     run_toss_readonly_probe,
@@ -123,6 +124,7 @@ from stock_monitor.models import (
     StockMetadata,
     TossMarketContextSnapshot,
     TossPriorityQuoteBaseline,
+    TossStockUniverseEntry,
     WorkerState,
 )
 from stock_monitor.notify.control import (
@@ -316,13 +318,12 @@ MARKET_BRIEFING_SLOT_LABELS = {
 }
 WEB_VIEW_STARTUP_SHORTCUT_NAME = "StockMonitor-WebView.lnk"
 MINI_PC_EXPECTED_SCHEDULER_TASK_SUFFIXES = (
-    "KrxDailyBackfill",
     "Notify",
     "Poll",
-    "KrxMentionedFlowBackfill",
     "MarketBriefingMood",
     "MarketBriefingLunch",
     "MarketBriefingPreclose",
+    "TossCloseSnapshot",
     "TelegramCommands",
     "WebViewHourlyRestart",
 )
@@ -1698,6 +1699,22 @@ def build_parser() -> argparse.ArgumentParser:
     toss_openapi_probe_parser.add_argument("--confirm-token-reissue", action="store_true")
     toss_openapi_probe_parser.add_argument("--json", action="store_true")
 
+    toss_market_calendar_check_parser = subparsers.add_parser(
+        "toss-market-calendar-check",
+        help="Compare planned dates with the read-only Toss KR market calendar.",
+    )
+    toss_market_calendar_check_parser.add_argument(
+        "--date",
+        dest="dates",
+        type=date.fromisoformat,
+        action="append",
+        required=True,
+        help="A planned observation/test date; can be repeated up to 20 dates.",
+    )
+    toss_market_calendar_check_parser.add_argument("--live", action="store_true")
+    toss_market_calendar_check_parser.add_argument("--confirm-token-reissue", action="store_true")
+    toss_market_calendar_check_parser.add_argument("--json", action="store_true")
+
     toss_priority_baseline_parser = subparsers.add_parser(
         "toss-priority-baseline-collect",
         help="Collect and save Toss 20:00 quote baselines for server-derived web-view priority candidates.",
@@ -2171,7 +2188,15 @@ def main(argv: list[str] | None = None) -> int:
             confirm_token_reissue=args.confirm_token_reissue,
             as_json=args.json,
         )
-
+    if args.command == "toss-market-calendar-check":
+        config = RuntimeConfig.from_env()
+        return _run_toss_market_calendar_check(
+            config,
+            dates=tuple(args.dates),
+            live=args.live,
+            confirm_token_reissue=args.confirm_token_reissue,
+            as_json=args.json,
+        )
     config = RuntimeConfig.from_env(headless=not getattr(args, "headed", False))
     config.ensure_runtime_dirs()
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
@@ -2291,7 +2316,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "summarize-previous-business-day":
             return _run_summary(config, repository, explicit_date=args.date, as_json=args.json)
         if args.command == "lookup-stock-code":
-            return _run_lookup_stock_code(config, query=args.query)
+            return _run_lookup_stock_code(config, repository, query=args.query)
         if args.command == "lookup-stock-research":
             return _run_lookup_stock_research(
                 config,
@@ -7722,6 +7747,188 @@ def _run_toss_openapi_readonly_probe(
     return 0
 
 
+def _run_toss_market_calendar_check(
+    config: RuntimeConfig,
+    *,
+    dates: tuple[date, ...],
+    live: bool,
+    confirm_token_reissue: bool,
+    as_json: bool,
+    calendar_provider: TossPriorityQuoteProvider | None = None,
+) -> int:
+    checked_dates = tuple(dict.fromkeys(dates))
+    if not checked_dates:
+        raise ValueError("Provide at least one --date to check.")
+    if len(checked_dates) > 20:
+        raise ValueError("A single market-calendar check is limited to 20 explicit dates.")
+
+    payload: dict[str, object] = {
+        "surface": "toss-market-calendar-check",
+        "dates": [value.isoformat() for value in checked_dates],
+        "source": "toss_openapi_market_calendar_kr",
+        "local_calendar_source": "configured_weekdays_and_holiday_overrides",
+        "read_only": True,
+        "live_fetch": False,
+        "writes_db": False,
+        "sends_telegram": False,
+        "registers_scheduler": False,
+        "mismatch_count": 0,
+        "unknown_count": 0,
+        "results": [],
+    }
+    if not live:
+        payload["mode"] = "plan"
+        if as_json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print("Toss KR market-calendar check (plan)")
+            print(f"- dates: {', '.join(payload['dates'])}")
+            print("- live_fetch: false")
+            print("- next: rerun with --live --confirm-token-reissue after local keys are configured")
+        return 0
+    if not confirm_token_reissue:
+        raise RuntimeError("Pass --confirm-token-reissue before using --live.")
+
+    provider = calendar_provider
+    if provider is None:
+        toss_config = TossOpenApiLabConfig.from_env(config.root_dir)
+        if not toss_config.live_enabled:
+            raise RuntimeError("Set STOCK_MONITOR_TOSS_OPENAPI_LIVE_ENABLED=true before using --live.")
+        if not toss_config.client_id or not toss_config.client_secret:
+            raise RuntimeError(
+                "Set STOCK_MONITOR_TOSS_OPENAPI_CLIENT_ID and "
+                "STOCK_MONITOR_TOSS_OPENAPI_CLIENT_SECRET before using --live."
+            )
+        provider = TossPriorityQuoteProvider(config=toss_config)
+
+    results_by_date: dict[date, dict[str, object]] = {}
+    remaining_dates = set(checked_dates)
+    while remaining_dates:
+        ordered_remaining = sorted(remaining_dates)
+        query_date = ordered_remaining[0]
+        if len(ordered_remaining) >= 3:
+            middle, following = ordered_remaining[1:3]
+            if (middle - query_date).days <= 7 and (following - middle).days <= 7:
+                query_date = middle
+        try:
+            calendar = provider.get_market_calendar(query_date=query_date)
+        except Exception as exc:
+            results_by_date[query_date] = {
+                "date": query_date.isoformat(),
+                "status": "error",
+                "local_is_business_day": is_business_day(query_date, config.holiday_overrides),
+                "error_type": type(exc).__name__,
+            }
+            remaining_dates.remove(query_date)
+            for unverified_date in remaining_dates:
+                results_by_date[unverified_date] = {
+                    "date": unverified_date.isoformat(),
+                    "status": "not_checked",
+                    "local_is_business_day": is_business_day(unverified_date, config.holiday_overrides),
+                    "reason": "prior_calendar_request_failed",
+                }
+            remaining_dates.clear()
+            break
+
+        calendar_days = calendar if isinstance(calendar, dict) else {}
+        for day_key in ("previousBusinessDay", "today", "nextBusinessDay"):
+            day = calendar_days.get(day_key)
+            day_date_text = day.get("date") if isinstance(day, dict) else None
+            matching_date = next(
+                (value for value in remaining_dates if value.isoformat() == day_date_text),
+                None,
+            )
+            if matching_date is None:
+                continue
+            integrated = day.get("integrated")
+            regular_market = integrated.get("regularMarket") if isinstance(integrated, dict) else None
+            if integrated is None:
+                toss_is_business_day: bool | None = False
+            elif not isinstance(integrated, dict) or "regularMarket" not in integrated:
+                toss_is_business_day = None
+            elif regular_market is None:
+                toss_is_business_day = False
+            elif (
+                isinstance(regular_market, dict)
+                and isinstance(regular_market.get("startTime"), str)
+                and bool(regular_market["startTime"].strip())
+                and isinstance(regular_market.get("endTime"), str)
+                and bool(regular_market["endTime"].strip())
+            ):
+                try:
+                    market_start = datetime.fromisoformat(regular_market["startTime"].strip())
+                    market_end = datetime.fromisoformat(regular_market["endTime"].strip())
+                    toss_is_business_day = (
+                        True
+                        if market_start.date() == matching_date
+                        and market_end.date() == matching_date
+                        and market_end > market_start
+                        else None
+                    )
+                except (TypeError, ValueError):
+                    toss_is_business_day = None
+            else:
+                toss_is_business_day = None
+            local_is_business_day = is_business_day(matching_date, config.holiday_overrides)
+            if toss_is_business_day is None:
+                status = "unknown"
+            elif toss_is_business_day == local_is_business_day:
+                status = "match"
+            else:
+                status = "mismatch"
+            results_by_date[matching_date] = {
+                "date": matching_date.isoformat(),
+                "status": status,
+                "local_is_business_day": local_is_business_day,
+                "toss_is_business_day": toss_is_business_day,
+                "toss_calendar_day": day,
+                "toss_regular_market": regular_market,
+                **({"reason": "invalid_regular_market_session"} if status == "unknown" else {}),
+            }
+            remaining_dates.remove(matching_date)
+
+        if query_date in remaining_dates:
+            results_by_date[query_date] = {
+                "date": query_date.isoformat(),
+                "status": "unknown",
+                "local_is_business_day": is_business_day(query_date, config.holiday_overrides),
+                "reason": "requested_date_not_returned",
+            }
+            remaining_dates.remove(query_date)
+
+    results = [results_by_date[value] for value in checked_dates]
+    mismatch_count = sum(result["status"] == "mismatch" for result in results)
+    unknown_count = sum(
+        result["status"] in {"error", "unknown", "not_checked"}
+        for result in results
+    )
+
+    payload.update(
+        {
+            "mode": "live_read_only",
+            "live_fetch": True,
+            "checked_at": datetime.now(ZoneInfo(config.timezone)).isoformat(),
+            "mismatch_count": mismatch_count,
+            "unknown_count": unknown_count,
+            "results": results,
+            "changes_market_day_rules": False,
+        }
+    )
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print("Toss KR market-calendar check")
+        print(f"- checked: {len(results)} / requested {len(checked_dates)}")
+        print(f"- local/Toss mismatches: {mismatch_count}")
+        print(f"- unknown or unverified: {unknown_count}")
+        for result in results:
+            print(
+                f"- {result['date']} | {result['status']} | "
+                f"local={result['local_is_business_day']} | Toss={result.get('toss_is_business_day')}"
+            )
+    return 1 if any(result["status"] not in {"match"} for result in results) else 0
+
+
 def _run_toss_priority_baseline_collect(
     config: RuntimeConfig,
     repository: StockMonitorRepository,
@@ -7993,7 +8200,7 @@ def _run_toss_market_context_capture(
         "affects_ordering": False,
         "business_date": business_date.isoformat(),
         "source": "toss_openapi",
-        "scope": "market_close_snapshot_top20_indices_flow_and_daily_candidates",
+        "scope": "market_close_snapshot_top20_indices_flow_daily_candidates_and_stock_universe",
         "requires_live_flag": True,
         "requires_token_reissue_confirmation": True,
         "requires_save_confirmation": True,
@@ -8080,6 +8287,78 @@ def _run_toss_market_context_capture(
         reference_date=business_date,
         priority_symbols=candidate_symbols[:2],
     )
+    stock_universe_error: str | None = None
+    try:
+        stock_universe_payload = provider.get_stock_universe()
+    except RuntimeError as exc:
+        stock_universe_payload = {"available": False, "items": [], "market_counts": {}}
+        stock_universe_error = type(exc).__name__
+    universe_items = stock_universe_payload.get("items") if isinstance(stock_universe_payload.get("items"), list) else []
+    universe_market_counts = (
+        stock_universe_payload.get("market_counts")
+        if isinstance(stock_universe_payload.get("market_counts"), dict)
+        else {}
+    )
+    universe_missing_markets = [
+        market
+        for market in TOSS_KR_STOCK_UNIVERSE_MARKETS
+        if market not in universe_market_counts
+    ]
+    universe_missing_markets.extend(
+        market
+        for market in ("KOSPI", "KOSDAQ")
+        if market in universe_market_counts and _safe_optional_int(universe_market_counts.get(market)) == 0
+    )
+    universe_cache_rows: list[TossStockUniverseEntry] = []
+    universe_checked_at = datetime.now(ZoneInfo(config.timezone))
+    universe_items_valid = True
+    for item in universe_items:
+        if not isinstance(item, dict):
+            universe_items_valid = False
+            break
+        stock_code = str(item.get("symbol") or "").strip()
+        stock_name = str(item.get("name") or "").strip()
+        market = str(item.get("market") or "").strip().upper()
+        security_type = str(item.get("securityType") or "").strip().upper()
+        isin_code = str(item.get("isinCode") or "").strip()
+        is_common_share = item.get("isCommonShare")
+        if (
+            not stock_code
+            or not stock_name
+            or not isin_code
+            or market not in TOSS_KR_STOCK_UNIVERSE_MARKETS
+            or not security_type
+            or not isinstance(is_common_share, bool)
+        ):
+            universe_items_valid = False
+            break
+        universe_cache_rows.append(
+            TossStockUniverseEntry(
+                business_date=business_date,
+                market=market,
+                stock_code=stock_code,
+                stock_name=stock_name,
+                security_type=security_type,
+                is_common_share=is_common_share,
+                isin_code=isin_code,
+                fetched_at=universe_checked_at,
+                source="toss_openapi",
+            )
+        )
+    stock_universe_complete = (
+        stock_universe_payload.get("available") is True
+        and not universe_missing_markets
+        and bool(universe_cache_rows)
+        and universe_items_valid
+    )
+    stock_universe_saved_count = 0
+    if stock_universe_complete:
+        stock_universe_saved_count = repository.upsert_toss_stock_universe_cache(universe_cache_rows)
+        if stock_universe_saved_count != len(universe_cache_rows):
+            stock_universe_complete = False
+            stock_universe_error = "stock_universe_cache_write_incomplete"
+    if not stock_universe_complete and stock_universe_error is None:
+        stock_universe_error = "incomplete_stock_universe_response"
     observed_at = _parse_toss_quote_timestamp(
         market_context.get("ranked_at"), datetime.now(ZoneInfo(config.timezone))
     )
@@ -8118,6 +8397,31 @@ def _run_toss_market_context_capture(
     )
     stock_metadata_available = market_context.get("stock_metadata_available") is True
     etf_symbols = {str(value) for value in market_context.get("etf_symbols") or []}
+    universe_by_symbol = {
+        row.stock_code: row
+        for row in universe_cache_rows
+    } if stock_universe_complete else {}
+    ranked_symbols = {str(item.get("symbol") or "").strip() for item in ranked_items}
+    for stock_code in ranked_symbols:
+        universe_item = universe_by_symbol.get(stock_code)
+        if universe_item is None:
+            continue
+        if not str(stock_names.get(stock_code) or "").strip():
+            stock_names[stock_code] = universe_item.stock_name
+        if not str(stock_markets.get(stock_code) or "").strip():
+            stock_markets[stock_code] = universe_item.market
+        if str(stock_security_types.get(stock_code) or "").strip().upper() not in {"STOCK", "ETF"}:
+            stock_security_types[stock_code] = universe_item.security_type
+        if universe_item.security_type == "ETF":
+            etf_symbols.add(stock_code)
+        else:
+            etf_symbols.discard(stock_code)
+    if universe_by_symbol and all(
+        str(stock_names.get(stock_code) or "").strip()
+        and str(stock_security_types.get(stock_code) or "").strip().upper() in {"STOCK", "ETF"}
+        for stock_code in ranked_symbols
+    ):
+        stock_metadata_available = True
     metadata_rows: list[StockMetadata] = []
     stock_rows: list[StockMarketDailySnapshot] = []
     etf_rows: list[EtfDailySnapshot] = []
@@ -8359,6 +8663,8 @@ def _run_toss_market_context_capture(
         missing_domains.append("market_flow")
     if candidate_missing_codes:
         missing_domains.append("candidate_close_reassessment")
+    if not stock_universe_complete:
+        missing_domains.append("stock_universe")
     coverage = {
         "top20": {
             "expected": 20,
@@ -8392,10 +8698,26 @@ def _run_toss_market_context_capture(
             "missing_symbols": candidate_missing_codes,
             "complete": not candidate_missing_codes,
         },
+        "stock_universe": {
+            "expected_markets": list(TOSS_KR_STOCK_UNIVERSE_MARKETS),
+            "market_counts": universe_market_counts,
+            "saved": stock_universe_saved_count,
+            "snapshot_date": (
+                business_date.isoformat()
+                if stock_universe_complete
+                else (
+                    repository.latest_toss_stock_universe_snapshot_date().isoformat()
+                    if repository.latest_toss_stock_universe_snapshot_date()
+                    else None
+                )
+            ),
+            "complete": stock_universe_complete,
+            "error_type": stock_universe_error,
+        },
         "missing_domains": missing_domains,
     }
     has_any_data = bool(
-        snapshots or stock_rows or etf_rows or index_rows or market_flow_rows
+        snapshots or stock_rows or etf_rows or index_rows or market_flow_rows or universe_cache_rows
         or baseline_rows or priority_flow_rows
     )
     capture_status = (
@@ -8420,6 +8742,9 @@ def _run_toss_market_context_capture(
         "candidate_flow_complete_count": len(flow_codes),
         "candidate_missing_count": len(candidate_missing_codes),
         "candidate_missing_codes": candidate_missing_codes,
+        "stock_universe_count": stock_universe_saved_count,
+        "stock_universe_market_counts": universe_market_counts,
+        "stock_universe_status": "completed" if stock_universe_complete else "partial",
         "capture_status": capture_status,
         "coverage": coverage,
         "observed_at": observed_at.isoformat(),
@@ -8436,6 +8761,8 @@ def _run_toss_market_context_capture(
                 detail=(
                     f"ranking_count={payload['ranking_count']}; saved_count={len(snapshots)}; "
                     f"candidate_targets={len(candidate_symbols)}; candidate_missing={len(candidate_missing_codes)}; "
+                    f"stock_universe_saved={stock_universe_saved_count}; "
+                    f"stock_universe_markets={','.join(f'{market}:{universe_market_counts.get(market, 0)}' for market in TOSS_KR_STOCK_UNIVERSE_MARKETS)}; "
                     f"missing_domains={','.join(missing_domains) or '-'}"
                 ),
             )
@@ -12733,13 +13060,23 @@ def _run_observation_hidden_holdout_sweep(
 
 def _run_lookup_stock_code(
     config: RuntimeConfig,
+    repository: StockMonitorRepository,
     *,
     query: str,
 ) -> int:
-    candidates = fetch_stock_code_candidates(
-        query,
-        timeout_seconds=config.telegram_timeout_seconds,
+    candidates, snapshot_date = _toss_cached_stock_lookup_candidates(
+        repository,
+        query=query,
+        as_of_date=datetime.now(ZoneInfo(config.timezone)).date(),
+        limit=5,
     )
+    if not candidates:
+        candidates = fetch_stock_code_candidates(
+            query,
+            timeout_seconds=config.telegram_timeout_seconds,
+        )
+    if snapshot_date is not None:
+        print(f"Toss 저장 종목 목록 기준일: {snapshot_date.isoformat()}")
     print(format_stock_code_lookup_message(query, candidates))
     return 0
 
@@ -22870,16 +23207,14 @@ def _build_market_briefing_readiness_date(
 
 
 def _market_briefing_manual_review_dates(repository: StockMonitorRepository) -> list[str]:
-    deliveries = repository.list_recent_deliveries(limit=200)
-    dates = {
-        delivery.business_date.isoformat()
-        for delivery in deliveries
-        if delivery.channel == MARKET_BRIEFING_DELIVERY_CHANNEL
-        and delivery.status == "sent"
-        and delivery.detail
-        and "source=manual" in delivery.detail
-    }
-    return sorted(dates, reverse=True)
+    return [
+        review_date.isoformat()
+        for review_date in repository.list_distinct_delivery_dates(
+            channel=MARKET_BRIEFING_DELIVERY_CHANNEL,
+            status="sent",
+            detail_contains="source=manual",
+        )
+    ]
 
 
 def _market_briefing_slot_delivery_channel(slot: str) -> str:
@@ -23718,6 +24053,14 @@ def _build_market_briefing_source_freshness_summary(
             else None
         ),
     )
+    toss_market_item = next(
+        (item for item in summary.get("items", []) if isinstance(item, dict) and item.get("key") == "toss_market"),
+        None,
+    )
+    _apply_toss_capture_state_to_freshness_item(
+        toss_market_item,
+        _web_view_toss_capture_state(repository, business_date),
+    )
     if not toss_context:
         return summary
     toss_item = toss_context.get("source_item")
@@ -23776,7 +24119,9 @@ def _market_briefing_source_freshness_item_text(item: dict[str, object]) -> str:
     reference_date = _market_briefing_source_reference_date_text(item.get("reference_date"))
     count = item.get("count")
     count_suffix = f" ({int(count)}건)" if isinstance(count, int) else ""
-    return f"{status}{(' ' + reference_date) if reference_date else ''}{count_suffix}"
+    missing_domains = item.get("missing_domains") if item.get("key") == "toss_market" else None
+    missing_suffix = f" (누락: {', '.join(str(value) for value in missing_domains)})" if missing_domains else ""
+    return f"{status}{(' ' + reference_date) if reference_date else ''}{count_suffix}{missing_suffix}"
 
 
 def _market_briefing_source_freshness_status_text(status: str) -> str:
@@ -26077,10 +26422,119 @@ def _make_web_view_handler(
         payload["derived_from"] = "web_view_candidate_evidence_top_2"
         return HTTPStatus.OK, payload
 
+    def build_toss_priority_daily_candles_payload(
+        business_date: date,
+        *,
+        count: int,
+    ) -> tuple[HTTPStatus, dict]:
+        if count not in {30, 90, 180}:
+            return HTTPStatus.BAD_REQUEST, {
+                "surface": "web-view-toss-priority-daily-candles",
+                "read_only": True,
+                "writes_db": False,
+                "reason": "unsupported_candle_count",
+            }
+        symbols = priority_candidate_codes(business_date)
+        base_payload: dict[str, object] = {
+            "surface": "web-view-toss-priority-daily-candles",
+            "read_only": True,
+            "configured": getattr(toss_provider, "configured", False),
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "affects_ordering": False,
+            "business_date": business_date.isoformat(),
+            "requested_count": count,
+            "adjusted": True,
+            "symbols": list(symbols),
+            "items": [],
+            "derived_from": "web_view_candidate_evidence_top_2",
+        }
+        if not symbols:
+            return HTTPStatus.OK, {**base_payload, "reason": "no_priority_symbols"}
+        fetch_candles = getattr(toss_provider, "get_priority_stock_daily_candles", None)
+        if not callable(fetch_candles):
+            return HTTPStatus.SERVICE_UNAVAILABLE, {**base_payload, "reason": "provider_unavailable"}
+        before = datetime.combine(
+            business_date,
+            datetime_time(hour=23, minute=59, second=59),
+            tzinfo=ZoneInfo(config.timezone),
+        )
+        try:
+            payload = fetch_candles(priority_symbols=symbols, before=before, count=count)
+        except Exception as exc:
+            error_payload = {
+                **base_payload,
+                "reason": "upstream_unavailable",
+                "error_type": type(exc).__name__,
+            }
+            upstream_status = getattr(exc, "status_code", None)
+            if (
+                isinstance(upstream_status, int)
+                and not isinstance(upstream_status, bool)
+                and 100 <= upstream_status <= 599
+            ):
+                error_payload["upstream_status"] = upstream_status
+            provider_code = getattr(exc, "provider_code", None)
+            if isinstance(provider_code, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,100}", provider_code):
+                error_payload["provider_code"] = provider_code
+            return HTTPStatus.BAD_GATEWAY, error_payload
+        received_count = 0
+        matched_count = 0
+        excluded_count = 0
+        dated_items: list[dict[str, object]] = []
+        for item in payload.get("items", []) if isinstance(payload.get("items"), list) else []:
+            if not isinstance(item, dict):
+                continue
+            candles = item.get("candles") if isinstance(item.get("candles"), list) else []
+            visible: list[dict[str, object]] = []
+            for candle in candles:
+                received_count += 1
+                if not isinstance(candle, dict):
+                    excluded_count += 1
+                    continue
+                try:
+                    candle_time = datetime.fromisoformat(str(candle.get("timestamp") or "").replace("Z", "+00:00"))
+                    if candle_time.tzinfo is not None:
+                        candle_time = candle_time.astimezone(ZoneInfo(config.timezone))
+                except ValueError:
+                    excluded_count += 1
+                    continue
+                if candle_time.date() <= business_date:
+                    visible.append(candle)
+                else:
+                    excluded_count += 1
+            matched_count += len(visible)
+            dated_items.append({**item, "candles": visible, "excluded_candle_count": len(candles) - len(visible)})
+        if received_count and not matched_count:
+            return HTTPStatus.CONFLICT, {
+                **base_payload,
+                "before": before.isoformat(),
+                "items": [],
+                "reason": "no_candles_before_top2_business_date",
+            }
+        return HTTPStatus.OK, {
+            **base_payload,
+            **payload,
+            "business_date": business_date.isoformat(),
+            "before": before.isoformat(),
+            "requested_count": count,
+            "adjusted": True,
+            "items": dated_items,
+            "available": matched_count > 0,
+            "excluded_candle_count": excluded_count,
+            "derived_from": "web_view_candidate_evidence_top_2",
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "affects_ordering": False,
+        }
+
     def build_toss_market_context_payload(business_date: date) -> tuple[HTTPStatus, dict]:
         archive = build_web_view_archive_snapshot(config, repository, limit=1)
         latest_business_date = archive.get("latest_business_date")
-        if latest_business_date and business_date.isoformat() != latest_business_date:
+        if not latest_business_date or business_date.isoformat() != latest_business_date:
             return HTTPStatus.CONFLICT, {
                 "surface": "web-view-toss-market-context",
                 "read_only": True,
@@ -26096,7 +26550,7 @@ def _make_web_view_handler(
                 "priority_overlap_symbols": [],
                 "investor_flow": {"KOSPI": None, "KOSDAQ": None},
                 "latest_business_date": latest_business_date,
-                "reason": "latest_business_date_only",
+                "reason": "latest_business_date_unavailable" if not latest_business_date else "latest_business_date_only",
             }
         symbols = priority_candidate_codes(business_date)
         payload = _build_toss_market_context(
@@ -26387,6 +26841,26 @@ def _make_web_view_handler(
                         "quotes": [],
                         "reason": "upstream_unavailable",
                     }
+                _write_http_response(
+                    self,
+                    status,
+                    json.dumps(payload, ensure_ascii=False),
+                    content_type="application/json; charset=utf-8",
+                )
+                return
+            if path == "/api/toss-priority-daily-candles":
+                query_params = url_parse.parse_qs(query)
+                raw_date = query_params.get("date", [None])[0]
+                raw_count = query_params.get("days", ["90"])[0]
+                try:
+                    if not raw_date:
+                        raise ValueError
+                    business_date = date.fromisoformat(raw_date)
+                    count = int(raw_count)
+                except (TypeError, ValueError):
+                    _write_http_response(self, HTTPStatus.BAD_REQUEST, "invalid date or days", content_type="text/plain; charset=utf-8")
+                    return
+                status, payload = build_toss_priority_daily_candles_payload(business_date, count=count)
                 _write_http_response(
                     self,
                     status,
@@ -27176,7 +27650,7 @@ def build_web_view_rotation_overlay_snapshot(
         "business_date": business_date.isoformat(),
         "image": image_config,
         "highlights": highlights,
-        "notice": "순환매 참고는 업종 기준 수동 좌표와 저장된 리포트 분류 요약을 겹쳐 본 설명용 화면입니다. 테마는 보조 근거이며 확정 판단이 아닙니다.",
+        "notice": "업종·테마 위치 참고는 업종 기준 수동 좌표와 저장된 리포트 분류 요약을 겹쳐 본 설명용 화면입니다. 테마는 보조 근거이며 자금 순환을 계산하지 않고 확정 판단도 아닙니다.",
     }
 
 
@@ -28709,7 +29183,7 @@ def _render_web_view_v2_html() -> str:
         ? `지수 기준 ${esc(daily.market_briefing.index_summary.reference_date)}`
         : "저장 Toss 기준 확인 필요";
       const etfLine = firstEtf
-        ? `${esc(firstEtf.etf_name || firstEtf.etf_code || "ETF")} · ${esc(firstEtf.evidence_label || "순환매 참고")}`
+        ? `${esc(firstEtf.etf_name || firstEtf.etf_code || "ETF")} · ${esc(firstEtf.evidence_label || "ETF 저장 참고")}`
         : "저장 ETF 순환매 근거 없음";
       $("v2-evidence-grid").innerHTML = [
         ["리포트", reportLine],
@@ -28924,50 +29398,17 @@ def _render_web_view_html() -> str:
     .toggle-switch input { accent-color: var(--accent); }
     .ghost-button { border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; background: #fffaf1; color: var(--muted); font-size: 12px; font-weight: 800; cursor: pointer; }
     .ghost-button[hidden] { display: none; }
-    .brief { display: grid; gap: 6px; margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+    .brief { display: grid; gap: 6px; margin: 0 0 12px; color: var(--muted); font-size: 14px; line-height: 1.5; }
     .brief:empty { display: none; }
     .daily-briefing { display: grid; gap: 12px; }
-    .briefing-line { margin: 0; color: var(--ink); font-size: 16px; font-weight: 900; letter-spacing: -.02em; }
-    .briefing-market-row { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: start; }
-    .briefing-reference-card { display: grid; gap: 0; border: 1px solid var(--line); border-radius: 8px; background: #fffaf1; overflow: hidden; }
-    .briefing-reference-head { display: flex; justify-content: space-between; gap: 8px; align-items: start; padding: 12px 12px 4px; }
-    .briefing-reference-head b { color: var(--ink); font-size: 15px; font-weight: 900; }
-    .briefing-reference-head span { color: var(--muted); font-size: 11px; font-weight: 800; text-align: right; }
-    .briefing-reference-section { display: grid; gap: 5px; padding: 10px 12px 12px; }
-    .briefing-reference-divider { border-top: 1px solid rgba(199,190,176,.95); margin: 0 12px; }
-    .briefing-box { border: 1px solid var(--line); border-radius: 16px; padding: 12px; background: #fffaf1; }
-    .briefing-reference-card .briefing-box { border: 0; border-radius: 0; padding: 12px; background: transparent; }
-    .briefing-reference-card .briefing-box b { color: var(--accent); font-size: 12px; }
-    .briefing-reference-card .briefing-box strong { color: var(--ink); font-size: 14px; font-weight: 700; line-height: 1.5; }
-    .briefing-box b { display: block; margin-bottom: 5px; color: var(--muted); font-size: 12px; }
-    .briefing-box strong { display: block; color: var(--ink); font-size: 18px; line-height: 1.35; }
-    .briefing-box span { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
-    .briefing-box span:empty { display: none; }
-    .briefing-card-lines { display: grid; gap: 4px; margin: 0; color: var(--ink); font-size: 15px; line-height: 1.35; }
-    .briefing-card-line { display: block; overflow-wrap: anywhere; }
-    .briefing-card-line em { color: var(--accent); font-style: normal; font-size: 12px; font-weight: 900; margin-right: 5px; }
-    .briefing-flow-lines { display: grid; gap: 8px; color: var(--ink); font-size: 13px; line-height: 1.35; }
-    .briefing-flow-row { display: grid; gap: 2px; border-top: 1px solid var(--line); padding-top: 7px; }
-    .briefing-flow-row:first-child { border-top: 0; padding-top: 0; }
-    .briefing-flow-row b { margin: 0; color: var(--ink); font-size: 13px; }
-    .briefing-flow-row span { margin: 0; color: var(--ink); font-size: 12px; }
-    .briefing-flow-row small { color: var(--muted); font-size: 11px; line-height: 1.35; }
-    .briefing-reference-card .briefing-flow-row b { color: var(--ink); font-size: 13px; font-weight: 800; }
-    .briefing-reference-card .briefing-flow-row span { color: var(--ink); font-size: 12px; font-weight: 600; }
+    .briefing-line { margin: 0; color: var(--ink); font-size: 18px; font-weight: 800; letter-spacing: -.02em; line-height: 1.45; }
     .briefing-comments { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
     .briefing-comment { border-left: 3px solid var(--accent); padding: 8px 10px; background: #fff; color: var(--ink); font-size: 12px; line-height: 1.45; }
     .briefing-comment b { display: block; margin-bottom: 3px; color: var(--accent); font-size: 12px; }
     .briefing-comment small { display: grid; gap: 2px; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.45; }
     .briefing-comment-opinion { display: block; margin-top: 5px; color: var(--ink); font-size: 11px; font-weight: 800; }
-    .briefing-detail-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 6px; align-items: start; }
-    .briefing-detail-row em { color: var(--accent); font-style: normal; font-weight: 900; }
-    .briefing-detail-flow { display: grid; gap: 2px; border-top: 1px solid rgba(222,216,204,.8); padding-top: 5px; }
-    .briefing-detail-flow:first-child { border-top: 0; padding-top: 0; }
-    .briefing-detail-flow b { margin: 0; color: var(--accent); font-size: 11px; }
-    .briefing-detail-flow span { display: block; color: var(--ink); }
-    .briefing-live-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
     .briefing-live-status { margin: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-    .news-observation-summary { display: grid; gap: 7px; margin: 10px 0 0; border: 1px solid #e7d8bf; border-radius: 8px; padding: 10px 12px; background: #fffaf1; }
+    .news-observation-summary { display: grid; gap: 7px; margin: 0; border: 1px solid #e7d8bf; border-radius: 12px; padding: 10px 12px; background: #fffaf1; }
     .news-observation-summary-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
     .news-observation-summary-head b { font-size: 13px; }
     .news-observation-summary-reason { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
@@ -28984,7 +29425,7 @@ def _render_web_view_html() -> str:
     .news-observation-summary-link:hover b { text-decoration: underline; }
     .news-observation-summary-item b { color: var(--ink); font-size: 12px; }
     .news-observation-summary-item span { color: var(--muted); line-height: 1.4; overflow-wrap: anywhere; }
-    .source-freshness-summary { display: grid; gap: 8px; border: 1px solid #d6dfd8; border-radius: 8px; padding: 10px 12px; background: #f6faf5; }
+    .source-freshness-summary { display: grid; gap: 8px; border: 1px solid #d6dfd8; border-radius: 12px; padding: 10px 12px; background: #f6faf5; }
     .source-freshness-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
     .source-freshness-head b { color: var(--ink); font-size: 13px; }
     .source-freshness-items { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 8px; }
@@ -29018,9 +29459,9 @@ def _render_web_view_html() -> str:
     .briefing-mood-gaps { display: flex; flex-wrap: wrap; gap: 6px; }
     .briefing-mood-gaps:empty { display: none; }
     .briefing-mood-gap { border: 1px solid rgba(222,216,204,.95); border-radius: 999px; padding: 5px 8px; background: #fbf4e6; color: var(--muted); font-size: 11px; font-weight: 800; }
-    .briefing-mini-label { margin: 2px 0 -4px; color: var(--muted); font-size: 12px; font-weight: 900; }
+    .briefing-mini-label { margin: 0 0 -4px; color: var(--muted); font-size: 12px; font-weight: 800; }
     .briefing-check-points { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
-    .briefing-check-points li { border: 1px solid rgba(222,216,204,.95); border-radius: 14px; padding: 8px 10px; background: #fbf4e6; color: var(--muted); font-size: 12px; font-weight: 800; }
+    .briefing-check-points li { border: 1px solid rgba(222,216,204,.95); border-radius: 12px; padding: 7px 10px; background: #fbf4e6; color: var(--muted); font-size: 13px; font-weight: 700; line-height: 1.4; }
     .scroll-panel { max-height: 420px; overflow: auto; padding-right: 4px; scrollbar-width: thin; }
     .scroll-panel.tall { max-height: 560px; }
     .scroll-panel.stock-summary-panel { max-height: 430px; }
@@ -29037,7 +29478,7 @@ def _render_web_view_html() -> str:
     .market-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
     .market-block { min-width: 0; border: 1px solid var(--line); border-radius: 16px; padding: 14px; background: #fffaf1; }
     .market-block h3 { margin: 0 0 10px; font-size: 15px; }
-    .candidate-list { display: grid; gap: 10px; }
+    .candidate-list { display: grid; grid-template-columns: 1fr; gap: 10px; }
     .watch-candidate-row { display: grid; width: 100%; gap: 6px; border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: #fffaf1; color: var(--ink); cursor: pointer; font: inherit; text-align: left; }
     .watch-candidate-row:hover, .watch-candidate-row:focus { border-color: var(--accent); outline: 3px solid rgba(40,92,77,.14); }
     .watch-candidate-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
@@ -29048,25 +29489,48 @@ def _render_web_view_html() -> str:
     .additional-candidates > summary { cursor: pointer; color: var(--accent); font-size: 13px; font-weight: 800; }
     .additional-candidates > summary::marker { color: var(--accent); }
     .additional-candidates .candidate-list { margin-top: 10px; }
-    .main-priority-card { order: -1; }
+    .main-priority-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .main-priority-control-group { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .main-priority-control-label { color: var(--muted); font-size: 12px; font-weight: 800; }
+    .main-priority-card .ghost-button, .main-market-card .ghost-button { min-height: 36px; padding: 8px 12px; color: var(--ink); font-size: 13px; }
     .main-priority-list { display: grid; gap: 10px; }
     .main-priority-list:empty { display: none; }
-    .main-priority-note { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+    .main-priority-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .main-priority-note:empty { display: none; }
+    .daily-candle-range { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
+    .daily-candle-range select { min-height: 36px; border: 1px solid var(--line); border-radius: 9px; padding: 4px 8px; background: #fff; color: var(--ink); font: inherit; }
+    .daily-candle-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 10px; }
+    .daily-candle-card { min-width: 0; border: 1px solid var(--line); border-radius: 14px; padding: 12px; background: #fff; }
+    .daily-candle-card h3 { margin: 0 0 6px; font-size: 15px; }
+    .daily-candle-meta { margin: 0 0 8px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .daily-candle-svg { display: block; width: 100%; height: auto; min-height: 150px; }
+    .daily-candle-up { fill: #d34b43; stroke: #d34b43; }
+    .daily-candle-down { fill: #3577c8; stroke: #3577c8; }
+    .daily-candle-flat { fill: #7b8790; stroke: #7b8790; }
+    .daily-candle-volume { opacity: .3; }
+    .daily-candle-axis { stroke: var(--line); stroke-width: 1; }
+    .daily-candle-month-boundary { stroke: #67766f; stroke-dasharray: 4 3; stroke-width: 1.4; }
+    .daily-candle-month-label { fill: var(--muted); font-size: 11px; font-weight: 800; }
+    .main-market-context-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .main-market-context-block { min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: #fffaf1; }
+    .main-market-context-block b { display: block; margin-bottom: 6px; font-size: 13px; }
     .top-two-candidates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 4px; }
     .top-two-entry { min-width: 0; }
     .top-two-entry .top-two-card { width: 100%; }
-    .candidate-research-focus { padding: 10px 12px; font-size: 12px; overflow-wrap: anywhere; }
+    .candidate-research-focus { margin: 6px 0 0; border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; background: #fff; font-size: 12px; overflow-wrap: anywhere; }
+    .candidate-research-focus > summary { color: var(--muted); cursor: pointer; font-weight: 700; }
+    .candidate-research-focus[open] > summary { margin-bottom: 6px; }
     .candidate-research-focus p { margin: 6px 0; }
     .candidate-research-focus a { color: var(--accent); text-decoration: underline; }
     .top-two-card { border: 1px solid var(--line); border-radius: 16px; padding: 12px; background: #fff; color: inherit; cursor: pointer; text-align: left; font: inherit; }
-    .top-two-card b { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 5px; color: var(--accent); font-size: 13px; }
+    .top-two-card b { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 5px; color: var(--accent); font-size: 14px; }
     .top-two-card .status-pill { font-size: 11px; padding: 2px 7px; }
-    .top-two-card span { display: block; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .top-two-card span { display: block; color: var(--muted); font-size: 13px; line-height: 1.45; }
     .top-two-news-line { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 6px; color: var(--ink); }
     .top-two-news-line strong { color: var(--accent); font-size: 11px; }
     .top-two-news-line .top-two-news-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--ink); }
     .top-two-evidence-line { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 6px; color: var(--ink); }
-    .top-two-evidence-line strong { color: var(--accent); font-size: 11px; }
+    .top-two-evidence-line strong { color: var(--accent); font-size: 12px; }
     .top-two-evidence-line .top-two-evidence-text { color: var(--ink); overflow-wrap: anywhere; }
     .top-two-card .priority-toss-quote { display: inline-flex; width: fit-content; border-radius: 999px; padding: 2px 7px; background: #eef7f2; color: #245746; font-size: 11px; font-weight: 900; }
     .top-two-card .priority-toss-quote.muted { background: #eef1f2; color: #5d676d; }
@@ -29217,6 +29681,9 @@ def _render_web_view_html() -> str:
     .rotation-reference-line { display: grid; gap: 2px; border-top: 1px solid var(--line); padding-top: 7px; margin-top: 7px; color: var(--ink); }
     .rotation-reference-line strong { color: var(--accent); font-size: 12px; }
     .rotation-reference-line span { color: var(--muted); font-size: 11px; line-height: 1.45; }
+    @media (min-width: 841px) {
+      .candidate-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
     @media (max-width: 840px) {
       .hero { flex-direction: column; }
       .hero-tools { min-width: 0; width: 100%; justify-items: stretch; }
@@ -29225,6 +29692,9 @@ def _render_web_view_html() -> str:
       .grid { grid-template-columns: 1fr; }
       .span-12, .span-8, .span-7, .span-6, .span-5, .span-4 { grid-column: auto; }
       .market-grid { grid-template-columns: 1fr; }
+      .main-market-context-grid { grid-template-columns: 1fr; }
+      .main-priority-controls { grid-template-columns: 1fr; }
+      .daily-candle-grid { grid-template-columns: 1fr; }
       .top-two-candidates { grid-template-columns: 1fr; }
       .rotation-evidence { grid-template-columns: 1fr; }
       .candidate-evidence-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -29243,7 +29713,7 @@ def _render_web_view_html() -> str:
       .calendar-dialog .date-calendar-cell { min-height: 44px; padding: 6px; border-radius: 10px; }
       .calendar-dialog .date-calendar-cell .report-count, .calendar-dialog .date-calendar-cell .news-count { display: none; }
       .main-priority-card .section-header { align-items: flex-start; flex-direction: column; }
-      .main-priority-card .summary-actions { justify-content: flex-start; }
+      .main-priority-control-group { align-items: flex-start; }
       .stock-context-panel { max-height: none; overflow: visible; padding-right: 0; }
       .target-trail-line { grid-template-columns: 62px minmax(0, 1fr); }
       table.mobile-card-table { display: table; overflow: visible; white-space: normal; }
@@ -29253,7 +29723,6 @@ def _render_web_view_html() -> str:
       table.mobile-card-table tr.active-selection { border-color: var(--accent); box-shadow: inset 4px 0 0 var(--accent); }
       table.mobile-card-table td { border: 0; padding: 6px 0; }
       table.mobile-card-table td::before { content: attr(data-label); display: block; margin-bottom: 2px; color: var(--muted); font-size: 11px; font-weight: 700; }
-      .briefing-market-row { grid-template-columns: 1fr; }
       .briefing-mood-sections { grid-template-columns: 1fr; }
       .briefing-comments { grid-template-columns: 1fr; }
       .candidate-evidence-grid { grid-template-columns: 1fr; }
@@ -29273,7 +29742,7 @@ def _render_web_view_html() -> str:
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v4"></path><path d="M16 2v4"></path><rect width="18" height="18" x="3" y="4" rx="2"></rect><path d="M3 10h18"></path><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path><path d="M8 18h.01"></path><path d="M12 18h.01"></path><path d="M16 18h.01"></path></svg>
           </button>
         </div>
-        <p class="sub">Daily Report <span id="calendar-selected-date" class="calendar-selected-date"></span></p>
+      <p class="sub">일일 리포트 <span id="calendar-selected-date" class="calendar-selected-date"></span></p>
       </div>
       <div class="hero-tools">
         <nav class="top-tabs" aria-label="상단 탭">
@@ -29285,8 +29754,6 @@ def _render_web_view_html() -> str:
           <button class="top-tab active" type="button" data-view-tab="main" aria-current="page" aria-pressed="true">메인</button>
           <button class="top-tab" type="button" data-view-tab="watch" aria-current="false" aria-pressed="false">관찰</button>
           <button class="top-tab" type="button" data-view-tab="stock" aria-current="false" aria-pressed="false">종목</button>
-          <button class="top-tab" type="button" data-view-tab="market" aria-current="false" aria-pressed="false">시장</button>
-          <button class="top-tab" type="button" data-view-tab="rotation" aria-current="false" aria-pressed="false">순환매</button>
         </nav>
         <p class="stock-search-status" id="stock-search-status" aria-live="polite">날짜를 선택하면 저장 종목을 찾을 수 있습니다.</p>
       </div>
@@ -29304,13 +29771,40 @@ def _render_web_view_html() -> str:
       <div id="archive-calendar" class="date-calendar-grid"><span class="muted">불러오는 중</span></div>
     </dialog>
     <section class="grid">
+      <div class="card span-12 main-priority-card" id="main-priority-card" data-view-panel="main">
+        <div class="section-header">
+          <h2>오늘의 우선순위</h2>
+        </div>
+        <div class="main-priority-controls">
+          <div class="main-priority-control-group" aria-label="장중 참고">
+            <span class="main-priority-control-label">장중</span>
+            <button id="toss-priority-refresh" class="ghost-button" type="button" disabled>Toss 현재가 · 수급</button>
+            <button id="intraday-market-top-check" class="ghost-button" type="button" disabled>거래대금 겹침</button>
+          </div>
+          <div class="main-priority-control-group" aria-label="일봉 차트 기간과 조회">
+            <label class="daily-candle-range" for="top2-daily-range">일봉 기간
+              <select id="top2-daily-range" aria-label="Top2 일봉 기간">
+                <option value="30">30거래일</option>
+                <option value="90" selected>90거래일</option>
+                <option value="180">180거래일</option>
+              </select>
+            </label>
+            <button id="top2-daily-candle-refresh" class="ghost-button" type="button" disabled>차트 확인</button>
+          </div>
+        </div>
+        <div id="main-priority-rows" class="main-priority-list"><span class="muted">날짜를 선택하세요.</span></div>
+        <p class="briefing-live-status" id="intraday-market-top-status">장중 거래대금 겹침 결과가 여기에 표시됩니다.</p>
+        <div id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden></div>
+        <p class="main-priority-note" id="top2-daily-candle-status">수정주가 · 선택한 Top2 기준일까지 · 월 경계 표시</p>
+        <div id="top2-daily-candle-panels" class="daily-candle-grid" hidden></div>
+      </div>
+
       <div class="card span-12 daily-briefing" data-view-panel="main">
         <div class="section-header">
-          <h2>오늘 읽을 요약 <span class="muted" id="daily-briefing-date"></span></h2>
+          <h2>오늘 읽을 요약</h2>
         </div>
-        <p class="briefing-mini-label">리포트 간략 정리</p>
         <p class="briefing-line" id="daily-briefing-headline">날짜를 선택하면 읽을 흐름을 압축해서 보여줍니다.</p>
-        <p class="briefing-mini-label">한줄평</p>
+        <p class="briefing-mini-label">확인할 점</p>
         <ul class="briefing-check-points" id="briefing-check-points"><li>확인 포인트가 있으면 여기에 표시됩니다.</li></ul>
         <div id="source-freshness-summary" class="source-freshness-summary" aria-live="polite">
           <div class="source-freshness-head"><b>데이터 기준</b><span class="status-pill">저장 상태</span></div>
@@ -29321,42 +29815,17 @@ def _render_web_view_html() -> str:
         <div id="news-observation-summary" class="news-observation-summary" aria-live="polite">
           <div class="news-observation-summary-head"><b>뉴스 관찰</b></div>
           <p class="news-observation-summary-reason">날짜를 선택하면 저장된 뉴스 관찰을 확인합니다.</p>
-          <p class="news-observation-summary-connection">우선 확인 후보와 함께 읽는 뉴스 근거입니다.</p>
-        </div>
-        <div class="briefing-market-row">
-          <div class="briefing-reference-card">
-            <div class="briefing-reference-head">
-              <b id="briefing-reference-title">시장 참고</b>
-            </div>
-            <div class="briefing-box briefing-reference-section">
-              <b id="briefing-turnover-title">거래대금 참고</b>
-              <strong id="briefing-turnover">-</strong>
-              <span id="briefing-turnover-sub"></span>
-            </div>
-            <div class="briefing-reference-divider" aria-hidden="true"></div>
-            <div class="briefing-box briefing-reference-section">
-              <b id="briefing-investor-flow-title">시장 수급 참고</b>
-              <strong id="briefing-investor-flow">-</strong>
-              <span id="briefing-investor-flow-sub"></span>
-            </div>
-          </div>
         </div>
       </div>
 
-      <div class="card span-12 main-priority-card" id="main-priority-card" data-view-panel="main">
+      <div class="card span-12 main-market-card" id="main-market-context-card" data-view-panel="main">
         <div class="section-header">
-          <h2>오늘의 우선순위 <span class="muted" id="main-priority-date"></span></h2>
-          <div class="summary-actions">
-            <button id="toss-priority-refresh" class="ghost-button" type="button" disabled>Toss 장중 정보 확인</button>
-            <button id="intraday-market-top-check" class="ghost-button" type="button" disabled>장중 거래대금 확인</button>
-          </div>
+          <h2>당일 시장 · 수급</h2>
+          <button id="toss-market-refresh" class="ghost-button" type="button" disabled>지수 · 수급 확인</button>
         </div>
-        <div class="briefing-live-tools">
-          <p class="briefing-live-status" id="intraday-market-top-status">날짜를 선택하면 우선 확인 종목과 장중 거래대금 교집합을 확인할 수 있습니다.</p>
-        </div>
-        <p class="brief">오늘 볼 것: Top2 후보와 현재 확인 가능한 근거만 먼저 봅니다. 전일 Toss 저장값/수급/ETF는 참고 영역입니다.</p>
-        <div id="main-priority-rows" class="main-priority-list"><span class="muted">날짜를 선택하세요.</span></div>
-        <div id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden></div>
+        <p class="brief">지수는 조회 시각, 수급은 기준일을 함께 표시합니다.</p>
+        <p id="toss-market-context-status" class="muted" aria-live="polite">날짜를 선택하고 버튼을 눌러 조회하세요.</p>
+        <div id="toss-market-context" class="intraday-overlap-panel" aria-live="polite" hidden></div>
       </div>
 
       <div class="card span-12" id="candidate-evidence-card" data-view-panel="watch" hidden>
@@ -29388,9 +29857,10 @@ def _render_web_view_html() -> str:
         <div id="stock-detail" class="detail-list scroll-panel stock-report-panel"><span class="muted">종목 행을 선택하세요.</span></div>
       </div>
 
-      <div class="card span-12" data-view-panel="rotation" hidden>
-        <h2>ETF 흐름 <span class="muted" id="etf-tab-title"></span></h2>
-        <p class="brief">순환매 탭은 업종/테마 흐름과 ETF 참고를 같은 보조 관찰 축으로 묶어 봅니다.</p>
+      <details class="card span-12 compact-details" id="industry-etf-details" data-view-panel="main">
+        <summary><h2>업종 · ETF 참고 <span class="muted" id="rotation-title"></span></h2></summary>
+        <p class="brief">리포트 분류와 저장 ETF 값의 참고 화면입니다. 실제 자금 순환을 계산하지 않습니다.</p>
+        <h3>거래대금 상위 ETF <span class="muted" id="etf-tab-title"></span></h3>
         <div class="scroll-panel">
           <table class="mobile-card-table">
             <thead><tr><th>날짜</th><th>거래대금 상위 ETF</th></tr></thead>
@@ -29398,11 +29868,8 @@ def _render_web_view_html() -> str:
           </table>
         </div>
         <p class="notice" id="etf-tab-notice">저장된 ETF 데이터 기준입니다.</p>
-      </div>
-
-      <details class="card span-12 compact-details" id="rotation-details" data-view-panel="rotation" hidden>
-        <summary><h2>순환매 참고 <span class="muted" id="rotation-title"></span></h2></summary>
-        <p class="brief">업종 기준 좌표가 있는 항목만 예시 이미지 위에 표시합니다. 테마는 보조 근거이며 확정 판단은 아닙니다.</p>
+        <h3>업종 · 테마 위치 참고</h3>
+        <p class="brief">저장된 업종/테마 요약 중 수동 좌표가 있는 항목만 예시 이미지에 표시합니다.</p>
         <div id="rotation-overlay" class="rotation-wrap"><span class="muted">날짜를 선택하세요.</span></div>
         <div id="rotation-evidence" class="rotation-evidence"></div>
         <p class="notice" id="rotation-notice">저장된 리포트 분류 요약 기준입니다.</p>
@@ -29425,7 +29892,7 @@ def _render_web_view_html() -> str:
         </div>
       </div>
 
-      <div class="card span-12 focus-card" id="category-detail-card" data-view-panel="rotation" data-view-when="category-selection" tabindex="-1" hidden>
+      <div class="card span-12 focus-card" id="category-detail-card" data-view-panel="stock" data-view-when="category-selection" tabindex="-1" hidden>
         <h2>업종/테마 상세 <span class="muted" id="category-title"></span></h2>
         <p class="brief" id="category-selection-status">업종 또는 테마 행을 선택하면 상세 종목과 최근 흐름을 불러옵니다.</p>
         <div class="scroll-panel">
@@ -29437,7 +29904,7 @@ def _render_web_view_html() -> str:
         <p class="notice">업종/테마는 저장된 분류 참고값입니다. 일부 과거 날짜는 최신 저장 분류 기준일 수 있습니다.</p>
       </div>
 
-      <details class="card span-12 compact-details" id="category-trend-details" data-view-panel="rotation" data-view-when="category-selection" hidden>
+      <details class="card span-12 compact-details" id="category-trend-details" data-view-panel="stock" data-view-when="category-selection" hidden>
         <summary><h2>업종/테마 최근 흐름 <span class="muted" id="category-trend-title"></span></h2></summary>
         <div class="scroll-panel compact">
           <table class="mobile-card-table">
@@ -29448,18 +29915,12 @@ def _render_web_view_html() -> str:
         <p class="notice">최근 저장 요약 기준입니다. 분류 기준이 완전히 통일되기 전까지는 참고 흐름으로만 봅니다.</p>
       </details>
 
-      <details class="card span-12 market-reference-card" id="market-reference-card" data-view-panel="market" hidden open>
+      <details class="card span-12 market-reference-card" id="market-reference-card" data-view-panel="main">
         <summary>
           <h2>시장 문맥 <span class="muted">Toss 당일 · Toss 저장</span></h2>
           <span class="muted">조회값과 저장값을 구분해 표시</span>
         </summary>
-        <p class="brief">시장 탭은 해석 문장이 아니라 선택 날짜의 Toss 저장/수급 근거를 확인하는 화면입니다.</p>
-
-        <details class="market-reference-panel" open>
-          <summary>Toss 당일 시장 <span class="muted">요청 시 조회</span></summary>
-          <div id="toss-market-context" class="intraday-overlap-panel" aria-live="polite" hidden></div>
-          <p class="notice">당일 지수·시장 수급·거래대금 Top20을 우선 표시합니다. Toss 저장 이력은 아래 참고용입니다.</p>
-        </details>
+        <p class="brief">선택 날짜의 Toss 저장 시장·수급 근거를 확인합니다. 최신 당일 조회는 메인 탭의 명시적 요청으로 제공합니다.</p>
 
         <details class="market-reference-panel">
           <summary>선택 날짜 Toss 저장 기준 <span class="muted" id="market-date"></span></summary>
@@ -29478,7 +29939,7 @@ def _render_web_view_html() -> str:
               <div class="scroll-panel compact"><table class="mobile-card-table"><thead><tr><th>지수</th><th>종가</th><th>등락률</th><th>거래대금</th></tr></thead><tbody id="market-index-rows"><tr><td colspan="4" class="muted">날짜를 선택하세요.</td></tr></tbody></table></div>
             </div>
           </div>
-          <p class="notice">선택 날짜 기준입니다. ETF는 순환매 탭에서 봅니다.</p>
+          <p class="notice">선택 날짜 기준입니다. ETF는 메인의 업종·ETF 참고에서 확인합니다.</p>
         </details>
 
         <details class="market-reference-panel" id="etf-trend-panel">
@@ -29487,7 +29948,7 @@ def _render_web_view_html() -> str:
             <thead><tr><th>날짜</th><th>KOSPI 거래대금 1위</th><th>KOSDAQ 거래대금 1위</th></tr></thead>
             <tbody id="krx-flow-rows"><tr><td colspan="3" class="muted">날짜를 선택하세요.</td></tr></tbody>
           </table>
-          <p class="notice" id="krx-flow-notice">선택 날짜를 포함한 최근 저장 시장 데이터 기준입니다. ETF는 순환매 탭에서 봅니다.</p>
+          <p class="notice" id="krx-flow-notice">선택 날짜를 포함한 최근 저장 시장 데이터 기준입니다. ETF는 메인의 업종·ETF 참고에서 확인합니다.</p>
         </details>
 
         <details class="market-reference-panel">
@@ -29499,7 +29960,7 @@ def _render_web_view_html() -> str:
           <p class="notice" id="investor-flow-notice">저장된 수급 데이터 기준입니다.</p>
         </details>
 
-        <details class="market-reference-panel">
+        <details class="market-reference-panel" id="flow-trend-details">
           <summary>수급 흐름 <span class="muted" id="flow-trend-title"></span></summary>
           <table class="mobile-card-table">
             <thead><tr><th>날짜</th><th>시장 수급</th></tr></thead>
@@ -29638,6 +30099,11 @@ def _render_web_view_html() -> str:
     let tossPriorityRows = [];
     let tossPriorityDate = null;
     let tossMarketContextRequestId = 0;
+    let tossMarketContextLoading = false;
+    let dailyCandleRequestId = 0;
+    let dailyCandleLoading = false;
+    let dailyCandleBySymbol = new Map();
+    let dailyCandleLoadedKey = null;
     let mainPriorityCohort = { date: null, codes: [] };
     let showSingleReportStocks = false;
     let dailyStockVisibleLimit = DAILY_STOCK_DEFAULT_LIMIT;
@@ -29648,7 +30114,6 @@ def _render_web_view_html() -> str:
     let candidateEvidenceLoadedLimit = 0;
     let watchDataLoading = false;
     let etfTrendLoadedDate = null;
-    let etfTrendAvailable = false;
     let flowTrendLoadedDate = null;
     let dailyLoadSequence = 0;
     let stockSearchQuery = "";
@@ -29672,7 +30137,7 @@ def _render_web_view_html() -> str:
     }
 
     function setViewTab(tabName) {
-      activeViewTab = tabName || "main";
+      activeViewTab = ["main", "watch", "stock"].includes(tabName) ? tabName : "main";
       document.querySelectorAll("[data-view-tab]").forEach((button) => {
         const isActive = button.dataset.viewTab === activeViewTab;
         button.classList.toggle("active", isActive);
@@ -29680,17 +30145,6 @@ def _render_web_view_html() -> str:
         button.setAttribute("aria-pressed", isActive ? "true" : "false");
       });
       refreshViewPanels();
-      if (activeViewTab === "rotation") {
-        document.getElementById("rotation-details").open = true;
-      }
-      if (activeViewTab === "market") {
-        document.getElementById("market-reference-card").open = true;
-      }
-      if (activeViewTab === "rotation" && selectedDate) {
-        loadRotationOverlayOnce(selectedDate).catch((error) => {
-          document.getElementById("rotation-overlay").innerHTML = `<span class="muted">오류: ${esc(error)}</span>`;
-        });
-      }
       if (selectedDate) {
         loadTabDataForActiveView(selectedDate).catch((error) => {
           renderLazyTabError(activeViewTab, error);
@@ -29956,11 +30410,6 @@ def _render_web_view_html() -> str:
       } else if (tabName === "stock") {
         document.getElementById("stock-context").innerHTML = message;
         document.getElementById("stock-detail").innerHTML = message;
-      } else if (tabName === "market") {
-        document.getElementById("flow-trend-rows").innerHTML = `<tr><td colspan="2" class="muted">오류: ${esc(error)}</td></tr>`;
-      } else if (tabName === "rotation") {
-        document.getElementById("rotation-overlay").innerHTML = message;
-        document.getElementById("etf-tab-rows").innerHTML = `<tr><td colspan="2" class="muted">오류: ${esc(error)}</td></tr>`;
       }
     }
 
@@ -29999,22 +30448,8 @@ def _render_web_view_html() -> str:
             button.disabled = false;
           });
         }
-      } else if (activeViewTab === "market") {
-        if (flowTrendLoadedDate !== date) {
-          await loadFlowTrend(date);
-          flowTrendLoadedDate = date;
-        }
-        loadTossMarketContext(date);
       } else if (activeViewTab === "stock") {
         return;
-      } else if (activeViewTab === "rotation") {
-        if (etfTrendLoadedDate !== date) {
-          const etfTrend = await loadEtfTrend(date);
-          etfTrendLoadedDate = date;
-          etfTrendAvailable = Boolean(etfTrend?.available);
-        }
-        if (!etfTrendAvailable) return;
-        await loadRotationOverlayOnce(date);
       }
     }
 
@@ -30023,6 +30458,21 @@ def _render_web_view_html() -> str:
       const requestedInitialStockCode = String(options.initialStockCode || "").trim();
       const initialStockCode = validStockCode(requestedInitialStockCode) ? requestedInitialStockCode : "";
       selectedDate = date;
+      tossMarketContextRequestId += 1;
+      tossMarketContextLoading = false;
+      document.getElementById("toss-market-context").hidden = true;
+      document.getElementById("toss-market-context").innerHTML = "";
+      document.getElementById("toss-market-context-status").textContent = "날짜를 선택하고 버튼을 눌러 조회하세요.";
+      tossPriorityRows = [];
+      dailyCandleRequestId += 1;
+      dailyCandleLoading = false;
+      dailyCandleBySymbol = new Map();
+      dailyCandleLoadedKey = null;
+      document.getElementById("top2-daily-candle-panels").innerHTML = "";
+      document.getElementById("top2-daily-candle-panels").hidden = true;
+      document.getElementById("top2-daily-candle-status").textContent = "수정주가 · 선택한 Top2 기준일까지 · 월 경계 표시";
+      updateDailyCandleButton();
+      updateTossMarketRefreshButton();
       selectedStockCode = null;
       selectedStockLabel = null;
       selectedStockSource = null;
@@ -30068,11 +30518,11 @@ def _render_web_view_html() -> str:
       renderDailyBriefing(data);
       renderSourceFreshnessSummary(data.source_freshness_summary);
       renderNewsObservationSummary(data.news_observation_summary);
-      document.getElementById("main-priority-date").textContent = `(${date})`;
       document.getElementById("main-priority-rows").innerHTML = '<span class="muted">오늘 우선순위를 불러오는 중입니다.</span>';
       tossPriorityRows = [];
       tossPriorityDate = date;
       updateTossPriorityRefreshButton();
+      updateTossMarketRefreshButton();
       document.getElementById("candidate-evidence-date").textContent = `(${date})`;
       document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">오늘의 관찰 후보를 불러오는 중입니다.</span>';
       renderStockSearchResults();
@@ -30082,15 +30532,17 @@ def _render_web_view_html() -> str:
       renderKrxRecentFlow(data.toss_recent_flow);
       renderInvestorFlow(data.toss_investor_flow);
       document.getElementById("etf-tab-title").textContent = `(${date})`;
-      document.getElementById("etf-tab-rows").innerHTML = '<tr><td colspan="2" class="muted">순환매 탭을 열면 최근 ETF 흐름을 불러옵니다.</td></tr>';
+      document.getElementById("etf-tab-rows").innerHTML = '<tr><td colspan="2" class="muted">업종·ETF 참고를 펼치면 저장된 ETF 흐름을 확인합니다.</td></tr>';
       document.getElementById("flow-trend-title").textContent = `(${date})`;
-      document.getElementById("flow-trend-rows").innerHTML = '<tr><td colspan="2" class="muted">시장 탭을 열면 최근 수급 흐름을 불러옵니다.</td></tr>';
+      document.getElementById("flow-trend-rows").innerHTML = '<tr><td colspan="2" class="muted">수급 흐름 참고를 펼치면 최근 저장값을 확인합니다.</td></tr>';
+      flowTrendLoadedDate = null;
+      etfTrendLoadedDate = null;
       rotationLoadedDate = null;
       document.getElementById("rotation-title").textContent = `(${date})`;
-      document.getElementById("rotation-overlay").innerHTML = '<span class="muted">펼치면 순환매 참고 이미지를 불러옵니다.</span>';
+      document.getElementById("rotation-overlay").innerHTML = '<span class="muted">펼치면 업종·테마 참고를 불러옵니다.</span>';
       document.getElementById("rotation-evidence").innerHTML = "";
-      if (document.getElementById("rotation-details").open) {
-        await loadRotationOverlayOnce(date).catch((error) => {
+      if (document.getElementById("industry-etf-details").open) {
+        await loadIndustryReference(date).catch((error) => {
           document.getElementById("rotation-overlay").innerHTML = `<span class="muted">오류: ${esc(error)}</span>`;
         });
       }
@@ -30129,32 +30581,22 @@ def _render_web_view_html() -> str:
 
     function renderDailyBriefing(data) {
       const mood = data?.market_mood || {};
-      const candidates = Array.isArray(data?.watch_candidates) ? data.watch_candidates : [];
       const briefing = data?.market_briefing || {};
+      const moodCard = briefing.time_slot_mood_card || {};
       const reportCount = Number(mood.total_reports || 0);
       const stockCount = Number(mood.stock_count || 0);
       const multiCount = Number(mood.multi_report_stock_count || 0);
-      const turnoverPair = briefing.turnover_summary
-        ? briefingTurnoverPair(briefing.turnover_summary)
-        : briefingLinePair(briefing.turnover_reference_lines, "거래대금 저장값 없음", "");
-      const flowPair = briefing.flow_summary
-        ? briefingFlowPair(briefing.flow_summary)
-        : briefingLinePair(briefing.flow_reference_lines, "수급 저장값 없음", "");
-      document.getElementById("daily-briefing-date").textContent = data?.business_date ? `(${data.business_date})` : "";
-      document.getElementById("daily-briefing-headline").textContent = reportCount > 0
-        ? `리포트 ${number(reportCount)}건이 ${number(stockCount)}개 종목에 모였습니다.`
-        : "선택 날짜에 저장된 리포트 요약이 없습니다.";
-      document.getElementById("briefing-reference-title").textContent = briefingReferenceTitle(turnoverPair, flowPair);
-      document.getElementById("briefing-turnover-title").textContent = turnoverPair.title || "거래대금 참고";
-      setBriefingPairValue("briefing-turnover", turnoverPair);
-      document.getElementById("briefing-turnover-sub").textContent = turnoverPair.label;
-      document.getElementById("briefing-investor-flow-title").textContent = flowPair.title || "수급 참고";
-      setBriefingPairValue("briefing-investor-flow", flowPair);
-      document.getElementById("briefing-investor-flow-sub").textContent = flowPair.label;
+      const singleCount = Math.max(stockCount - multiCount, 0);
+      const moodSections = Array.isArray(moodCard.sections) ? moodCard.sections : [];
+      const corePoints = moodSections.find((section) => section?.key === "core_points")?.items || [];
+      document.getElementById("daily-briefing-headline").textContent = moodCard.headline || (reportCount > 0
+        ? `리포트 ${number(reportCount)}건 · ${number(stockCount)}개 종목`
+        : "선택 날짜에 저장된 리포트 요약이 없습니다.");
       renderIntradayMarketTopStatus(data?.market_commentary);
       renderIntradayMarketTopOverlap(data?.market_commentary);
-      const multiPoint = multiCount > 0 ? `반복 언급 ${number(multiCount)}종목` : "";
-      renderBriefingCheckPoints([multiPoint, ...(briefing.check_points || [])]);
+      const concentrationPoint = `2건 이상 ${number(multiCount)}종목 · 1건 ${number(singleCount)}종목은 종목 탭에서 기본 숨김`;
+      const marketPoint = corePoints.find((item) => !String(item).startsWith("리포트 "));
+      renderBriefingCheckPoints([concentrationPoint, marketPoint]);
     }
 
     function renderSourceFreshnessSummary(summary) {
@@ -30217,16 +30659,6 @@ def _render_web_view_html() -> str:
       if (status === "lab_hold") return "lab-hold";
       if (status === "missing") return "missing";
       return "";
-    }
-
-    function setBriefingPairValue(elementId, pair) {
-      const node = document.getElementById(elementId);
-      if (!node) return;
-      if (pair?.html) {
-        node.innerHTML = pair.html;
-      } else {
-        node.textContent = pair?.value || "-";
-      }
     }
 
     function renderIntradayMarketTopStatus(commentary) {
@@ -30653,113 +31085,6 @@ def _render_web_view_html() -> str:
         : "<li>확인 포인트가 없습니다.</li>";
     }
 
-    function briefingLinePair(lines, emptyValue, emptyLabel) {
-      const picked = Array.isArray(lines) ? lines.filter(Boolean) : [];
-      const label = picked[0] || emptyLabel;
-      const values = picked.slice(1).map((item) => String(item).replace(/^-\\s*/, ""));
-      return {
-        label,
-        value: values.length ? values.join(" · ") : emptyValue,
-        lines: values,
-      };
-    }
-
-    function briefingFlowLinePair(lines, emptyValue, emptyLabel) {
-      const pair = briefingLinePair(lines, emptyValue, emptyLabel);
-      const rows = pair.lines.map(parseBriefingStockFlowLine).filter(Boolean).slice(0, 3);
-      if (!rows.length) return pair;
-      return {
-        ...pair,
-        html: `<span class="briefing-flow-lines">${rows.map(renderBriefingStockFlowRow).join("")}</span>`,
-      };
-    }
-
-    function parseBriefingStockFlowLine(line) {
-      const parts = String(line || "").replace(/^-\\s*/, "").split(" · ").map((item) => item.trim()).filter(Boolean);
-      if (!parts.length) return null;
-      const first = parts[0].match(/^(.+?)\\s+(?:\\d+일\\s+)?외국인\\s+(.+)$/);
-      if (!first) return { stockName: parts[0], flows: [], turns: parts.slice(1) };
-      const stockName = first[1];
-      const flows = [`외국인 ${first[2]}`];
-      const turns = [];
-      for (const part of parts.slice(1)) {
-        if (part.startsWith("기관 ") && !part.includes("전환") && !part.includes("연속")) {
-          flows.push(part);
-        } else {
-          turns.push(part);
-        }
-      }
-      return { stockName, flows, turns };
-    }
-
-    function renderBriefingStockFlowRow(row) {
-      return `<span class="briefing-flow-row">
-        <b>${esc(row.stockName || "-")}</b>
-        ${row.flows.map((line) => `<span>${esc(line)}</span>`).join("")}
-        ${row.turns.length ? `<small>${row.turns.map((line) => esc(line)).join("<br>")}</small>` : ""}
-      </span>`;
-    }
-
-    function briefingDateSuffix(summary) {
-      if (!summary?.reference_date) return "";
-      return summary.exact_date_available === false
-        ? ` · ${summary.reference_date} 저장값`
-        : ` · ${summary.reference_date}`;
-    }
-
-    function briefingReferenceTitle(...pairs) {
-      const dated = pairs.find((pair) => pair?.referenceDate);
-      return dated ? `시장 참고 (${dated.referenceDate})` : "시장 참고";
-    }
-
-    function briefingPairTitle(base, summary) {
-      return base;
-    }
-
-    function briefingTurnoverPair(summary) {
-      const markets = Array.isArray(summary?.markets) ? summary.markets : [];
-      const topItems = Array.isArray(summary?.top_items) && summary.top_items.length
-        ? summary.top_items
-        : markets.flatMap((market) => {
-            const items = Array.isArray(market.items) ? market.items : [];
-            return items.map((item) => ({ ...item, market: item.market || market.market || "" }));
-          }).sort((a, b) => Number(b.turnover || 0) - Number(a.turnover || 0)).slice(0, 3);
-      const rows = topItems.slice(0, 3).map((item) => {
-        const market = item.market || "-";
-        const value = `${item.stock_name || "-"} ${item.turnover_display || compactAmount(item.turnover, "원")}`;
-        return { market, value };
-      });
-      const html = rows.length
-        ? `<span class="briefing-card-lines">${rows.map((item) => `<span class="briefing-card-line"><em>${esc(item.market)}</em>${esc(item.value)}</span>`).join("")}</span>`
-        : "";
-      return {
-        value: rows.length ? rows.map((item) => `${item.market}: ${item.value}`).join(" · ") : "거래대금 저장값 없음",
-        html,
-        title: briefingPairTitle("거래대금 참고", summary),
-        label: "",
-        referenceDate: summary?.reference_date || "",
-      };
-    }
-
-    function briefingFlowPair(summary) {
-      const items = Array.isArray(summary?.items) ? summary.items : [];
-      const parts = items.map((item) => `${esc(item.investor_label || "-")} ${esc(item.direction_label || "-")}`).filter(Boolean);
-      if (!parts.length) {
-        return {
-          value: "시장 수급 저장값 없음",
-          title: "시장 수급 참고",
-          label: "후보 Toss 수급은 관찰 후보·종목 상세에서 확인",
-          referenceDate: "",
-        };
-      }
-      return {
-        value: parts.length ? parts.join(" / ") : "수급 저장값 없음",
-        title: "시장 수급 참고",
-        label: "",
-        referenceDate: summary?.reference_date || "",
-      };
-    }
-
     async function loadRotationOverlay(date) {
       const data = await fetch(`/api/rotation-overlay?date=${encodeURIComponent(date)}&limit=5`, { cache: "no-store" }).then((response) => response.json());
       document.getElementById("rotation-title").textContent = `(${data.business_date})`;
@@ -30778,8 +31103,8 @@ def _render_web_view_html() -> str:
         <text x="${numberAttr(item.x)}" y="${numberAttr(Number(item.y || 0) + Number(item.radius || 0) + 34)}" text-anchor="middle">${esc(item.label || item.display_name)}</text>
       `).join("");
       document.getElementById("rotation-overlay").innerHTML = `
-        <img src="/assets/cycle.jpg" alt="순환매 참고 이미지">
-        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="순환매 참고 강조 표시">${circles}</svg>
+        <img src="/assets/cycle.jpg" alt="업종·테마 분류 참고 이미지">
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="업종·테마 참고 강조 표시">${circles}</svg>
       `;
       document.getElementById("rotation-evidence").innerHTML = highlights.map((item) =>
         `<div class="rotation-evidence-card"><button type="button" class="rotation-category-link" data-public-category-id="${esc(safePublicCategoryId(item.category_type, item.public_category_id))}" data-category-type="${esc(item.category_type || "")}" data-category-display-name="${esc(item.display_name || "")}">${esc(item.category_label)} ${esc(item.display_name)}</button>
@@ -30793,8 +31118,8 @@ def _render_web_view_html() -> str:
 
     function renderRotationCandidateStocks(items) {
       const picked = (items || []).slice(0, 3);
-      if (!picked.length) return '<div class="rotation-reference-line"><strong>순환매 참고 종목</strong><span>부족한 정보: 해당 업종 후보 종목 근거 없음</span></div>';
-      return `<div class="rotation-reference-line"><strong>순환매 참고 종목</strong><span>${picked.map((item) => {
+      if (!picked.length) return '<div class="rotation-reference-line"><strong>업종 참고 종목</strong><span>부족한 정보: 해당 업종 후보 종목 근거 없음</span></div>';
+      return `<div class="rotation-reference-line"><strong>업종 참고 종목</strong><span>${picked.map((item) => {
         const market = item.market ? ` · ${esc(item.market)}` : "";
         const priceLine = item.close_price ? ` · ${price(item.close_price)} ${percent(item.change_percent)}` : "";
         const turnover = item.turnover ? ` · 거래대금 ${compactTurnover(item.turnover)}` : "";
@@ -30805,8 +31130,8 @@ def _render_web_view_html() -> str:
 
     function renderRotationCandidateEtfs(items) {
       const picked = (items || []).slice(0, 3);
-      if (!picked.length) return '<div class="rotation-reference-line"><strong>순환매 참고 ETF</strong><span>부족한 정보: 수동 ETF 매핑 또는 저장 ETF 스냅샷 없음</span></div>';
-      return `<div class="rotation-reference-line"><strong>순환매 참고 ETF</strong><span>${picked.map((item) => {
+      if (!picked.length) return '<div class="rotation-reference-line"><strong>ETF 참고</strong><span>부족한 정보: 수동 ETF 매핑 또는 저장 ETF 스냅샷 없음</span></div>';
+      return `<div class="rotation-reference-line"><strong>ETF 참고</strong><span>${picked.map((item) => {
         const index = item.underlying_index_name ? ` · ${esc(item.underlying_index_name)}` : "";
         const priceLine = item.close_price ? ` · ${price(item.close_price)} ${percent(item.change_percent)}` : "";
         const turnover = item.turnover ? ` · 거래대금 ${compactTurnover(item.turnover)}` : "";
@@ -31021,7 +31346,7 @@ def _render_web_view_html() -> str:
         ${currentQuoteLine}
         <span>저장 기준: ${esc(candidateTossBaselineCompactLine(candidate.toss_baseline_reference))}</span>
         <div class="journey-actions">
-          <button class="journey-link" type="button" data-journey-view="market">시장 기준 보기</button>
+          <button class="journey-link" type="button" data-journey-view="main-market">당일 시장 · 수급 보기</button>
           ${relatedCategoryAction}
         </div>
       </div>`;
@@ -31219,7 +31544,7 @@ def _render_web_view_html() -> str:
 
     function renderCandidateEvidence(evidence) {
       document.getElementById("candidate-evidence-date").textContent = evidence?.business_date ? `(${evidence.business_date})` : "";
-      document.getElementById("main-priority-date").textContent = evidence?.business_date ? `(${evidence.business_date})` : "";
+      if (currentDailyData) renderDailyBriefing({ ...currentDailyData, priority_candidate_evidence: evidence });
       const rows = evidence?.rows || [];
       if (!rows.length) {
         document.getElementById("main-priority-rows").innerHTML = '<span class="muted">우선 확인 후보 데이터가 없습니다.</span>';
@@ -31228,8 +31553,17 @@ def _render_web_view_html() -> str:
         tossPriorityCohortKey = null;
         tossPriorityQuoteByCode = new Map();
         tossPriorityInvestorTradingByCode = new Map();
-        document.getElementById("toss-market-context").hidden = true;
+        tossPriorityDate = evidence?.business_date || selectedDate;
+        dailyCandleRequestId += 1;
+        dailyCandleLoading = false;
+        dailyCandleBySymbol = new Map();
+        dailyCandleLoadedKey = null;
+        document.getElementById("top2-daily-candle-panels").innerHTML = "";
+        document.getElementById("top2-daily-candle-panels").hidden = true;
+        document.getElementById("top2-daily-candle-status").textContent = "이 날짜의 우선 확인 종목이 없어 일봉을 조회할 수 없습니다.";
         updateTossPriorityRefreshButton();
+        updateDailyCandleButton();
+        updateTossMarketRefreshButton();
         refreshViewPanels();
         return;
       }
@@ -31242,13 +31576,21 @@ def _render_web_view_html() -> str:
         tossPriorityCohortKey = nextTossCohortKey;
         tossPriorityQuoteByCode = new Map();
         tossPriorityInvestorTradingByCode = new Map();
+        dailyCandleRequestId += 1;
+        dailyCandleLoading = false;
+        dailyCandleBySymbol = new Map();
+        dailyCandleLoadedKey = null;
+        document.getElementById("top2-daily-candle-panels").innerHTML = "";
+        document.getElementById("top2-daily-candle-panels").hidden = true;
+        document.getElementById("top2-daily-candle-status").textContent = "수정주가 · 선택한 Top2 기준일까지 · 월 경계 표시";
       }
       document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(priorityRows);
       updateTossPriorityRefreshButton();
+      updateDailyCandleButton();
+      updateTossMarketRefreshButton();
       if (tossCohortChanged) {
         loadTossPriorityQuotes(tossPriorityDate);
       }
-      if (activeViewTab === "market") loadTossMarketContext(tossPriorityDate);
       document.getElementById("candidate-evidence-rows").innerHTML = rows.slice(0, 8).map(renderWatchCandidateRow).join("");
       refreshViewPanels();
     }
@@ -31267,6 +31609,184 @@ def _render_web_view_html() -> str:
       </button>`;
     }
 
+    async function loadIndustryReference(date) {
+      const requests = [loadRotationOverlayOnce(date)];
+      if (etfTrendLoadedDate !== date) {
+        requests.push(loadEtfTrend(date).then((flow) => {
+          etfTrendLoadedDate = date;
+          return flow;
+        }).catch((error) => {
+          document.getElementById("etf-tab-rows").innerHTML = `<tr><td colspan="2" class="muted">오류: ${esc(error)}</td></tr>`;
+        }));
+      }
+      await Promise.all(requests);
+    }
+
+    function dailyCandleSelectedCount() {
+      const count = Number(document.getElementById("top2-daily-range")?.value || 90);
+      return [30, 90, 180].includes(count) ? count : 90;
+    }
+
+    function dailyCandleKey(date, count = dailyCandleSelectedCount()) {
+      return `${date || ""}:${count}:${tossPriorityRows.map((row) => String(row?.stock_code || "")).join(",")}`;
+    }
+
+    function updateDailyCandleButton() {
+      const button = document.getElementById("top2-daily-candle-refresh");
+      if (!button) return;
+      button.disabled = !validDate(selectedDate) || !tossPriorityRows.length || dailyCandleLoading;
+      button.textContent = dailyCandleLoading
+        ? "일봉 조회 중"
+        : dailyCandleLoadedKey === dailyCandleKey(selectedDate) ? "일봉 차트 새로 확인" : "일봉 차트 확인";
+    }
+
+    function renderDailyCandleChart(candles, stockName, selectedDateText, requestedCount, fetchedAt) {
+      const points = (Array.isArray(candles) ? candles : []).slice(0, requestedCount).filter((item) => {
+        const open = Number(item?.openPrice);
+        const high = Number(item?.highPrice);
+        const low = Number(item?.lowPrice);
+        const close = Number(item?.closePrice);
+        const volume = Number(item?.volume);
+        return [open, high, low, close, volume].every(Number.isFinite)
+          && low > 0 && volume >= 0 && low <= Math.min(open, close) && high >= Math.max(open, close);
+      }).reverse();
+      if (!points.length) return '<div class="daily-candle-card"><p class="muted">표시할 일봉 데이터가 없습니다.</p></div>';
+      const highs = points.map((item) => Number(item.highPrice));
+      const lows = points.map((item) => Number(item.lowPrice));
+      const maxPrice = Math.max(...highs);
+      const minPrice = Math.min(...lows);
+      const priceRange = maxPrice - minPrice || Math.max(Math.abs(maxPrice) * 0.001, 1);
+      const maxVolume = Math.max(...points.map((item) => Number(item.volume)), 1);
+      const width = 1000;
+      const height = 330;
+      const left = 62;
+      const right = 10;
+      const priceTop = 24;
+      const priceBottom = 225;
+      const volumeTop = 265;
+      const volumeBottom = 310;
+      const plotWidth = width - left - right;
+      const slotWidth = plotWidth / points.length;
+      const x = (index) => left + ((index + 0.5) * slotWidth);
+      const y = (value) => priceTop + ((maxPrice - value) / priceRange) * (priceBottom - priceTop);
+      const barWidth = Math.max(1, Math.min(8, slotWidth * 0.62));
+      let previousMonth = "";
+      const monthMarkers = [];
+      const candleSvg = points.map((item, index) => {
+        const open = Number(item.openPrice);
+        const high = Number(item.highPrice);
+        const low = Number(item.lowPrice);
+        const close = Number(item.closePrice);
+        const volume = Number(item.volume);
+        const month = String(item.timestamp || "").slice(0, 7);
+        const candleX = x(index);
+        if (month && month !== previousMonth) {
+          const boundaryX = candleX - slotWidth / 2;
+          monthMarkers.push(`<line class="daily-candle-month-boundary" x1="${boundaryX.toFixed(2)}" y1="${priceTop}" x2="${boundaryX.toFixed(2)}" y2="${volumeBottom}"/>`);
+          monthMarkers.push(`<text class="daily-candle-month-label" x="${Math.min(boundaryX + 3, width - 52).toFixed(2)}" y="15">${esc(month)}</text>`);
+          previousMonth = month;
+        }
+        const color = close > open ? "up" : close < open ? "down" : "flat";
+        const bodyTop = Math.min(y(open), y(close));
+        const bodyHeight = Math.max(Math.abs(y(open) - y(close)), 1);
+        const volumeHeight = (volume / maxVolume) * (volumeBottom - volumeTop);
+        return `<g class="daily-candle-${color}"><line x1="${candleX.toFixed(2)}" y1="${y(high).toFixed(2)}" x2="${candleX.toFixed(2)}" y2="${y(low).toFixed(2)}" stroke-width="1"/><rect x="${(candleX - barWidth / 2).toFixed(2)}" y="${bodyTop.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${bodyHeight.toFixed(2)}"/><rect class="daily-candle-volume" x="${(candleX - barWidth / 2).toFixed(2)}" y="${(volumeBottom - volumeHeight).toFixed(2)}" width="${barWidth.toFixed(2)}" height="${volumeHeight.toFixed(2)}"/></g>`;
+      }).join("");
+      const formatPrice = (value) => Number(value).toLocaleString("ko-KR", { maximumFractionDigits: 2 });
+      const firstDate = String(points[0]?.timestamp || "").slice(0, 10);
+      const lastDate = String(points[points.length - 1]?.timestamp || "").slice(0, 10);
+      const responseTime = fetchedAt ? String(fetchedAt).replace("T", " ").slice(0, 16) : "";
+      return `<div class="daily-candle-card">
+        <h3>${esc(stockName || "종목")}</h3>
+        <p class="daily-candle-meta">${number(points.length)}거래일 · 수정주가 · ${esc(firstDate)}–${esc(lastDate)} · 기준 ${esc(selectedDateText)}${responseTime ? ` · 조회 ${esc(responseTime)}` : ""}</p>
+        <svg class="daily-candle-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(stockName || "종목")} 일봉 캔들, 거래량 및 월 경계">
+          ${monthMarkers.join("")}
+          <line class="daily-candle-axis" x1="${left}" y1="${priceBottom}" x2="${width - right}" y2="${priceBottom}"/>
+          <line class="daily-candle-axis" x1="${left}" y1="${volumeBottom}" x2="${width - right}" y2="${volumeBottom}"/>
+          <text x="2" y="${priceTop + 8}" font-size="11" fill="currentColor">${esc(formatPrice(maxPrice))}</text>
+          <text x="2" y="${priceBottom}" font-size="11" fill="currentColor">${esc(formatPrice(minPrice))}</text>
+          ${candleSvg}
+        </svg>
+      </div>`;
+    }
+
+    function renderDailyCandlePanels() {
+      const panel = document.getElementById("top2-daily-candle-panels");
+      const count = dailyCandleSelectedCount();
+      const rows = (Array.isArray(tossPriorityRows) ? tossPriorityRows : []).slice(0, 2);
+      const rendered = rows.map((row) => {
+        const code = String(row?.stock_code || "");
+        const data = dailyCandleBySymbol.get(code);
+        return renderDailyCandleChart(
+          data?.candles,
+          `${row?.stock_name || code} (${code})`,
+          selectedDate,
+          count,
+          data?.fetched_at,
+        );
+      });
+      panel.innerHTML = rendered.join("");
+      panel.hidden = rendered.length === 0;
+    }
+
+    async function loadTopTwoDailyCandles(date) {
+      if (!validDate(date) || !tossPriorityRows.length) return;
+      const count = dailyCandleSelectedCount();
+      const requestId = ++dailyCandleRequestId;
+      dailyCandleLoading = true;
+      dailyCandleBySymbol = new Map();
+      dailyCandleLoadedKey = null;
+      document.getElementById("top2-daily-candle-panels").innerHTML = "";
+      document.getElementById("top2-daily-candle-panels").hidden = true;
+      updateDailyCandleButton();
+      document.getElementById("top2-daily-candle-status").textContent = `Top2 기준일 ${date}까지 ${number(count)}거래일 수정주가 일봉을 조회 중입니다.`;
+      try {
+        const response = await fetch(`/api/toss-priority-daily-candles?date=${encodeURIComponent(date)}&days=${count}`, { cache: "no-store" });
+        const data = await response.json();
+        if (requestId !== dailyCandleRequestId || date !== selectedDate) return;
+        if (!response.ok) {
+          const upstreamStatus = Number(data.upstream_status);
+          const statusLabel = Number.isInteger(upstreamStatus) && upstreamStatus >= 100 && upstreamStatus <= 599
+            ? `Toss HTTP ${upstreamStatus}`
+            : `HTTP ${response.status}`;
+          const providerCode = typeof data.provider_code === "string" ? ` · ${data.provider_code}` : "";
+          const message = data.reason === "no_candles_before_top2_business_date"
+            ? "선택한 기준일까지 일봉 데이터가 없습니다."
+            : data.reason === "provider_unavailable"
+              ? "Toss 일봉 조회 공급자가 준비되지 않았습니다."
+              : data.reason === "upstream_unavailable"
+                ? `Toss 일봉 조회 실패 (${statusLabel}${providerCode}).`
+                : `일봉 조회 실패 (HTTP ${response.status}).`;
+          document.getElementById("top2-daily-candle-status").textContent = message;
+          return;
+        }
+        if (data.configured === false) {
+          document.getElementById("top2-daily-candle-status").textContent = "Toss OpenAPI 실시간 조회가 설정되어 있지 않습니다.";
+          return;
+        }
+        const items = Array.isArray(data.items) ? data.items : [];
+        dailyCandleBySymbol = new Map(items.map((item) => [String(item?.symbol || ""), {
+          candles: Array.isArray(item?.candles) ? item.candles : [],
+          fetched_at: item?.fetched_at || data.fetched_at,
+        }]));
+        dailyCandleLoadedKey = dailyCandleKey(date, count);
+        renderDailyCandlePanels();
+        const receivedCount = [...dailyCandleBySymbol.values()].reduce((total, item) => total + item.candles.length, 0);
+        document.getElementById("top2-daily-candle-status").textContent = receivedCount
+          ? ""
+          : "선택한 Top2의 기간 일봉 데이터가 없습니다.";
+      } catch (_error) {
+        if (requestId === dailyCandleRequestId) {
+          document.getElementById("top2-daily-candle-status").textContent = "일봉 요청 중 연결 오류가 발생했습니다. 다시 요청해 주세요.";
+        }
+      } finally {
+        if (requestId === dailyCandleRequestId) {
+          dailyCandleLoading = false;
+          updateDailyCandleButton();
+        }
+      }
+    }
+
     function renderTopTwoReviewCandidates(rows) {
       const picked = (Array.isArray(rows) ? rows : []).filter((item) => item?.selected !== false).slice(0, 2);
       if (!picked.length) return "";
@@ -31281,16 +31801,22 @@ def _render_web_view_html() -> str:
         const targetRevisionLine = targetRevisionTrailLine(item);
         const currentEvidenceLine = topTwoCurrentEvidenceLine(item);
         const missingEvidenceLine = topTwoMissingEvidenceLine(item, tossQuote);
+        const currentEvidenceBlock = currentEvidenceLine
+          ? `<span class="top-two-evidence-line"><strong>근거</strong><span class="top-two-evidence-text">${esc(currentEvidenceLine)}</span></span>`
+          : "";
         const missingEvidenceBlock = missingEvidenceLine === "추가 공백 없음"
           ? ""
-          : `<span class="top-two-evidence-line"><strong>현재 미확인:</strong><span class="top-two-evidence-text">${esc(missingEvidenceLine)}</span></span>`;
+          : `<span class="top-two-evidence-line"><strong>확인 필요</strong><span class="top-two-evidence-text">${esc(missingEvidenceLine)}</span></span>`;
+        const targetRevisionBlock = targetRevisionLine === "최근 조정 없음"
+          ? ""
+          : `<span class="target-revision-line">${esc(targetRevisionLine)}</span>`;
         return `<div class="top-two-entry"><button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote-context="main" data-toss-quote="${esc(item.stock_code || "")}">${esc(tossQuote || "Toss 현재가 확인 중")}</span></b>
-          <span class="muted">관찰 사유: ${esc(why)}</span>
-          <span class="top-two-evidence-line"><strong>현재 근거:</strong><span class="top-two-evidence-text">${esc(currentEvidenceLine)}</span></span>
-          <span class="top-two-evidence-line"><strong>Toss 조회 수급 참고(미저장):</strong><span class="top-two-evidence-text priority-toss-investor-trading muted" data-toss-investor-trading="${esc(item.stock_code || "")}">${esc(tossInvestorTrading || "확인 중")}</span></span>
+          <span class="muted">${esc(why)}</span>
+          ${currentEvidenceBlock}
+          <span class="top-two-evidence-line"><strong>수급</strong><span class="top-two-evidence-text priority-toss-investor-trading muted" data-toss-investor-trading="${esc(item.stock_code || "")}">${esc(tossInvestorTrading || "확인 중")}</span></span>
           ${missingEvidenceBlock}
-          <span class="target-revision-line">${esc(targetRevisionLine)}</span>
+          ${targetRevisionBlock}
         </button>${renderCandidateResearchFocus(item.research_focus)}</div>`;
       }).join("")}</section>`;
       return `${cards}${renderTopTwoCloseReassessment(currentCandidateEvidenceData?.close_reassessment)}`;
@@ -31299,11 +31825,11 @@ def _render_web_view_html() -> str:
     function renderCandidateResearchFocus(focus) {
       const items = (Array.isArray(focus?.items) ? focus.items : []).slice(0, 3);
       if (!items.length) return "";
-      return `<div class="candidate-research-focus"><strong>더 확인할 주제</strong>${items.map((item) => {
+      return `<details class="candidate-research-focus"><summary>리포트 주제 · 뉴스 검색 ${number(items.length)}</summary>${items.map((item) => {
         const query = String(item?.query || "");
         const href = "https://search.naver.com/search.naver?where=news&query=" + encodeURIComponent(query);
-        return `<p><span>${esc(item.source_kind || "리포트")}: ${esc(item.topic || item.source_title || "")}</span> <a href="${esc(href)}" target="_blank" rel="noopener noreferrer">관련 뉴스 찾기</a></p>`;
-      }).join("")}<small class="muted">${esc(focus.notice || "검색 결과는 별도로 확인하세요.")}</small></div>`;
+        return `<p><span>${esc(item.source_kind || "리포트")} · ${esc(item.topic || item.source_title || "")}</span> <a href="${esc(href)}" target="_blank" rel="noopener noreferrer">뉴스 검색</a></p>`;
+      }).join("")}</details>`;
     }
 
     function renderTopTwoCloseReassessment(reassessment) {
@@ -31331,12 +31857,7 @@ def _render_web_view_html() -> str:
       if (item?.stock_flow_reference?.available === true) {
         parts.push(evidenceFlowLabel(item.stock_flow_reference));
       }
-      if (!parts.length) {
-        const reportCount = Number(item?.report_summary?.report_count || 0);
-        const primary = candidateCompactLabel(candidateWhyDisplayItems(candidateEvidenceLayers(item).primary), 2);
-        if (reportCount > 0) parts.push(`리포트 ${number(reportCount)}건${primary ? ` · ${primary}` : ""}`);
-      }
-      return parts.length ? parts.join(" · ") : "현재 근거 확인 전";
+      return parts.join(" · ");
     }
 
     function topTwoMissingEvidenceLine(item, tossQuote) {
@@ -31590,36 +32111,28 @@ def _render_web_view_html() -> str:
 
     function renderTossMarketContext(data) {
       const panel = document.getElementById("toss-market-context");
+      const status = document.getElementById("toss-market-context-status");
       if (!data || data.live_fetch !== true) {
         panel.hidden = false;
-        panel.textContent = data?.configured === false
-          ? "Toss 시장 문맥은 연결 준비 상태입니다."
-          : "Toss 시장 문맥을 지금 확인할 수 없습니다.";
+        panel.textContent = data?.configured === false ? "Toss OpenAPI 연결 설정을 기다리고 있습니다." : "지수와 시장 수급을 확인할 수 없습니다.";
+        status.textContent = data?.configured === false ? "연결 설정 대기" : "조회 실패 또는 데이터 없음";
         return;
       }
-      const rankings = Array.isArray(data.rankings) ? data.rankings.slice(0, 20) : [];
       const marketPrices = Array.isArray(data.market_prices) ? data.market_prices : [];
-      const overlaps = Array.isArray(data.priority_overlap_symbols) ? data.priority_overlap_symbols : [];
-      const stockNames = data.stock_names && typeof data.stock_names === "object" ? data.stock_names : {};
-      const etfSymbols = new Set(Array.isArray(data.etf_symbols) ? data.etf_symbols.map(String) : []);
       const marketPriceChanges = data.market_price_changes && typeof data.market_price_changes === "object"
         ? data.market_price_changes
         : {};
-      const rankedAt = tossQuoteTimeLabel({ timestamp: data.ranked_at }, data);
-      const marketPriceLabel = marketPrices
+      const indexItems = marketPrices
         .filter((item) => item && item.symbol && item.lastPrice !== null && item.lastPrice !== undefined)
         .map((item) => {
-          const changeRate = Number(marketPriceChanges[item.symbol]?.change_rate);
-          const changeLabel = Number.isFinite(changeRate) ? ` (${percent(changeRate * 100)})` : "";
-          return `${esc(item.symbol)} ${number(item.lastPrice)}${changeLabel}`;
-        })
-        .join(" · ");
-      const rankingName = (item) => stockNames[String(item?.symbol || "")] || item?.symbol || "-";
-      const rankItems = (items) => items.length
-        ? items.map((item) => `<span class="status-pill">${esc(item?.rank || "")}. ${esc(rankingName(item))}</span>`).join("")
-        : '<span class="muted">집계값 없음</span>';
-      const stockRankings = rankings.filter((item) => !etfSymbols.has(String(item?.symbol || ""))).slice(0, 10);
-      const etfRankings = rankings.filter((item) => etfSymbols.has(String(item?.symbol || ""))).slice(0, 5);
+          const symbol = String(item.symbol);
+          const label = symbol === "KOSPI" ? "코스피" : symbol === "KOSDAQ" ? "코스닥" : symbol;
+          const level = Number(item.lastPrice);
+          const priceLabel = Number.isFinite(level) ? level.toLocaleString("ko-KR", { maximumFractionDigits: 2 }) : "값 확인 필요";
+          const changeRate = Number(marketPriceChanges[symbol]?.change_rate);
+          const changeLabel = Number.isFinite(changeRate) ? ` · ${percent(changeRate * 100)}` : "";
+          return `${esc(label)} ${esc(priceLabel)}${changeLabel}`;
+        });
       const flowLabel = (record, market) => {
         if (!record || typeof record !== "object") return `${market} 기준일 데이터 없음`;
         const parts = [["개인", record.individual], ["외국인", record.foreigner], ["기관", record.institution]].flatMap(([label, amount]) => {
@@ -31630,42 +32143,65 @@ def _render_web_view_html() -> str:
           return [`${label} ${net >= 0 ? "순매수" : "순매도"} ${compactTurnover(Math.abs(net))}`];
         });
         const updatedAt = tossQuoteTimeLabel({ timestamp: record.updatedAt }, data);
-        return `${market} ${parts.join(" · ") || "집계값 확인 필요"}${updatedAt ? ` · ${updatedAt}` : ""}`;
+        const flowDate = record.date ? ` · 기준 ${record.date}` : "";
+        return `${market} ${parts.join(" · ") || "집계값 확인 필요"}${flowDate}${updatedAt ? ` · ${updatedAt}` : ""}`;
       };
       const flow = data.investor_flow || {};
       panel.hidden = false;
       panel.innerHTML = `
-        <div class="intraday-overlap-head"><b>Toss 시장 문맥</b><span>· ${esc(rankedAt || "집계 시각 확인 필요")}</span></div>
-        <p class="muted">당일 지수 · ${marketPriceLabel || "지수값 확인 필요"}</p>
-        <p class="muted">당일 시장 수급 잠정 · ${esc(flowLabel(flow.KOSPI, "KOSPI"))} · ${esc(flowLabel(flow.KOSDAQ, "KOSDAQ"))}</p>
-        <p class="intraday-overlap-summary">우선 확인 겹침 ${esc(overlaps.map((symbol) => stockNames[String(symbol)] || symbol).join(", ") || "없음")}</p>
-        <p class="muted"><b>Toss 거래대금 상위 Top10</b></p>
-        <div class="intraday-overlap-stocks">${rankItems(stockRankings)}</div>
-        <p class="muted"><b>Toss 거래대금 상위 ETF Top5</b></p>
-        <div class="intraday-overlap-stocks">${rankItems(etfRankings)}</div>
+        <div class="main-market-context-grid">
+          <div class="main-market-context-block"><b>지수</b><span>${indexItems.length ? indexItems.join(" · ") : "지수값 없음"}</span></div>
+          <div class="main-market-context-block"><b>시장 수급 · 잠정</b><span>${esc(flowLabel(flow.KOSPI, "KOSPI"))}</span><br><span>${esc(flowLabel(flow.KOSDAQ, "KOSDAQ"))}</span></div>
+        </div>
       `;
+      const fetchedAt = tossQuoteTimeLabel({ timestamp: data.fetched_at }, data).replace(/^조회 /, "");
+      const staleLabel = data.cache === "stale"
+        ? "이전 조회값 · 최신성 미확인"
+        : ["hit", "shared"].includes(data.cache) ? "Toss 캐시값" : "Toss 요청 결과";
+      status.textContent = `${data.reference_date || data.latest_business_date || "최신 영업일"} · ${staleLabel}${fetchedAt ? ` · 응답 ${fetchedAt}` : ""}`;
     }
 
     async function loadTossMarketContext(date) {
       const panel = document.getElementById("toss-market-context");
-      if (!validDate(date) || !tossPriorityRows.length) {
-        panel.hidden = true;
-        return;
-      }
+      const status = document.getElementById("toss-market-context-status");
+      if (!validDate(date)) return;
       const requestId = ++tossMarketContextRequestId;
+      tossMarketContextLoading = true;
+      updateTossMarketRefreshButton();
       panel.hidden = false;
-      panel.textContent = "Toss 시장 문맥 확인 중";
+      panel.textContent = "지수와 시장 수급을 확인 중입니다.";
+      status.textContent = "Toss 조회 중";
       try {
         const response = await fetch(`/api/toss-market-context?date=${encodeURIComponent(date)}`, { cache: "no-store" });
         const data = await response.json();
         if (requestId !== tossMarketContextRequestId || date !== selectedDate) return;
-        if (response.status === 409 || !response.ok) throw new Error(`HTTP ${response.status}`);
+        if (response.status === 409) {
+          panel.hidden = true;
+          status.textContent = data.latest_business_date
+            ? `실시간 조회는 최신 영업일(${data.latest_business_date})만 가능합니다.`
+            : "저장된 최신 기준일이 없어 Toss 시장 조회를 중단했습니다.";
+          return;
+        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         renderTossMarketContext(data);
       } catch (_error) {
         if (requestId === tossMarketContextRequestId) {
           panel.textContent = "Toss 시장 문맥을 지금 확인할 수 없습니다.";
+          status.textContent = "조회 실패 · 다시 요청할 수 있습니다.";
+        }
+      } finally {
+        if (requestId === tossMarketContextRequestId) {
+          tossMarketContextLoading = false;
+          updateTossMarketRefreshButton();
         }
       }
+    }
+
+    function updateTossMarketRefreshButton() {
+      const button = document.getElementById("toss-market-refresh");
+      if (!button) return;
+      button.disabled = !validDate(selectedDate) || tossMarketContextLoading;
+      button.textContent = tossMarketContextLoading ? "시장 · 수급 조회 중" : "지수 · 수급 확인";
     }
 
     function tossQuoteTimeLabel(quote, payload) {
@@ -32020,7 +32556,7 @@ def _render_web_view_html() -> str:
           ? `(최근 저장 ${referenceDate} · 선택 ${selectedDateText})`
           : `(기준 ${referenceDate})`)
         : "";
-      document.getElementById("krx-flow-notice").textContent = `${displayNotice(flow?.notice || "선택 날짜를 포함한 최근 저장 데이터 기준입니다.")} ETF는 순환매 탭에서 봅니다.`;
+      document.getElementById("krx-flow-notice").textContent = `${displayNotice(flow?.notice || "선택 날짜를 포함한 최근 저장 데이터 기준입니다.")} ETF는 메인의 업종·ETF 참고에서 확인합니다.`;
       if (!flow || !flow.available || !flow.items.length) {
         document.getElementById("krx-flow-rows").innerHTML = '<tr><td colspan="3" class="muted">최근 Toss 저장 흐름 데이터가 없습니다.</td></tr>';
         return;
@@ -32080,7 +32616,6 @@ def _render_web_view_html() -> str:
       if (!flow || !flow.available || !flow.items.length) {
         const emptyRows = '<tr><td colspan="2" class="muted">최근 ETF 흐름 데이터가 없습니다.</td></tr>';
         document.getElementById("etf-tab-rows").innerHTML = emptyRows;
-        document.getElementById("rotation-details").open = false;
         return;
       }
       const rows = flow.items.map((item) => row([
@@ -32149,7 +32684,7 @@ def _render_web_view_html() -> str:
       const displayName = target.dataset.categoryDisplayName || "";
       const publicCategoryId = safePublicCategoryId(categoryType, target.dataset.publicCategoryId);
       if (!["sector", "theme"].includes(categoryType) || !displayName) return;
-      setViewTab("rotation");
+      setViewTab("stock");
       loadCategoryDetail(selectedDate, categoryType, publicCategoryId, displayName, { scrollToDetail: true, userSelected: true }).catch((error) => {
         document.getElementById("category-rows").innerHTML = `<tr><td colspan="6" class="muted">오류: ${esc(error)}</td></tr>`;
       });
@@ -32161,9 +32696,9 @@ def _render_web_view_html() -> str:
       const journeyTarget = event.target.closest("[data-journey-view]");
       if (journeyTarget) {
         const viewName = journeyTarget.dataset.journeyView;
-        if (!['market', 'rotation'].includes(viewName)) return;
-        setViewTab(viewName);
-        window.setTimeout(() => focusDetailCard(viewName === 'market' ? 'market-reference-card' : 'rotation-details'), 0);
+        if (viewName !== "main-market") return;
+        setViewTab("main");
+        window.setTimeout(() => focusDetailCard("main-market-context-card"), 0);
         return;
       }
     });
@@ -32211,6 +32746,22 @@ def _render_web_view_html() -> str:
     document.getElementById("toss-priority-refresh").addEventListener("click", () => {
       loadTossPriorityQuotes(tossPriorityDate || selectedDate, { force: true });
     });
+    document.getElementById("top2-daily-range").addEventListener("change", () => {
+      dailyCandleRequestId += 1;
+      dailyCandleLoading = false;
+      dailyCandleBySymbol = new Map();
+      dailyCandleLoadedKey = null;
+      document.getElementById("top2-daily-candle-panels").innerHTML = "";
+      document.getElementById("top2-daily-candle-panels").hidden = true;
+      document.getElementById("top2-daily-candle-status").textContent = "수정주가 · 선택한 Top2 기준일까지 · 월 경계 표시";
+      updateDailyCandleButton();
+    });
+    document.getElementById("top2-daily-candle-refresh").addEventListener("click", () => {
+      loadTopTwoDailyCandles(selectedDate);
+    });
+    document.getElementById("toss-market-refresh").addEventListener("click", () => {
+      loadTossMarketContext(selectedDate);
+    });
     document.getElementById("intraday-market-top-check").addEventListener("click", () => {
       loadIntradayMarketTopForSelectedDate();
     });
@@ -32233,10 +32784,18 @@ def _render_web_view_html() -> str:
       if (event.target.closest(".stock-search")) return;
       document.getElementById("stock-search-results").hidden = true;
     });
-    document.getElementById("rotation-details").addEventListener("toggle", (event) => {
-      if (!event.target.open || !selectedDate || rotationLoadedDate === selectedDate) return;
-      loadRotationOverlayOnce(selectedDate).catch((error) => {
+    document.getElementById("industry-etf-details").addEventListener("toggle", (event) => {
+      if (!event.target.open || !selectedDate) return;
+      loadIndustryReference(selectedDate).catch((error) => {
         document.getElementById("rotation-overlay").innerHTML = `<span class="muted">오류: ${esc(error)}</span>`;
+      });
+    });
+    document.getElementById("flow-trend-details").addEventListener("toggle", (event) => {
+      if (!event.target.open || !selectedDate || flowTrendLoadedDate === selectedDate) return;
+      loadFlowTrend(selectedDate).then(() => {
+        flowTrendLoadedDate = selectedDate;
+      }).catch((error) => {
+        document.getElementById("flow-trend-rows").innerHTML = `<tr><td colspan="2" class="muted">오류: ${esc(error)}</td></tr>`;
       });
     });
     loadArchive().catch((error) => {
@@ -32707,6 +33266,12 @@ def build_web_view_stock_search_snapshot(
 
     like_query = f"%{normalized_query}%"
     exact_query = normalized_query
+    latest_universe_date = repository.latest_toss_stock_universe_snapshot_date()
+    universe_reference_date = (
+        latest_universe_date
+        if latest_universe_date is not None and latest_universe_date <= business_date
+        else None
+    )
     with repository.connect() as connection:
         rows = connection.execute(
             """
@@ -32731,14 +33296,21 @@ def build_web_view_stock_search_snapshot(
                   AND stock_code IS NOT NULL
                 UNION ALL
                 SELECT stock_code, stock_name, market, 1 AS source_rank
+                FROM toss_stock_universe_cache
+                WHERE business_date = (
+                    SELECT MAX(business_date) FROM toss_stock_universe_cache
+                )
+                  AND business_date <= ?
+                UNION ALL
+                SELECT stock_code, stock_name, market, 2 AS source_rank
                 FROM latest_krx
                 WHERE stock_code IS NOT NULL
                 UNION ALL
-                SELECT stock_code, stock_name, NULL AS market, 2 AS source_rank
+                SELECT stock_code, stock_name, NULL AS market, 3 AS source_rank
                 FROM stock_metadata
                 WHERE stock_code IS NOT NULL
                 UNION ALL
-                SELECT stock_code, stock_name, NULL AS market, 3 AS source_rank
+                SELECT stock_code, stock_name, NULL AS market, 4 AS source_rank
                 FROM reports
                 WHERE stock_code IS NOT NULL
             ),
@@ -32776,7 +33348,14 @@ def build_web_view_stock_search_snapshot(
                 stock_code ASC
             LIMIT ?
             """,
-            (business_date.isoformat(), like_query, like_query, exact_query, max_limit),
+            (
+                business_date.isoformat(),
+                business_date.isoformat(),
+                like_query,
+                like_query,
+                exact_query,
+                max_limit,
+            ),
         ).fetchall()
         stock_codes = [str(row["stock_code"] or "") for row in rows if row["stock_code"]]
         report_codes = {
@@ -32842,6 +33421,9 @@ def build_web_view_stock_search_snapshot(
         "read_only": True,
         "business_date": business_date.isoformat(),
         "source": "stored_stock_universe",
+        "stock_universe_reference_date": (
+            universe_reference_date.isoformat() if universe_reference_date else None
+        ),
         "live_fetch": False,
         "available": bool(items),
         "query": normalized_query,
@@ -32993,7 +33575,6 @@ def build_web_view_daily_snapshot(
     mood = _build_market_mood_snapshot(business_date, summaries, sectors)
     watch_candidates = _build_web_view_watch_candidates(summaries)
     recent_toss_snapshot_dates = repository.list_recent_toss_market_snapshot_dates(on_or_before=business_date, limit=3)
-    toss_snapshot_date = recent_toss_snapshot_dates[0] if recent_toss_snapshot_dates else None
     toss_capture_state = _web_view_toss_capture_state(repository, business_date)
     recent_toss_etf_snapshot_dates = repository.list_recent_toss_etf_snapshot_dates(
         on_or_before=business_date, limit=1
@@ -33087,13 +33668,7 @@ def build_web_view_daily_snapshot(
         toss_market_item = next(
             item for item in source_freshness_summary["items"] if item.get("key") == "toss_market"
         )
-        capture_status = toss_capture_state.get("status")
-        toss_market_item["capture_status"] = capture_status
-        toss_market_item["capture_date"] = toss_capture_state.get("business_date")
-        toss_market_item["missing_domains"] = list(toss_capture_state.get("missing_domains") or [])
-        if capture_status in {"partial", "empty", "failed"} and toss_snapshot_date == business_date:
-            toss_market_item["status"] = "partial" if capture_status in {"partial", "failed"} else "missing"
-            toss_market_item["exact_date_available"] = False
+        _apply_toss_capture_state_to_freshness_item(toss_market_item, toss_capture_state)
     return {
         "now": current.isoformat(),
         "timezone": config.timezone,
@@ -38779,6 +39354,21 @@ def _web_view_toss_capture_state(
     }
 
 
+def _apply_toss_capture_state_to_freshness_item(
+    item: dict[str, object] | None,
+    capture_state: dict[str, object] | None,
+) -> None:
+    if item is None or capture_state is None:
+        return
+    capture_status = capture_state.get("status")
+    item["capture_status"] = capture_status
+    item["capture_date"] = capture_state.get("business_date")
+    item["missing_domains"] = list(capture_state.get("missing_domains") or [])
+    if capture_status in {"partial", "empty", "failed"} and item.get("reference_date") == capture_state.get("business_date"):
+        item["status"] = "partial" if capture_status in {"partial", "failed"} else "missing"
+        item["exact_date_available"] = False
+
+
 def _build_web_view_toss_context(
     repository: StockMonitorRepository,
     business_date: date,
@@ -38898,7 +39488,7 @@ def build_web_view_etf_trend_snapshot(
         "source": "toss_openapi" if items else None,
         "data_scope": "stored_toss_close_snapshot",
         "basis": "Toss 거래대금 상위 ETF",
-        "display_label": "ETF 순환매 참고" if items else "ETF 저장값 없음",
+        "display_label": "ETF 저장 참고" if items else "ETF 저장값 없음",
         "constituents_available": False,
         "composition_scope": "구성종목 미포함",
         "live_fetch": False,
@@ -39682,6 +40272,16 @@ def _build_live_observation_snapshot(
             event_types=event_types,
             prefer_latest_time=key in {"krx_daily_backfill", "poll_news", "toss_market_context"},
         )
+        if key == "toss_market_context":
+            capture_event = _latest_live_event_for(
+                current,
+                events,
+                component=component,
+                event_types={"capture"},
+                prefer_latest_time=True,
+            )
+            if capture_event is not None:
+                event = capture_event
         evidence_status = _live_event_evidence_status(event)
         attention_reason = None
         if key in {"krx_daily_backfill", "poll_news", "toss_market_context"} and event and event.status in {"empty", "partial"}:
@@ -39689,7 +40289,10 @@ def _build_live_observation_snapshot(
         elif key == "krx_daily_backfill" and _krx_daily_backfill_event_has_incomplete_snapshots(repository, event):
             evidence_status = "attention"
             attention_reason = "incomplete_snapshot"
-        if event is None:
+        missing_capture_evidence = event is None or (
+            key == "toss_market_context" and event.status == "skipped"
+        )
+        if missing_capture_evidence:
             if _live_observation_component_not_yet_due(config, current, key):
                 evidence_status = "pending"
         component_status = {
@@ -39698,7 +40301,7 @@ def _build_live_observation_snapshot(
         }
         if attention_reason:
             component_status["attention_reason"] = attention_reason
-        if event is None and key in {"poll_news", "toss_market_context"}:
+        if missing_capture_evidence and key in {"poll_news", "toss_market_context"}:
             expected_task_key = "poll" if key == "poll_news" else "toss-market-context"
             has_enabled_task = any(
                 _scheduler_task_key(config.scheduler_task_prefix, str(task.get("task_name") or ""))
@@ -40307,48 +40910,35 @@ def _validate_operator_no_run_date_target(
 
 
 def _resolve_scheduler_control_task_names(task_prefix: str, task_selector: str) -> tuple[str, ...]:
-    (
-        notify,
-        poll,
-        krx_daily_backfill,
-        krx_mentioned_flow_backfill,
-        krx_flow_login_reminder,
-        market_briefing_mood,
-        market_briefing_lunch,
-        market_briefing_preclose,
-        telegram_commands,
-        web_view_hourly_restart,
-        shutdown,
-    ) = _scheduler_task_names(task_prefix)
     mapping = {
-        "notify": notify,
-        "poll": poll,
-        "krx-daily-backfill": krx_daily_backfill,
-        "krx-mentioned-flow-backfill": krx_mentioned_flow_backfill,
-        "krx-flow-login-reminder": krx_flow_login_reminder,
-        "market-briefing-mood": market_briefing_mood,
-        "market-briefing-lunch": market_briefing_lunch,
-        "market-briefing-preclose": market_briefing_preclose,
-        "telegram-commands": telegram_commands,
-        "web-view-hourly-restart": web_view_hourly_restart,
+        "notify": f"{task_prefix}-Notify",
+        "poll": f"{task_prefix}-Poll",
+        "krx-daily-backfill": f"{task_prefix}-KrxDailyBackfill",
+        "krx-mentioned-flow-backfill": f"{task_prefix}-KrxMentionedFlowBackfill",
+        "krx-flow-login-reminder": f"{task_prefix}-KrxFlowLoginReminder",
+        "market-briefing-mood": f"{task_prefix}-MarketBriefingMood",
+        "market-briefing-lunch": f"{task_prefix}-MarketBriefingLunch",
+        "market-briefing-preclose": f"{task_prefix}-MarketBriefingPreclose",
+        "telegram-commands": f"{task_prefix}-TelegramCommands",
+        "web-view-hourly-restart": f"{task_prefix}-WebViewHourlyRestart",
         "web-view-manual": f"{task_prefix}-WebViewManual",
-        "shutdown": shutdown,
+        "shutdown": f"{task_prefix}-Shutdown",
     }
     if task_selector == "all":
-        return (
-            notify,
-            poll,
-            krx_daily_backfill,
-            krx_mentioned_flow_backfill,
-            krx_flow_login_reminder,
-            market_briefing_mood,
-            market_briefing_lunch,
-            market_briefing_preclose,
-            telegram_commands,
-            web_view_hourly_restart,
-            f"{task_prefix}-WebViewManual",
-            shutdown,
-        )
+        return tuple(mapping[key] for key in (
+            "notify",
+            "poll",
+            "krx-daily-backfill",
+            "krx-mentioned-flow-backfill",
+            "krx-flow-login-reminder",
+            "market-briefing-mood",
+            "market-briefing-lunch",
+            "market-briefing-preclose",
+            "telegram-commands",
+            "web-view-hourly-restart",
+            "web-view-manual",
+            "shutdown",
+        ))
     return (mapping[task_selector],)
 
 
@@ -41074,6 +41664,7 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
             state.clear_pending_stock_selection()
             response_text = _build_stock_code_command_response(
                 config,
+                repository=repository,
                 query=argument,
             )
             send_telegram_message(
@@ -41093,6 +41684,7 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
             response_text = _build_stock_lookup_command_response(
                 config,
                 state,
+                repository=repository,
                 query=argument,
                 now=now,
                 lookback_days=15,
@@ -41341,19 +41933,8 @@ $rows | ConvertTo-Json -Depth 4 -Compress
 
 
 def _scheduler_task_names(task_prefix: str) -> tuple[str, ...]:
-    return (
-        f"{task_prefix}-Notify",
-        f"{task_prefix}-Poll",
-        f"{task_prefix}-KrxDailyBackfill",
-        f"{task_prefix}-KrxMentionedFlowBackfill",
-        f"{task_prefix}-KrxFlowLoginReminder",
-        f"{task_prefix}-MarketBriefingMood",
-        f"{task_prefix}-MarketBriefingLunch",
-        f"{task_prefix}-MarketBriefingPreclose",
-        f"{task_prefix}-TelegramCommands",
-        f"{task_prefix}-WebViewHourlyRestart",
-        f"{task_prefix}-Shutdown",
-    )
+    suffixes = (*MINI_PC_EXPECTED_SCHEDULER_TASK_SUFFIXES, *MINI_PC_DESKTOP_VALIDATION_SCHEDULER_TASK_SUFFIXES)
+    return tuple(f"{task_prefix}-{suffix}" for suffix in suffixes)
 
 
 def _normalize_scheduler_task_status(task_name: str, item: dict | None) -> dict:
@@ -41649,6 +42230,7 @@ def _build_stock_lookup_command_response(
     config: RuntimeConfig,
     state: TelegramControlState,
     *,
+    repository: StockMonitorRepository | None = None,
     query: str | None,
     now: datetime,
     lookback_days: int,
@@ -41676,14 +42258,24 @@ def _build_stock_lookup_command_response(
             entry_limit=entry_limit,
         )
 
-    try:
-        candidates = fetch_stock_code_candidates(
-            normalized_query,
-            timeout_seconds=config.telegram_timeout_seconds,
+    snapshot_date: date | None = None
+    candidates: list[StockCodeLookupEntry] = []
+    if repository is not None:
+        candidates, snapshot_date = _toss_cached_stock_lookup_candidates(
+            repository,
+            query=normalized_query,
+            as_of_date=now.date(),
+            limit=5,
         )
-    except Exception as exc:
-        state.clear_pending_stock_selection()
-        return f"종목검색 실패: {exc}"
+    if not candidates:
+        try:
+            candidates = fetch_stock_code_candidates(
+                normalized_query,
+                timeout_seconds=config.telegram_timeout_seconds,
+            )
+        except Exception as exc:
+            state.clear_pending_stock_selection()
+            return f"종목검색 실패: {exc}"
 
     if not candidates:
         state.clear_pending_stock_selection()
@@ -41703,7 +42295,10 @@ def _build_stock_lookup_command_response(
         ],
         expires_at=now + timedelta(minutes=5),
     )
-    return format_stock_selection_message(normalized_query, candidates)
+    message = format_stock_selection_message(normalized_query, candidates)
+    if snapshot_date is not None:
+        message = f"Toss 저장 종목 목록 기준일: {snapshot_date.isoformat()}\n\n{message}"
+    return message
 
 
 def _build_stock_selection_followup_response(
@@ -42443,6 +43038,7 @@ def _build_stock_code_command_response(
     config: RuntimeConfig,
     *,
     query: str | None,
+    repository: StockMonitorRepository | None = None,
 ) -> str:
     normalized_query = (query or "").strip()
     if not normalized_query:
@@ -42454,15 +43050,57 @@ def _build_stock_code_command_response(
             ]
         )
 
-    try:
-        candidates = fetch_stock_code_candidates(
-            normalized_query,
-            timeout_seconds=config.telegram_timeout_seconds,
+    candidates: list[StockCodeLookupEntry] = []
+    snapshot_date: date | None = None
+    if repository is not None:
+        candidates, snapshot_date = _toss_cached_stock_lookup_candidates(
+            repository,
+            query=normalized_query,
+            as_of_date=datetime.now(ZoneInfo(config.timezone)).date(),
+            limit=5,
         )
-    except Exception as exc:
-        return f"종목코드 조회 실패: {exc}"
+    if not candidates:
+        try:
+            candidates = fetch_stock_code_candidates(
+                normalized_query,
+                timeout_seconds=config.telegram_timeout_seconds,
+            )
+        except Exception as exc:
+            return f"종목코드 조회 실패: {exc}"
 
-    return format_stock_code_lookup_message(normalized_query, candidates)
+    message = format_stock_code_lookup_message(normalized_query, candidates)
+    if snapshot_date is not None:
+        message = f"Toss 저장 종목 목록 기준일: {snapshot_date.isoformat()}\n\n{message}"
+    return message
+
+
+def _toss_cached_stock_lookup_candidates(
+    repository: StockMonitorRepository,
+    *,
+    query: str,
+    as_of_date: date,
+    limit: int,
+) -> tuple[list[StockCodeLookupEntry], date | None]:
+    rows = repository.search_toss_stock_universe(query, as_of_date=as_of_date, limit=limit)
+    market_labels = {"KOSPI": "코스피", "KOSDAQ": "코스닥", "KR_ETC": "기타"}
+    security_type_labels = {"STOCK": "주식", "ETF": "ETF"}
+    candidates = [
+        StockCodeLookupEntry(
+            stock_code=row.stock_code,
+            stock_name=row.stock_name,
+            market_type=" · ".join(
+                part
+                for part in (
+                    market_labels.get(row.market, row.market),
+                    security_type_labels.get(row.security_type, row.security_type),
+                )
+                if part
+            ),
+            source_url="",
+        )
+        for row in rows
+    ]
+    return candidates, rows[0].business_date if rows else None
 
 
 def _run_process_intraday_alerts(
@@ -42616,7 +43254,6 @@ def _run_scheduled_intraday_briefing(
     if not batches:
         if pending_batches:
             print("No current-day intraday batches; prior-day pending batches require operator recovery.")
-            return 0
         return _send_intraday_empty_notification(
             config,
             repository,

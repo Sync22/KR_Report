@@ -417,7 +417,7 @@ def test_market_briefing_toss_context_hides_unclassified_top20_symbols() -> None
     assert "122630" not in "\n".join(ranking_lines)
 
 
-def test_scheduled_intraday_briefing_does_not_send_empty_when_prior_day_batch_is_pending(tmp_path, monkeypatch) -> None:
+def test_scheduled_intraday_briefing_sends_empty_without_sending_prior_day_batch(tmp_path, monkeypatch) -> None:
     config, repository = _config_and_repository(tmp_path, monkeypatch)
     prior_day_report = replace(
         _report(),
@@ -441,7 +441,10 @@ def test_scheduled_intraday_briefing_does_not_send_empty_when_prior_day_batch_is
     )
 
     assert result == 0
-    assert not empty_calls
+    assert empty_calls == [{
+        "polled_at": datetime(2026, 4, 24, 8, 30, tzinfo=cli_module.ZoneInfo(config.timezone)),
+        "dry_run": False,
+    }]
     assert repository.count_pending_intraday_alert_batches() == 1
 
 

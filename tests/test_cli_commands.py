@@ -89,6 +89,7 @@ from stock_monitor.models import (
     EtfDailySnapshot,
     InvestorNetBuyTopDaily,
     KrxStockMetadataSnapshot,
+    TossStockUniverseEntry,
 )
 
 
@@ -119,6 +120,8 @@ def _create_schema_v5_database(db_path) -> None:
     with sqlite3.connect(db_path) as connection:
         for statement in SCHEMA_STATEMENTS:
             connection.execute(statement)
+
+
         connection.execute(SCHEMA_MIGRATIONS_TABLE_STATEMENT)
         connection.execute(
             "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
@@ -137,6 +140,31 @@ def _create_schema_v5_database(db_path) -> None:
                 (migration.version, migration.name, "2026-06-02T00:00:00+00:00"),
             )
         connection.execute("PRAGMA user_version = 5")
+
+
+def _fake_toss_stock_universe_payload() -> dict[str, object]:
+    return {
+        "available": True,
+        "market_counts": {"KOSPI": 1, "KOSDAQ": 1, "KR_ETC": 0},
+        "items": [
+            {
+                "symbol": "005930",
+                "name": "삼성전자",
+                "market": "KOSPI",
+                "securityType": "STOCK",
+                "isCommonShare": True,
+                "isinCode": "KR7005930003",
+            },
+            {
+                "symbol": "111111",
+                "name": "테스트코스닥",
+                "market": "KOSDAQ",
+                "securityType": "STOCK",
+                "isCommonShare": True,
+                "isinCode": "KR7111111000",
+            },
+        ],
+    }
 
 
 class _KrxReminderAllowedDateTime(datetime):
@@ -363,7 +391,7 @@ def test_main_db_verify_json_reports_stale_schema_without_traceback(tmp_path, mo
     assert payload["schema_status"]["current"] is False
     assert payload["schema_status"]["current_version"] == 5
     assert payload["schema_status"]["target_version"] == SCHEMA_VERSION
-    assert payload["schema_status"]["pending_versions"] == [6, 7, 8, 9, 10]
+    assert payload["schema_status"]["pending_versions"] == list(range(6, SCHEMA_VERSION + 1))
     assert payload["blockers"][0]["code"] == "default_db_schema_not_current"
     assert "python -m stock_monitor db-migrate --dry-run" in payload["recommended_commands"]
     assert "schema migration on operating PC" in payload["requires_separate_approval"]
@@ -1699,6 +1727,176 @@ def test_toss_market_context_capture_parser_accepts_live_save_gate() -> None:
     assert args.json is True
 
 
+def test_toss_market_calendar_check_parser_accepts_repeated_dates() -> None:
+    parser = cli_module.build_parser()
+
+    args = parser.parse_args(
+        [
+            "toss-market-calendar-check",
+            "--date",
+            "2026-09-29",
+            "--date",
+            "2026-09-26",
+            "--live",
+            "--confirm-token-reissue",
+            "--json",
+        ]
+    )
+
+    assert args.command == "toss-market-calendar-check"
+    assert args.dates == [date(2026, 9, 29), date(2026, 9, 26)]
+    assert args.live is True
+    assert args.confirm_token_reissue is True
+    assert args.json is True
+
+
+def test_toss_market_calendar_check_reports_local_disagreement(tmp_path, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    checked_dates = (date(2026, 9, 29), date(2026, 9, 26))
+
+    class FakeCalendarProvider:
+        def __init__(self):
+            self.dates: list[date] = []
+
+        def get_market_calendar(self, *, query_date: date) -> dict[str, object]:
+            self.dates.append(query_date)
+            return {
+                "today": {
+                    "date": query_date.isoformat(),
+                    "integrated": {
+                        "regularMarket": {
+                            "startTime": f"{query_date.isoformat()}T09:00:00+09:00",
+                            "endTime": f"{query_date.isoformat()}T15:30:00+09:00",
+                        }
+                    },
+                },
+                "previousBusinessDay": {"date": "2026-09-25", "integrated": None},
+                "nextBusinessDay": {"date": "2026-09-30", "integrated": None},
+            }
+
+    provider = FakeCalendarProvider()
+    exit_code = cli_module._run_toss_market_calendar_check(
+        config,
+        dates=checked_dates,
+        live=True,
+        confirm_token_reissue=True,
+        as_json=True,
+        calendar_provider=provider,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert provider.dates == sorted(checked_dates)
+    assert payload["live_fetch"] is True
+    assert payload["writes_db"] is False
+    assert payload["mismatch_count"] == 1
+    assert payload["results"][0]["status"] == "match"
+    assert payload["results"][1]["status"] == "mismatch"
+
+
+def test_toss_market_calendar_check_uses_neighbor_days_and_fails_unverified_dates(tmp_path, capsys) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    dates = (date(2026, 9, 29), date(2026, 9, 30), date(2026, 10, 1))
+
+    class FakeCalendarProvider:
+        def __init__(self, include_dates: bool = True):
+            self.dates: list[date] = []
+            self.include_dates = include_dates
+
+        def get_market_calendar(self, *, query_date: date) -> dict[str, object]:
+            self.dates.append(query_date)
+            if not self.include_dates:
+                return {}
+            prior = query_date - timedelta(days=1)
+            following = query_date + timedelta(days=1)
+            def market_day(value: date) -> dict[str, object]:
+                return {
+                    "date": value.isoformat(),
+                    "integrated": {
+                        "regularMarket": {
+                            "startTime": f"{value.isoformat()}T09:00:00+09:00",
+                            "endTime": f"{value.isoformat()}T15:30:00+09:00",
+                        }
+                    },
+                }
+            return {
+                "today": market_day(query_date),
+                "previousBusinessDay": market_day(prior),
+                "nextBusinessDay": market_day(following),
+            }
+
+    provider = FakeCalendarProvider()
+    exit_code = cli_module._run_toss_market_calendar_check(
+        config,
+        dates=dates,
+        live=True,
+        confirm_token_reissue=True,
+        as_json=True,
+        calendar_provider=provider,
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert provider.dates == [date(2026, 9, 30)]
+    assert [row["status"] for row in payload["results"]] == ["match", "match", "match"]
+
+    unknown_provider = FakeCalendarProvider(include_dates=False)
+    exit_code = cli_module._run_toss_market_calendar_check(
+        config,
+        dates=(date(2026, 9, 29),),
+        live=True,
+        confirm_token_reissue=True,
+        as_json=True,
+        calendar_provider=unknown_provider,
+    )
+    unknown_payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert unknown_payload["unknown_count"] == 1
+    assert unknown_payload["results"][0]["status"] == "unknown"
+
+    class MalformedCalendarProvider:
+        def get_market_calendar(self, *, query_date: date) -> dict[str, object]:
+            return {
+                "today": {"date": query_date.isoformat(), "integrated": {"regularMarket": {}}},
+            }
+
+    exit_code = cli_module._run_toss_market_calendar_check(
+        config,
+        dates=(date(2026, 9, 29),),
+        live=True,
+        confirm_token_reissue=True,
+        as_json=True,
+        calendar_provider=MalformedCalendarProvider(),
+    )
+    malformed_payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert malformed_payload["unknown_count"] == 1
+    assert malformed_payload["results"][0]["reason"] == "invalid_regular_market_session"
+
+    class InvalidMarketTimeProvider:
+        def get_market_calendar(self, *, query_date: date) -> dict[str, object]:
+            return {
+                "today": {
+                    "date": query_date.isoformat(),
+                    "integrated": {
+                        "regularMarket": {"startTime": "invalid", "endTime": "not-a-time"}
+                    },
+                },
+            }
+
+    exit_code = cli_module._run_toss_market_calendar_check(
+        config,
+        dates=(date(2026, 9, 29),),
+        live=True,
+        confirm_token_reissue=True,
+        as_json=True,
+        calendar_provider=InvalidMarketTimeProvider(),
+    )
+    invalid_time_payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert invalid_time_payload["unknown_count"] == 1
+    assert invalid_time_payload["results"][0]["reason"] == "invalid_regular_market_session"
+
+
 @pytest.mark.parametrize("scheduled", [False, True])
 def test_toss_market_context_capture_saves_close_snapshot_with_fake_provider(tmp_path, capsys, monkeypatch, scheduled) -> None:
     class CloseTime(datetime):
@@ -1764,6 +1962,9 @@ def test_toss_market_context_capture_saves_close_snapshot_with_fake_provider(tmp
                     }
                 },
             }
+
+        def get_stock_universe(self) -> dict[str, object]:
+            return _fake_toss_stock_universe_payload()
 
         def get_quotes(self, **_kwargs) -> dict[str, object]:
             return {
@@ -1905,6 +2106,9 @@ def test_toss_market_context_capture_is_completed_only_with_all_required_coverag
                 "investor_flow": investor_flow,
             }
 
+        def get_stock_universe(self) -> dict[str, object]:
+            return _fake_toss_stock_universe_payload()
+
         def get_quotes(self, *, symbols, **_kwargs) -> dict[str, object]:
             return {
                 "quotes": [
@@ -1983,6 +2187,8 @@ def test_toss_market_context_capture_is_completed_only_with_all_required_coverag
         [codes[1]],
         source="toss_openapi",
     ) == []
+    assert repository.latest_toss_stock_universe_snapshot_date() == business_date
+    assert [row.stock_code for row in repository.search_toss_stock_universe("삼성전자")] == ["005930"]
 
     rankings[-1]["symbol"] = codes[0]
     assert cli_module._run_toss_market_context_capture(
@@ -2086,6 +2292,9 @@ def test_toss_capture_does_not_classify_untyped_ranked_symbols_as_stocks(tmp_pat
                 "investor_flow": {},
             }
 
+        def get_stock_universe(self) -> dict[str, object]:
+            return _fake_toss_stock_universe_payload()
+
         def get_quotes(self, **_kwargs) -> dict[str, object]:
             return {"quotes": [], "investor_trading": {"items": []}}
 
@@ -2115,6 +2324,92 @@ def test_toss_capture_does_not_classify_untyped_ranked_symbols_as_stocks(tmp_pat
         ["069500"],
         source="toss_openapi",
     ) == []
+
+
+def test_toss_market_context_capture_keeps_last_complete_universe_on_fetch_failure(
+    tmp_path, capsys
+) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    prior_date = date(2026, 7, 9)
+    repository.upsert_toss_stock_universe_cache(
+        [
+            TossStockUniverseEntry(
+                business_date=prior_date,
+                market="KOSDAQ",
+                stock_code="123456",
+                stock_name="테스트바이오",
+                security_type="STOCK",
+                is_common_share=True,
+                isin_code="KR7123456000",
+                fetched_at=datetime(2026, 7, 9, 20, 5),
+            )
+        ]
+    )
+
+    class FailingUniverseProvider:
+        def get_market_context(self, **_kwargs) -> dict[str, object]:
+            return {
+                "live_fetch": True,
+                "rankings": [],
+                "stock_names": {},
+                "stock_markets": {},
+                "stock_security_types": {},
+                "stock_metadata_available": False,
+                "etf_symbols": [],
+                "market_prices": [],
+                "market_price_changes": {},
+                "investor_flow": {},
+            }
+
+        def get_stock_universe(self) -> dict[str, object]:
+            raise RuntimeError("provider unavailable")
+
+        def get_quotes(self, **_kwargs) -> dict[str, object]:
+            return {"quotes": [], "investor_trading": {"items": []}}
+
+    assert cli_module._run_toss_market_context_capture(
+        config,
+        repository,
+        business_date=date(2026, 7, 10),
+        live=True,
+        confirm_token_reissue=True,
+        confirm_save=True,
+        scheduled=False,
+        as_json=True,
+        toss_provider=FailingUniverseProvider(),
+    ) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["capture_status"] == "empty"
+    assert "stock_universe" in payload["coverage"]["missing_domains"]
+    assert repository.latest_toss_stock_universe_snapshot_date() == prior_date
+    assert [row.stock_code for row in repository.search_toss_stock_universe("테스트바이오")] == [
+        "123456"
+    ]
+
+    class StaleUniverseProvider(FailingUniverseProvider):
+        def get_stock_universe(self) -> dict[str, object]:
+            return _fake_toss_stock_universe_payload()
+
+    assert cli_module._run_toss_market_context_capture(
+        config,
+        repository,
+        business_date=date(2026, 7, 8),
+        live=True,
+        confirm_token_reissue=True,
+        confirm_save=True,
+        scheduled=False,
+        as_json=True,
+        toss_provider=StaleUniverseProvider(),
+    ) == 0
+    stale_payload = json.loads(capsys.readouterr().out)
+    assert stale_payload["stock_universe_status"] == "partial"
+    assert stale_payload["coverage"]["stock_universe"]["complete"] is False
+    assert stale_payload["coverage"]["stock_universe"]["snapshot_date"] == prior_date.isoformat()
+    assert "stock_universe" in stale_payload["coverage"]["missing_domains"]
+    assert repository.latest_toss_stock_universe_snapshot_date() == prior_date
 
 
 def test_toss_market_context_capture_saves_every_daily_candidate_in_two_symbol_batches(tmp_path, capsys) -> None:
@@ -2169,6 +2464,9 @@ def test_toss_market_context_capture_saves_every_daily_candidate_in_two_symbol_b
                 "market_price_changes": {},
                 "investor_flow": {},
             }
+
+        def get_stock_universe(self) -> dict[str, object]:
+            return _fake_toss_stock_universe_payload()
 
         def get_quotes(self, **kwargs) -> dict[str, object]:
             symbols = tuple(kwargs["symbols"])
@@ -2619,6 +2917,15 @@ def test_web_view_browser_smoke_parser_accepts_latest_date_alias() -> None:
     assert args.json is True
 
 
+def test_web_view_browser_render_smoke_opens_nested_market_reference() -> None:
+    source = Path("src/stock_monitor/cli_web_view_checks.py").read_text(encoding="utf-8")
+    main_disclosure = source.index('market_details.locator(":scope > summary").click')
+    nested_disclosure = source.index('market_reference.locator(":scope > summary").click')
+    visible_notice = source.index('page.locator("#market-notice").wait_for(state="visible"')
+
+    assert main_disclosure < nested_disclosure < visible_notice
+
+
 def test_dev_fixture_db_parser_accepts_visible_product_flow_output_and_overwrite(tmp_path) -> None:
     parser = cli_module.build_parser()
     output_path = tmp_path / "visible-product-flow.db"
@@ -2739,6 +3046,8 @@ def test_web_view_browser_api_smoke_checks_intraday_market_top_route(monkeypatch
         "method": "GET",
         "status": 200,
     } in api_checks
+    assert "POST /api/daily/2026-05-20" in calls
+    assert {"path": "/api/daily/2026-05-20", "method": "POST", "status": 405} in api_checks
 
 
 def test_web_view_browser_api_smoke_flags_candidate_json_operator_keys(monkeypatch) -> None:
@@ -2986,19 +3295,18 @@ def test_web_view_browser_smoke_json_reports_read_only_contract(tmp_path, monkey
                     "name": "mobile",
                     "width": 390,
                     "height": 844,
-                    "tab_count": 5,
-                    "tab_order": ["main", "watch", "stock", "market", "rotation"],
+                    "tab_count": 3,
+                    "tab_order": ["main", "watch", "stock"],
                     "search_input": True,
                     "candidate_panel": True,
                     "watch_panel_clickable": True,
                     "stock_panel_hidden_before_selection": True,
-                    "market_panel_clickable": True,
-                    "rotation_panel_clickable": True,
+                    "market_details_open": True,
+                    "market_reference_open": True,
+                    "rotation_details_open": True,
                     "watch_tab_current": True,
                     "stock_tab_current": True,
-                    "market_tab_current": True,
-                    "rotation_tab_current": True,
-                    "keyboard_market_current": True,
+                    "keyboard_watch_current": True,
                     "horizontal_overflow_px": 0,
                 }
             ],
@@ -3068,12 +3376,13 @@ def test_web_view_browser_smoke_text_reports_tab_contract(tmp_path, monkeypatch,
                     "name": "desktop",
                     "width": 1366,
                     "height": 900,
-                    "tab_count": 5,
-                    "tab_order": ["main", "watch", "stock", "market", "rotation"],
+                    "tab_count": 3,
+                    "tab_order": ["main", "watch", "stock"],
                     "watch_panel_clickable": True,
                     "stock_panel_hidden_before_selection": True,
-                    "market_panel_clickable": True,
-                    "rotation_panel_clickable": True,
+                    "market_details_open": True,
+                    "market_reference_open": True,
+                    "rotation_details_open": True,
                     "horizontal_overflow_px": 0,
                 }
             ],
@@ -3093,9 +3402,9 @@ def test_web_view_browser_smoke_text_reports_tab_contract(tmp_path, monkeypatch,
 
     output = capsys.readouterr().out
     assert exit_code == 0
-    assert "tabs=5" in output
-    assert "order=main/watch/stock/market/rotation" in output
-    assert "panels=watch=True stock_waiting_for_selection=True market=True rotation=True" in output
+    assert "tabs=3" in output
+    assert "order=main/watch/stock" in output
+    assert "sections=watch=True stock_waiting_for_selection=True market_details=True market_reference=True rotation_details=True" in output
 
 
 def test_external_web_view_smoke_accepts_access_gate_and_blocks_admin(monkeypatch) -> None:
@@ -3928,11 +4237,12 @@ def test_mini_pc_preflight_snapshot_reports_db_and_access_gate_state(tmp_path) -
     assert "-PythonExe" in snapshot["runtime"]["scheduler_register_command"]
     assert "register_mini_pc_scheduler_tasks.ps1" in snapshot["runtime"]["scheduler_register_command"]
     assert snapshot["scheduler_scripts"]["missing_required_scripts"]
-    assert "StockMonitor-KrxDailyBackfill" in snapshot["expected_scheduler_tasks"]
-    assert "StockMonitor-KrxMentionedFlowBackfill" in snapshot["expected_scheduler_tasks"]
+    assert "StockMonitor-KrxDailyBackfill" not in snapshot["expected_scheduler_tasks"]
+    assert "StockMonitor-KrxMentionedFlowBackfill" not in snapshot["expected_scheduler_tasks"]
     assert "StockMonitor-MarketBriefingMood" in snapshot["expected_scheduler_tasks"]
     assert "StockMonitor-MarketBriefingLunch" in snapshot["expected_scheduler_tasks"]
     assert "StockMonitor-MarketBriefingPreclose" in snapshot["expected_scheduler_tasks"]
+    assert "StockMonitor-TossCloseSnapshot" in snapshot["expected_scheduler_tasks"]
     assert "StockMonitor-WebViewHourlyRestart" in snapshot["expected_scheduler_tasks"]
     assert "StockMonitor-Shutdown" not in snapshot["expected_scheduler_tasks"]
     assert "StockMonitor-KrxFlowLoginReminder" not in snapshot["expected_scheduler_tasks"]
@@ -3950,6 +4260,10 @@ def test_mini_pc_preflight_snapshot_reports_db_and_access_gate_state(tmp_path) -
 def test_operator_status_scheduler_task_names_include_web_view_hourly_restart() -> None:
     task_names = cli_module._scheduler_task_names("StockMonitor")
 
+    assert "StockMonitor-TossCloseSnapshot" in task_names
+    assert cli_module._scheduler_task_key("StockMonitor", "StockMonitor-TossCloseSnapshot") == "toss-market-context"
+    assert "StockMonitor-KrxDailyBackfill" not in task_names
+    assert "StockMonitor-KrxMentionedFlowBackfill" not in task_names
     assert "StockMonitor-WebViewHourlyRestart" in task_names
     assert cli_module._scheduler_task_key("StockMonitor", "StockMonitor-WebViewHourlyRestart") == "web-view-hourly-restart"
     assert "StockMonitor-MarketBriefingMood" in task_names
@@ -4176,7 +4490,8 @@ def test_mini_pc_preflight_snapshot_uses_configured_task_prefix(tmp_path, monkey
         require_access_code=False,
     )
 
-    assert "MyMonitor-KrxDailyBackfill" in snapshot["expected_scheduler_tasks"]
+    assert "MyMonitor-KrxDailyBackfill" not in snapshot["expected_scheduler_tasks"]
+    assert "MyMonitor-KrxMentionedFlowBackfill" not in snapshot["expected_scheduler_tasks"]
     assert "MyMonitor-MarketBriefingMood" in snapshot["expected_scheduler_tasks"]
     assert "MyMonitor-KrxFlowLoginReminder" in snapshot["optional_scheduler_tasks"]
     assert "StockMonitor-KrxDailyBackfill" not in snapshot["expected_scheduler_tasks"]
@@ -8786,6 +9101,39 @@ def test_market_briefing_readiness_parser_defaults_to_read_only_json() -> None:
     assert market_day_observation_args.json is True
 
 
+def test_market_briefing_manual_review_dates_survive_newer_delivery_volume(tmp_path) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    review_dates = [date(2026, 5, 13), date(2026, 5, 14), date(2026, 5, 15)]
+    for index, review_date in enumerate(review_dates):
+        repository.record_delivery(
+            DeliveryLog(
+                business_date=review_date,
+                channel=cli_module.MARKET_BRIEFING_DELIVERY_CHANNEL,
+                status="sent",
+                delivered_at=datetime.combine(review_date, datetime.min.time()) + timedelta(hours=16, minutes=index),
+                message_id=f"manual-review-{index}",
+                detail="source=manual; review send",
+            )
+        )
+    for index in range(200):
+        repository.record_delivery(
+            DeliveryLog(
+                business_date=date(2026, 9, 28),
+                channel="telegram_intraday",
+                status="sent_batch",
+                delivered_at=datetime(2026, 9, 28, 12, 0) + timedelta(minutes=index),
+                message_id=f"intraday-{index}",
+                detail="source=scheduled; report briefing",
+            )
+        )
+
+    assert cli_module._market_briefing_manual_review_dates(repository) == [
+        review_date.isoformat() for review_date in reversed(review_dates)
+    ]
+
+
 def test_scheduled_market_briefing_slot_sends_with_slot_delivery_channel(tmp_path, capsys, monkeypatch) -> None:
     monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_CHAT_ID", "test-chat")
@@ -9399,6 +9747,50 @@ def test_market_briefing_json_preview_includes_slot_and_public_news_observation(
     assert "삼성전자, AI 반도체 공급 계약 체결" in payload["message"]
     assert "sentiment_score" not in json.dumps(payload, ensure_ascii=False)
     assert "operator_recommendation" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_market_briefing_freshness_marks_same_date_partial_toss_capture(tmp_path) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 7, 10)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                close_price=70_000,
+                turnover=100_000,
+                fetched_at=datetime(2026, 7, 10, 20, 5),
+                source="toss_openapi",
+            )
+        ]
+    )
+    repository.record_operation_event(
+        OperationEvent(
+            event_time=datetime(2026, 7, 10, 20, 5),
+            component="toss-market-context",
+            event_type="capture",
+            status="partial",
+            business_date=business_date,
+            detail="missing_domains=security_metadata,candidate_close_reassessment",
+        )
+    )
+
+    summary = cli_module._build_market_briefing_source_freshness_summary(
+        repository,
+        business_date,
+        report_count=0,
+    )
+    toss_market = next(item for item in summary["items"] if item["key"] == "toss_market")
+    lines = cli_module._market_briefing_source_freshness_lines(summary)
+
+    assert toss_market["status"] == "partial"
+    assert toss_market["capture_status"] == "partial"
+    assert toss_market["missing_domains"] == ["security_metadata", "candidate_close_reassessment"]
+    assert any("partial" in line and "security_metadata" in line for line in lines)
 
 
 def test_market_briefing_realtime_first_preview_orders_sections(tmp_path, capsys) -> None:
@@ -19584,6 +19976,47 @@ def test_stock_lookup_command_response_keeps_prompt_even_for_exact_name_match(mo
     assert "종목 선택 (삼성전자)" in message
     assert "1. 삼성전자(005930) | 코스피" in message
     assert state.pending_stock_selection is not None
+
+
+def test_stock_lookup_command_prefers_stored_toss_universe(tmp_path, monkeypatch) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    repository.upsert_toss_stock_universe_cache(
+        [
+            TossStockUniverseEntry(
+                business_date=date(2026, 9, 29),
+                market="KOSDAQ",
+                stock_code="123456",
+                stock_name="테스트바이오",
+                security_type="STOCK",
+                is_common_share=True,
+                isin_code="KR7123456000",
+                fetched_at=datetime(2026, 9, 29, 20, 5),
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "fetch_stock_code_candidates",
+        lambda *_args, **_kwargs: pytest.fail("stored Toss lookup should avoid a live search request"),
+    )
+
+    state = TelegramControlState()
+    message = _build_stock_lookup_command_response(
+        config,
+        state,
+        repository=repository,
+        query="테스트바이오",
+        now=datetime(2026, 9, 29, 20, 10),
+        lookback_days=15,
+        entry_limit=5,
+    )
+
+    assert "Toss 저장 종목 목록 기준일: 2026-09-29" in message
+    assert "1. 테스트바이오(123456) | 코스닥 · 주식" in message
+    assert state.pending_stock_selection is not None
+    assert state.pending_stock_selection.candidates[0].source_url == ""
 
 
 def test_stock_lookup_command_response_does_not_treat_six_char_korean_name_as_code(monkeypatch) -> None:
