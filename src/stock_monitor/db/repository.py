@@ -3189,33 +3189,55 @@ class StockMonitorRepository:
         return [date.fromisoformat(row["business_date"]) for row in rows]
 
     def list_recent_toss_market_snapshot_dates(self, *, on_or_before: date, limit: int = 5) -> list[date]:
-        with self.connect() as connection:
-            rows = connection.execute(
+        cutoff = on_or_before.isoformat()
+        queries: tuple[tuple[str, tuple[object, ...]], ...] = (
+            (
                 """
-                SELECT business_date
-                FROM (
-                    SELECT business_date FROM toss_market_context_snapshots
-                    WHERE business_date <= ? AND source = 'toss_openapi' GROUP BY business_date
-                    UNION
-                    SELECT business_date FROM stock_market_daily
-                    WHERE business_date <= ? AND source = 'toss_openapi'
-                      AND (change_amount IS NOT NULL OR change_percent IS NOT NULL OR volume IS NOT NULL
-                           OR turnover IS NOT NULL OR market_cap IS NOT NULL OR listed_shares IS NOT NULL
-                           OR open_price IS NOT NULL OR high_price IS NOT NULL OR low_price IS NOT NULL)
-                    GROUP BY business_date
-                    UNION
-                    SELECT business_date FROM etf_daily_snapshots
-                    WHERE business_date <= ? AND source = 'toss_openapi' GROUP BY business_date
-                    UNION
-                    SELECT business_date FROM market_index_daily
-                    WHERE business_date <= ? AND source = 'toss_openapi' GROUP BY business_date
-                )
-                ORDER BY business_date DESC
-                LIMIT ?
+                SELECT business_date FROM toss_market_context_snapshots
+                WHERE business_date <= ? AND source = 'toss_openapi'
+                GROUP BY business_date ORDER BY business_date DESC LIMIT ?
                 """,
-                tuple(on_or_before.isoformat() for _ in range(4)) + (limit,),
-            ).fetchall()
-        return [date.fromisoformat(row["business_date"]) for row in rows]
+                (cutoff, limit),
+            ),
+            (
+                """
+                SELECT business_date FROM stock_market_daily
+                WHERE business_date <= ? AND source = 'toss_openapi'
+                  AND (change_amount IS NOT NULL OR change_percent IS NOT NULL OR volume IS NOT NULL
+                       OR turnover IS NOT NULL OR market_cap IS NOT NULL OR listed_shares IS NOT NULL
+                       OR open_price IS NOT NULL OR high_price IS NOT NULL OR low_price IS NOT NULL)
+                GROUP BY business_date ORDER BY business_date DESC LIMIT ?
+                """,
+                (cutoff, limit),
+            ),
+            (
+                """
+                SELECT business_date FROM etf_daily_snapshots
+                WHERE business_date <= ? AND source = 'toss_openapi'
+                GROUP BY business_date ORDER BY business_date DESC LIMIT ?
+                """,
+                (cutoff, limit),
+            ),
+            (
+                """
+                SELECT business_date FROM market_index_daily
+                WHERE business_date <= ? AND source = 'toss_openapi'
+                GROUP BY business_date ORDER BY business_date DESC LIMIT ?
+                """,
+                (cutoff, limit),
+            ),
+        )
+        dates: set[str] = set()
+        with self.connect() as connection:
+            for query, parameters in queries:
+                dates.update(
+                    row["business_date"]
+                    for row in connection.execute(query, parameters).fetchall()
+                )
+        ordered_dates = sorted(dates, reverse=True)
+        if limit >= 0:
+            ordered_dates = ordered_dates[:limit]
+        return [date.fromisoformat(value) for value in ordered_dates]
 
     def list_recent_toss_etf_snapshot_dates(self, *, on_or_before: date, limit: int = 5) -> list[date]:
         with self.connect() as connection:
@@ -3239,34 +3261,35 @@ class StockMonitorRepository:
         source: str = "krx_data_market",
         limit: int = 5,
     ) -> list[date]:
+        cutoff = on_or_before.isoformat()
+        queries = (
+            """
+            SELECT business_date FROM stock_investor_flow_daily
+            WHERE business_date <= ? AND source = ?
+            GROUP BY business_date ORDER BY business_date DESC LIMIT ?
+            """,
+            """
+            SELECT business_date FROM market_investor_flow_daily
+            WHERE business_date <= ? AND source = ?
+            GROUP BY business_date ORDER BY business_date DESC LIMIT ?
+            """,
+            """
+            SELECT business_date FROM investor_net_buy_top_daily
+            WHERE business_date <= ? AND source = ?
+            GROUP BY business_date ORDER BY business_date DESC LIMIT ?
+            """,
+        )
+        dates: set[str] = set()
         with self.connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT business_date
-                FROM (
-                    SELECT business_date FROM stock_investor_flow_daily
-                    WHERE business_date <= ? AND source = ?
-                    UNION
-                    SELECT business_date FROM market_investor_flow_daily
-                    WHERE business_date <= ? AND source = ?
-                    UNION
-                    SELECT business_date FROM investor_net_buy_top_daily
-                    WHERE business_date <= ? AND source = ?
+            for query in queries:
+                dates.update(
+                    row["business_date"]
+                    for row in connection.execute(query, (cutoff, source, limit)).fetchall()
                 )
-                ORDER BY business_date DESC
-                LIMIT ?
-                """,
-                (
-                    on_or_before.isoformat(),
-                    source,
-                    on_or_before.isoformat(),
-                    source,
-                    on_or_before.isoformat(),
-                    source,
-                    limit,
-                ),
-            ).fetchall()
-        return [date.fromisoformat(row["business_date"]) for row in rows]
+        ordered_dates = sorted(dates, reverse=True)
+        if limit >= 0:
+            ordered_dates = ordered_dates[:limit]
+        return [date.fromisoformat(value) for value in ordered_dates]
 
     def list_recent_market_investor_flow_dates(
         self,

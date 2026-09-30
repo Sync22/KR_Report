@@ -43,10 +43,11 @@ These code, test, and documentation changes are local only. No live host state o
 
 | Order | Todo ID | Why Now |
 | --- | --- | --- |
-| 1 | TODO2-DATA-FRESHNESS-LIVE | Validate current Toss freshness and capture/health/freshness agreement on representative dates and the operating host. |
-| 2 | TODO2-TG-LIVE-DRYRUN | Review paging/retry/outbox behavior; ambiguous-send retry changes await the policy choice. |
-| 3 | TODO2-RT-PRUNE | Use the shared operating review to decide whether current evidence should move higher in the first-read path. |
-| 4 | TODO2-NI-EVAL | Judge explanation usefulness on real stored samples without converting a small sample into a quality score. |
+| 1 | TODO2-WV-FIRST-LOAD | Reduce cold first-entry work while preserving stored-data content and user-triggered detail requests. |
+| 2 | TODO2-DATA-FRESHNESS-LIVE | Validate current Toss freshness and capture/health/freshness agreement on representative dates and the operating host. |
+| 3 | TODO2-TG-LIVE-DRYRUN | Review paging/retry/outbox behavior; ambiguous-send retry changes await the policy choice. |
+| 4 | TODO2-RT-PRUNE | Use the shared operating review to decide whether current evidence should move higher in the first-read path. |
+| 5 | TODO2-NI-EVAL | Judge explanation usefulness on real stored samples without converting a small sample into a quality score. |
 
 ## Completed Work Record (Historical)
 
@@ -87,6 +88,24 @@ Reorder public `web-view` and Telegram thinking around current observation evide
 
 - `docs/codex/surface-guide.md`
 - `docs/codex/operating-guide.md`
+- `docs/codex/data-governance.md`
+
+### [ ] TODO2-WV-FIRST-LOAD: Web-View First-Entry Performance
+
+**Goal:**
+Make the first stored-data view responsive without changing candidate ordering, market data, or public API boundaries.
+
+**Implementation update (2026-09-30):** Recent Toss-market and investor-flow dates now use bounded per-source queries, and the daily snapshot reuses its already loaded Toss date. Missing market context no longer auto-opens the ETF reference details. On the same local 2026-09-29 data, the direct daily-snapshot builder profile went from 6.36s before the change to 1.16s after restart (5.20s / 82% lower). The latest 2026-09-30 builder took 0.89–0.91s across three unprofiled reads. Market dates matched the old UNION query for limits 1, 3, 5, and 20; flow dates matched at limits 1, 3, and 5 for both sources. The service restarted and `/health` returned `200 ok`. Authenticated HTTP timing remains pending: direct API access returned `401` at the access-code gate, and the existing cold-miss logs (4.48–21.92s) do not identify request origin.
+
+**Done When:**
+
+- A fresh browser entry preserves archive, daily, Top2, and missing-state values while optional ETF/rotation requests remain tied to user expansion.
+- Cold and warm `/api/archive` and `/api/daily/{date}` timings from the updated local web-view confirm the improvement without errors or automatic optional ETF/rotation requests.
+- Existing GET-only and public-safe boundaries remain intact.
+
+**Start By Reading:**
+
+- `docs/codex/surface-guide.md`
 - `docs/codex/data-governance.md`
 
 ### [ ] TODO2-TG-LIVE-DRYRUN: Telegram Real-Data No-Send Dry Run

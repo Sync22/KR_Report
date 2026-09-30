@@ -32519,7 +32519,6 @@ def _render_web_view_html() -> str:
         document.getElementById("market-kospi-rows").innerHTML = emptyRow;
         document.getElementById("market-kosdaq-rows").innerHTML = emptyRow;
         document.getElementById("market-index-rows").innerHTML = emptyRow;
-        document.getElementById("etf-trend-panel").open = true;
         return;
       }
       document.getElementById("market-kospi-rows").innerHTML = context.top_kospi_by_turnover.length ? context.top_kospi_by_turnover.map((item) => row([
@@ -34945,7 +34944,11 @@ def _build_web_view_market_briefing_context(
     recent_flow_dates: list[date] | None = None,
     priority_stock_codes: tuple[str, ...] | list[str] | None = None,
 ) -> dict:
-    snapshot_dates = repository.list_recent_toss_market_snapshot_dates(on_or_before=business_date, limit=1)
+    snapshot_dates = (
+        recent_krx_snapshot_dates
+        if recent_krx_snapshot_dates is not None
+        else repository.list_recent_toss_market_snapshot_dates(on_or_before=business_date, limit=1)
+    )
     reference_date = snapshot_dates[0] if snapshot_dates else None
     indices = repository.list_market_index_daily(reference_date, limit=200, source="toss_openapi") if reference_date else []
     kospi = _find_named_market_index(indices, series="KOSPI", name="코스피")
