@@ -14,13 +14,15 @@ Current operating state, delivery sequence, roadmap, and work board.
 
 The repository is in live-market validation and operational hardening, not initial MVP construction. A read-only operator-status snapshot from this Windows work environment at 2026-09-28 09:01 KST showed `StockMonitor-TossCloseSnapshot` healthy, capture pending before 20:05, and no health warnings. This does not identify the environment as the designated main PC or mini PC, or verify today's close capture and Telegram delivery.
 
-Current contracts describe Naver report collection and summaries, Telegram paging/commands, operator-only `admin-gui`, GET-only stored-data `web-view`, and Toss 20:00 as the current stored web-view market/ETF/flow baseline. Existing KRX rows are historical analysis/recovery data only. See [AGENTS.md](../../AGENTS.md), [surface-guide.md](surface-guide.md), [data-governance.md](data-governance.md), [market-data-runbook.md](market-data-runbook.md), and [mini-pc-runbook.md](mini-pc-runbook.md).
+Current contracts describe the Naver report-to-summary/Telegram pipeline, the operator-only `admin-gui`, and a GET-only, stored-data-first `web-view`. Toss 20:00 snapshots own stored current market/ETF/flow context; bounded live Top2/Top20 references are read-only API overlays and do not reorder candidates or persist values. Existing KRX rows are historical analysis/recovery data only. See [AGENTS.md](../../AGENTS.md), [surface-guide.md](surface-guide.md), [data-governance.md](data-governance.md), [market-data-runbook.md](market-data-runbook.md), and [mini-pc-runbook.md](mini-pc-runbook.md).
 
-### Local implementation status (2026-09-28)
+### Local implementation status (2026-10-01)
 
 1. Candidate and nested daily DTOs strip the internal numeric sort field and identify Toss-backed dates/scope as Toss. `TODO2-WV-CONTENT-QA` completed on 2026-09-28; see its recent-date and responsive smoke evidence below.
-2. Local Toss capture reports required-domain coverage, marks incomplete events partial/empty, preserves explicit security classification, and excludes candidate-only rows from snapshot dates. Web-view and market-briefing freshness carry partial status/missing domains; operator status warns when a healthy Toss task lacks a due capture; mini-PC preflight includes that task and no longer requires retired KRX backfill tasks. A late skipped capture warns as missing, while suppression and a prior successful capture remain non-alerting. Focused regression set: 470 passed. Real host/date validation remains in `TODO2-DATA-FRESHNESS-LIVE`.
-3. Telegram retry behavior still needs an explicit policy for an accepted send with a lost response; tracked in `TODO2-TG-LIVE-DRYRUN`.
+2. Local Toss capture reports required-domain coverage, marks incomplete events partial/empty, preserves explicit security classification, and excludes candidate-only rows from snapshot dates. Web-view and market-briefing freshness carry partial status/missing domains; operator status warns when a healthy Toss task lacks a due capture; mini-PC preflight includes that task and no longer requires retired KRX backfill tasks. A late skipped capture warns as missing, while suppression and a prior successful capture remain non-alerting. The focused regression set recorded on 2026-09-28 passed 470 tests. Real host/date validation remains in `TODO2-DATA-FRESHNESS-LIVE`.
+3. Web-view first-load query work now bounds recent-date reads by source and reuses the already loaded Toss snapshot date. Authenticated browser/API timing remains pending in `TODO2-WV-FIRST-LOAD`.
+4. The current working tree propagates Telegram send failures, records empty-alert delivery failures, and includes intraday failures in operator health. This is local code/test evidence only; no real Telegram send, scheduler run, or operating-DB validation was performed.
+5. Retry policy for an accepted Telegram send whose response is lost remains undecided and unchanged; it is tracked in `TODO2-TG-LIVE-DRYRUN`.
 
 These code, test, and documentation changes are local only. No live host state or Telegram delivery is inferred from repository code or dated history.
 ## Work Todo Board
@@ -100,6 +102,7 @@ Make the first stored-data view responsive without changing candidate ordering, 
 **Done When:**
 
 - A fresh browser entry preserves archive, daily, Top2, and missing-state values while optional ETF/rotation requests remain tied to user expansion.
+- The bounded Top2 current-quote GET after a cohort change is measured separately; it does not persist values or change candidate membership/order. Top2 candles and Top20 market context remain explicit user actions.
 - Cold and warm `/api/archive` and `/api/daily/{date}` timings from the updated local web-view confirm the improvement without errors or automatic optional ETF/rotation requests.
 - Existing GET-only and public-safe boundaries remain intact.
 
@@ -109,6 +112,8 @@ Make the first stored-data view responsive without changing candidate ordering, 
 - `docs/codex/data-governance.md`
 
 ### [ ] TODO2-TG-LIVE-DRYRUN: Telegram Real-Data No-Send Dry Run
+
+**Implementation update (2026-10-01, working-tree only):** Regular and hourly Telegram send failures now produce a nonzero CLI result; empty-alert failures write a failed `delivery_log` row and `intraday/empty-send` operation event; operator health surfaces the latest intraday send status. Ten focused tests passed. No real Telegram send, scheduler change, operating-DB write, deployment, or ambiguous-response retry change was made. The accepted-send/lost-response policy below remains pending.
 
 **Goal:**
 Use operating-like stored data to prove Telegram briefing payload quality, paging, retry, and outbox/readiness behavior before any real Telegram send is approved.
@@ -146,6 +151,8 @@ Use operating-like stored data to prove Telegram briefing payload quality, pagin
 Move beyond fixture smoke and verify that recent-date web-view content is usable, scan-friendly, and public-safe across desktop, tablet, and mobile.
 
 **Completed (2026-09-28):** `web-view-value-qa --recent-business-days 4 --stock-limit 20 --json` scanned 2026-09-28, 2026-09-23, 2026-09-22, and 2026-09-21 with 0 issues; its one warning was the expected not-yet-due 2026-09-28 Toss 20:00 capture. Browser smoke passed for 2026-09-21, 22, 23, and latest 2026-09-28: 0 issues, correct five-tab flow, no horizontal overflow at desktop/tablet/large-mobile/mobile, GET APIs 200, POST 405, and `/api/status` 404. Manual first-read review of 9/21–23 found candidate reasons, evidence, missing states, and source/date labels understandable; no content fix was evidenced. The internal sort field remained absent and candidate order unchanged.
+
+**Current navigation note (2026-10-01):** The current implementation has three top-level tabs (`메인`, `관찰`, `종목`); market and rotation/ETF references are nested or collapsed panels. The five-tab wording above remains the dated 2026-09-28 smoke record, not current navigation.
 
 **Scope:**
 

@@ -82,6 +82,7 @@ What exists now:
 - regression tests for delivery fragments, operator health, scheduler classification, admin boundary, and DB hardening
 - separate GET-only user `web-view`
 - Toss 20:00 stored snapshot for current web-view market, ETF, and flow references
+- bounded read-only Toss Top2 quote, Top2 daily-candle, and latest-date market-context GETs; Top2 quotes may fall back to Naver, and none persist data or reorder candidates
 - Existing KRX records and schemas remain for historical analysis/recovery; no normal KRX market-data refresh or investor-flow ingest is scheduled.
 - read-only observation/backtest DTO/API and `web-view` observation tab
 - internal-only scoring-draft CLI paths with no public numeric score or trading-recommendation output
@@ -121,6 +122,7 @@ Local-only intake files:
 Important currently observed modules:
 
 - `src/stock_monitor/cli.py`
+- `src/stock_monitor/toss_openapi_web_view.py`
 - `src/stock_monitor/business_day.py`
 - `src/stock_monitor/summary.py`
 - `src/stock_monitor/fetch/naver_research.py`
@@ -246,7 +248,7 @@ Working-tree note:
 | Scheduler | PowerShell wrappers in [scripts/](../../scripts/) call guarded CLI commands. Current task registration is documented in [mini-pc-runbook.md](mini-pc-runbook.md). |
 | Admin surface | `admin-gui` is a local/operator control surface with guarded routes in [cli.py](../../src/stock_monitor/cli.py). |
 | User surface | `web-view` is a separate GET-only/read-only surface; `/auth/login` is its access-code POST exception. |
-| Current market data | Toss 20:00 snapshots supply stored web-view market/ETF/flow context. Existing KRX rows are historical review/recovery data only. |
+| Current market data | Toss 20:00 snapshots supply stored web-view market/ETF/flow context. Separate bounded GETs supply live Top2/Top20 references without persistence or candidate reordering. Existing KRX rows are historical review/recovery data only. |
 ## Key Paths
 
 | Concern | Path |
@@ -261,6 +263,7 @@ Working-tree note:
 | Historical KRX mentioned-stock flow | [scripts/run_scheduled_krx_mentioned_flow_backfill.ps1](../../scripts/run_scheduled_krx_mentioned_flow_backfill.ps1), [cli.py](../../src/stock_monitor/cli.py); retained for historical/recovery use |
 | Admin GUI handler | [cli.py](../../src/stock_monitor/cli.py) |
 | Web-view handler / DTOs | [cli.py](../../src/stock_monitor/cli.py) |
+| Bounded live web-view Toss provider | [toss_openapi_web_view.py](../../src/stock_monitor/toss_openapi_web_view.py); GET handlers and rendering in [cli.py](../../src/stock_monitor/cli.py) |
 | Public-safe smoke / QA | [tests/test_web_view.py](../../tests/test_web_view.py), [tests/test_cli_commands.py](../../tests/test_cli_commands.py) |
 
 ## Confirmed Findings
@@ -327,7 +330,8 @@ Working-tree note:
 | KRX Open API | Existing rows are historical references; current stored market baseline is Toss 20:00. | Keep KRX reads out of current web-view fallback and normal refresh scheduling. |
 | KRX Data Marketplace | Existing samples are historical/recovery references; current market flow uses stored Toss 20:00 snapshots. | Do not restore KRX scheduled ingestion as part of the current source baseline. |
 | Naver `priceTop` | Manual same-day display-only web-view reference. | Ensure no DB writes, Telegram sends, scheduler changes, KRX replacement, or scoring are tied to this route. |
-| Future approved intraday source | Separate read-only lab/staging lane before public use. | If approved, it may affect top-2 `우선 확인` ordering and main-card emphasis, but must not create DB writes, Telegram/scheduler automation, broker execution, public score, or trading-call wording. |
+| Bounded live web-view references | Toss provides Top2 current quotes/provisional investor volume, Top2 candles, and latest-date market context through read-only GETs; Naver current quotes are a bounded Top2 fallback and Naver market-top is a separate user-triggered comparison. | Preserve server-derived Top2 scope, source/freshness labels, no persistence, and no candidate creation/reordering, Telegram/scheduler automation, account/order access, scores, or trading calls. |
+| Future additional market sources | Any source beyond these bounded Toss/Naver references remains a separate lab/staging proposal before public use. | Do not connect new probes to DB writes, Telegram/scheduler automation, broker execution, public scores, or trading-call wording. |
 | Future operator decision/execution lane | Separate from public `web-view` and Telegram. | It may evaluate trading-decision support only after stable real-time data, permission, audit, failure handling, and order-safety gates are defined. |
 | Category taxonomy | 업종/테마 is a separate taxonomy layer, not official KRX taxonomy. | Ensure historical dates do not silently receive future/current category snapshots. |
 
@@ -337,7 +341,7 @@ Working-tree note:
 
 2. Repository methods open a SQLite connection per call. WAL mode, cache size, busy timeout, and recent batching reduce risk, but DTO paths should keep query-budget tests.
 
-3. The CodeGraph snapshot from 2026-09-27 indexed `cli.py`, `web_perf.py`, and `news/evidence_review.py`. Subsequent 2026-09-28 changes touched `cli.py` and `repository.py`, so refresh the index before using their call edges for impact claims.
+3. The CodeGraph snapshot from 2026-09-27 indexed `cli.py`, `web_perf.py`, and `news/evidence_review.py`. Changes to `cli.py` and `repository.py` on 2026-09-28 and 2026-09-30, plus the current 2026-10-01 working-tree changes, make those call edges stale until an updater is available.
 
 4. `candidate-evidence`, archive, and daily payload generation already have documented performance improvements. Future regressions should be checked with the existing web performance tests and browser smoke commands before adding more caching.
 
@@ -349,7 +353,7 @@ The path and flow tables above are the architecture map. Current role routing an
 
 The ignored `{PROJECT_ROOT}\.codegraph\codegraph.db` is local navigation data, not a product or runtime dependency.
 
-**Last index snapshot (2026-09-27):** the upper-folder session refreshed CodeGraph after raising `maxFileSize` to 2 MiB so the 1.88 MiB `cli.py` was indexed. That snapshot contains 103 files, 3,831 nodes, and 8,672 edges, including 1,033 CLI nodes, 36 `web_perf.py` nodes, and 21 `news/evidence_review.py` nodes. Since then, `cli.py` and `repository.py` changed on 2026-09-28; treat their indexed nodes and edges as stale until the existing updater runs again. This runtime has no `codegraph` executable or configured MCP, so refresh from an environment that has the updater.
+**Last index snapshot (2026-09-27):** the upper-folder session refreshed CodeGraph after raising `maxFileSize` to 2 MiB so the 1.88 MiB `cli.py` was indexed. That snapshot contains 103 files, 3,831 nodes, and 8,672 edges, including 1,033 CLI nodes, 36 `web_perf.py` nodes, and 21 `news/evidence_review.py` nodes. `cli.py` and `repository.py` changed on 2026-09-28 and 2026-09-30; the current working tree also changes `cli.py`. Treat those indexed nodes and edges as stale until an updater runs. This runtime has no `codegraph` executable or configured MCP, so refresh from an environment that has the updater.
 
 Treat CodeGraph as a code-navigation backend for existing agents, not as a new product dependency.
 
@@ -516,7 +520,9 @@ Use the root AGENTS.md for current global skills, Luna roles, and project-specif
 - Stock-query responses may include current price at the time of the lookup, but this is a query-time aid rather than part of the scheduled daily summary.
 - Future enhancements can add richer pagination, broader historical windows, or quote freshness labels when needed.
 
-### Future Sector View Direction
+### Historical Sector View Proposal
+
+The basic report-backed `업종`/`테마` rollups and reference panels are implemented. The broader flow-based sector ranking and interest-alert ideas below remain future work and must not be inferred from report counts alone.
 
 - A later phase may extend beyond per-stock alerts into sector-level accumulation and ranking.
 - The first sector goal is to infer which sectors are leading on a given day by aggregating report counts and recency at the sector level.
@@ -524,22 +530,26 @@ Use the root AGENTS.md for current global skills, Luna roles, and project-specif
 - This should be treated as a later data-product layer on top of the existing report collector rather than mixed into the MVP alert format immediately.
 - Future UI work may expose this data through a lightweight web view once the stored data shape and operator preferences are stable enough.
 
-### Future Operator Workflow
+### Historical Operator Workflow Proposal
+
+The original memo/backlog-only web-view direction below is superseded. The Python-rendered GET-only web-view and operator-only `admin-gui` are implemented as separate surfaces; current validation work is tracked in [operating-guide.md](operating-guide.md) and current route/source rules are in [surface-guide.md](surface-guide.md).
 
 - The intended medium-term workflow is:
 - Telegram for morning summary and intraday alerts
 - a later web view for after-market review, browsing, and thinking
 - That means the web layer does not need to replace Telegram; it should complement the notification flow with richer read-oriented views after the market session.
-- Until several live-market days have validated the current batches and stored data, web-view work should remain in memo/backlog mode rather than active implementation.
+- The original proposal to keep web-view in memo/backlog mode before live-market validation is historical; it is no longer current implementation guidance.
 - The `example/report_*.jpg` references are useful as layout and information-architecture inspiration, but the project should not copy unsupported trading-signal semantics directly.
 - Useful reference patterns include market mood, strong/weak lists, category rotation, and next-watch candidates.
 - `example/Cycle.jpg` should be treated as a conceptual reference for a future sector/theme rotation view, showing possible attention movement across broad market groups.
 - Any rotation-cycle view should be descriptive and data-backed by accumulated report/sector/theme history, not a hard-coded prediction that money must move in a fixed order.
 - Score, grade, and conviction-style displays should wait until there is enough historical data and a clear calculation rule.
 
-### Future Operator/Admin Program
+### Historical Operator/Admin Program Proposal
 
-- A local admin surface is likely useful once the system moves toward N100 or other always-on operation.
+The local `admin-gui` and separate GET-only `web-view` described as future work below have since been implemented. Retain this section as planning history; current boundaries and verification live in [AGENTS.md](../../AGENTS.md) and [surface-guide.md](surface-guide.md).
+
+- The original proposal treated a local admin surface as future work; `admin-gui` is now implemented as an operator-only surface.
 - `admin-gui` must remain a local control surface. If a mini PC or remote access path is added, the read-only shared/web-view surface must be separate from the control admin surface.
 - This separation is a permission/API boundary, not only a UI boundary.
 - Do not implement the shared user page by adding a read-only mode to `admin-gui`.
@@ -569,11 +579,13 @@ Use the root AGENTS.md for current global skills, Luna roles, and project-specif
 - If representative-stock demand or flow signals are later added, they should likely live in their own ingest path and join onto the report-derived sector summary rather than overloading the current report schema directly.
 - ETF data should use a separate ingest and display model rather than being inserted into company-report summaries.
 - Report count is an attention signal, not supply/demand flow. Flow, volume, and trading-value data should be collected through a separate market-data ingest before rotation or interest-alert features rely on it.
-- Naver industry/theme pages are the preferred domestic taxonomy source for industry/theme labels. KRX remains the preferred source for market data such as price, volume, turnover, ETF, and index context.
+- Naver industry/theme pages remain the preferred domestic taxonomy source. The older KRX market-source preference is superseded: Toss 20:00 owns new/current stored market references, while existing KRX rows remain historical/recovery data only. See [data-governance.md](data-governance.md).
 - Industry refresh should remain explicit and slow first (`refresh-industry <code>`), not broad automatic crawling, until source stability and rate behavior are observed.
 - Store industry as the representative sector-like label in `stock_metadata`; keep theme membership as a separate many-to-many layer because one stock can belong to multiple themes.
 
-### Future Target-Price Progress View
+### Historical Target-Price Progress Proposal
+
+Stored target history/progress is now part of candidate evidence and stock detail; see [candidate-evidence.md](candidate-evidence.md). The broader display ideas below remain subject to source/date and missing-state rules.
 
 - A later web view may show how far each stock has progressed toward report target prices after the first target-bearing report is observed.
 - A candidate display idea is `목표가의 N% 도달 (M일차)`.

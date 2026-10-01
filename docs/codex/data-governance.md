@@ -260,7 +260,7 @@ The historical plan to move current market references to KRX is superseded. Stor
 
 - Keep Naver report facts, stored Toss market snapshots, and historical KRX rows in separate source layers.
 - Do not relabel historical KRX or Naver reference values as current Toss snapshots.
-- The GET-only web-view reads stored data; collection and persistence belong to explicitly bounded scheduled/operator paths.
+- Core web-view data reads stored Naver/Toss rows. Bounded GET-only Top2 quote, latest-date market-context, and daily-candle endpoints may request Toss upstream; the Top2 quote path may use a bounded Naver fallback. The Naver market-top overlap is a separate user-triggered GET. These requests do not persist data, re-rank candidates, send Telegram, schedule work, or access account/order APIs. Capture and other persistence remain in explicit scheduled/operator paths.
 - Preserve missing numeric markers and source-specific timestamps; do not turn missing values into zero or success.
 - Do not expose public numeric scoring, investment grades, trading calls, broker execution, or order routing.
 - Keep operator-only diagnostics off the friend-facing web-view.
