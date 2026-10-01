@@ -40215,7 +40215,7 @@ def _build_operator_health_snapshot(
     for component_key, component in (live_observation or {}).get("components", {}).items():
         evidence_status = component.get("evidence_status")
         if evidence_status == "attention" or (
-            evidence_status == "failed" and component_key in {"poll_news", "toss_market_context"}
+            evidence_status == "failed" and component_key in {"poll_news", "toss_market_context", "intraday"}
         ):
             last_event = component.get("last_event") or {}
             reason = str(component.get("attention_reason") or last_event.get("status") or "attention")
@@ -40260,6 +40260,7 @@ def _build_live_observation_snapshot(
     specs = {
         "notify": ("notify", {"send", "fragment", "early_notify", "late_notify", "run-guard"}),
         "poll": ("poll", {"manual-poll", "time-window", "run-guard"}),
+        "intraday": ("intraday", {"send", "hourly-send", "empty-send"}),
         "poll_news": ("poll-news", {"scheduled-collect"}),
         "toss_market_context": ("toss-market-context", {"capture", "time-window", "run-guard"}),
         "krx_daily_backfill": ("krx", {"scheduled-daily-backfill", "backfill-missing"}),
@@ -40273,7 +40274,7 @@ def _build_live_observation_snapshot(
             events,
             component=component,
             event_types=event_types,
-            prefer_latest_time=key in {"krx_daily_backfill", "poll_news", "toss_market_context"},
+            prefer_latest_time=key in {"intraday", "krx_daily_backfill", "poll_news", "toss_market_context"},
         )
         if key == "toss_market_context":
             capture_event = _latest_live_event_for(
@@ -43145,6 +43146,7 @@ def _run_process_intraday_alerts(
         )
 
     processed = 0
+    send_error: Exception | None = None
     for batch in batches:
         reports = repository.list_reports_for_intraday_batch(batch.batch_id)
         if not reports:
@@ -43180,6 +43182,7 @@ def _run_process_intraday_alerts(
                 retry_delay_seconds=config.telegram_retry_delay_seconds,
             )
         except Exception as exc:
+            send_error = exc
             repository.mark_intraday_alert_batch_failed(
                 batch.batch_id,
                 attempted_at=attempted_at,
@@ -43238,6 +43241,8 @@ def _run_process_intraday_alerts(
 
     save_control_state(config.telegram_control_state_path, state)
     print(f"Processed {processed} intraday alert batch(es).")
+    if send_error is not None:
+        raise RuntimeError(f"Intraday alert delivery failed: {send_error}") from send_error
     return processed
 
 
@@ -43350,7 +43355,7 @@ def _run_scheduled_intraday_briefing(
                 detail=str(exc),
             )
         )
-        return 0
+        raise RuntimeError(f"Hourly intraday briefing delivery failed: {exc}") from exc
 
     repository.mark_intraday_alert_batches_sent(
         batch_ids,
@@ -43394,20 +43399,42 @@ def _send_intraday_empty_notification(
         print(message)
         return 0
 
-    if not config.telegram_bot_token or not config.telegram_chat_id:
-        raise RuntimeError(
-            "Telegram configuration is missing. Set STOCK_MONITOR_TELEGRAM_BOT_TOKEN and "
-            "STOCK_MONITOR_TELEGRAM_CHAT_ID."
+    attempted_at = datetime.now(ZoneInfo(config.timezone))
+    try:
+        if not config.telegram_bot_token or not config.telegram_chat_id:
+            raise RuntimeError(
+                "Telegram configuration is missing. Set STOCK_MONITOR_TELEGRAM_BOT_TOKEN and "
+                "STOCK_MONITOR_TELEGRAM_CHAT_ID."
+            )
+        message_id = send_telegram_message(
+            config.telegram_bot_token,
+            config.telegram_chat_id,
+            message,
+            timeout_seconds=config.telegram_timeout_seconds,
+            max_retries=config.telegram_max_retries,
+            retry_delay_seconds=config.telegram_retry_delay_seconds,
         )
-
-    message_id = send_telegram_message(
-        config.telegram_bot_token,
-        config.telegram_chat_id,
-        message,
-        timeout_seconds=config.telegram_timeout_seconds,
-        max_retries=config.telegram_max_retries,
-        retry_delay_seconds=config.telegram_retry_delay_seconds,
-    )
+    except Exception as exc:
+        repository.record_delivery(
+            DeliveryLog(
+                business_date=message_time.date(),
+                channel="telegram_intraday",
+                status="failed",
+                delivered_at=attempted_at,
+                detail=str(exc),
+            )
+        )
+        repository.record_operation_event(
+            _operation_event(
+                config,
+                component="intraday",
+                event_type="empty-send",
+                status="failed",
+                business_date=message_time.date(),
+                detail=str(exc),
+            )
+        )
+        raise
     repository.record_delivery(
         DeliveryLog(
             business_date=message_time.date(),
@@ -43415,6 +43442,16 @@ def _send_intraday_empty_notification(
             status="sent_empty",
             delivered_at=message_time,
             message_id=message_id,
+            detail="intraday empty alert",
+        )
+    )
+    repository.record_operation_event(
+        _operation_event(
+            config,
+            component="intraday",
+            event_type="empty-send",
+            status="sent",
+            business_date=message_time.date(),
             detail="intraday empty alert",
         )
     )

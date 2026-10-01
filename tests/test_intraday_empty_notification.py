@@ -126,6 +126,28 @@ def test_manual_poll_retries_pending_intraday_batches_before_empty_notification(
     assert not empty_calls
 
 
+def test_manual_poll_cli_exits_nonzero_when_intraday_delivery_fails(tmp_path, monkeypatch) -> None:
+    config, repository = _config_and_repository(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli_module.RuntimeConfig, "from_env", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(cli_module, "fetch_reports", lambda *_args, **_kwargs: ([_report()], _inspection(1)))
+
+    def fail_send(*_args, **_kwargs):
+        raise RuntimeError("telegram unavailable")
+
+    monkeypatch.setattr(cli_module, "send_telegram_message", fail_send)
+
+    result = cli_module.main(["manual-poll", "--send-intraday-alert"])
+
+    assert result == 1
+    assert repository.list_operation_events(
+        component="intraday",
+        event_type="send",
+        business_date=date(2026, 4, 24),
+        status="failed",
+        limit=1,
+    )
+
+
 @pytest.mark.parametrize(
     ("hour", "expected"),
     [
@@ -446,6 +468,111 @@ def test_scheduled_intraday_briefing_sends_empty_without_sending_prior_day_batch
         "dry_run": False,
     }]
     assert repository.count_pending_intraday_alert_batches() == 1
+
+
+def test_scheduled_poll_propagates_hourly_intraday_delivery_failure(tmp_path, monkeypatch) -> None:
+    config, repository = _config_and_repository(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli_module, "fetch_reports", lambda *_args, **_kwargs: ([_report()], _inspection(1)))
+    monkeypatch.setattr(cli_module, "_fetch_intraday_quotes_by_stock_code", lambda *_args, **_kwargs: {})
+
+    def fail_send(*_args, **_kwargs):
+        raise RuntimeError("telegram unavailable")
+
+    monkeypatch.setattr(cli_module, "send_telegram_message", fail_send)
+
+    with pytest.raises(RuntimeError, match="telegram unavailable"):
+        cli_module._run_manual_poll(
+            config,
+            repository,
+            limit=50,
+            dry_run=False,
+            inspect_only=False,
+            headless=True,
+            send_intraday_alert=True,
+            scheduled_run_at=datetime(2026, 4, 24, 8, 30, tzinfo=cli_module.ZoneInfo(config.timezone)),
+        )
+
+    assert repository.count_pending_intraday_alert_batches() == 1
+    assert repository.list_operation_events(
+        component="intraday",
+        event_type="hourly-send",
+        business_date=date(2026, 4, 24),
+        status="failed",
+        limit=1,
+    )
+
+
+def test_empty_intraday_notification_failure_is_recorded_and_raised(tmp_path, monkeypatch) -> None:
+    config, repository = _config_and_repository(tmp_path, monkeypatch)
+    polled_at = datetime(2026, 4, 24, 8, 30)
+
+    def fail_send(*_args, **_kwargs):
+        raise RuntimeError("telegram unavailable")
+
+    monkeypatch.setattr(cli_module, "send_telegram_message", fail_send)
+
+    with pytest.raises(RuntimeError, match="telegram unavailable"):
+        cli_module._send_intraday_empty_notification(config, repository, polled_at=polled_at)
+
+    deliveries = repository.list_recent_deliveries(limit=1)
+    assert len(deliveries) == 1
+    delivery = deliveries[0]
+    assert delivery.business_date == polled_at.date()
+    assert delivery.channel == "telegram_intraday"
+    assert delivery.status == "failed"
+    assert "telegram unavailable" in (delivery.detail or "")
+    assert repository.list_operation_events(
+        component="intraday",
+        event_type="empty-send",
+        business_date=polled_at.date(),
+        status="failed",
+        limit=1,
+    )
+
+
+def test_empty_intraday_notification_missing_config_is_recorded_and_raised(tmp_path, monkeypatch) -> None:
+    config, repository = _config_and_repository(tmp_path, monkeypatch)
+    config = replace(config, telegram_bot_token="", telegram_chat_id="")
+    polled_at = datetime(2026, 4, 24, 8, 30)
+    monkeypatch.setattr(
+        cli_module,
+        "send_telegram_message",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not attempt a send")),
+    )
+
+    with pytest.raises(RuntimeError, match="Telegram configuration is missing"):
+        cli_module._send_intraday_empty_notification(config, repository, polled_at=polled_at)
+
+    deliveries = repository.list_recent_deliveries(limit=1)
+    assert len(deliveries) == 1
+    assert deliveries[0].channel == "telegram_intraday"
+    assert deliveries[0].status == "failed"
+    assert "Telegram configuration is missing" in (deliveries[0].detail or "")
+    assert repository.list_operation_events(
+        component="intraday",
+        event_type="empty-send",
+        business_date=polled_at.date(),
+        status="failed",
+        limit=1,
+    )
+
+
+def test_empty_intraday_notification_success_records_intraday_event(tmp_path, monkeypatch) -> None:
+    config, repository = _config_and_repository(tmp_path, monkeypatch)
+    polled_at = datetime(2026, 4, 24, 8, 30)
+    monkeypatch.setattr(cli_module, "send_telegram_message", lambda *_args, **_kwargs: "message-2")
+
+    result = cli_module._send_intraday_empty_notification(config, repository, polled_at=polled_at)
+
+    assert result == 0
+    events = repository.list_operation_events(
+        component="intraday",
+        event_type="empty-send",
+        business_date=polled_at.date(),
+        status="sent",
+        limit=1,
+    )
+    assert len(events) == 1
 
 
 def test_scheduled_intraday_briefing_limits_stock_blocks_without_paging_prompt(tmp_path, monkeypatch) -> None:

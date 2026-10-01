@@ -942,6 +942,69 @@ def test_operator_status_warns_on_failed_poll_news_and_partial_toss_capture(tmp_
     assert "live_observation.toss_market_context.partial" in snapshot["health"]["warning_checks"]
 
 
+def test_operator_status_warns_on_latest_intraday_failure(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 7, 10)
+    repository.record_operation_event(
+        OperationEvent(
+            event_time=datetime(2026, 7, 10, 8, 30),
+            component="intraday",
+            event_type="hourly-send",
+            status="sent",
+            business_date=business_date,
+            detail="batches=1",
+        )
+    )
+    repository.record_operation_event(
+        OperationEvent(
+            event_time=datetime(2026, 7, 10, 9, 30),
+            component="intraday",
+            event_type="hourly-send",
+            status="failed",
+            business_date=business_date,
+            detail="telegram unavailable",
+        )
+    )
+
+    snapshot = cli_module.build_operator_status_snapshot(
+        config,
+        repository,
+        limit=5,
+        now=datetime(2026, 7, 10, 9, 35),
+        scheduler_tasks=[],
+    )
+
+    component = snapshot["live_observation"]["components"].get("intraday")
+    assert component is not None
+    assert component["evidence_status"] == "failed"
+    assert component["last_event"]["status"] == "failed"
+    assert "live_observation.intraday.failed" in snapshot["health"]["warning_checks"]
+
+    repository.record_operation_event(
+        OperationEvent(
+            event_time=datetime(2026, 7, 10, 9, 40),
+            component="intraday",
+            event_type="hourly-send",
+            status="sent",
+            business_date=business_date,
+            detail="batches=1",
+        )
+    )
+    recovered_snapshot = cli_module.build_operator_status_snapshot(
+        config,
+        repository,
+        limit=5,
+        now=datetime(2026, 7, 10, 9, 45),
+        scheduler_tasks=[],
+    )
+
+    assert recovered_snapshot["live_observation"]["components"]["intraday"]["evidence_status"] == "observed"
+    assert "live_observation.intraday.failed" not in recovered_snapshot["health"]["warning_checks"]
+
+
 def test_operator_status_warns_on_failed_toss_capture_event(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
