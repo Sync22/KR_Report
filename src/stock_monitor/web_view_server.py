@@ -15,10 +15,17 @@ def create_web_view_server(
     make_handler: Callable[..., type[BaseHTTPRequestHandler]],
     allow_non_loopback: bool = False,
     toss_quote_provider: Any = None,
+    newbby_base_url: str = "http://127.0.0.1:8734",
 ) -> ThreadingHTTPServer:
     _validate_web_view_host(host, allow_non_loopback=allow_non_loopback)
     repository.enable_wal_mode()
-    handler = make_handler(config, repository, limit=limit, toss_quote_provider=toss_quote_provider)
+    handler = make_handler(
+        config,
+        repository,
+        limit=limit,
+        toss_quote_provider=toss_quote_provider,
+        newbby_base_url=newbby_base_url,
+    )
     return ThreadingHTTPServer((host, port), handler)
 
 

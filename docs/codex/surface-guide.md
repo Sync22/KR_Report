@@ -20,7 +20,7 @@ The decision is:
 
 - `admin-gui` is the local operator operations console.
 - `web-view` is a separate read-only user page.
-- `operator-review` is a future private review surface for raw judgment and evidence inspection.
+- `operator-review` is a standalone private review surface for selected-date candidate evidence.
 - They may share SQLite, repository queries, and summary logic.
 - They must not share HTTP control endpoints or raw operator status payloads.
 
@@ -32,7 +32,7 @@ This is a permission and API boundary, not just a visual layout boundary.
 | --- | --- | --- | --- | --- | --- |
 | `admin-gui` | Operator only | Run operations status, local controls, recovery, settings, and audit | Loopback/local by default | `GET` + guarded `POST` | Scheduler, no-run dates, worker/status, recovery controls, safe settings, admin audit |
 | `web-view` | Trusted friends or external read-only viewers | Consume public-safe stored-data projections | Loopback by default; shared read-only only through reviewed tunnel/access path | `GET` only, except `/auth/login` | Archive, daily summaries, dated categories, ETF/flow references, market mood, bounded Top2 daily candles, public-safe candidate/news summaries |
-| `operator-review` | Operator only | Future private review of raw judgment and linked evidence | Not implemented; define separately before use | TBD, preferably read-only first | Raw news observation review, candidate linkage review, internal labels, evidence comparison |
+| `operator-review` | Operator only | Selected-date Main candidate and stored-evidence review | Loopback only at `127.0.0.1:8767` | `GET` only | Main cohort review, source/freshness/missing labels, local chart handoff |
 
 ## Non-Negotiable Rules
 
@@ -76,18 +76,33 @@ This is a permission and API boundary, not just a visual layout boundary.
 
 ## Operator Review Surface
 
-`operator-review` is reserved for future private review workflows that need more detail than public `web-view` may show and more judgment context than `admin-gui` should carry.
+`operator-review` is a separate local review panel for the selected-date Main cohort. Start it with `python -m stock_monitor operator-review`; it binds to `127.0.0.1:8767` and has no non-loopback host option. The panel and its `/api/operator-review?date=YYYY-MM-DD` endpoint use their own GET-only handler and DTO.
 
-Allowed future examples:
+Phase 1 contract:
 
-- raw saved news-intelligence observation runs
-- article-level evidence rows
-- candidate linkage evaluation internals
-- direct/indirect/market-context counts and warnings
-- operator recommendation-support labels
-- comparison between stored news observations, reports, KRX context, and candidate evidence
+- Candidate membership and order come from the same selected-date candidate-evidence builder as Main; this panel adds no ranking logic.
+- The date picker defaults to the latest stored report date. The operator can select a historical date.
+- Candidate evidence shows its source, reference date, same-date/missing freshness, why-notable labels, evidence layers, and gaps. Toss same-day investor flow is labeled provisional.
+- News is summarized with collection state and evidence counts. Raw news bodies, headlines, HTML, secrets, scores, and recommendation fields are not exposed.
+- The response excludes post-date reaction/progress rows. Missing selected-date values stay missing instead of falling back to another source or date.
+- SQLite opens through a read-only URI with query-only mode. The command does not initialize or migrate the database, fetch live sources, write rows, contact Telegram, or change scheduler state.
+- Each candidate may link to the local Stock-Newbby page at `http://127.0.0.1:8734/chart-first.html?symbol=<six-digit-code>&asOf=<business-date>`.
 
-This surface is not implemented yet. Before implementation, define its route, access model, read/write behavior, and test contract separately. The first version should prefer read-only stored-data review unless the operator explicitly asks for review actions.
+The panel remains separate from both control and public surfaces: its route is absent from `admin-gui` HTML and public `web-view` HTML/routes. Its chart links remain operator-clicked. The public Main has the separate, user-triggered indicator exception below.
+
+## Main Newbby Indicator Block
+
+The Main tab has a separate `Top2 기술 지표 참고` card. Its button is the only browser UI trigger for Newbby lookup; page load and date selection never call Newbby. The public GET-only route `GET /api/newbby-indicators?date=YYYY-MM-DD` can also be called directly by web-view readers. It accepts only the date and derives the selected Main Top2 from the existing daily response/cache and candidate-evidence builder, caching same-key responses. Browser-supplied symbols are rejected. The response preserves Main order and includes at most those two candidates.
+
+For each candidate, the server uses that selected date's stored Toss `market_reference.market`. If that value is missing, it may use the latest stored Toss stock-universe classification on or before the selected date and show the classification source date. If neither has a valid `KOSPI`/`KOSDAQ` value, the row shows an unavailable state and Newbby is not called. KRX and guessed exchange suffixes are never used.
+
+The server makes a loopback GET to `http://127.0.0.1:8734/api/indicator-snapshot?code=<six-digit>&market=<KOSPI|KOSDAQ>&asOf=YYYY-MM-DD`. `web-view --newbby-base-url` may override the origin only with a loopback HTTP origin. Each call has a 25-second timeout; the existing response cache keeps the fixed Top2 response for 30 seconds and coalesces same-key requests.
+
+A Newbby cache miss may fetch from Newbby's configured provider and update Newbby's own local market cache. The response identifies that behavior, and the UI displays provider/source, source fetch time/date, Newbby `cacheHit`, `cacheAge`, `stale`, and `lastSuccessAt` separately from the requested date and actual `barAsOf`. This route writes no Stock Monitor DB rows, does not reorder candidates, and does not contact the scheduler or Telegram.
+
+The renderer requires the complete Newbby v1 snapshot contract: source/cache/calculation metadata, OHLCV, all 12 SMA/EMA/WMA fields, the eight remaining indicator groups and their method/status fields, all volume-profile bins, `structures`, and the top-level three-family `structureStatus`. After schema projection, nested `code`, `market`, `requestedAsOf`, and Korean ticker `symbol` (`<code>.KS` for KOSPI, `<code>.KQ` for KOSDAQ) must match the selected candidate and request; an identity mismatch renders `provider_response_mismatch`. `servedAt` is optional. `volumeProfile12.binCount` is optional only for `insufficient-data`; otherwise it is required. The MACD `signal` line is an objective indicator field and is displayed. Status strings are enum-allow-listed (`barStatus`: `confirmed`/`provisional`/`unknown`; indicator groups: `ready`/`partial-data`/`insufficient-data`; OBV `delta5Status`: `ready`/`insufficient-data`; family status: `disabled`/`paused`/`unsupported`/`error`/`no-geometry`/`insufficient-data`/`ready`; structure item status: `forming`/`confirmed`/`breakout-pending`/`paused`/`failed`/`expired`/`retested`). Structure categorical values are allow-listed too: horizontal type is `prior-20-high`/`prior-10-low`/`user-resistance`/`user-support`; flag type and geometry kind are `channel`; triangle type and geometry kind are `triangle`; `volumeEvidence` is `volume-confirmed`/`volume-insufficient`. For structures, only the three known families and explicit measurement names/labels/units are accepted; an unknown field, enum, family, measurement, or missing v1 field renders an unsupported-format state.
+
+The renderer shows each family's `structureStatus`; an empty measurement list means no measurement was returned, not a negative signal or a completed check. Triangle apex measurements retain Newbby's straight-line extrapolation labels and units: `geometry.points.2.price` uses `삼각형 교점 · 직선 외삽값(목표가 아님)` / `projected-price`, `geometry.points.2.logicalOffset` uses `삼각형 시작점부터 교점까지 봉 수 · 직선 외삽` / `projected-bars`, and `apexRemainingBars` uses `삼각형 교점까지 남은 봉 · 직선 외삽` / `projected-bars`. `null` values and each group status remain visible as missing/partial/warmup states. Trade actions/signals and score/grade fields are unsupported. Newbby timeout, unavailable, malformed/mismatched response, or missing Toss classification renders an explicit per-candidate empty/error state; no KRX fallback is used.
 
 ## Shared User Surface
 
@@ -852,9 +867,11 @@ Status: **the user-approved tab and information layout was implemented on 2026-0
 
 These are point-in-time observations, not permanent source guarantees. During the earlier DTO inspection, SQLite was opened in its default read/write mode but only read methods were called; the DB file modification time changed and the cause is unknown. No write command, live Toss call, Telegram action, or scheduler change was issued during that assessment.
 
+Resolution (2026-10-07): the Main summary now names the selected Main candidates' stored `why_notable` evidence and `missing_information` gaps. It continues to use the existing stored candidate DTO; it adds no score, grade, or trading instruction.
+
 ### Implemented layout and behavior
 
-- **Main summary:** `오늘의 우선순위` is first in both visual and document order. `오늘 읽을 요약` uses one market-mood headline, report concentration, source freshness, and candidate-level news; Top2 names appear only in the priority cards. Main typography uses 18px section titles, 18px lead text, 14px body text, and 12px supporting status text.
+- **Main summary:** `오늘의 우선순위` is first in both visual and document order. `오늘 읽을 요약` uses one market-mood headline and compact chips for why the stored Main candidates are notable, their recorded information gaps, and the existing market/concentration context. Source freshness and candidate-level news remain visible below. It uses no score or trading instruction. Main typography uses 18px section titles, 18px lead text, 14px body text, and 12px supporting status text.
 - **Main market panel:** current Toss indices and aggregate market flow appear only after the user presses `지수 · 수급 확인`. The response is latest-business-day-only and includes Top20/overlap data, but the current renderer shows indices and provisional aggregate flow only; it omits Top20 ranking and ETF rows. The request does not store values, affect Top2 ordering, or run on page entry. Stale cached results are labeled with their original response time. Historical stored market tables remain collapsed under Main, including when a selected-date market snapshot is missing; opening ETF/category details remains user-triggered.
 - **관찰:** candidate cards use two columns above 840px and one column at narrower widths.
 - **종목:** the intentional `2건 이상` default remains. The page shows the number of hidden one-report stocks and keeps the `1건 포함` toggle.

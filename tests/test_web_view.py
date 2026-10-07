@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import date, datetime, time as datetime_time
 from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
 import pytest
@@ -4297,6 +4298,11 @@ def test_web_view_main_has_toss_market_context_panel() -> None:
     assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in html
     assert "moodCard.headline" in briefing_body
     assert "priorityNames" not in briefing_body
+    assert "priorityEvidenceRows" in briefing_body
+    assert "row.why_notable" in briefing_body
+    assert "row.missing_information" in briefing_body
+    assert "관찰 근거" in briefing_body
+    assert "확인 공백" in briefing_body
     assert "2건 이상" in briefing_body
     assert "freshnessItems" not in briefing_body
     assert "loadTossMarketContext" not in active_tab_body
@@ -8324,3 +8330,583 @@ def test_web_view_exposes_failed_toss_capture_without_new_snapshot_rows(tmp_path
     assert freshness["toss_market"]["status"] == "missing"
     assert market_snapshot["latest_capture_attempt"]["status"] == "failed"
     assert market_snapshot["snapshot_date"] is None
+
+
+def test_web_view_newbby_indicators_only_fetches_the_server_derived_top_two(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 7, 10)
+    selected_rows = [
+        {
+            "stock_code": "005930",
+            "stock_name": "삼성전자",
+            "selected": True,
+            "market_reference": {"market": "KOSPI", "business_date": "2026-07-10"},
+        },
+        {
+            "stock_code": "035420",
+            "stock_name": "NAVER",
+            "selected": True,
+            "market_reference": {"business_date": "2026-07-10"},
+        },
+        {
+            "stock_code": "000660",
+            "stock_name": "SK하이닉스",
+            "selected": True,
+            "market_reference": {"market": "KOSPI", "business_date": "2026-07-10"},
+        },
+    ]
+    monkeypatch.setattr(
+        cli_module,
+        "build_web_view_candidate_evidence_snapshot",
+        lambda *_args, **_kwargs: {"rows": selected_rows},
+    )
+    monkeypatch.setattr(
+        repository,
+        "get_toss_stock_universe_entry_as_of",
+        lambda code, *, as_of_date: SimpleNamespace(
+            stock_code=code,
+            market="KOSDAQ",
+            business_date=as_of_date,
+        ) if code == "035420" else None,
+    )
+    real_urlopen = urllib.request.urlopen
+    provider_requests = []
+
+    class FakeResponse:
+        status = 200
+
+        def __init__(self, body: dict[str, object]) -> None:
+            self.body = json.dumps(body).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self.body
+
+    def valid_snapshot(code: str, market: str, as_of: str) -> dict[str, object]:
+        return {
+            "schemaVersion": 1,
+            "code": code,
+            "symbol": f"{code}{'.KS' if market == 'KOSPI' else '.KQ'}",
+            "market": market,
+            "timeframe": "D",
+            "requestedAsOf": as_of,
+            "barAsOf": as_of,
+            "source": "fixture",
+            "sourceFetchedAt": "2026-07-10T16:00:00+09:00",
+            "sourceDate": as_of,
+            "barStatus": "confirmed",
+            "confirmedPolicy": "fixture policy",
+            "cacheHit": False,
+            "cacheAge": 0,
+            "stale": False,
+            "lastSuccessAt": "2026-07-10T16:00:00+09:00",
+            "dataRevision": "fixture-data-v1",
+            "calculationVersion": "indicator-snapshot-v1",
+            "sourceCalculationVersion": "cache-v1",
+            "calculationBasis": {
+                "ohlcv": "provider-adjusted daily candles",
+                "cutoff": "last candle through requestedAsOf",
+                "candlePrecision": "OHLC 4 decimals",
+                "sourceSeries": "aligned dashboard series",
+            },
+            "price": {"open": 1, "high": 2, "low": 1, "close": 2, "volume": 3},
+            "indicators": {
+                "movingAverages": {
+                    **{f"{kind}{period}": None for kind in ("sma", "ema", "wma") for period in (20, 60, 120, 200)},
+                    "status": "insufficient-data",
+                    "calculationVersion": "technical-v3",
+                    "emaSeedPolicy": "sma-period",
+                    "wmaWeights": "linear-oldest-1-newest-period",
+                },
+                "bollinger20": {"middle": None, "upper": None, "lower": None, "status": "insufficient-data", "period": 20, "multiplier": 2, "stddev": "population", "calculationVersion": "technical-v3"},
+                "donchian20": {"upper": None, "middle": None, "lower": None, "status": "insufficient-data", "period": 20, "includeCurrent": True, "calculationVersion": "technical-v3"},
+                "rsi14": {"value": None, "status": "insufficient-data", "provisional": False, "method": "wilder", "seedPolicy": "simple-average-14-changes"},
+                "atr14": {"value": None, "status": "insufficient-data", "provisional": False, "method": "wilder", "seedPolicy": "simple-average-14-true-ranges"},
+                "volume": {"barVolume": 3, "ratio20": None, "status": "partial-data", "period": 20, "includeCurrent": True},
+                "macd129": {"macd": None, "signal": None, "histogram": None, "status": "insufficient-data", "fast": 12, "slow": 26, "signalPeriod": 9, "seedPolicy": "sma-period", "calculationVersion": "technical-v3"},
+                "obv": {"value": 3, "delta5": None, "seedTime": as_of, "status": "partial-data", "delta5Status": "insufficient-data", "seedPolicy": "first-bar-zero-stop-on-gap", "calculationVersion": "technical-v3"},
+                "volumeProfile12": {"version": "vp-1", "method": "hlc3", "from": None, "to": None, "count": 1, "total": 0, "bins": [], "status": "insufficient-data"},
+            },
+            "structures": [],
+            "structureStatus": {"horizontal": "no-geometry", "flag": "disabled", "triangle": "disabled"},
+        }
+
+    def fake_newbby_open(request, *, timeout):
+        parsed = cli_module.url_parse.urlsplit(request.full_url)
+        assert parsed.path == "/api/indicator-snapshot"
+        params = cli_module.url_parse.parse_qs(parsed.query)
+        provider_requests.append((parsed.netloc, params, timeout))
+        code = params["code"][0]
+        market = params["market"][0]
+        if code == "035420" and params["asOf"][0] in {"2026-07-10", "2026-07-11"}:
+            raise urllib.error.URLError(TimeoutError("fixture timeout"))
+        provider_payload = valid_snapshot(code, market, params["asOf"][0])
+        if params["asOf"][0] == "2026-07-12":
+            provider_payload["indicators"]["rsi14"]["status"] = "BUY"
+        nested_identity_mismatches = {
+            "2026-07-13": ("code", "005930"),
+            "2026-07-14": ("market", "KOSPI"),
+            "2026-07-15": ("requestedAsOf", "2026-07-14"),
+            "2026-07-16": ("symbol", "035420.KS"),
+        }
+        if code == "035420" and params["asOf"][0] in nested_identity_mismatches:
+            field, value = nested_identity_mismatches[params["asOf"][0]]
+            provider_payload[field] = value
+        return FakeResponse(provider_payload)
+
+    monkeypatch.setattr(cli_module, "_open_newbby_indicator_request", fake_newbby_open)
+    server = cli_module.create_web_view_server(
+        config,
+        repository,
+        host="127.0.0.1",
+        port=0,
+        limit=5,
+        newbby_base_url="http://127.0.0.1:9134",
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        with real_urlopen(base_url + "/", timeout=5) as response:
+            page = response.read().decode("utf-8")
+        assert provider_requests == []
+        assert 'id="newbby-indicator-refresh"' in page
+        with real_urlopen(base_url + "/api/newbby-indicators?date=2026-07-10", timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        with real_urlopen(base_url + "/api/newbby-indicators?date=2026-07-10", timeout=5):
+            assert len(provider_requests) == 2
+        try:
+            real_urlopen(
+                base_url + "/api/newbby-indicators?date=2026-07-10&symbols=999999",
+                timeout=5,
+            )
+        except urllib.error.HTTPError as exc:
+            arbitrary_symbol_status = exc.code
+        else:
+            arbitrary_symbol_status = HTTPStatus.OK
+        request = urllib.request.Request(
+            base_url + "/api/newbby-indicators?date=2026-07-10",
+            data=b"",
+            method="POST",
+        )
+        try:
+            real_urlopen(request, timeout=5)
+        except urllib.error.HTTPError as exc:
+            post_status = exc.code
+        else:
+            post_status = HTTPStatus.OK
+        with real_urlopen(base_url + "/api/newbby-indicators?date=2026-07-11", timeout=5) as response:
+            missing_market_payload = json.loads(response.read().decode("utf-8"))
+        with real_urlopen(base_url + "/api/newbby-indicators?date=2026-07-12", timeout=5) as response:
+            unsupported_schema_payload = json.loads(response.read().decode("utf-8"))
+        identity_mismatch_payloads = {}
+        for mismatch_date in ("2026-07-13", "2026-07-14", "2026-07-15", "2026-07-16"):
+            with real_urlopen(base_url + f"/api/newbby-indicators?date={mismatch_date}", timeout=5) as response:
+                identity_mismatch_payloads[mismatch_date] = json.loads(response.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert arbitrary_symbol_status == HTTPStatus.BAD_REQUEST
+    assert post_status == HTTPStatus.METHOD_NOT_ALLOWED
+    assert payload["derived_from"] == "web_view_candidate_evidence_top_2"
+    assert payload["stock_monitor_read_only"] is True
+    assert payload["provider_may_be_called_on_cache_miss"] is True
+    assert payload["writes_stock_monitor_db"] is False
+    assert payload["newbby_cache_may_update"] is True
+    assert [item["stock_code"] for item in payload["items"]] == ["005930", "035420"]
+    assert payload["items"][0]["available"] is True
+    assert payload["items"][1]["reason"] == "provider_timeout"
+    assert payload["items"][1]["market_source"] == "stored_toss_stock_universe"
+    assert missing_market_payload["items"][0]["reason"] == "missing_toss_market_classification"
+    assert missing_market_payload["items"][1]["reason"] == "provider_timeout"
+    assert unsupported_schema_payload["items"][0]["reason"] == "missing_toss_market_classification"
+    assert unsupported_schema_payload["items"][1]["reason"] == "unsupported_schema"
+    for mismatch_payload in identity_mismatch_payloads.values():
+        assert mismatch_payload["items"][1]["available"] is False
+        assert mismatch_payload["items"][1]["reason"] == "provider_response_mismatch"
+    assert [request[1]["code"][0] for request in provider_requests] == ["005930", "035420", "035420", "035420", "035420", "035420", "035420", "035420"]
+    assert [request[1]["market"][0] for request in provider_requests] == ["KOSPI", "KOSDAQ", "KOSDAQ", "KOSDAQ", "KOSDAQ", "KOSDAQ", "KOSDAQ", "KOSDAQ"]
+    assert all(request[0] == "127.0.0.1:9134" for request in provider_requests)
+    assert all(set(request[1]) == {"code", "market", "asOf"} for request in provider_requests)
+    assert [request[1]["asOf"][0] for request in provider_requests] == ["2026-07-10", "2026-07-10", "2026-07-11", "2026-07-12", "2026-07-13", "2026-07-14", "2026-07-15", "2026-07-16"]
+    assert all(request[2] <= 25 for request in provider_requests)
+
+
+def test_web_view_newbby_indicator_snapshot_keeps_missing_states_and_neutral_fields() -> None:
+    snapshot = {
+        "schemaVersion": 1,
+        "code": "005930",
+        "symbol": "fixture",
+        "market": "KOSPI",
+        "timeframe": "D",
+        "requestedAsOf": "2026-07-10",
+        "barAsOf": "2026-07-09",
+        "source": "fixture",
+        "sourceFetchedAt": "2026-07-10T16:00:00+09:00",
+        "sourceDate": "2026-07-10",
+        "barStatus": "provisional",
+        "confirmedPolicy": "next-session confirmation",
+        "cacheHit": True,
+        "cacheAge": 12,
+        "stale": True,
+        "lastSuccessAt": "2026-07-10T15:50:00+09:00",
+        "dataRevision": "fixture-data-v1",
+        "calculationVersion": "fixture-calc-v1",
+        "sourceCalculationVersion": "cache-v1",
+        "servedAt": "2026-07-10T16:00:01+09:00",
+        "calculationBasis": {
+            "ohlcv": "provider-adjusted daily candles",
+            "cutoff": "last candle through requestedAsOf",
+            "candlePrecision": "OHLC 4 decimals",
+            "sourceSeries": "aligned dashboard series",
+        },
+        "price": {"open": 1, "high": 2, "low": 1, "close": 2, "volume": 3},
+        "indicators": {
+            "movingAverages": {
+                "sma20": None,
+                "sma60": 2,
+                "sma120": 3,
+                "sma200": 4,
+                "ema20": 1,
+                "ema60": 2,
+                "ema120": 3,
+                "ema200": 4,
+                "wma20": 1,
+                "wma60": 2,
+                "wma120": 3,
+                "wma200": 4,
+                "status": "partial-data",
+                "calculationVersion": "technical-v3",
+                "emaSeedPolicy": "sma-period",
+                "wmaWeights": "linear-oldest-1-newest-period",
+            },
+            "bollinger20": {"middle": None, "upper": None, "lower": None, "status": "insufficient-data", "period": 20, "multiplier": 2, "stddev": "population", "calculationVersion": "technical-v3"},
+            "donchian20": {"upper": 3, "middle": 2, "lower": 1, "status": "ready", "period": 20, "includeCurrent": True, "calculationVersion": "technical-v3"},
+            "rsi14": {"value": None, "status": "insufficient-data", "provisional": True, "method": "wilder", "seedPolicy": "simple-average-14-changes"},
+            "atr14": {"value": 1, "status": "ready", "provisional": False, "method": "wilder", "seedPolicy": "simple-average-14-true-ranges"},
+            "volume": {"barVolume": 3, "ratio20": None, "status": "partial-data", "period": 20, "includeCurrent": True},
+            "macd129": {"macd": 1, "signal": None, "histogram": None, "status": "partial-data", "fast": 12, "slow": 26, "signalPeriod": 9, "seedPolicy": "sma-period", "calculationVersion": "technical-v3"},
+            "obv": {"value": 3, "delta5": None, "seedTime": "2026-07-09", "status": "partial-data", "delta5Status": "insufficient-data", "seedPolicy": "first-bar-zero-stop-on-gap", "calculationVersion": "technical-v3"},
+            "volumeProfile12": {
+                "version": "vp-1",
+                "method": "close-weighted",
+                "from": "2026-06-01",
+                "to": "2026-07-09",
+                "count": 12,
+                "total": 12,
+                "binCount": 12,
+                "bins": [{"low": index, "high": index + 1, "volume": 1, "share": 1 / 12, "peak": index == 0} for index in range(12)],
+                "status": "ready",
+            },
+        },
+        "structures": [
+            {
+                "family": "horizontal",
+                "status": "forming",
+                "timeframe": "D",
+                "barTime": "2026-07-09",
+                "measurements": [
+                    {"name": "type", "label": "type", "value": "prior-20-high", "unit": "state"},
+                    {"name": "volumeEvidence", "label": "volumeEvidence", "value": "volume-confirmed", "unit": "state"},
+                    {"name": "rvol20Previous", "label": "rvol20Previous", "value": 1.5, "unit": "ratio"},
+                ],
+            },
+            {
+                "family": "flag",
+                "status": "paused",
+                "timeframe": "D",
+                "barTime": None,
+                "measurements": [
+                    {"name": "type", "label": "type", "value": "channel", "unit": "state"},
+                    {"name": "geometry.kind", "label": "geometry.kind", "value": "channel", "unit": "state"},
+                ],
+            },
+            {
+                "family": "triangle",
+                "status": "forming",
+                "timeframe": "D",
+                "barTime": "2026-07-09",
+                "measurements": [
+                    {"name": "type", "label": "type", "value": "triangle", "unit": "state"},
+                    {"name": "geometry.kind", "label": "geometry.kind", "value": "triangle", "unit": "state"},
+                    {"name": "volumeEvidence", "label": "volumeEvidence", "value": "volume-insufficient", "unit": "state"},
+                    {
+                        "name": "geometry.points.2.logicalOffset",
+                        "label": "삼각형 시작점부터 교점까지 봉 수 · 직선 외삽",
+                        "value": 14,
+                        "unit": "projected-bars",
+                    },
+                    {
+                        "name": "geometry.points.2.price",
+                        "label": "삼각형 교점 · 직선 외삽값(목표가 아님)",
+                        "value": 101.25,
+                        "unit": "projected-price",
+                    },
+                    {
+                        "name": "apexRemainingBars",
+                        "label": "삼각형 교점까지 남은 봉 · 직선 외삽",
+                        "value": 3,
+                        "unit": "projected-bars",
+                    },
+                ],
+            },
+        ],
+        "structureStatus": {"horizontal": "ready", "flag": "paused", "triangle": "ready"},
+    }
+
+    public_snapshot = cli_module._web_view_public_newbby_indicator_snapshot(snapshot)
+
+    assert public_snapshot["requestedAsOf"] == "2026-07-10"
+    assert public_snapshot["barAsOf"] == "2026-07-09"
+    assert public_snapshot["barStatus"] == "provisional"
+    assert public_snapshot["sourceFetchedAt"] == "2026-07-10T16:00:00+09:00"
+    assert public_snapshot["sourceDate"] == "2026-07-10"
+    assert public_snapshot["requestedAsOf"] == "2026-07-10"
+    assert public_snapshot["timeframe"] == "D"
+    assert public_snapshot["cacheHit"] is True
+    assert public_snapshot["stale"] is True
+    assert public_snapshot["indicators"]["movingAverages"]["sma20"] is None
+    assert set(public_snapshot["indicators"]["movingAverages"]) == {
+        "sma20", "sma60", "sma120", "sma200", "ema20", "ema60", "ema120", "ema200",
+        "wma20", "wma60", "wma120", "wma200", "status", "calculationVersion", "emaSeedPolicy", "wmaWeights",
+    }
+    assert {
+        "movingAverages", "bollinger20", "donchian20", "rsi14", "atr14", "volume", "macd129", "obv", "volumeProfile12"
+    } == set(public_snapshot["indicators"])
+    assert public_snapshot["indicators"]["bollinger20"]["status"] == "insufficient-data"
+    assert len(public_snapshot["indicators"]["volumeProfile12"]["bins"]) == 12
+    assert any(
+        item["name"] == "rvol20Previous" and item["value"] == 1.5
+        for item in public_snapshot["structures"][0]["measurements"]
+    )
+    assert public_snapshot["structureStatus"]["flag"] == "paused"
+    assert public_snapshot["structures"][1]["measurements"][0]["value"] == "channel"
+    triangle_measurements = public_snapshot["structures"][2]["measurements"]
+    assert next(item for item in triangle_measurements if item["name"] == "geometry.points.2.logicalOffset")["label"] == "삼각형 시작점부터 교점까지 봉 수 · 직선 외삽"
+    assert next(item for item in triangle_measurements if item["name"] == "geometry.points.2.price")["unit"] == "projected-price"
+    assert next(item for item in triangle_measurements if item["name"] == "apexRemainingBars")["unit"] == "projected-bars"
+
+    with pytest.raises(cli_module._UnsupportedNewbbyIndicatorSchema):
+        cli_module._web_view_public_newbby_indicator_snapshot({**snapshot, "confidence": 0.9})
+    with pytest.raises(cli_module._UnsupportedNewbbyIndicatorSchema):
+        cli_module._web_view_public_newbby_indicator_snapshot({**snapshot, "signal": "unknown"})
+    with pytest.raises(cli_module._UnsupportedNewbbyIndicatorSchema):
+        cli_module._web_view_public_newbby_indicator_snapshot({**snapshot, "source": {"confidence": 0.9}})
+    unsupported_macd_signal = {
+        **snapshot,
+        "indicators": {
+            **snapshot["indicators"],
+            "rsi14": {**snapshot["indicators"]["rsi14"], "signal": 1},
+        },
+    }
+    with pytest.raises(cli_module._UnsupportedNewbbyIndicatorSchema):
+        cli_module._web_view_public_newbby_indicator_snapshot(unsupported_macd_signal)
+    unsupported_missing_field = {
+        **snapshot,
+        "indicators": {
+            **snapshot["indicators"],
+            "movingAverages": {
+                key: value
+                for key, value in snapshot["indicators"]["movingAverages"].items()
+                if key != "wma200"
+            },
+        },
+    }
+    with pytest.raises(cli_module._UnsupportedNewbbyIndicatorSchema):
+        cli_module._web_view_public_newbby_indicator_snapshot(unsupported_missing_field)
+    with pytest.raises(cli_module._UnsupportedNewbbyIndicatorSchema):
+        cli_module._web_view_public_newbby_indicator_snapshot({**snapshot, "timeframe": "H4"})
+    with pytest.raises(cli_module._UnsupportedNewbbyIndicatorSchema):
+        cli_module._web_view_public_newbby_indicator_snapshot({**snapshot, "barAsOf": "2026-07-11"})
+    bad_status = {
+        **snapshot,
+        "indicators": {
+            **snapshot["indicators"],
+            "rsi14": {**snapshot["indicators"]["rsi14"], "status": "BUY"},
+        },
+    }
+    bad_bar_status = {**snapshot, "barStatus": "BUY"}
+    bad_delta_status = {
+        **snapshot,
+        "indicators": {
+            **snapshot["indicators"],
+            "obv": {**snapshot["indicators"]["obv"], "delta5Status": "BUY"},
+        },
+    }
+    bad_structure_status = {
+        **snapshot,
+        "structures": [
+            {**snapshot["structures"][0], "status": "BUY"},
+            *snapshot["structures"][1:],
+        ],
+    }
+    bad_type = {
+        **snapshot,
+        "structures": [
+            {
+                **snapshot["structures"][0],
+                "measurements": [
+                    {**item, "value": "BUY"} if item["name"] == "type" else item
+                    for item in snapshot["structures"][0]["measurements"]
+                ],
+            },
+            *snapshot["structures"][1:],
+        ],
+    }
+    bad_volume_evidence = {
+        **snapshot,
+        "structures": [
+            {
+                **snapshot["structures"][0],
+                "measurements": [
+                    {**item, "value": "BUY"} if item["name"] == "volumeEvidence" else item
+                    for item in snapshot["structures"][0]["measurements"]
+                ],
+            },
+            *snapshot["structures"][1:],
+        ],
+    }
+    bad_geometry_kind = {
+        **snapshot,
+        "structures": [
+            *snapshot["structures"][:2],
+            {
+                **snapshot["structures"][2],
+                "measurements": [
+                    {**item, "value": "BUY"} if item["name"] == "geometry.kind" else item
+                    for item in snapshot["structures"][2]["measurements"]
+                ],
+            },
+        ],
+    }
+    for unsupported_snapshot in (
+        bad_status, bad_bar_status, bad_delta_status, bad_structure_status,
+        bad_type, bad_volume_evidence, bad_geometry_kind,
+    ):
+        with pytest.raises(cli_module._UnsupportedNewbbyIndicatorSchema):
+            cli_module._web_view_public_newbby_indicator_snapshot(unsupported_snapshot)
+    ready_profile_without_count = {
+        **snapshot,
+        "indicators": {
+            **snapshot["indicators"],
+            "volumeProfile12": {
+                key: value
+                for key, value in snapshot["indicators"]["volumeProfile12"].items()
+                if key != "binCount"
+            },
+        },
+    }
+    with pytest.raises(cli_module._UnsupportedNewbbyIndicatorSchema):
+        cli_module._web_view_public_newbby_indicator_snapshot(ready_profile_without_count)
+
+    page = cli_module._render_web_view_html()
+    assert "function renderNewbbyIndicatorValue" in page
+    assert "indicatorValue == null" in page
+    assert "loadNewbbyIndicatorSnapshot(selectedDate)" in page
+    assert "sourceFetchedAt" in page
+    assert "cacheAge" in page
+    assert "barAsOf" in page
+    assert "Newbby 캐시 경과" in page
+    assert "구조 계산 상태" in page
+    assert "sourceCalculationVersion" in page
+    assert "calculationBasis" in page
+    assert "servedAt" in page
+    assert "SMA 20봉" in page
+    assert "EMA 200봉" in page
+    assert "WMA 120봉" in page
+    assert "지원하지 않는 Newbby 지표 형식입니다." in page
+    assert "Newbby 로컬 캐시 갱신이 일어날 수 있습니다" in page
+    with pytest.raises(ValueError, match="loopback"):
+        cli_module._validate_newbby_indicator_origin("http://example.com:8734")
+
+
+def test_web_view_newbby_v1_structure_allowlist_covers_all_analyzer_measurement_paths() -> None:
+    expected = {
+        "horizontal": {
+            "type", "boundary", "atr14Previous", "rvol20Previous", "volumeEvidence", "barTime", "close",
+        },
+        "flag": {
+            "type", "poleStartTime", "poleStartPrice", "poleEndTime", "poleEndPrice", "poleMove", "poleAtr",
+            "adjustmentStartTime", "discoveredTime", "upper.slope", "upper.intercept", "lower.slope",
+            "lower.intercept", "atr14Previous", "anchorTime", "pivotHighTimes", "pivotLowTimes", "containment",
+            "barTime", "close", "upperPrice", "lowerPrice", "geometry.kind", "adjustmentBars",
+            "rvol20Previous", "volumeEvidence", "retracementRatio", "adjustmentVolumeRatio",
+            "pivotHighTimes.1", "pivotLowTimes.3", "geometry.points.4.time", "geometry.points.4.price",
+            "geometry.pole.2.time", "geometry.pole.2.price",
+        },
+        "triangle": {
+            "type", "anchorTime", "structureStartTime", "discoveredTime", "upper.slope", "upper.intercept",
+            "lower.slope", "lower.intercept", "atr14Previous", "pivotHighTimes", "pivotLowTimes", "contactCount",
+            "containment", "barTime", "close", "geometry.kind", "geometry.observedThrough", "structureBars",
+            "upperPrice", "lowerPrice", "boundary", "convergenceRatio", "apexRemainingBars", "rvol20Previous",
+            "volumeEvidence", "pivotHighTimes.2", "pivotLowTimes.4", "geometry.points.1.time",
+            "geometry.points.1.price", "geometry.points.2.anchorTime", "geometry.points.2.logicalOffset",
+            "geometry.points.2.price", "geometry.points.3.time", "geometry.points.3.price",
+        },
+    }
+
+    assert all(
+        cli_module._newbby_structure_measurement_name_allowed(family, name)
+        for family, names in expected.items()
+        for name in names
+    )
+    assert not cli_module._newbby_structure_measurement_name_allowed("triangle", "confidence")
+    assert not cli_module._newbby_structure_measurement_name_allowed("unknown", "type")
+
+
+def test_newbby_indicator_request_does_not_follow_loopback_redirects() -> None:
+    target_requests = []
+
+    class TargetHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            target_requests.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *_args) -> None:
+            return
+
+    target_server = ThreadingHTTPServer(("127.0.0.1", 0), TargetHandler)
+
+    class RedirectHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{target_server.server_port}/redirect-target")
+            self.end_headers()
+
+        def log_message(self, *_args) -> None:
+            return
+
+    redirect_server = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+    target_thread = threading.Thread(target=target_server.serve_forever, daemon=True)
+    redirect_thread = threading.Thread(target=redirect_server.serve_forever, daemon=True)
+    target_thread.start()
+    redirect_thread.start()
+    try:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{redirect_server.server_port}/api/indicator-snapshot",
+            method="GET",
+        )
+        with pytest.raises(urllib.error.HTTPError) as error:
+            cli_module._open_newbby_indicator_request(request, timeout=3)
+        assert error.value.code == HTTPStatus.FOUND
+    finally:
+        redirect_server.shutdown()
+        redirect_server.server_close()
+        redirect_thread.join(timeout=3)
+        target_server.shutdown()
+        target_server.server_close()
+        target_thread.join(timeout=3)
+
+    assert target_requests == []

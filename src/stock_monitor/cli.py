@@ -175,6 +175,7 @@ ACCESS_CODE_SESSION_MAX_AGE_SECONDS = 12 * 60 * 60
 SCRAPLING_EXE_ENV_VAR = "SCRAPLING_EXE"
 WEB_VIEW_DEFAULT_HOST = "127.0.0.1"
 WEB_VIEW_DEFAULT_PORT = 87 * 100 + 80
+NEWBBY_INDICATOR_DEFAULT_BASE_URL = "http://127.0.0.1:8734"
 SCHEDULED_NOTIFY_EARLIEST_TIME = datetime_time(hour=8, minute=0)
 SCHEDULED_NOTIFY_LATEST_TIME = datetime_time(hour=8, minute=30)
 SCHEDULED_TOSS_PRIORITY_BASELINE_EARLIEST_TIME = datetime_time(hour=20, minute=5)
@@ -1653,9 +1654,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Allow admin-gui to bind outside localhost. Use only on a trusted private network.",
     )
 
+    operator_review_parser = subparsers.add_parser(
+        "operator-review",
+        help="Run the separate loopback-only, read-only operator review panel.",
+    )
+    operator_review_parser.add_argument("--port", type=int, default=8767)
+    operator_review_parser.add_argument(
+        "--newbby-base-url",
+        default="http://127.0.0.1:8734",
+        help="Loopback Stock-Newbby UI origin used for chart handoff links.",
+    )
+
     admin_boundary_audit_parser = subparsers.add_parser(
         "admin-boundary-audit",
-        help="Read-only audit of admin-gui, web-view, and future operator-review surface boundaries.",
+        help="Read-only audit of admin-gui, web-view, and operator-review surface boundaries.",
     )
     admin_boundary_audit_parser.add_argument("--limit", type=int, default=5)
     admin_boundary_audit_parser.add_argument("--json", action="store_true")
@@ -1755,6 +1767,11 @@ def build_parser() -> argparse.ArgumentParser:
     web_view_parser.add_argument("--port", type=int, default=WEB_VIEW_DEFAULT_PORT)
     web_view_parser.add_argument("--limit", type=int, default=20)
     web_view_parser.add_argument("--no-open", action="store_true")
+    web_view_parser.add_argument(
+        "--newbby-base-url",
+        default=NEWBBY_INDICATOR_DEFAULT_BASE_URL,
+        help="Loopback Stock-Newbby API origin used by the explicit Main indicator lookup.",
+    )
     web_view_parser.add_argument(
         "--allow-non-loopback",
         action="store_true",
@@ -2197,6 +2214,13 @@ def main(argv: list[str] | None = None) -> int:
             live=args.live,
             confirm_token_reissue=args.confirm_token_reissue,
             as_json=args.json,
+        )
+    if args.command == "operator-review":
+        config = RuntimeConfig.from_env(headless=True)
+        return _run_operator_review(
+            config,
+            port=args.port,
+            newbby_base_url=args.newbby_base_url,
         )
     config = RuntimeConfig.from_env(headless=not getattr(args, "headed", False))
     config.ensure_runtime_dirs()
@@ -2967,6 +2991,7 @@ def main(argv: list[str] | None = None) -> int:
                 limit=args.limit,
                 open_browser=not args.no_open,
                 allow_non_loopback=args.allow_non_loopback,
+                newbby_base_url=args.newbby_base_url,
             )
         if args.command == "web-view":
             return _run_web_view(
@@ -8897,6 +8922,10 @@ def _build_admin_boundary_audit_payload(
     limit: int,
 ) -> dict[str, object]:
     html_text = _render_admin_gui_html()
+    from stock_monitor import operator_review_server
+
+    web_view_html_text = _render_web_view_html() + _render_web_view_v2_html()
+    operator_review_html_text = operator_review_server.render_operator_review_html()
     html_judgment_tokens = _admin_boundary_tokens_found(
         html_text,
         ADMIN_BOUNDARY_JUDGMENT_REVIEW_FORBIDDEN_TOKENS,
@@ -8905,7 +8934,34 @@ def _build_admin_boundary_audit_payload(
         html_text,
         ADMIN_BOUNDARY_PUBLIC_CONTENT_FORBIDDEN_TOKENS,
     )
-    operator_review_route_present = "operator-review" in html_text
+    operator_review_route = operator_review_server.OPERATOR_REVIEW_API_PATH
+    operator_review_route_present_in_admin_html = operator_review_route in html_text
+    operator_review_route_present_in_web_view_html = operator_review_route in web_view_html_text
+    import inspect
+
+    try:
+        web_view_handler_source = inspect.getsource(_make_web_view_handler)
+    except (OSError, TypeError):
+        web_view_handler_source = ""
+    operator_review_route_present_in_web_view_handler = operator_review_route in web_view_handler_source
+    operator_review_page_has_route = operator_review_route in operator_review_html_text
+    operator_review_handler = operator_review_server._make_operator_review_handler(config)
+    operator_review_post_status = operator_review_server._route_operator_review_request(
+        "POST", "/", config
+    )[0]
+    operator_review_api_without_date_status = operator_review_server._route_operator_review_request(
+        "GET", operator_review_route, config
+    )[0]
+    operator_review_separate_handler = operator_review_handler.__module__ == operator_review_server.__name__
+    operator_review_implemented = (
+        callable(operator_review_server.create_operator_review_server)
+        and callable(operator_review_server.build_operator_review_snapshot)
+        and operator_review_page_has_route
+        and hasattr(operator_review_handler, "do_GET")
+        and operator_review_separate_handler
+        and operator_review_post_status == HTTPStatus.METHOD_NOT_ALLOWED
+        and operator_review_api_without_date_status == HTTPStatus.BAD_REQUEST
+    )
     schema_status = _ops_sync_db_schema_status(repository)
     status_available = bool(schema_status.get("current"))
     status_keys: list[str] = []
@@ -8950,11 +9006,32 @@ def _build_admin_boundary_audit_payload(
                 "tokens": html_public_content_tokens,
             }
         )
-    if operator_review_route_present:
+    if operator_review_route_present_in_admin_html:
         issues.append(
             {
                 "code": "operator_review_route_in_admin_html",
-                "message": "future operator-review route appears in admin-gui HTML before the surface is implemented.",
+                "message": "operator-review API route appears in admin-gui HTML.",
+            }
+        )
+    if operator_review_route_present_in_web_view_html:
+        issues.append(
+            {
+                "code": "operator_review_route_in_web_view_html",
+                "message": "operator-review API route appears in public web-view HTML.",
+            }
+        )
+    if operator_review_route_present_in_web_view_handler:
+        issues.append(
+            {
+                "code": "operator_review_route_in_public_web_view_handler",
+                "message": "operator-review API route appears in the public web-view handler.",
+            }
+        )
+    if not operator_review_implemented:
+        issues.append(
+            {
+                "code": "operator_review_surface_incomplete",
+                "message": "operator-review page or GET-only route contract is incomplete.",
             }
         )
     if not bool(schema_status.get("current")):
@@ -9026,12 +9103,22 @@ def _build_admin_boundary_audit_payload(
             "expected_admin_control_post_status": 405,
         },
         "operator_review": {
-            "implemented": False,
-            "route_present_in_admin_html": operator_review_route_present,
+            "implemented": operator_review_implemented,
+            "separate_handler": operator_review_separate_handler,
+            "handler_factory": "_make_operator_review_handler",
+            "host": operator_review_server.DEFAULT_OPERATOR_REVIEW_HOST,
+            "default_port": operator_review_server.DEFAULT_OPERATOR_REVIEW_PORT,
+            "methods": ["GET"],
+            "post_status": int(operator_review_post_status),
+            "sqlite_uri_mode": "ro",
+            "sqlite_query_only": True,
+            "route": operator_review_route,
+            "route_present_in_admin_html": operator_review_route_present_in_admin_html,
+            "route_present_in_web_view_html": operator_review_route_present_in_web_view_html,
+            "route_present_in_web_view_handler": operator_review_route_present_in_web_view_handler,
             "reserved_for": [
-                "raw news intelligence evidence review",
-                "candidate evidence linkage review",
-                "internal judgment-review workflows",
+                "selected-date Main candidate and evidence review",
+                "source, freshness, and missing-state inspection",
             ],
         },
         "verification_commands": [
@@ -9039,6 +9126,7 @@ def _build_admin_boundary_audit_payload(
             "python -m stock_monitor operator-status --json --health-exit",
             "python -m stock_monitor web-view-browser-smoke --date latest --stock-limit 20 --json",
             "python -m pytest tests/test_admin_gui.py tests/test_operator_status.py tests/test_cli_commands.py -q",
+            "python -m pytest tests/test_operator_review.py -q",
         ],
         "issues": issues,
     }
@@ -9077,7 +9165,8 @@ def _run_admin_boundary_audit(
     operator_review = payload["operator_review"]
     print(
         f"- operator-review: implemented={'Y' if operator_review['implemented'] else 'N'} "
-        f"route_in_admin={'Y' if operator_review['route_present_in_admin_html'] else 'N'}"
+        f"route_in_admin={'Y' if operator_review['route_present_in_admin_html'] else 'N'} "
+        f"route_in_web_view={'Y' if operator_review['route_present_in_web_view_html'] or operator_review['route_present_in_web_view_handler'] else 'N'}"
     )
     if payload["issues"]:
         print("- issues:")
@@ -25389,6 +25478,7 @@ def _run_web_view(
     limit: int,
     open_browser: bool,
     allow_non_loopback: bool,
+    newbby_base_url: str = NEWBBY_INDICATOR_DEFAULT_BASE_URL,
 ) -> int:
     server = create_web_view_server(
         config,
@@ -25397,6 +25487,7 @@ def _run_web_view(
         port=port,
         limit=limit,
         allow_non_loopback=allow_non_loopback,
+        newbby_base_url=newbby_base_url,
     )
     url = f"http://{host}:{server.server_port}/"
     print(f"Stock Monitor web view: {url}")
@@ -25408,6 +25499,29 @@ def _run_web_view(
     except KeyboardInterrupt:
         print("")
         print("Stopping web view.")
+    finally:
+        server.server_close()
+    return 0
+
+
+def _run_operator_review(
+    config: RuntimeConfig,
+    *,
+    port: int,
+    newbby_base_url: str,
+) -> int:
+    from stock_monitor.operator_review_server import create_operator_review_server
+
+    server = create_operator_review_server(
+        config,
+        port=port,
+        newbby_base_url=newbby_base_url,
+    )
+    print(f"Operator review: http://127.0.0.1:{port}/")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        return 0
     finally:
         server.server_close()
     return 0
@@ -26450,10 +26564,13 @@ def create_web_view_server(
     limit: int,
     allow_non_loopback: bool = False,
     toss_quote_provider: TossPriorityQuoteProvider | None = None,
+    newbby_base_url: str = NEWBBY_INDICATOR_DEFAULT_BASE_URL,
 ) -> ThreadingHTTPServer:
     return web_view_server_module.create_web_view_server(
         config, repository, host=host, port=port, limit=limit, make_handler=_make_web_view_handler,
-        allow_non_loopback=allow_non_loopback, toss_quote_provider=toss_quote_provider,
+        allow_non_loopback=allow_non_loopback,
+        toss_quote_provider=toss_quote_provider,
+        newbby_base_url=newbby_base_url,
     )
 
 
@@ -26583,6 +26700,7 @@ def _make_web_view_handler(
     *,
     limit: int,
     toss_quote_provider: TossPriorityQuoteProvider | None = None,
+    newbby_base_url: str = NEWBBY_INDICATOR_DEFAULT_BASE_URL,
 ) -> type[BaseHTTPRequestHandler]:
     response_cache: dict[str, tuple[float, bytes]] = {}
     response_cache_lock = threading.Lock()
@@ -26592,6 +26710,7 @@ def _make_web_view_handler(
     toss_provider = toss_quote_provider or TossPriorityQuoteProvider(
         config=TossOpenApiLabConfig.from_env(config.root_dir)
     )
+    newbby_origin = _validate_newbby_indicator_origin(newbby_base_url)
 
     def read_cached_json_payload(cache_key: str) -> dict | None:
         now_monotonic = time.monotonic()
@@ -26632,7 +26751,7 @@ def _make_web_view_handler(
                 response_cache[cache_key] = (time.monotonic(), body)
             return body, "miss", json_ms, build_ms, metrics.db_ms
 
-    def priority_candidate_codes(business_date: date) -> tuple[str, ...]:
+    def priority_candidate_rows(business_date: date) -> list[dict[str, object]]:
         daily_payload = read_cached_json_payload(f"daily:{business_date.isoformat()}")
         priority_rows = (
             daily_payload.get("priority_candidate_evidence", {}).get("rows", [])
@@ -26646,11 +26765,123 @@ def _make_web_view_handler(
                 business_date=business_date,
                 limit=2,
             ).get("rows", [])
-        return tuple(
-            str(row.get("stock_code") or "").strip()
+        return [
+            row
             for row in _web_view_selected_candidate_rows(priority_rows)
             if re.fullmatch(r"\d{6}", str(row.get("stock_code") or "").strip())
-        )
+        ]
+
+    def priority_candidate_codes(business_date: date) -> tuple[str, ...]:
+        return tuple(str(row.get("stock_code") or "").strip() for row in priority_candidate_rows(business_date))
+
+    def build_newbby_indicator_payload(business_date: date, candidate_rows: list[dict[str, object]]) -> dict:
+        items: list[dict[str, object]] = []
+        for row in candidate_rows[:2]:
+            code = str(row.get("stock_code") or "").strip()
+            item: dict[str, object] = {
+                "stock_code": code,
+                "stock_name": str(row.get("stock_name") or code),
+                "available": False,
+                "requested_as_of": business_date.isoformat(),
+            }
+            market_reference = row.get("market_reference")
+            reference = market_reference if isinstance(market_reference, dict) else {}
+            market = None
+            market_source = None
+            market_source_date = None
+            if reference.get("business_date") == business_date.isoformat():
+                candidate_market = str(reference.get("market") or "").upper()
+                if candidate_market in {"KOSPI", "KOSDAQ"}:
+                    market = candidate_market
+                    market_source = "selected_date_toss_market_reference"
+                    market_source_date = business_date.isoformat()
+            if market is None:
+                universe_entry = repository.get_toss_stock_universe_entry_as_of(code, as_of_date=business_date)
+                if universe_entry and universe_entry.market in {"KOSPI", "KOSDAQ"}:
+                    market = universe_entry.market
+                    market_source = "stored_toss_stock_universe"
+                    market_source_date = universe_entry.business_date.isoformat()
+            item.update(
+                {
+                    "market": market,
+                    "market_source": market_source,
+                    "market_source_date": market_source_date,
+                }
+            )
+            if market is None:
+                item["reason"] = "missing_toss_market_classification"
+                items.append(item)
+                continue
+
+            provider_url = f"{newbby_origin}/api/indicator-snapshot?{url_parse.urlencode({'code': code, 'market': market, 'asOf': business_date.isoformat()})}"
+            request = url_request.Request(provider_url, headers={"Accept": "application/json"}, method="GET")
+            try:
+                with _open_newbby_indicator_request(request, timeout=25) as response:
+                    status_code = getattr(response, "status", None)
+                    if status_code is None:
+                        status_code = response.getcode()
+                    if status_code != HTTPStatus.OK:
+                        raise ValueError("unexpected_provider_status")
+                    provider_payload = json.loads(response.read().decode("utf-8"))
+                if not isinstance(provider_payload, dict):
+                    raise ValueError("invalid_provider_payload")
+                if (
+                    str(provider_payload.get("code") or "") != code
+                    or str(provider_payload.get("market") or "") != market
+                    or str(provider_payload.get("requestedAsOf") or "") != business_date.isoformat()
+                ):
+                    item["reason"] = "provider_response_mismatch"
+                    items.append(item)
+                    continue
+            except url_error.HTTPError as exc:
+                item["reason"] = "provider_http_error"
+                item["upstream_status"] = exc.code
+                items.append(item)
+                continue
+            except (TimeoutError, url_error.URLError) as exc:
+                reason = getattr(exc, "reason", None)
+                item["reason"] = "provider_timeout" if isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError) else "provider_unavailable"
+                items.append(item)
+                continue
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+                item["reason"] = "invalid_provider_response"
+                items.append(item)
+                continue
+            except Exception:
+                item["reason"] = "provider_unavailable"
+                items.append(item)
+                continue
+            try:
+                public_snapshot = _web_view_public_newbby_indicator_snapshot(provider_payload)
+            except _UnsupportedNewbbyIndicatorSchema:
+                item["reason"] = "unsupported_schema"
+                items.append(item)
+                continue
+            expected_symbol = f"{code}{'.KS' if market == 'KOSPI' else '.KQ'}"
+            if (
+                public_snapshot.get("code") != code
+                or public_snapshot.get("market") != market
+                or public_snapshot.get("requestedAsOf") != business_date.isoformat()
+                or public_snapshot.get("symbol") != expected_symbol
+            ):
+                item["reason"] = "provider_response_mismatch"
+                items.append(item)
+                continue
+            item.update({"available": True, "snapshot": public_snapshot})
+            items.append(item)
+        return {
+            "surface": "web-view-newbby-indicators",
+            "stock_monitor_read_only": True,
+            "provider_may_be_called_on_cache_miss": True,
+            "newbby_cache_may_update": True,
+            "writes_stock_monitor_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "affects_ordering": False,
+            "business_date": business_date.isoformat(),
+            "derived_from": "web_view_candidate_evidence_top_2",
+            "items": items,
+        }
 
     def build_daily_payload_for_route(
         business_date: date,
@@ -27109,6 +27340,30 @@ def _make_web_view_handler(
                     status,
                     json.dumps(payload, ensure_ascii=False),
                     content_type="application/json; charset=utf-8",
+                )
+                return
+            if path == "/api/newbby-indicators":
+                query_params = url_parse.parse_qs(query)
+                raw_date = query_params.get("date", [None])[0]
+                if (
+                    set(query_params) != {"date"}
+                    or len(query_params.get("date", [])) != 1
+                    or not raw_date
+                    or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw_date)
+                ):
+                    _write_http_response(self, HTTPStatus.BAD_REQUEST, "invalid date or query", content_type="text/plain; charset=utf-8")
+                    return
+                try:
+                    business_date = date.fromisoformat(raw_date)
+                except ValueError:
+                    _write_http_response(self, HTTPStatus.BAD_REQUEST, "invalid date", content_type="text/plain; charset=utf-8")
+                    return
+                candidate_rows = priority_candidate_rows(business_date)[:2]
+                cache_codes = ",".join(str(row.get("stock_code") or "") for row in candidate_rows)
+                write_cached_json_response(
+                    self,
+                    f"newbby-indicators:{business_date.isoformat()}:{cache_codes}",
+                    lambda: build_newbby_indicator_payload(business_date, candidate_rows),
                 )
                 return
             if path == "/api/toss-priority-quotes":
@@ -29812,6 +30067,13 @@ def _render_web_view_html() -> str:
     .main-market-context-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     .main-market-context-block { min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: #fffaf1; }
     .main-market-context-block b { display: block; margin-bottom: 6px; font-size: 13px; }
+    .newbby-indicator-candidate { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 10px; }
+    .newbby-indicator-group { border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; padding: 9px; }
+    .newbby-indicator-group h4 { margin: 0 0 8px; font-size: 13px; }
+    .newbby-indicator-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; }
+    .newbby-indicator-field { display: flex; flex-direction: column; gap: 3px; overflow-wrap: anywhere; padding: 5px; }
+    .newbby-indicator-field b { color: var(--muted); font-size: 11px; font-weight: 600; }
+    .newbby-indicator-field span { font-size: 13px; }
     .top-two-candidates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 4px; }
     .top-two-entry { min-width: 0; }
     .top-two-entry .top-two-card { width: 100%; }
@@ -30102,7 +30364,7 @@ def _render_web_view_html() -> str:
           <h2>오늘 읽을 요약</h2>
         </div>
         <p class="briefing-line" id="daily-briefing-headline">날짜를 선택하면 읽을 흐름을 압축해서 보여줍니다.</p>
-        <p class="briefing-mini-label">확인할 점</p>
+        <p class="briefing-mini-label">먼저 볼 근거와 확인 공백</p>
         <ul class="briefing-check-points" id="briefing-check-points"><li>확인 포인트가 있으면 여기에 표시됩니다.</li></ul>
         <div id="source-freshness-summary" class="source-freshness-summary" aria-live="polite">
           <div class="source-freshness-head"><b>데이터 기준</b><span class="status-pill">저장 상태</span></div>
@@ -30124,6 +30386,16 @@ def _render_web_view_html() -> str:
         <p class="brief">지수는 조회 시각, 수급은 기준일을 함께 표시합니다.</p>
         <p id="toss-market-context-status" class="muted" aria-live="polite">날짜를 선택하고 버튼을 눌러 조회하세요.</p>
         <div id="toss-market-context" class="intraday-overlap-panel" aria-live="polite" hidden></div>
+      </div>
+
+      <div class="card span-12 main-market-card" id="main-newbby-indicator-card" data-view-panel="main">
+        <div class="section-header">
+          <h2>Top2 기술 지표 참고</h2>
+          <button id="newbby-indicator-refresh" class="ghost-button" type="button" disabled>기술 지표 확인</button>
+        </div>
+        <p class="brief">버튼을 눌렀을 때 선택 날짜 Main Top2만 조회합니다. Newbby 캐시가 비어 있거나 만료되면 Newbby 제공자 조회와 Newbby 로컬 캐시 갱신이 일어날 수 있습니다. Stock Monitor 저장, 후보 순서, 스케줄러, Telegram에는 반영하지 않습니다.</p>
+        <p id="newbby-indicator-status" class="muted" aria-live="polite">날짜를 선택하고 버튼을 눌러 조회하세요.</p>
+        <div id="newbby-indicator-panel" class="newbby-indicator-panel" aria-live="polite" hidden></div>
       </div>
 
       <div class="card span-12" id="candidate-evidence-card" data-view-panel="watch" hidden>
@@ -30398,6 +30670,8 @@ def _render_web_view_html() -> str:
     let tossPriorityDate = null;
     let tossMarketContextRequestId = 0;
     let tossMarketContextLoading = false;
+    let newbbyIndicatorRequestId = 0;
+    let newbbyIndicatorLoading = false;
     let dailyCandleRequestId = 0;
     let dailyCandleLoading = false;
     let dailyCandleBySymbol = new Map();
@@ -30761,6 +31035,11 @@ def _render_web_view_html() -> str:
       document.getElementById("toss-market-context").hidden = true;
       document.getElementById("toss-market-context").innerHTML = "";
       document.getElementById("toss-market-context-status").textContent = "날짜를 선택하고 버튼을 눌러 조회하세요.";
+      newbbyIndicatorRequestId += 1;
+      newbbyIndicatorLoading = false;
+      document.getElementById("newbby-indicator-panel").hidden = true;
+      document.getElementById("newbby-indicator-panel").innerHTML = "";
+      document.getElementById("newbby-indicator-status").textContent = "날짜를 선택하고 버튼을 눌러 조회하세요.";
       tossPriorityRows = [];
       dailyCandleRequestId += 1;
       dailyCandleLoading = false;
@@ -30887,6 +31166,9 @@ def _render_web_view_html() -> str:
       const singleCount = Math.max(stockCount - multiCount, 0);
       const moodSections = Array.isArray(moodCard.sections) ? moodCard.sections : [];
       const corePoints = moodSections.find((section) => section?.key === "core_points")?.items || [];
+      const priorityEvidenceRows = (Array.isArray(data?.priority_candidate_evidence?.rows)
+        ? data.priority_candidate_evidence.rows
+        : []).filter((row) => row && row.selected !== false).slice(0, 2);
       document.getElementById("daily-briefing-headline").textContent = moodCard.headline || (reportCount > 0
         ? `리포트 ${number(reportCount)}건 · ${number(stockCount)}개 종목`
         : "선택 날짜에 저장된 리포트 요약이 없습니다.");
@@ -30894,7 +31176,22 @@ def _render_web_view_html() -> str:
       renderIntradayMarketTopOverlap(data?.market_commentary);
       const concentrationPoint = `2건 이상 ${number(multiCount)}종목 · 1건 ${number(singleCount)}종목은 종목 탭에서 기본 숨김`;
       const marketPoint = corePoints.find((item) => !String(item).startsWith("리포트 "));
-      renderBriefingCheckPoints([concentrationPoint, marketPoint]);
+      const candidateNames = (row) => String(row.stock_name || row.stock_code || "관찰 후보");
+      const candidateWhy = priorityEvidenceRows.map((row) => {
+        const reasons = Array.isArray(row.why_notable) ? row.why_notable.map(String).filter(Boolean).slice(0, 2) : [];
+        return `${candidateNames(row)}: ${reasons.length ? reasons.join(" · ") : "저장 리포트 기준 후보"}`;
+      });
+      const candidateGaps = priorityEvidenceRows.flatMap((row) => {
+        const gaps = Array.isArray(row.missing_information) ? row.missing_information.map(String).filter(Boolean).slice(0, 1) : [];
+        return gaps.map((gap) => `${candidateNames(row)}: ${gap}`);
+      }).slice(0, 2);
+      const evidencePoint = candidateWhy.length ? `관찰 근거 · ${candidateWhy.join(" / ")}` : null;
+      const gapPoint = priorityEvidenceRows.length
+        ? `확인 공백 · ${candidateGaps.length ? candidateGaps.join(" / ") : "저장 후보 자료에 표시된 누락 항목 없음"}`
+        : null;
+      renderBriefingCheckPoints(priorityEvidenceRows.length
+        ? [evidencePoint, gapPoint, marketPoint || concentrationPoint]
+        : [concentrationPoint, marketPoint]);
     }
 
     function renderSourceFreshnessSummary(summary) {
@@ -32500,6 +32797,193 @@ def _render_web_view_html() -> str:
       if (!button) return;
       button.disabled = !validDate(selectedDate) || tossMarketContextLoading;
       button.textContent = tossMarketContextLoading ? "시장 · 수급 조회 중" : "지수 · 수급 확인";
+      updateNewbbyIndicatorRefreshButton();
+    }
+
+    function updateNewbbyIndicatorRefreshButton() {
+      const button = document.getElementById("newbby-indicator-refresh");
+      if (!button) return;
+      button.disabled = !validDate(selectedDate) || newbbyIndicatorLoading;
+      button.textContent = newbbyIndicatorLoading ? "기술 지표 조회 중" : "기술 지표 확인";
+    }
+
+    function newbbyIndicatorFieldLabel(key) {
+      const labels = {
+        schemaVersion: "응답 형식",
+        code: "종목 코드",
+        symbol: "종목 기호",
+        market: "시장",
+        timeframe: "시간 단위",
+        requestedAsOf: "요청 기준일",
+        barAsOf: "실제 봉 기준일",
+        source: "출처",
+        sourceFetchedAt: "출처 조회 시각",
+        sourceDate: "출처 기준일",
+        barStatus: "봉 상태",
+        confirmedPolicy: "봉 확인 기준",
+        cacheHit: "Newbby 캐시 사용",
+        cacheAge: "Newbby 캐시 경과",
+        stale: "Newbby 캐시 오래됨",
+        lastSuccessAt: "Newbby 최근 성공 시각",
+        dataRevision: "자료 버전",
+        calculationVersion: "계산 버전",
+        sourceCalculationVersion: "원천 계산 버전",
+        servedAt: "Newbby 응답 시각",
+        calculationBasis: "계산 기준",
+        ohlcv: "가격·거래량 원천",
+        cutoff: "계산 기준 봉",
+        candlePrecision: "봉 정밀도",
+        sourceSeries: "원천 지표 계열",
+        price: "일봉 가격 · 거래량",
+        open: "시가",
+        high: "고가",
+        low: "저가",
+        close: "종가",
+        volume: "거래량",
+        indicators: "지표",
+        movingAverages: "이동평균",
+        sma20: "SMA 20봉",
+        sma60: "SMA 60봉",
+        sma120: "SMA 120봉",
+        sma200: "SMA 200봉",
+        ema20: "EMA 20봉",
+        ema60: "EMA 60봉",
+        ema120: "EMA 120봉",
+        ema200: "EMA 200봉",
+        wma20: "WMA 20봉",
+        wma60: "WMA 60봉",
+        wma120: "WMA 120봉",
+        wma200: "WMA 200봉",
+        bollinger20: "볼린저 밴드 20",
+        donchian20: "돈치안 채널 20",
+        rsi14: "RSI 14",
+        atr14: "ATR 14",
+        macd129: "MACD 12/26/9",
+        obv: "OBV",
+        volumeProfile12: "거래량 프로파일 12구간",
+        emaSeedPolicy: "EMA 초기값 기준",
+        wmaWeights: "WMA 가중치 기준",
+        period: "기간",
+        multiplier: "표준편차 배수",
+        stddev: "표준편차 방식",
+        includeCurrent: "현재 봉 포함",
+        method: "계산 방식",
+        seedPolicy: "초기값 기준",
+        fast: "MACD 단기 기간",
+        slow: "MACD 장기 기간",
+        signalPeriod: "MACD 시그널 기간",
+        delta5Status: "5봉 OBV 변화 상태",
+        binCount: "가격 구간 수",
+        structureStatus: "구조 계산 상태",
+        horizontal: "수평 구조",
+        flag: "플래그 구조",
+        triangle: "삼각 구조",
+        middle: "중심값",
+        upper: "상단값",
+        lower: "하단값",
+        value: "값",
+        barVolume: "해당 봉 거래량",
+        ratio20: "20봉 거래량 비율",
+        macd: "MACD 값",
+        signal: "MACD 시그널 값",
+        histogram: "MACD 히스토그램",
+        delta5: "5봉 OBV 변화",
+        seedTime: "OBV 시작 시각",
+        version: "버전",
+        from: "시작 기준일",
+        to: "끝 기준일",
+        count: "구간 수",
+        total: "전체 거래량",
+        bins: "가격 구간",
+        share: "비중",
+        peak: "최대 구간",
+        structures: "중립적 차트 구조 측정값",
+        family: "구조 유형",
+        status: "상태",
+        barTime: "봉 시각",
+        measurements: "측정값",
+        name: "측정 항목",
+        label: "측정 설명",
+        unit: "단위",
+      };
+      if (labels[key]) return labels[key];
+      return String(key).replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ");
+    }
+
+    function renderNewbbyIndicatorValue(indicatorValue, fieldName) {
+      const rawName = String(fieldName || "");
+      const label = newbbyIndicatorFieldLabel(rawName);
+      if (indicatorValue == null) {
+        return `<div class="newbby-indicator-field"><b>${esc(label)}</b><span>값 없음</span></div>`;
+      }
+      if (Array.isArray(indicatorValue)) {
+        if (!indicatorValue.length) return `<div class="muted">${esc(label)} · 데이터 없음</div>`;
+        return `<section class="newbby-indicator-group"><h4>${esc(label)}</h4><div class="newbby-indicator-fields">${indicatorValue.map((item, index) => renderNewbbyIndicatorValue(item, `${rawName} ${index + 1}`)).join("")}</div></section>`;
+      }
+      if (typeof indicatorValue === "object") {
+        const entries = Object.entries(indicatorValue);
+        if (!entries.length) return `<div class="muted">${esc(label)} · 데이터 없음</div>`;
+        const title = label ? `<h4>${esc(label)}</h4>` : "";
+        return `<section class="newbby-indicator-group">${title}<div class="newbby-indicator-fields">${entries.map(([key, value]) => renderNewbbyIndicatorValue(value, key)).join("")}</div></section>`;
+      }
+      const displayValue = typeof indicatorValue === "boolean" ? (indicatorValue ? "예" : "아니요") : String(indicatorValue);
+      return `<div class="newbby-indicator-field"><b>${esc(label)}</b><span>${esc(displayValue)}</span></div>`;
+    }
+
+    function renderNewbbyIndicatorItems(data) {
+      const items = Array.isArray(data?.items) ? data.items.slice(0, 2) : [];
+      if (!items.length) return '<p class="muted">선택 날짜의 Main Top2 후보가 없습니다.</p>';
+      return items.map((item) => {
+        const candidate = `${item.stock_name || item.stock_code || "Main 후보"} · ${item.stock_code || ""}`;
+        if (item.available !== true || !item.snapshot || typeof item.snapshot !== "object") {
+          const messages = {
+            missing_toss_market_classification: "선택 날짜 이전의 저장된 Toss 시장 분류가 없어 조회하지 않았습니다.",
+            provider_timeout: "Newbby 응답 시간 초과 · 잠시 후 다시 확인하세요.",
+            provider_unavailable: "Newbby 서버에 연결할 수 없습니다.",
+            provider_http_error: `Newbby 응답 오류 · HTTP ${number(item.upstream_status)}`,
+            invalid_provider_response: "Newbby 응답을 읽을 수 없습니다.",
+            provider_response_mismatch: "Newbby 종목·시장·기준일 응답이 요청과 일치하지 않습니다.",
+            unsupported_schema: "지원하지 않는 Newbby 지표 형식입니다.",
+          };
+          const reason = messages[item.reason] || "Newbby 지표를 확인할 수 없습니다.";
+          const market = item.market ? ` · ${esc(item.market)} (${esc(item.market_source_date || "Toss 저장")})` : "";
+          return `<article class="newbby-indicator-candidate"><h3>${esc(candidate)}</h3><p class="muted">${esc(reason)}${market}</p></article>`;
+        }
+        const fields = Object.entries(item.snapshot)
+          .map(([key, value]) => renderNewbbyIndicatorValue(value, key))
+          .join("");
+        return `<article class="newbby-indicator-candidate"><h3>${esc(candidate)} · ${esc(item.market || item.snapshot.market || "시장 미상")}</h3><p class="muted">Toss 시장 구분 · ${esc(item.market_source_date || "저장 기준일 없음")}</p>${fields}</article>`;
+      }).join("");
+    }
+
+    async function loadNewbbyIndicatorSnapshot(date) {
+      const panel = document.getElementById("newbby-indicator-panel");
+      const status = document.getElementById("newbby-indicator-status");
+      if (!validDate(date)) return;
+      const requestId = ++newbbyIndicatorRequestId;
+      newbbyIndicatorLoading = true;
+      updateNewbbyIndicatorRefreshButton();
+      panel.hidden = false;
+      panel.innerHTML = '<p class="muted">Main Top2의 Newbby 기술 지표를 확인 중입니다.</p>';
+      status.textContent = `${date} · Newbby 응답 대기`;
+      try {
+        const response = await fetch(`/api/newbby-indicators?date=${encodeURIComponent(date)}`, { cache: "no-store" });
+        const data = await response.json();
+        if (requestId !== newbbyIndicatorRequestId || date !== selectedDate) return;
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        panel.innerHTML = renderNewbbyIndicatorItems(data);
+        status.textContent = `${date} · ${Array.isArray(data.items) ? data.items.length : 0}개 Main 후보 · Newbby 출처 조회 시각과 봉 기준일은 각 항목에 표시`;
+      } catch (_error) {
+        if (requestId === newbbyIndicatorRequestId) {
+          panel.innerHTML = '<p class="muted">Newbby 기술 지표 응답을 받을 수 없습니다.</p>';
+          status.textContent = "Newbby 연결 실패 · 캐시된 응답이 만료된 뒤 다시 요청할 수 있습니다.";
+        }
+      } finally {
+        if (requestId === newbbyIndicatorRequestId) {
+          newbbyIndicatorLoading = false;
+          updateNewbbyIndicatorRefreshButton();
+        }
+      }
     }
 
     function tossQuoteTimeLabel(quote, payload) {
@@ -33058,6 +33542,9 @@ def _render_web_view_html() -> str:
     });
     document.getElementById("toss-market-refresh").addEventListener("click", () => {
       loadTossMarketContext(selectedDate);
+    });
+    document.getElementById("newbby-indicator-refresh").addEventListener("click", () => {
+      loadNewbbyIndicatorSnapshot(selectedDate);
     });
     document.getElementById("intraday-market-top-check").addEventListener("click", () => {
       loadIntradayMarketTopForSelectedDate();
@@ -38678,6 +39165,436 @@ def _web_view_selected_candidate_rows(rows: object, *, limit: int = 2) -> list[d
         for row in (rows if isinstance(rows, list) else [])
         if isinstance(row, dict) and row.get("selected") is not False
     ][:limit]
+
+
+class _NewbbyNoRedirectHandler(url_request.HTTPRedirectHandler):
+    def redirect_request(self, *_args, **_kwargs):
+        return None
+
+
+def _open_newbby_indicator_request(request: url_request.Request, *, timeout: float):
+    return url_request.build_opener(_NewbbyNoRedirectHandler()).open(request, timeout=timeout)
+
+
+def _validate_newbby_indicator_origin(base_url: str) -> str:
+    try:
+        parsed = url_parse.urlsplit(base_url.strip())
+        hostname = parsed.hostname or ""
+        port = parsed.port
+    except (AttributeError, ValueError):
+        raise ValueError("Newbby indicator API origin must be a loopback HTTP origin.") from None
+    try:
+        loopback = hostname.lower() == "localhost" or ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        loopback = False
+    if (
+        parsed.scheme != "http"
+        or not loopback
+        or port == 0
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("Newbby indicator API origin must be a loopback HTTP origin.")
+    return f"http://{parsed.netloc}".rstrip("/")
+
+
+class _UnsupportedNewbbyIndicatorSchema(ValueError):
+    pass
+
+
+_NEWBBY_SNAPSHOT_FIELDS = frozenset(
+    {
+        "schemaVersion", "code", "symbol", "market", "timeframe", "requestedAsOf", "barAsOf",
+        "source", "sourceFetchedAt", "sourceDate", "barStatus", "confirmedPolicy", "cacheHit",
+        "cacheAge", "stale", "lastSuccessAt", "dataRevision", "calculationVersion",
+        "sourceCalculationVersion", "calculationBasis", "price", "indicators", "structures",
+        "structureStatus", "servedAt",
+    }
+)
+_NEWBBY_PRICE_FIELDS = frozenset({"open", "high", "low", "close", "volume"})
+_NEWBBY_INDICATOR_FIELDS = {
+    "movingAverages": frozenset(
+        {
+            "sma20", "sma60", "sma120", "sma200", "ema20", "ema60", "ema120", "ema200",
+            "wma20", "wma60", "wma120", "wma200", "status", "calculationVersion",
+            "emaSeedPolicy", "wmaWeights",
+        }
+    ),
+    "bollinger20": frozenset({"middle", "upper", "lower", "status", "period", "multiplier", "stddev", "calculationVersion"}),
+    "donchian20": frozenset({"upper", "middle", "lower", "status", "period", "includeCurrent", "calculationVersion"}),
+    "rsi14": frozenset({"value", "status", "provisional", "method", "seedPolicy"}),
+    "atr14": frozenset({"value", "status", "provisional", "method", "seedPolicy"}),
+    "volume": frozenset({"barVolume", "ratio20", "status", "period", "includeCurrent"}),
+    "macd129": frozenset({"macd", "signal", "histogram", "status", "fast", "slow", "signalPeriod", "seedPolicy", "calculationVersion"}),
+    "obv": frozenset({"value", "delta5", "seedTime", "status", "delta5Status", "seedPolicy", "calculationVersion"}),
+    "volumeProfile12": frozenset({"version", "method", "from", "to", "count", "total", "binCount", "bins", "status"}),
+}
+_NEWBBY_VOLUME_PROFILE_BIN_FIELDS = frozenset({"low", "high", "volume", "share", "peak"})
+_NEWBBY_CALCULATION_BASIS_FIELDS = frozenset({"ohlcv", "cutoff", "candlePrecision", "sourceSeries"})
+_NEWBBY_STRUCTURE_FAMILIES = frozenset({"horizontal", "flag", "triangle"})
+_NEWBBY_STRUCTURE_STATUS_VALUES = frozenset(
+    {"disabled", "paused", "unsupported", "error", "no-geometry", "insufficient-data", "ready"}
+)
+_NEWBBY_INDICATOR_STATUS_VALUES = frozenset({"ready", "partial-data", "insufficient-data"})
+_NEWBBY_BAR_STATUS_VALUES = frozenset({"confirmed", "provisional", "unknown"})
+_NEWBBY_STRUCTURE_ITEM_STATUS_VALUES = frozenset(
+    {"forming", "confirmed", "breakout-pending", "paused", "failed", "expired", "retested"}
+)
+_NEWBBY_STRUCTURE_FIELDS = frozenset({"family", "status", "timeframe", "barTime", "measurements"})
+_NEWBBY_STRUCTURE_MEASUREMENT_FIELDS = frozenset({"name", "label", "value", "unit"})
+_NEWBBY_STRUCTURE_MEASUREMENT_UNITS = frozenset(
+    {"price", "price-per-bar", "projected-price", "projected-bars", "volume", "ratio", "bars", "count", "number", "date", "state"}
+)
+_NEWBBY_STRUCTURE_MEASUREMENT_LABELS = {
+    ("triangle", "geometry.points.2.price"): ("삼각형 교점 · 직선 외삽값(목표가 아님)", "projected-price"),
+    ("triangle", "geometry.points.2.logicalOffset"): ("삼각형 시작점부터 교점까지 봉 수 · 직선 외삽", "projected-bars"),
+    ("triangle", "apexRemainingBars"): ("삼각형 교점까지 남은 봉 · 직선 외삽", "projected-bars"),
+}
+_NEWBBY_STRUCTURE_MEASUREMENT_NAMES = {
+    "horizontal": frozenset({"type", "boundary", "atr14Previous", "rvol20Previous", "volumeEvidence", "barTime", "close"}),
+    "flag": frozenset(
+        {
+            "type", "poleStartTime", "poleStartPrice", "poleEndTime", "poleEndPrice", "poleMove", "poleAtr",
+            "adjustmentStartTime", "discoveredTime", "upper.slope", "upper.intercept", "lower.slope",
+            "lower.intercept", "atr14Previous", "anchorTime", "pivotHighTimes", "pivotLowTimes", "containment",
+            "barTime", "close", "upperPrice", "lowerPrice", "geometry.kind", "adjustmentBars",
+            "rvol20Previous", "volumeEvidence", "retracementRatio", "adjustmentVolumeRatio",
+        }
+    ),
+    "triangle": frozenset(
+        {
+            "type", "anchorTime", "structureStartTime", "discoveredTime", "upper.slope", "upper.intercept",
+            "lower.slope", "lower.intercept", "atr14Previous", "pivotHighTimes", "pivotLowTimes", "contactCount",
+            "containment", "barTime", "close", "geometry.kind", "geometry.observedThrough", "structureBars",
+            "upperPrice", "lowerPrice", "boundary", "convergenceRatio", "apexRemainingBars", "rvol20Previous",
+            "volumeEvidence",
+        }
+    ),
+}
+_NEWBBY_STRUCTURE_TYPE_VALUES = {
+    "horizontal": frozenset({"prior-20-high", "prior-10-low", "user-resistance", "user-support"}),
+    "flag": frozenset({"channel"}),
+    "triangle": frozenset({"triangle"}),
+}
+_NEWBBY_STRUCTURE_GEOMETRY_VALUES = {"flag": frozenset({"channel"}), "triangle": frozenset({"triangle"})}
+_NEWBBY_VOLUME_EVIDENCE_VALUES = frozenset({"volume-confirmed", "volume-insufficient"})
+_NEWBBY_STRUCTURE_MEASUREMENT_NAME_PATTERNS = {
+    "horizontal": (),
+    "flag": (
+        re.compile(r"pivot(?:High|Low)Times(?:\.\d+)?"),
+        re.compile(r"geometry\.points\.[1-4]\.(?:time|price)"),
+        re.compile(r"geometry\.pole\.[1-2]\.(?:time|price)"),
+    ),
+    "triangle": (
+        re.compile(r"pivot(?:High|Low)Times(?:\.\d+)?"),
+        re.compile(r"geometry\.points\.(?:1|3)\.(?:time|price)"),
+        re.compile(r"geometry\.points\.2\.(?:anchorTime|logicalOffset|price)"),
+    ),
+}
+
+
+def _check_newbby_fields(
+    value: object,
+    allowed: frozenset[str],
+    field: str,
+    *,
+    required: frozenset[str] | None = None,
+) -> dict[str, object]:
+    if (
+        not isinstance(value, dict)
+        or not set(value).issubset(allowed)
+        or required is not None and not required.issubset(value)
+    ):
+        raise _UnsupportedNewbbyIndicatorSchema(field)
+    return value
+
+
+def _check_newbby_scalar_types(
+    values: dict[str, object],
+    field: str,
+    *,
+    numbers: frozenset[str] = frozenset(),
+    integers: frozenset[str] = frozenset(),
+    strings: frozenset[str] = frozenset(),
+    nullable_strings: frozenset[str] = frozenset(),
+    booleans: frozenset[str] = frozenset(),
+    nullable_booleans: frozenset[str] = frozenset(),
+) -> None:
+    for name in numbers:
+        value = values.get(name)
+        if value is not None and (type(value) not in {int, float} or not math.isfinite(value)):
+            raise _UnsupportedNewbbyIndicatorSchema(f"{field}.{name}")
+    for name in integers:
+        value = values.get(name)
+        if type(value) is not int:
+            raise _UnsupportedNewbbyIndicatorSchema(f"{field}.{name}")
+    for name in strings:
+        if not isinstance(values.get(name), str):
+            raise _UnsupportedNewbbyIndicatorSchema(f"{field}.{name}")
+    for name in nullable_strings:
+        if values.get(name) is not None and not isinstance(values[name], str):
+            raise _UnsupportedNewbbyIndicatorSchema(f"{field}.{name}")
+    for name in booleans:
+        if type(values.get(name)) is not bool:
+            raise _UnsupportedNewbbyIndicatorSchema(f"{field}.{name}")
+    for name in nullable_booleans:
+        if values.get(name) is not None and type(values[name]) is not bool:
+            raise _UnsupportedNewbbyIndicatorSchema(f"{field}.{name}")
+
+
+def _newbby_structure_measurement_name_allowed(family: str, name: str) -> bool:
+    if family not in _NEWBBY_STRUCTURE_MEASUREMENT_NAMES:
+        return False
+    return name in _NEWBBY_STRUCTURE_MEASUREMENT_NAMES[family] or any(
+        pattern.fullmatch(name) for pattern in _NEWBBY_STRUCTURE_MEASUREMENT_NAME_PATTERNS[family]
+    )
+
+
+def _web_view_public_newbby_indicator_snapshot(snapshot: dict[str, object]) -> dict[str, object]:
+    if not isinstance(snapshot, dict) or type(snapshot.get("schemaVersion")) is not int or snapshot["schemaVersion"] != 1:
+        raise _UnsupportedNewbbyIndicatorSchema("schemaVersion")
+    required_snapshot_fields = _NEWBBY_SNAPSHOT_FIELDS - {"servedAt"}
+    _check_newbby_fields(
+        snapshot,
+        _NEWBBY_SNAPSHOT_FIELDS,
+        "snapshot fields",
+        required=required_snapshot_fields,
+    )
+    _check_newbby_scalar_types(
+        snapshot,
+        "snapshot",
+        integers=frozenset({"schemaVersion"}),
+        strings=frozenset({"code", "symbol", "market", "timeframe", "requestedAsOf", "barStatus", "confirmedPolicy", "calculationVersion"}),
+        nullable_strings=frozenset({"barAsOf", "source", "sourceFetchedAt", "sourceDate", "lastSuccessAt", "dataRevision", "sourceCalculationVersion", "servedAt"}),
+        numbers=frozenset({"cacheAge"}),
+        nullable_booleans=frozenset({"cacheHit", "stale"}),
+    )
+    requested_as_of = snapshot.get("requestedAsOf")
+    bar_as_of = snapshot.get("barAsOf")
+    if (
+        snapshot.get("timeframe") != "D"
+        or snapshot.get("barStatus") not in _NEWBBY_BAR_STATUS_VALUES
+        or not isinstance(requested_as_of, str)
+        or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", requested_as_of)
+    ):
+        raise _UnsupportedNewbbyIndicatorSchema("daily timeframe/requestedAsOf")
+    try:
+        requested_date = date.fromisoformat(requested_as_of)
+        if requested_date.isoformat() != requested_as_of:
+            raise ValueError
+        if bar_as_of is not None:
+            if not isinstance(bar_as_of, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", bar_as_of):
+                raise ValueError
+            if date.fromisoformat(bar_as_of) > requested_date:
+                raise ValueError
+    except ValueError:
+        raise _UnsupportedNewbbyIndicatorSchema("barAsOf/requestedAsOf") from None
+    result = dict(snapshot)
+    if "price" in result:
+        result["price"] = _check_newbby_fields(
+            result["price"], _NEWBBY_PRICE_FIELDS, "price", required=_NEWBBY_PRICE_FIELDS
+        )
+        _check_newbby_scalar_types(result["price"], "price", numbers=_NEWBBY_PRICE_FIELDS)
+    if "calculationBasis" in result:
+        result["calculationBasis"] = _check_newbby_fields(
+            result["calculationBasis"],
+            _NEWBBY_CALCULATION_BASIS_FIELDS,
+            "calculationBasis",
+            required=_NEWBBY_CALCULATION_BASIS_FIELDS,
+        )
+        _check_newbby_scalar_types(
+            result["calculationBasis"],
+            "calculationBasis",
+            strings=_NEWBBY_CALCULATION_BASIS_FIELDS,
+        )
+    if "indicators" in result:
+        indicator_group_names = frozenset(_NEWBBY_INDICATOR_FIELDS)
+        indicators = _check_newbby_fields(
+            result["indicators"],
+            indicator_group_names,
+            "indicators",
+            required=indicator_group_names,
+        )
+        public_indicators = {}
+        for group, fields in _NEWBBY_INDICATOR_FIELDS.items():
+            required_fields = fields - {"binCount"} if group == "volumeProfile12" else fields
+            values = _check_newbby_fields(
+                indicators[group],
+                fields,
+                f"indicators.{group}",
+                required=required_fields,
+            )
+            if group == "movingAverages":
+                _check_newbby_scalar_types(
+                    values,
+                    f"indicators.{group}",
+                    numbers=frozenset(fields - {"status", "calculationVersion", "emaSeedPolicy", "wmaWeights"}),
+                    strings=frozenset({"status", "calculationVersion", "emaSeedPolicy", "wmaWeights"}),
+                )
+            elif group in {"bollinger20", "donchian20"}:
+                number_fields = {"middle", "upper", "lower"} if group == "bollinger20" else {"upper", "middle", "lower"}
+                integer_fields = {"period"} if group == "donchian20" else {"period"}
+                if group == "bollinger20":
+                    integer_fields.add("multiplier")
+                _check_newbby_scalar_types(
+                    values,
+                    f"indicators.{group}",
+                    numbers=frozenset(number_fields),
+                    integers=frozenset(integer_fields),
+                    strings=frozenset({"status", "calculationVersion"} | ({"stddev"} if group == "bollinger20" else set())),
+                    booleans=frozenset({"includeCurrent"} if group == "donchian20" else set()),
+                )
+            elif group in {"rsi14", "atr14"}:
+                _check_newbby_scalar_types(
+                    values,
+                    f"indicators.{group}",
+                    numbers=frozenset({"value"}),
+                    strings=frozenset({"status", "method", "seedPolicy"}),
+                    nullable_booleans=frozenset({"provisional"}),
+                )
+            elif group == "volume":
+                _check_newbby_scalar_types(
+                    values,
+                    f"indicators.{group}",
+                    numbers=frozenset({"barVolume", "ratio20"}),
+                    integers=frozenset({"period"}),
+                    strings=frozenset({"status"}),
+                    booleans=frozenset({"includeCurrent"}),
+                )
+            elif group == "macd129":
+                _check_newbby_scalar_types(
+                    values,
+                    f"indicators.{group}",
+                    numbers=frozenset({"macd", "signal", "histogram"}),
+                    integers=frozenset({"fast", "slow", "signalPeriod"}),
+                    strings=frozenset({"status", "seedPolicy", "calculationVersion"}),
+                )
+            elif group == "obv":
+                _check_newbby_scalar_types(
+                    values,
+                    f"indicators.{group}",
+                    numbers=frozenset({"value", "delta5"}),
+                    nullable_strings=frozenset({"seedTime"}),
+                    strings=frozenset({"status", "delta5Status", "seedPolicy", "calculationVersion"}),
+                )
+            if group == "volumeProfile12" and "bins" in values:
+                if not isinstance(values["bins"], list):
+                    raise _UnsupportedNewbbyIndicatorSchema("indicators.volumeProfile12.bins")
+                profile_status = values.get("status")
+                bin_count = values.get("binCount")
+                if profile_status != "insufficient-data" and (
+                    not isinstance(bin_count, int) or isinstance(bin_count, bool) or bin_count < 1
+                ):
+                    raise _UnsupportedNewbbyIndicatorSchema("indicators.volumeProfile12.binCount")
+                _check_newbby_scalar_types(
+                    values,
+                    "indicators.volumeProfile12",
+                    numbers=frozenset({"total"}),
+                    integers=frozenset({"count", "binCount"} if "binCount" in values else {"count"}),
+                    nullable_strings=frozenset({"from", "to"}),
+                    strings=frozenset({"version", "method", "status"}),
+                )
+                values = dict(values)
+                values["bins"] = [
+                    _check_newbby_fields(
+                        item,
+                        _NEWBBY_VOLUME_PROFILE_BIN_FIELDS,
+                        "indicators.volumeProfile12.bins",
+                        required=_NEWBBY_VOLUME_PROFILE_BIN_FIELDS,
+                    )
+                    for item in values["bins"]
+                ]
+                for item in values["bins"]:
+                    _check_newbby_scalar_types(
+                        item,
+                        "indicators.volumeProfile12.bins",
+                        numbers=frozenset({"low", "high", "volume", "share"}),
+                        booleans=frozenset({"peak"}),
+                    )
+            public_indicators[group] = values
+            if "status" in values and values["status"] not in _NEWBBY_INDICATOR_STATUS_VALUES:
+                raise _UnsupportedNewbbyIndicatorSchema(f"indicators.{group}.status")
+            if group == "obv" and values["delta5Status"] not in {"ready", "insufficient-data"}:
+                raise _UnsupportedNewbbyIndicatorSchema("indicators.obv.delta5Status")
+        result["indicators"] = public_indicators
+    if "structureStatus" in result:
+        statuses = _check_newbby_fields(
+            result["structureStatus"],
+            _NEWBBY_STRUCTURE_FAMILIES,
+            "structureStatus",
+            required=_NEWBBY_STRUCTURE_FAMILIES,
+        )
+        if any(
+            not isinstance(value, str) or value not in _NEWBBY_STRUCTURE_STATUS_VALUES
+            for value in statuses.values()
+        ):
+            raise _UnsupportedNewbbyIndicatorSchema("structureStatus values")
+    if "structures" in result:
+        if not isinstance(result["structures"], list):
+            raise _UnsupportedNewbbyIndicatorSchema("structures")
+        public_structures = []
+        for structure in result["structures"]:
+            structure = _check_newbby_fields(
+                structure,
+                _NEWBBY_STRUCTURE_FIELDS,
+                "structures item",
+                required=_NEWBBY_STRUCTURE_FIELDS,
+            )
+            family = structure.get("family")
+            if not isinstance(family, str) or family not in _NEWBBY_STRUCTURE_FAMILIES or not isinstance(structure.get("measurements"), list):
+                raise _UnsupportedNewbbyIndicatorSchema("structures family")
+            _check_newbby_scalar_types(
+                structure,
+                "structure",
+                strings=frozenset({"family", "status", "timeframe"}),
+                nullable_strings=frozenset({"barTime"}),
+            )
+            if structure["status"] not in _NEWBBY_STRUCTURE_ITEM_STATUS_VALUES:
+                raise _UnsupportedNewbbyIndicatorSchema("structures.status")
+            public_measurements = []
+            for measurement in structure["measurements"]:
+                measurement = _check_newbby_fields(
+                    measurement,
+                    _NEWBBY_STRUCTURE_MEASUREMENT_FIELDS,
+                    "structure measurement",
+                    required=_NEWBBY_STRUCTURE_MEASUREMENT_FIELDS,
+                )
+                name = measurement.get("name")
+                special_label = _NEWBBY_STRUCTURE_MEASUREMENT_LABELS.get((family, name)) if isinstance(name, str) else None
+                if (
+                    not isinstance(name, str)
+                    or not isinstance(measurement.get("label"), str)
+                    or not isinstance(measurement.get("unit"), str)
+                    or not _newbby_structure_measurement_name_allowed(family, name)
+                    or (
+                        (measurement.get("label"), measurement.get("unit")) != special_label
+                        if special_label
+                        else (
+                            measurement.get("label") != name
+                            or measurement.get("unit") not in _NEWBBY_STRUCTURE_MEASUREMENT_UNITS
+                        )
+                    )
+                ):
+                    raise _UnsupportedNewbbyIndicatorSchema("structure measurement name/label/unit")
+                measurement_value = measurement.get("value")
+                if measurement_value is None or (
+                    type(measurement_value) not in {str, int, float}
+                    or type(measurement_value) is float and not math.isfinite(measurement_value)
+                ):
+                    raise _UnsupportedNewbbyIndicatorSchema("structure measurement value")
+                if name == "type" and measurement_value not in _NEWBBY_STRUCTURE_TYPE_VALUES[family]:
+                    raise _UnsupportedNewbbyIndicatorSchema("structure measurement type")
+                if name == "geometry.kind" and measurement_value not in _NEWBBY_STRUCTURE_GEOMETRY_VALUES.get(family, ()):
+                    raise _UnsupportedNewbbyIndicatorSchema("structure geometry kind")
+                if name == "volumeEvidence" and measurement_value not in _NEWBBY_VOLUME_EVIDENCE_VALUES:
+                    raise _UnsupportedNewbbyIndicatorSchema("structure volume evidence")
+                public_measurements.append(measurement)
+            public_structures.append({**structure, "measurements": public_measurements})
+        result["structures"] = public_structures
+    return result
 
 
 def _web_view_candidate_value_profile(

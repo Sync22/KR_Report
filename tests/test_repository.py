@@ -282,6 +282,50 @@ def test_repository_searches_only_latest_toss_stock_universe_snapshot(tmp_path) 
     assert repository.search_toss_stock_universe("KODEX") == []
 
 
+def test_repository_gets_toss_stock_universe_market_as_of_date_without_future_rows(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+    before_selected_date = date(2026, 7, 9)
+    after_selected_date = date(2026, 7, 11)
+    repository.upsert_toss_stock_universe_cache(
+        [
+            TossStockUniverseEntry(
+                business_date=before_selected_date,
+                market="KOSDAQ",
+                stock_code="035420",
+                stock_name="NAVER",
+                security_type="STOCK",
+                is_common_share=True,
+                isin_code="KR7035420009",
+                fetched_at=datetime(2026, 7, 9, 20, 5),
+            )
+        ]
+    )
+    repository.upsert_toss_stock_universe_cache(
+        [
+            TossStockUniverseEntry(
+                business_date=after_selected_date,
+                market="KOSPI",
+                stock_code="035420",
+                stock_name="NAVER",
+                security_type="STOCK",
+                is_common_share=True,
+                isin_code="KR7035420009",
+                fetched_at=datetime(2026, 7, 11, 20, 5),
+            )
+        ]
+    )
+
+    entry = repository.get_toss_stock_universe_entry_as_of(
+        "035420",
+        as_of_date=date(2026, 7, 10),
+    )
+
+    assert entry is not None
+    assert entry.business_date == before_selected_date
+    assert entry.market == "KOSDAQ"
+
+
 def test_latest_toss_market_snapshot_date_ignores_candidate_only_rows(tmp_path) -> None:
     repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
     repository.initialize()

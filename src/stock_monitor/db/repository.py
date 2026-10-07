@@ -539,6 +539,41 @@ class StockMonitorRepository:
             ).fetchone()
         return date.fromisoformat(row["business_date"]) if row and row["business_date"] else None
 
+    def get_toss_stock_universe_entry_as_of(
+        self,
+        stock_code: str,
+        *,
+        as_of_date: date,
+    ) -> TossStockUniverseEntry | None:
+        normalized_code = stock_code.strip()
+        if not normalized_code:
+            return None
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT market, stock_code, stock_name, security_type, is_common_share,
+                       isin_code, business_date, fetched_at, source
+                FROM toss_stock_universe_cache
+                WHERE stock_code = ? AND business_date <= ?
+                ORDER BY business_date DESC, fetched_at DESC, market ASC
+                LIMIT 1
+                """,
+                (normalized_code, as_of_date.isoformat()),
+            ).fetchone()
+        if row is None:
+            return None
+        return TossStockUniverseEntry(
+            business_date=date.fromisoformat(row["business_date"]),
+            market=row["market"],
+            stock_code=row["stock_code"],
+            stock_name=row["stock_name"],
+            security_type=row["security_type"],
+            is_common_share=bool(row["is_common_share"]),
+            isin_code=row["isin_code"],
+            fetched_at=datetime.fromisoformat(row["fetched_at"]),
+            source=row["source"],
+        )
+
     def search_toss_stock_universe(
         self,
         query: str,

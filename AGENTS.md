@@ -60,7 +60,7 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
 - `web-view` 기본 로드는 stored-data 기반이어야 한다.
 - KRX 저장 행은 과거 분석/복기 전용으로 유지하며, 신규 웹뷰·스케줄러 시장 기준값은 Toss 20:00 저장 스냅샷을 사용한다.
 - `.env` raw login 확인이 가능하면 browser login automation보다 우선한다.
-- 외부 실험 도구/라이브러리는 production runtime, scheduler task, public `web-view` 기능으로 바로 연결하지 않는다.
+- 외부 실험 도구/라이브러리는 production runtime, scheduler task, public `web-view` 기능으로 바로 연결하지 않는다. Stock-Newbby의 명시적 Main Top2 지표 확인 예외는 아래 계약만 허용한다.
 
 ## Current Operating State
 
@@ -98,6 +98,22 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
 - `codex-complexity-optimizer`
   - local complexity/performance review 전용
   - 결과를 그대로 코드 변경으로 간주하지 않는다
+- `chart-assistant` (Stock-Newbby)
+  - global Codex skill로 설치됨. 사용자가 요청한 경우 on-demand 차트/기술 근거 검토에 사용한다
+  - 출력에 source, 기준 시각, provisional/confirmation 상태를 보존하고 수익성·매매 지시로 해석하지 않는다
+  - Stock-Newbby의 별도 cache/provider는 main 후보 순서, Stock Monitor DB, scheduler, Telegram에 연결하지 않는다. public `web-view`에서는 아래 명시적 Main Top2 버튼만 예외로 허용한다
+  - 로컬 서버 시작, 실시간 source 요청, monitor start/pause는 사용자 요청이 있을 때만 수행한다
+- `operator-review`
+  - `admin-gui`와 public `web-view`에 넣지 않는 operator 전용 근거 검토면이며, 별도 GET-only 서버로 `127.0.0.1`에만 바인딩한다
+  - 선택 날짜의 Main 후보 순서와 저장 근거를 읽기 전용 SQLite 연결로 표시한다. 스키마 초기화·마이그레이션·저장은 금지한다
+  - Stock-Newbby 차트 링크는 operator가 직접 클릭할 때만 사용한다. Newbby 서버를 자동 시작하지 않는다. public `web-view`의 별도 Main 지표 버튼 계약은 operator-review 기능으로 취급하지 않는다
+- public `web-view` Main
+  - 저장 후보, 관찰 요약, 출처/기준일, 근거와 누락 정보를 직관적으로 읽을 수 있는 공개 화면으로 유지한다
+  - 차트 도구의 로컬 데이터나 숫자 점수·등급·매매 신호를 노출하지 않는다
+  - 브라우저 Main 화면에서는 사용자가 `Top2 기술 지표 참고`를 눌렀을 때만 Stock-Newbby 지표를 조회한다. public GET `/api/newbby-indicators?date=...` 자체는 web-view 이용자가 직접 호출할 수 있으나, 서버가 고른 Main Top2만 조회하고 같은 날짜 응답은 캐시한다. 선택일 Toss `market_reference.market`이 없으면 선택일 이전의 최신 Toss 종목 유니버스 저장 분류와 그 기준일을 사용하고, 둘 다 없으면 조회하지 않는다
+  - Newbby 캐시 miss는 Newbby 제공자 조회와 Newbby 자체 market cache 갱신을 일으킬 수 있다. Stock Monitor DB, 후보 순서, scheduler, Telegram에는 반영하지 않고 KRX fallback을 사용하지 않는다. source/fetch time/bar date/cache state와 missing/error 상태를 표시한다
+  - schemaVersion 1의 전체 허용 필드를 검증한다: 모든 지표 group/계산 기준·provenance, 전체 profile bins, 세 `structureStatus` family, family별 geometry measurement 이름/label/unit. `servedAt`과 insufficient-data profile의 `binCount`만 optional이다. MACD `signal` 선은 객관 지표로 표시한다. unknown/missing v1 field는 unsupported 상태로 표시한다
+  - 빈 geometry는 음성 근거나 확인 완료로 해석하지 않는다. 삼각형 교점 price 및 봉 거리에는 직선 외삽/목표가 아님 label을 표시한다. 매매 action/signal, score, grade 필드는 노출하지 않는다
 
 ## CodeGraph
 
