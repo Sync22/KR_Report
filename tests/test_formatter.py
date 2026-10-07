@@ -260,9 +260,13 @@ def test_format_daily_briefing_messages_builds_morning_briefing_without_recommen
     message = messages[0]
 
     assert "국장 시작 전 리포트 브리핑 · 26.05.14" in message
-    assert "기준: 전일 리포트 / Toss 저장값은 항목별 기준일 표시" in message
+    assert "기준: 전일 리포트 / Toss 실시간 자료와 저장 종가 비교를 구분" in message
+    assert "전일 리포트" in message
     assert "리포트 집중" in message
     assert "- 반도체와반도체장비 4건" in message
+    assert message.index("\n\n전일 리포트") < message.index("이전 종가 비교")
+    assert message.index("이전 종가 비교") < message.index("지수 참고 · 26.05.13 Toss 저장값")
+    assert message.index("이전 종가 비교") < message.index("수급 참고 · 26.05.12 KOSPI 저장값")
     assert "지수 참고 · 26.05.13 Toss 저장값" in message
     assert "KOSPI 7,844.01 +2.63%" in message
     assert "수급 참고 · 26.05.12 KOSPI 저장값 / 리포트일 전 최신" in message
@@ -270,7 +274,9 @@ def test_format_daily_briefing_messages_builds_morning_briefing_without_recommen
     assert "핵심 포인트" in message
     assert "리포트 집중 1위: 반도체와반도체장비 4건" in message
     assert "주요 종목" in message
-    assert "삼성전자(005930) | 현재가 279,000원 | 반도체와반도체장비" in message
+    assert "삼성전자(005930)" in message
+    assert "현재가 279,000원" not in message
+    assert "현재가 646,000원" not in message
     assert "확인 포인트" in message
     assert "추천" not in message
     assert "매수 기회" not in message

@@ -9335,6 +9335,643 @@ def test_scheduled_market_briefing_slot_repeat_uses_a_distinct_delivery_channel(
     assert "Market briefing lunch sent with message_id=repeat-42" in capsys.readouterr().out
 
 
+def _market_briefing_display_fixture(monkeypatch, market_context: dict[str, object], *, slot: str = "lunch") -> str:
+    business_date = date(2026, 7, 10)
+    summary = DailyStockSummary(
+        business_date=business_date,
+        stock_name="삼성전자",
+        stock_code="005930",
+        mention_count=2,
+        broker_display="NH투자증권",
+        target_price_min=None,
+        target_price_max=None,
+        dominant_opinion="의견 없음",
+        generated_at=datetime(2026, 7, 10, 12, 0),
+    )
+
+    class FakeRepository:
+        def list_daily_summaries(self, requested_date: date) -> list[DailyStockSummary]:
+            assert requested_date == business_date
+            return [summary]
+
+    monkeypatch.setattr(cli_module, "build_web_view_candidate_evidence_snapshot", lambda *_args, **_kwargs: {"rows": []})
+    monkeypatch.setattr(cli_module, "_build_market_briefing_news_observation_lines", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(cli_module, "_build_market_briefing_source_freshness_lines", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        cli_module,
+        "_build_daily_briefing_market_reference_lines",
+        lambda *_args, **_kwargs: ["지수 참고 · 26.07.08 Toss 저장값", "- KOSPI 3,000 +1.0%"],
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_build_market_briefing_turnover_lines",
+        lambda *_args, **_kwargs: ["거래대금 참고 · 26.07.08 Toss 저장값", "- KOSPI: 삼성전자 2.3조"],
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_build_daily_briefing_flow_reference_lines",
+        lambda *_args, **_kwargs: ["수급 참고 · 26.07.07 KOSPI 저장값", "- 외국인 매수"],
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_build_market_briefing_check_point_lines",
+        lambda *_args, **_kwargs: ["확인 포인트", "- 26.07.08 기준 지수 흐름"],
+    )
+    return cli_module._build_market_briefing_message(
+        type("Config", (), {"telegram_timeout_seconds": 1})(),
+        FakeRepository(),
+        business_date=business_date,
+        limit=5,
+        slot=slot,
+        toss_context={
+            "payload": {"configured": False, "live_fetch": False},
+            "market_context": market_context,
+            "names_by_symbol": {"005930": "삼성전자"},
+        },
+    )
+
+
+@pytest.mark.parametrize("slot", ["lunch", "preclose"])
+def test_midday_market_briefing_leads_with_live_toss_context_and_groups_prior_close(monkeypatch, slot) -> None:
+    business_date = date(2026, 7, 10)
+    live_context = {
+        "configured": True,
+        "live_fetch": True,
+        "reference_date": business_date.isoformat(),
+        "ranked_at": "2026-07-10T09:15:00+09:00",
+        "fetched_at": "2026-07-10T09:16:00+09:00",
+        "rankings": [{"rank": 1, "symbol": "005930", "tradingAmount": 1000}],
+        "market_prices": [{"symbol": "KOSPI", "lastPrice": "3120.45"}],
+        "stock_metadata_available": True,
+        "priority_overlap_symbols": ["005930"],
+        "investor_flow": {"KOSPI": None, "KOSDAQ": None},
+    }
+    message = _market_briefing_display_fixture(monkeypatch, live_context, slot=slot)
+
+    assert "랭킹 기준 2026-07-10 09:15+09:00 · 조회 2026-07-10 09:16+09:00" in message
+    assert "이전 종가 비교 · 항목별 기준일 표시" in message
+    assert message.index("Toss 거래대금 상위 Top10") < message.index("리포트 흐름")
+    assert message.index("리포트 흐름") < message.index("이전 종가 비교")
+    assert "리포트 2건 / 1종목" in message
+    assert "거래대금 참고 · 26.07.08 Toss 저장값" in message
+    assert "수급 참고 · 26.07.07 KOSPI 저장값" in message
+    assert "26.07.08 기준 지수 흐름" in message
+
+
+@pytest.mark.parametrize(
+    "market_context",
+    [
+        {"configured": False, "live_fetch": False, "reference_date": "2026-07-10", "rankings": []},
+        {
+            "configured": True,
+            "live_fetch": False,
+            "reference_date": "2026-07-10",
+            "reason": "upstream_unavailable",
+            "rankings": [],
+        },
+        {
+            "configured": True,
+            "live_fetch": True,
+            "cache": "stale",
+            "reference_date": "2026-07-10",
+            "rankings": [],
+        },
+    ],
+)
+def test_midday_market_briefing_marks_live_context_unavailable_and_keeps_close_dated(monkeypatch, market_context) -> None:
+    message = _market_briefing_display_fixture(monkeypatch, market_context)
+
+    assert "당일 실시간 시장 데이터 확인 불가" in message
+    assert "이전 종가 비교 · 항목별 기준일 표시" in message
+    assert message.index("당일 실시간 시장 데이터 확인 불가") < message.index("리포트 흐름")
+    assert message.index("리포트 흐름") < message.index("이전 종가 비교")
+    assert "리포트 2건 / 1종목" in message
+    assert "26.07.08 기준 지수 흐름" in message
+    assert "Toss 거래대금 상위 Top10" not in message
+
+
+@pytest.mark.parametrize(
+    "ranked_at,fetched_at,unavailable_reason",
+    [
+        ("2026-10-07T09:15:00+09:00", "2026-10-07T09:16:00+09:00", "거래대금 랭킹 기준일 확인 불가"),
+        ("2026-10-07T09:15:00+09:00", "2026-07-10T09:16:00+09:00", "거래대금 랭킹 기준일 확인 불가"),
+        ("2026-07-10T09:15:00+09:00", "2026-10-07T09:16:00+09:00", "Toss 조회/랭킹 기준일 불일치"),
+    ],
+)
+def test_historical_market_briefing_rejects_live_context_from_another_date(
+    monkeypatch,
+    ranked_at: str,
+    fetched_at: str,
+    unavailable_reason: str,
+) -> None:
+    message = _market_briefing_display_fixture(
+        monkeypatch,
+        {
+            "configured": True,
+            "live_fetch": True,
+            "reference_date": "2026-07-10",
+            "ranked_at": ranked_at,
+            "fetched_at": fetched_at,
+            "rankings": [{"rank": 1, "symbol": "005930", "tradingAmount": 1000}],
+            "market_prices": [{"symbol": "KOSPI", "lastPrice": "3120.45"}],
+            "stock_metadata_available": True,
+            "priority_overlap_symbols": ["005930"],
+            "investor_flow": {"KOSPI": None, "KOSDAQ": None},
+        },
+    )
+
+    assert "당일 실시간 시장 데이터 확인 불가" in message
+    assert unavailable_reason in message
+    assert "Toss 거래대금 상위 Top10" not in message
+    assert "당일 지수:" not in message
+    assert "당일 시장 수급 잠정" not in message
+    assert "이전 종가 비교 · 항목별 기준일 표시" in message
+
+
+def test_midday_market_briefing_hides_rankings_without_ranked_at(monkeypatch) -> None:
+    message = _market_briefing_display_fixture(
+        monkeypatch,
+        {
+            "configured": True,
+            "live_fetch": True,
+            "reference_date": "2026-07-10",
+            "fetched_at": "2026-07-10T09:16:00+09:00",
+            "rankings": [{"rank": 1, "symbol": "005930", "tradingAmount": 1000}],
+            "market_prices": [{"symbol": "KOSPI", "lastPrice": "3120.45"}],
+            "stock_metadata_available": True,
+            "priority_overlap_symbols": ["005930"],
+            "investor_flow": {"KOSPI": None, "KOSDAQ": None},
+        },
+    )
+
+    assert "당일 실시간 시장 데이터 확인 불가" in message
+    assert "거래대금 랭킹 기준일 확인 불가" in message
+    assert "Toss 거래대금 상위 Top10" not in message
+    assert "당일 지수:" not in message
+
+
+def test_market_mood_briefing_keeps_stored_close_layout(monkeypatch) -> None:
+    live_context = {
+        "configured": True,
+        "live_fetch": True,
+        "reference_date": "2026-07-10",
+        "ranked_at": "2026-07-10T09:15:00+09:00",
+        "fetched_at": "2026-07-10T09:16:00+09:00",
+        "rankings": [{"rank": 1, "symbol": "005930", "tradingAmount": 1000}],
+        "market_prices": [{"symbol": "KOSPI", "lastPrice": "3120.45"}],
+        "stock_metadata_available": True,
+        "priority_overlap_symbols": ["005930"],
+        "investor_flow": {"KOSPI": None, "KOSDAQ": None},
+    }
+    message = _market_briefing_display_fixture(monkeypatch, live_context, slot="mood")
+
+    assert "거래대금 참고 · 26.07.08 Toss 저장값" in message
+    assert message.index("거래대금 참고") < message.index("리포트 흐름")
+    assert "이전 종가 비교" not in message
+    assert "당일 실시간 Toss 시장 참고" not in message
+
+
+def test_historical_briefing_hides_current_toss_quotes_and_marks_source_unavailable() -> None:
+    business_date = date(2026, 7, 10)
+    context = {
+        "payload": {
+            "configured": True,
+            "live_fetch": True,
+            "priority_date": business_date.isoformat(),
+            "fetched_at": "2026-10-07T09:16:00+09:00",
+            "quotes": [
+                {"symbol": "005930", "lastPrice": 100_000, "timestamp": "2026-07-10T09:15:00+09:00"}
+            ],
+            "cache": "miss",
+        },
+        "names_by_symbol": {"005930": "삼성전자"},
+    }
+    candidate_rows = [{"stock_code": "005930", "stock_name": "삼성전자", "report_summary": {"report_count": 2}}]
+
+    quote_lines = cli_module._build_market_briefing_toss_priority_quote_lines(
+        context,
+        candidate_rows=candidate_rows,
+        business_date=business_date,
+    )
+    candidate_lines = cli_module._build_market_briefing_priority_candidate_lines(
+        candidate_rows,
+        toss_context=context,
+        business_date=business_date,
+        include_live_candidate_quotes=False,
+        naver_quote_fetcher=None,
+        timeout_seconds=1,
+    )
+    realtime_quote_lines = cli_module._market_briefing_realtime_current_quote_lines(
+        context,
+        candidate_rows,
+        business_date=business_date,
+    )
+    source_item = cli_module._market_briefing_toss_source_freshness_item(
+        context["payload"],
+        business_date=business_date,
+    )
+
+    assert not any("100,000원" in line for line in quote_lines + candidate_lines + realtime_quote_lines)
+    assert source_item["status"] == "unavailable"
+    assert source_item["available"] is False
+    assert cli_module._market_briefing_source_freshness_item_text(source_item) == "unavailable (조회 기준일 불일치)"
+
+    current_context = {
+        **context,
+        "payload": {
+            **context["payload"],
+            "fetched_at": "2026-07-10T09:16:00+09:00",
+        },
+    }
+    current_quote_lines = cli_module._build_market_briefing_toss_priority_quote_lines(
+        current_context,
+        candidate_rows=candidate_rows,
+        business_date=business_date,
+    )
+    current_candidate_lines = cli_module._build_market_briefing_priority_candidate_lines(
+        candidate_rows,
+        toss_context=current_context,
+        business_date=business_date,
+        include_live_candidate_quotes=False,
+        naver_quote_fetcher=None,
+        timeout_seconds=1,
+    )
+    current_realtime_quote_lines = cli_module._market_briefing_realtime_current_quote_lines(
+        current_context,
+        candidate_rows,
+        business_date=business_date,
+    )
+    current_source_item = cli_module._market_briefing_toss_source_freshness_item(
+        current_context["payload"],
+        business_date=business_date,
+    )
+
+    assert any("100,000원" in line for line in current_quote_lines + current_candidate_lines + current_realtime_quote_lines)
+    assert current_source_item["status"] == "current"
+
+
+def test_market_briefing_shows_only_quote_rows_with_same_day_timestamps() -> None:
+    business_date = date(2026, 7, 10)
+    context = {
+        "payload": {
+            "configured": True,
+            "live_fetch": True,
+            "priority_date": business_date.isoformat(),
+            "fetched_at": "2026-07-10T12:00:00+09:00",
+            "symbols": ["005930", "000660", "035420"],
+            "quotes": [
+                {"symbol": "005930", "lastPrice": 100_000, "timestamp": "2026-07-09T15:59:00+09:00"},
+                {"symbol": "000660", "lastPrice": 200_000, "timestamp": "2026-07-10T11:59:00+09:00"},
+                {"symbol": "035420", "lastPrice": 300_000},
+            ],
+            "cache": "miss",
+        },
+        "names_by_symbol": {"005930": "삼성전자", "000660": "SK하이닉스", "035420": "NAVER"},
+    }
+    candidate_rows = [
+        {"stock_code": "005930", "stock_name": "삼성전자", "report_summary": {"report_count": 2}},
+        {"stock_code": "000660", "stock_name": "SK하이닉스", "report_summary": {"report_count": 2}},
+        {"stock_code": "035420", "stock_name": "NAVER", "report_summary": {"report_count": 2}},
+    ]
+    naver_times = {
+        "005930": datetime(2026, 7, 9, 15, 59),
+        "000660": datetime(2026, 7, 10, 11, 59),
+        "035420": None,
+    }
+    naver_prices = {"005930": 111_000, "000660": 222_000, "035420": 333_000}
+
+    def naver_quote(stock_code: str, **_kwargs) -> StockQuoteSnapshot:
+        return StockQuoteSnapshot(
+            stock_code=stock_code,
+            stock_name=None,
+            sector_code=None,
+            sector_name=None,
+            current_price=naver_prices[stock_code],
+            market_status="OPEN",
+            trade_time=naver_times[stock_code],
+            prev_close_price=None,
+        )
+
+    quote_lines = cli_module._build_market_briefing_toss_priority_quote_lines(
+        context,
+        candidate_rows=candidate_rows,
+        business_date=business_date,
+    )
+    candidate_lines = cli_module._build_market_briefing_priority_candidate_lines(
+        candidate_rows,
+        toss_context=context,
+        business_date=business_date,
+        include_live_candidate_quotes=True,
+        naver_quote_fetcher=naver_quote,
+        timeout_seconds=1,
+    )
+    realtime_quote_lines = cli_module._market_briefing_realtime_current_quote_lines(
+        context,
+        candidate_rows,
+        business_date=business_date,
+    )
+    source_item = cli_module._market_briefing_toss_source_freshness_item(
+        context["payload"],
+        business_date=business_date,
+    )
+
+    assert any("SK하이닉스 200,000원" in line for line in quote_lines)
+    assert not any("삼성전자 100,000원" in line or "NAVER 300,000원" in line for line in quote_lines)
+    assert any("Toss 현재가: 200,000원" in line for line in candidate_lines)
+    assert not any("Toss 현재가: 100,000원" in line or "Toss 현재가: 300,000원" in line for line in candidate_lines)
+    assert any("222,000원" in line for line in candidate_lines)
+    assert not any("111,000원" in line or "333,000원" in line for line in candidate_lines)
+    assert len(realtime_quote_lines) == 1 and "200,000원" in realtime_quote_lines[0]
+    assert source_item["status"] == "unavailable"
+    assert source_item["available"] is False
+    assert cli_module._market_briefing_source_freshness_item_text(source_item) == "unavailable (종목별 시각 확인 불가)"
+
+
+def test_market_briefing_distinguishes_successful_empty_quote_response() -> None:
+    item = cli_module._market_briefing_toss_source_freshness_item(
+        {
+            "configured": True,
+            "live_fetch": True,
+            "priority_date": "2026-07-10",
+            "fetched_at": "2026-07-10T12:00:00+09:00",
+            "quotes": [],
+            "cache": "miss",
+        },
+        business_date=date(2026, 7, 10),
+    )
+
+    assert item["status"] == "missing"
+    assert cli_module._market_briefing_source_freshness_item_text(item) == "missing (조회 결과 없음)"
+
+
+def _run_morning_briefing_fixture(monkeypatch, capsys, *, report_date, local_today, toss_context, quotes):
+    summaries = [
+        DailyStockSummary(
+            business_date=report_date,
+            stock_name=stock_name,
+            stock_code=stock_code,
+            mention_count=2,
+            broker_display="NH투자증권",
+            target_price_min=None,
+            target_price_max=None,
+            dominant_opinion="의견 없음",
+            generated_at=datetime(report_date.year, report_date.month, report_date.day, 16, 0),
+        )
+        for stock_code, stock_name in (("005930", "삼성전자"), ("000660", "SK하이닉스"))
+    ]
+
+    class FakeRepository:
+        def has_successful_delivery(self, *_args) -> bool:
+            return False
+
+        def list_daily_summaries(self, requested_date: date) -> list[DailyStockSummary]:
+            assert requested_date == report_date
+            return summaries
+
+        def get_stock_metadata(self, stock_code: str) -> StockMetadata:
+            name = "삼성전자" if stock_code == "005930" else "SK하이닉스"
+            return StockMetadata(
+                stock_code=stock_code,
+                stock_name=name,
+                sector_code="1",
+                sector_name="반도체",
+                updated_at=datetime(2026, 5, 14, 16, 0),
+            )
+
+    original_datetime = datetime
+
+    class FixedDateTime(original_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = original_datetime(local_today.year, local_today.month, local_today.day, 8, 20)
+            return value.replace(tzinfo=tz) if tz else value
+
+    monkeypatch.setattr(cli_module, "datetime", FixedDateTime)
+    monkeypatch.setattr(cli_module, "_effective_bool_setting", lambda *_args: False)
+    naver_fetch_calls: list[str] = []
+
+    def fake_naver_fetch(stock_code: str, **_kwargs) -> StockQuoteSnapshot | None:
+        naver_fetch_calls.append(stock_code)
+        quote = quotes.get(stock_code)
+        if quote is None:
+            raise RuntimeError("no Naver quote fixture")
+        return quote
+
+    monkeypatch.setattr(cli_module, "fetch_stock_quote_snapshot", fake_naver_fetch)
+    quote_cache_calls: list[int] = []
+
+    def record_quote_cache(_repository, quote_rows) -> None:
+        quote_cache_calls.append(len(quote_rows))
+
+    monkeypatch.setattr(cli_module, "_cache_quote_snapshots", record_quote_cache)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_daily_briefing_market_reference_lines",
+        lambda *_args, **_kwargs: ["지수 참고 · 26.05.14 Toss 저장값", "- KOSPI 2,900.00"],
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_build_daily_briefing_flow_reference_lines",
+        lambda *_args, **_kwargs: ["수급 참고 · 26.05.14 KOSPI 저장값", "- 외국인 매수"],
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_build_daily_briefing_core_point_lines",
+        lambda *_args, **_kwargs: (
+            ["핵심 포인트", "- 리포트 집중 1위: 반도체 2건"],
+            ["저장 지수/수급 포인트", "- 26.05.14 기준 KOSPI 하락 흐름"],
+        ),
+    )
+    context_calls: list[date] = []
+
+    def build_toss_context(_config, _repository, *, business_date: date, candidate_rows: list[dict]) -> dict:
+        context_calls.append(business_date)
+        assert candidate_rows == []
+        return toss_context
+
+    monkeypatch.setattr(cli_module, "_build_market_briefing_toss_priority_context", build_toss_context)
+    config = type(
+        "Config",
+        (),
+        {"timezone": "Asia/Seoul", "telegram_timeout_seconds": 1, "holiday_overrides": frozenset()},
+    )()
+    exit_code = cli_module._run_send_test_notification(
+        config,
+        FakeRepository(),
+        explicit_date=report_date,
+        custom_message=None,
+        dry_run=True,
+        allow_repeat=True,
+        limit=5,
+        min_mentions=1,
+        delivery_channel=cli_module.PRODUCTION_DELIVERY_CHANNEL,
+        notification_format="briefing",
+    )
+    return exit_code, capsys.readouterr().out, context_calls, naver_fetch_calls, quote_cache_calls
+
+
+def test_morning_briefing_shows_same_day_toss_context_and_dates_prior_references(monkeypatch, capsys) -> None:
+    report_date = date(2026, 5, 14)
+    briefing_date = date(2026, 5, 15)
+    stale_quote = StockQuoteSnapshot(
+        stock_code="005930",
+        stock_name="삼성전자",
+        sector_code="1",
+        sector_name="반도체",
+        current_price=111_000,
+        market_status="CLOSE",
+        trade_time=datetime(2026, 5, 14, 15, 30),
+        prev_close_price=110_000,
+    )
+    current_quote = StockQuoteSnapshot(
+        stock_code="000660",
+        stock_name="SK하이닉스",
+        sector_code="1",
+        sector_name="반도체",
+        current_price=222_000,
+        market_status="OPEN",
+        trade_time=datetime(2026, 5, 15, 8, 19),
+        prev_close_price=220_000,
+    )
+    toss_context = {
+        "names_by_symbol": {"005930": "삼성전자"},
+        "market_context": {
+            "configured": True,
+            "live_fetch": True,
+            "reference_date": briefing_date.isoformat(),
+            "ranked_at": "2026-05-15T08:19:00+09:00",
+            "fetched_at": "2026-05-15T08:20:00+09:00",
+            "rankings": [{"rank": 1, "symbol": "005930", "tradingAmount": 1000}],
+            "stock_metadata_available": True,
+            "market_prices": [
+                {"symbol": "KOSPI", "lastPrice": "3000.10", "timestamp": "2026-05-15T08:19:00+09:00"},
+                {"symbol": "KOSDAQ", "lastPrice": "900.10", "timestamp": "2026-05-14T15:30:00+09:00"},
+                {"symbol": "KOSDAQ", "lastPrice": "900.20"},
+            ],
+            "market_price_changes": {
+                "KOSPI": {"change_rate": 0.01},
+                "KOSDAQ": {"change_rate": 0.02},
+            },
+            "priority_overlap_symbols": [],
+            "investor_flow": {
+                "KOSPI": {
+                    "date": briefing_date.isoformat(),
+                    "updatedAt": "2026-05-15T08:19:00+09:00",
+                    "foreigner": {"buyAmount": 100, "sellAmount": 90},
+                },
+                "KOSDAQ": {
+                    "date": "2026-05-14",
+                    "updatedAt": "2026-05-14T15:30:00+09:00",
+                    "institution": {"buyAmount": 80, "sellAmount": 120},
+                },
+            },
+        },
+    }
+
+    exit_code, output, context_calls, naver_fetch_calls, quote_cache_calls = _run_morning_briefing_fixture(
+        monkeypatch,
+        capsys,
+        report_date=report_date,
+        local_today=briefing_date,
+        toss_context=toss_context,
+        quotes={"005930": stale_quote, "000660": current_quote},
+    )
+
+    assert exit_code == 0
+    assert context_calls == [briefing_date]
+    assert set(naver_fetch_calls) == {"005930", "000660"}
+    assert quote_cache_calls == [2]
+    assert "Toss 실시간 시장 참고" in output
+    assert "랭킹 기준 2026-05-15 08:19+09:00" in output
+    assert "KOSPI 3000.10 (+1.00%) · 기준 2026-05-15 08:19+09:00" in output
+    assert "KOSDAQ 900.10" not in output
+    assert "이전 종가 비교" in output
+    assert output.index("Toss 실시간 시장 참고") < output.index("리포트 집중")
+    assert output.index("리포트 집중") < output.index("이전 종가 비교")
+    assert "지수 참고 · 26.05.14 Toss 저장값" in output
+    assert "수급 참고 · 26.05.14 KOSPI 저장값" in output
+    assert output.index("핵심 포인트") < output.index("이전 종가 비교")
+    assert output.index("이전 종가 비교") < output.index("저장 지수/수급 포인트")
+    assert "현재가 111,000원" not in output
+    assert "현재가 222,000원" in output
+    assert "NXT" not in output
+
+
+def test_morning_briefing_without_reports_keeps_live_and_prior_close_sections() -> None:
+    messages = cli_module.format_daily_briefing_messages(
+        date(2026, 5, 14),
+        [],
+        briefing_date=date(2026, 5, 15),
+        live_market_context_lines=["Toss 실시간 시장 참고", "- 당일 지수 참고 없음"],
+        market_reference_lines=["지수 참고 · 26.05.13 Toss 저장값", "- KOSPI 2,900.00"],
+        flow_reference_lines=["수급 참고 · 26.05.13 KOSPI 저장값", "- 외국인 매수"],
+        stored_core_point_lines=["저장 지수/수급 포인트", "- 26.05.13 기준 KOSPI 흐름"],
+    )
+    message = "\n\n".join(messages)
+
+    assert "Toss 실시간 시장 참고" in message
+    assert "전일 리포트\n리포트 집중\n- 신규 리포트 없음" in message
+    assert "이전 종가 비교" in message
+    assert "지수 참고 · 26.05.13 Toss 저장값" in message
+    assert "수급 참고 · 26.05.13 KOSPI 저장값" in message
+    assert "저장 지수/수급 포인트" in message
+    assert message.index("Toss 실시간 시장 참고") < message.index("\n\n전일 리포트")
+    assert message.index("\n\n전일 리포트") < message.index("이전 종가 비교")
+    assert message.index("이전 종가 비교") < message.index("저장 지수/수급 포인트")
+
+
+def test_historical_morning_briefing_skips_toss_request(monkeypatch, capsys) -> None:
+    exit_code, output, context_calls, naver_fetch_calls, quote_cache_calls = _run_morning_briefing_fixture(
+        monkeypatch,
+        capsys,
+        report_date=date(2026, 5, 13),
+        local_today=date(2026, 5, 15),
+        toss_context={},
+        quotes={},
+    )
+
+    assert exit_code == 0
+    assert context_calls == []
+    assert naver_fetch_calls == []
+    assert quote_cache_calls == []
+    assert "Toss 실시간 시장 참고" in output
+    assert "과거 날짜 브리핑이므로 실시간 조회를 생략했습니다" in output
+    assert "이전 종가 비교" in output
+    assert "Toss 거래대금 상위 Top10" not in output
+
+
+def test_morning_briefing_rejects_rank_rows_without_ranked_timestamp(monkeypatch, capsys) -> None:
+    report_date = date(2026, 5, 14)
+    briefing_date = date(2026, 5, 15)
+    context = {
+        "market_context": {
+            "configured": True,
+            "live_fetch": True,
+            "reference_date": briefing_date.isoformat(),
+            "fetched_at": "2026-05-15T08:20:00+09:00",
+            "rankings": [{"rank": 1, "symbol": "005930", "tradingAmount": 1000}],
+            "market_prices": [{"symbol": "KOSPI", "lastPrice": "3000.10", "timestamp": "2026-05-15T08:19:00+09:00"}],
+        }
+    }
+
+    exit_code, output, context_calls, naver_fetch_calls, quote_cache_calls = _run_morning_briefing_fixture(
+        monkeypatch,
+        capsys,
+        report_date=report_date,
+        local_today=briefing_date,
+        toss_context=context,
+        quotes={},
+    )
+
+    assert exit_code == 0
+    assert context_calls == [briefing_date]
+    assert set(naver_fetch_calls) == {"005930", "000660"}
+    assert "Toss 실시간 시장 참고" in output
+    assert "거래대금 랭킹 기준일 확인 불가" in output
+    assert "Toss 거래대금 상위 Top10" not in output
+    assert "당일 지수:" not in output
+
+
 def test_market_briefing_preview_includes_turnover_reference(tmp_path, capsys) -> None:
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
@@ -9465,8 +10102,18 @@ def test_market_briefing_uses_toss_top_two_quotes_when_provider_is_available(tmp
                 "priority_date": priority_date.isoformat(),
                 "fetched_at": "2026-05-14T09:15:00+09:00",
                 "quotes": [
-                    {"symbol": "005930", "lastPrice": 100_000, "currency": "KRW"},
-                    {"symbol": "000660", "lastPrice": 200_000, "currency": "KRW"},
+                    {
+                        "symbol": "005930",
+                        "lastPrice": 100_000,
+                        "currency": "KRW",
+                        "timestamp": "2026-05-14T09:15:00+09:00",
+                    },
+                    {
+                        "symbol": "000660",
+                        "lastPrice": 200_000,
+                        "currency": "KRW",
+                        "timestamp": "2026-05-14T09:15:00+09:00",
+                    },
                 ],
                 "cache": "miss",
             }
@@ -9606,7 +10253,15 @@ def test_scheduled_market_briefing_message_groups_live_context_by_priority_candi
                 "live_fetch": True,
                 "priority_date": priority_date.isoformat(),
                 "fetched_at": "2026-05-14T12:01:00+09:00",
-                "quotes": [{"symbol": symbol, "lastPrice": 100_000, "currency": "KRW"} for symbol in symbols],
+                "quotes": [
+                    {
+                        "symbol": symbol,
+                        "lastPrice": 100_000,
+                        "currency": "KRW",
+                        "timestamp": "2026-05-14T12:01:00+09:00",
+                    }
+                    for symbol in symbols
+                ],
                 "cache": "miss",
             }
 

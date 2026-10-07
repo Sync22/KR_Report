@@ -265,21 +265,37 @@ def format_daily_briefing_messages(
     market_reference_lines: list[str] | None = None,
     flow_reference_lines: list[str] | None = None,
     core_point_lines: list[str] | None = None,
+    stored_core_point_lines: list[str] | None = None,
+    live_market_context_lines: list[str] | None = None,
     max_items: int = 7,
     max_chars: int = 3000,
 ) -> list[str]:
     header = f"국장 시작 전 리포트 브리핑 · {_format_short_date(briefing_date)}"
-    basis = "기준: 전일 리포트 / Toss 저장값은 항목별 기준일 표시"
+    basis = "기준: 전일 리포트 / Toss 실시간 자료와 저장 종가 비교를 구분"
     if not summaries:
-        return ["\n".join([header, basis, "", "리포트 집중", "- 신규 리포트 없음"])]
+        previous_close_lines = [
+            *(market_reference_lines or []),
+            *(flow_reference_lines or []),
+            *(stored_core_point_lines or []),
+        ] or ["- 저장된 시장/수급 참고값 없음"]
+        sections = [
+            "\n".join([header, basis]),
+            "\n".join(live_market_context_lines) if live_market_context_lines else "",
+            "\n".join(["전일 리포트", "리포트 집중", "- 신규 리포트 없음"]),
+            "\n".join(["이전 종가 비교", *previous_close_lines]),
+        ]
+        return ["\n\n".join(section for section in sections if section)]
 
     ordered = _sort_summaries(summaries)
     focus_lines = _format_briefing_sector_focus(ordered, quotes_by_stock_code)
+    current_quotes_by_stock_code = {
+        stock_code: quote
+        for stock_code, quote in (quotes_by_stock_code or {}).items()
+        if quote.trade_time is not None and quote.trade_time.date() == briefing_date
+    }
     blocks: list[str] = []
     for summary in ordered[:max_items]:
-        summary_quote = None
-        if summary.stock_code and quotes_by_stock_code:
-            summary_quote = quotes_by_stock_code.get(summary.stock_code)
+        summary_quote = current_quotes_by_stock_code.get(summary.stock_code) if summary.stock_code else None
         blocks.append(
             "\n".join(
                 [
@@ -295,23 +311,36 @@ def format_daily_briefing_messages(
     if remaining > 0:
         footer_lines = [f"- 추가 {remaining}개 종목은 웹뷰/다음 페이지에서 확인", *footer_lines]
 
-    full_message = "\n\n".join(
+    report_section = "\n\n".join(
         [section for section in [
-            "\n".join([header, basis]),
+            "전일 리포트",
             "\n".join(["리포트 집중", *focus_lines]),
-            "\n".join(market_reference_lines) if market_reference_lines else "",
-            "\n".join(flow_reference_lines) if flow_reference_lines else "",
             "\n".join(core_point_lines) if core_point_lines else "",
             "\n\n".join(["주요 종목", *blocks]),
             "\n".join(["확인 포인트", *footer_lines]),
         ] if section]
+    )
+    previous_close_lines = [
+        *(market_reference_lines or []),
+        *(flow_reference_lines or []),
+        *(stored_core_point_lines or []),
+    ] or ["- 저장된 시장/수급 참고값 없음"]
+    full_message = "\n\n".join(
+        section
+        for section in (
+            "\n".join([header, basis]),
+            "\n".join(live_market_context_lines) if live_market_context_lines else "",
+            report_section,
+            "\n".join(["이전 종가 비교", *previous_close_lines]),
+        )
+        if section
     )
     if len(full_message) <= max_chars:
         return [full_message]
     return format_daily_summary_messages(
         business_date,
         summaries,
-        quotes_by_stock_code=quotes_by_stock_code,
+        quotes_by_stock_code=current_quotes_by_stock_code,
         max_chars=max_chars,
     )
 
@@ -354,6 +383,36 @@ def format_market_close_briefing_message(
             "\n".join(report_lines),
             "\n".join(point_lines),
         ]
+        if section
+    )
+
+
+def format_intraday_market_briefing_message(
+    business_date: date,
+    *,
+    report_count: int,
+    stock_count: int,
+    live_market_context_lines: list[str],
+    previous_close_heading: str,
+    previous_close_lines: list[str],
+    notable_lines: list[str] | None = None,
+) -> str:
+    header = f"오늘의 시장 분위기 · {_format_short_date(business_date)}"
+    basis = "기준: 당일 리포트 / Toss 실시간 참고와 저장 종가 비교를 구분"
+    report_lines = ["리포트 흐름", f"- 리포트 {report_count}건 / {stock_count}종목"]
+    if notable_lines:
+        report_lines.extend(notable_lines)
+    else:
+        report_lines.append("- 눈에 띄는 다건 언급 종목 없음")
+
+    return "\n\n".join(
+        "\n".join(section)
+        for section in (
+            [header, basis],
+            live_market_context_lines,
+            report_lines,
+            [previous_close_heading, *previous_close_lines],
+        )
         if section
     )
 

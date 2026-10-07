@@ -139,6 +139,7 @@ from stock_monitor.notify.formatter import (
     format_daily_briefing_messages,
     format_daily_summary_message,
     format_daily_summary_messages,
+    format_intraday_market_briefing_message,
     format_market_close_briefing_message,
     format_intraday_empty_message,
     format_intraday_batch_message,
@@ -18358,8 +18359,9 @@ def _build_daily_briefing_core_point_lines(
     business_date: date,
     summaries: list[DailyStockSummary],
     quotes_by_stock_code: dict[str, StockQuoteSnapshot],
-) -> list[str]:
-    points: list[str] = []
+) -> tuple[list[str], list[str]]:
+    report_points: list[str] = []
+    stored_points: list[str] = []
     indices = repository.list_market_index_daily(business_date, limit=200)
     kospi = _find_named_market_index(indices, series="KOSPI", name="코스피")
     kosdaq = _find_named_market_index(indices, series="KOSDAQ", name="코스닥")
@@ -18367,16 +18369,22 @@ def _build_daily_briefing_core_point_lines(
         kospi_direction = _market_direction_label(kospi.change_percent)
         kosdaq_direction = _market_direction_label(kosdaq.change_percent)
         if kospi_direction == kosdaq_direction:
-            points.append(f"- KOSPI/KOSDAQ 모두 {kospi_direction} 흐름")
+            stored_points.append(f"- {business_date.strftime('%y.%m.%d')} 기준 KOSPI/KOSDAQ 모두 {kospi_direction} 흐름")
         else:
-            points.append(f"- KOSPI {kospi_direction}, KOSDAQ {kosdaq_direction}으로 시장 방향이 엇갈림")
+            stored_points.append(
+                f"- {business_date.strftime('%y.%m.%d')} 기준 KOSPI {kospi_direction}, "
+                f"KOSDAQ {kosdaq_direction}으로 시장 방향이 엇갈림"
+            )
     top_sector = _top_briefing_sector_focus(summaries, quotes_by_stock_code)
     if top_sector:
-        points.append(f"- 리포트 집중 1위: {top_sector[0]} {top_sector[1]}건")
+        report_points.append(f"- 리포트 집중 1위: {top_sector[0]} {top_sector[1]}건")
     flow_fragment = _briefing_flow_direction_fragment(repository, business_date)
     if flow_fragment:
-        points.append(f"- KOSPI 수급: {flow_fragment} 우위")
-    return ["핵심 포인트", *points[:3]] if points else []
+        stored_points.append(f"- KOSPI 수급: {flow_fragment} 우위")
+    return (
+        ["핵심 포인트", *report_points[:3]] if report_points else [],
+        ["저장 지수/수급 포인트", *stored_points[:3]] if stored_points else [],
+    )
 
 
 def _build_daily_briefing_flow_reference_lines(
@@ -23348,6 +23356,7 @@ def _build_market_briefing_message(
         _build_market_briefing_priority_candidate_lines(
             candidate_rows,
             toss_context=effective_toss_context,
+            business_date=business_date,
             include_live_candidate_quotes=True,
             naver_quote_fetcher=naver_quote_fetcher,
             timeout_seconds=config.telegram_timeout_seconds,
@@ -23371,11 +23380,14 @@ def _build_market_briefing_message(
     toss_quote_lines = _build_market_briefing_toss_priority_quote_lines(
         effective_toss_context,
         candidate_rows=candidate_rows,
+        business_date=business_date,
     )
     market_reference_lines = _build_daily_briefing_market_reference_lines(repository, business_date)
+    stored_turnover_reference_lines = _build_market_briefing_turnover_lines(repository, business_date)
+    live_first_slot = layout != "realtime-first" and slot in {"lunch", "preclose"}
     turnover_reference_lines = [
-        *_build_market_briefing_turnover_lines(repository, business_date),
-        *_build_market_briefing_toss_market_context_lines(effective_toss_context),
+        *stored_turnover_reference_lines,
+        *([] if live_first_slot else _build_market_briefing_toss_market_context_lines(effective_toss_context)),
     ]
     flow_reference_lines = _build_daily_briefing_flow_reference_lines(
         repository,
@@ -23406,6 +23418,28 @@ def _build_market_briefing_message(
                 priority_stock_codes=tuple(str(row.get("stock_code") or "").strip() for row in candidate_rows),
             ),
         )
+    elif live_first_slot:
+        previous_close_lines = [
+            *market_reference_lines,
+            *stored_turnover_reference_lines,
+            *flow_reference_lines,
+            *check_point_lines,
+        ]
+        if not previous_close_lines:
+            previous_close_lines = ["- 저장된 이전 종가 참고값 없음"]
+        previous_close_heading = "이전 종가 비교 · 항목별 기준일 표시"
+        message = format_intraday_market_briefing_message(
+            business_date,
+            report_count=report_count,
+            stock_count=len(summaries),
+            live_market_context_lines=_build_market_briefing_live_toss_market_context_lines(
+                effective_toss_context,
+                business_date=business_date,
+            ),
+            previous_close_heading=previous_close_heading,
+            previous_close_lines=previous_close_lines,
+            notable_lines=notable_lines,
+        )
     else:
         message = format_market_close_briefing_message(
             business_date,
@@ -23421,14 +23455,19 @@ def _build_market_briefing_message(
     if layout == "realtime-first":
         _ensure_market_briefing_message_public_safe(message)
         return message
+    insert_briefing_section = (
+        _insert_market_briefing_section_before_previous_close
+        if live_first_slot
+        else _insert_market_briefing_section_before_check_points
+    )
     if news_observation_lines:
-        message = _insert_market_briefing_section_before_check_points(message, news_observation_lines)
+        message = insert_briefing_section(message, news_observation_lines)
     if priority_lines:
-        message = _insert_market_briefing_section_before_check_points(message, priority_lines)
+        message = insert_briefing_section(message, priority_lines)
     if toss_quote_lines and not priority_lines:
-        message = _insert_market_briefing_section_before_check_points(message, toss_quote_lines)
+        message = insert_briefing_section(message, toss_quote_lines)
     if source_freshness_lines:
-        message = _insert_market_briefing_section_before_check_points(message, source_freshness_lines)
+        message = insert_briefing_section(message, source_freshness_lines)
     _ensure_market_briefing_message_public_safe(message)
     return message
 
@@ -23446,7 +23485,11 @@ def _format_market_briefing_realtime_first_preview(
     flow_reference_lines: list[str],
     source_freshness_summary: dict,
 ) -> str:
-    current_lines = _market_briefing_realtime_current_quote_lines(toss_context, candidate_rows)
+    current_lines = _market_briefing_realtime_current_quote_lines(
+        toss_context,
+        candidate_rows,
+        business_date=business_date,
+    )
     if news_observation_lines:
         current_lines.extend(news_observation_lines[1:] or news_observation_lines)
     if not current_lines:
@@ -23502,9 +23545,15 @@ def _market_briefing_realtime_candidate_lines(
 def _market_briefing_realtime_current_quote_lines(
     toss_context: dict[str, object],
     candidate_rows: list[dict[str, object]],
+    *,
+    business_date: date,
 ) -> list[str]:
     payload = toss_context.get("payload") if isinstance(toss_context.get("payload"), dict) else {}
-    if payload.get("live_fetch") is not True:
+    if not _market_briefing_toss_payload_is_current(
+        payload,
+        business_date=business_date,
+        reference_date_key="priority_date",
+    ):
         return []
     names_by_code = {
         str(row.get("stock_code") or "").strip(): str(row.get("stock_name") or row.get("stock_code") or "-").strip()
@@ -23513,6 +23562,8 @@ def _market_briefing_realtime_current_quote_lines(
     lines: list[str] = []
     for quote in payload.get("quotes", []):
         if not isinstance(quote, dict):
+            continue
+        if not _market_briefing_toss_quote_row_is_current(quote, business_date=business_date):
             continue
         symbol = str(quote.get("symbol") or "").strip()
         price = _safe_optional_int(quote.get("lastPrice"))
@@ -23643,6 +23694,7 @@ def _build_market_briefing_priority_candidate_lines(
     candidate_rows: list[dict[str, object]],
     *,
     toss_context: dict[str, object],
+    business_date: date,
     include_live_candidate_quotes: bool,
     naver_quote_fetcher: Callable[..., StockQuoteSnapshot] | None,
     timeout_seconds: float,
@@ -23653,8 +23705,20 @@ def _build_market_briefing_priority_candidate_lines(
     toss_payload = toss_context.get("payload") if isinstance(toss_context.get("payload"), dict) else {}
     toss_quotes = {
         str(item.get("symbol") or "").strip(): item
-        for item in toss_payload.get("quotes", [])
-        if isinstance(item, dict) and str(item.get("symbol") or "").strip()
+        for item in (
+            toss_payload.get("quotes", [])
+            if _market_briefing_toss_payload_is_current(
+                toss_payload,
+                business_date=business_date,
+                reference_date_key="priority_date",
+            )
+            else []
+        )
+        if (
+            isinstance(item, dict)
+            and _market_briefing_toss_quote_row_is_current(item, business_date=business_date)
+            and str(item.get("symbol") or "").strip()
+        )
     }
     lines = ["우선 확인 후보"]
     for index, row in enumerate(candidate_rows, start=1):
@@ -23679,7 +23743,8 @@ def _build_market_briefing_priority_candidate_lines(
             except Exception:
                 lines.append("- 장중 참고: Naver 현재 참고값을 이번 회차에 확인하지 못했습니다.")
             else:
-                lines.append(f"- 장중 참고: {_format_market_briefing_naver_quote(quote)}")
+                if quote.trade_time is not None and quote.trade_time.date() == business_date:
+                    lines.append(f"- 장중 참고: {_format_market_briefing_naver_quote(quote)}")
 
         badge = row.get("news_observation_badge") if isinstance(row.get("news_observation_badge"), dict) else {}
         news_label = str(badge.get("display_label") or badge.get("connection_label") or "뉴스 근거 수집 전").strip()
@@ -23737,11 +23802,30 @@ def _market_briefing_naver_market_status(value: object) -> str | None:
 
 
 def _market_briefing_toss_source_freshness_item(payload: dict[str, object], *, business_date: date) -> dict[str, object]:
-    live_fetch = payload.get("live_fetch") is True
+    requested_live_fetch = payload.get("live_fetch") is True
+    payload_current = _market_briefing_toss_payload_is_current(
+        payload,
+        business_date=business_date,
+        reference_date_key="priority_date",
+    )
     configured = payload.get("configured") is True
     cache = str(payload.get("cache") or "").strip()
-    if live_fetch:
-        status = "stale" if cache == "stale" else "current"
+    quote_rows = payload.get("quotes") if isinstance(payload.get("quotes"), list) else []
+    has_unverified_quote_row = any(
+        not isinstance(row, dict) or not _market_briefing_toss_quote_row_is_current(row, business_date=business_date)
+        for row in quote_rows
+    )
+    live_fetch = payload_current and bool(quote_rows) and not has_unverified_quote_row
+    if requested_live_fetch and cache.lower() == "stale":
+        status = "stale"
+    elif live_fetch:
+        status = "current"
+    elif payload_current and has_unverified_quote_row:
+        status = "unavailable"
+    elif payload_current:
+        status = "missing"
+    elif requested_live_fetch:
+        status = "unavailable"
     elif configured and str(payload.get("reason") or "") == "upstream_unavailable":
         status = "unavailable"
     elif configured:
@@ -23758,6 +23842,9 @@ def _market_briefing_toss_source_freshness_item(payload: dict[str, object], *, b
         "available": live_fetch,
         "data_scope": "market_briefing_priority_top_2_quotes" if live_fetch else "not_called_or_unavailable",
         "live_fetch": live_fetch,
+        "request_current": payload_current,
+        "date_mismatch": requested_live_fetch and cache.lower() != "stale" and not payload_current,
+        "quote_timestamp_mismatch": payload_current and has_unverified_quote_row,
         "affects_ordering": False,
         "notice": "Scheduled market briefing top-two current-price reference.",
     }
@@ -23767,6 +23854,7 @@ def _build_market_briefing_toss_priority_quote_lines(
     toss_context: dict[str, object],
     *,
     candidate_rows: list[dict[str, object]],
+    business_date: date,
 ) -> list[str]:
     payload = toss_context.get("payload") if isinstance(toss_context.get("payload"), dict) else {}
     if payload.get("live_fetch") is not True:
@@ -23774,16 +23862,26 @@ def _build_market_briefing_toss_priority_quote_lines(
             lines = ["Toss 우선확인 현재가", "- 공급자 응답 없음"]
         else:
             lines = []
+    elif not _market_briefing_toss_payload_is_current(
+        payload,
+        business_date=business_date,
+        reference_date_key="priority_date",
+    ):
+        lines = []
     else:
         names_by_symbol = toss_context.get("names_by_symbol")
         if not isinstance(names_by_symbol, dict):
             names_by_symbol = {}
         quote_rows = payload.get("quotes") if isinstance(payload.get("quotes"), list) else []
+        verified_quote_rows = [
+            quote
+            for quote in quote_rows
+            if isinstance(quote, dict)
+            and _market_briefing_toss_quote_row_is_current(quote, business_date=business_date)
+        ]
         fetched_at = payload.get("fetched_at")
         quote_lines: list[str] = []
-        for quote in quote_rows:
-            if not isinstance(quote, dict):
-                continue
+        for quote in verified_quote_rows:
             symbol = str(quote.get("symbol") or "").strip()
             if not symbol:
                 continue
@@ -23796,7 +23894,8 @@ def _build_market_briefing_toss_priority_quote_lines(
             if checked_at:
                 line += f" · 조회 {checked_at}"
             quote_lines.append(line)
-        lines = ["Toss 우선확인 현재가", *quote_lines] if quote_lines else ["Toss 우선확인 현재가", "- 조회 결과 없음"]
+        empty_label = "종목별 조회 시각 확인 불가" if quote_rows and not verified_quote_rows else "조회 결과 없음"
+        lines = ["Toss 우선확인 현재가", *quote_lines] if quote_lines else ["Toss 우선확인 현재가", f"- {empty_label}"]
 
     baseline_lines: list[str] = []
     for row in candidate_rows:
@@ -23909,6 +24008,98 @@ def _market_briefing_toss_checked_time(value: object) -> str | None:
     return raw[11:16] if len(raw) >= 16 and raw[11:16].count(":") == 1 else None
 
 
+def _parse_market_briefing_toss_timestamp(value: object) -> datetime | None:
+    raw = str(value or "").strip()
+    if not any(separator in raw for separator in ("T", " ")) or ":" not in raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _market_briefing_toss_timestamp(value: object) -> str | None:
+    timestamp = _parse_market_briefing_toss_timestamp(value)
+    if timestamp is None:
+        return None
+    return timestamp.isoformat(timespec="minutes").replace("T", " ")
+
+
+def _market_briefing_toss_payload_is_current(
+    payload: dict[str, object],
+    *,
+    business_date: date,
+    reference_date_key: str,
+) -> bool:
+    fetched_timestamp = _parse_market_briefing_toss_timestamp(payload.get("fetched_at"))
+    return (
+        payload.get("live_fetch") is True
+        and str(payload.get("cache") or "").strip().lower() != "stale"
+        and payload.get(reference_date_key) == business_date.isoformat()
+        and fetched_timestamp is not None
+        and fetched_timestamp.date() == business_date
+    )
+
+
+def _market_briefing_toss_quote_row_is_current(quote: dict[str, object], *, business_date: date) -> bool:
+    timestamp = _parse_market_briefing_toss_timestamp(quote.get("timestamp"))
+    return timestamp is not None and timestamp.date() == business_date
+
+
+def _build_market_briefing_live_toss_market_context_lines(
+    toss_context: dict[str, object],
+    *,
+    business_date: date,
+) -> list[str]:
+    payload = toss_context.get("market_context") if isinstance(toss_context.get("market_context"), dict) else {}
+    cache_status = str(payload.get("cache") or "").strip().lower()
+    ranked_at_value = payload.get("ranked_at")
+    ranked_timestamp = _parse_market_briefing_toss_timestamp(ranked_at_value)
+    fetched_timestamp = _parse_market_briefing_toss_timestamp(payload.get("fetched_at"))
+    rankings = payload.get("rankings")
+    has_rankings = isinstance(rankings, list) and bool(rankings)
+    ranked_date_matches = (
+        (not ranked_at_value and not has_rankings)
+        or (ranked_timestamp is not None and ranked_timestamp.date() == business_date)
+    )
+    dates_match = (
+        payload.get("reference_date") == business_date.isoformat()
+        and fetched_timestamp is not None
+        and fetched_timestamp.date() == business_date
+        and ranked_date_matches
+    )
+    available = _market_briefing_toss_payload_is_current(
+        payload,
+        business_date=business_date,
+        reference_date_key="reference_date",
+    ) and ranked_date_matches
+    if not available:
+        if has_rankings and not ranked_date_matches:
+            reason = "거래대금 랭킹 기준일 확인 불가"
+        elif payload.get("configured") is not True:
+            reason = "Toss 실시간 호출 비활성화"
+        elif cache_status == "stale" or payload.get("reason") == "upstream_unavailable":
+            reason = "Toss 조회 실패"
+        elif not dates_match:
+            reason = "Toss 조회/랭킹 기준일 불일치"
+        else:
+            reason = "당일 기준 데이터 없음"
+        return ["당일 실시간 Toss 시장 참고", f"- 당일 실시간 시장 데이터 확인 불가 ({reason})"]
+
+    ranked_at = _market_briefing_toss_timestamp(payload.get("ranked_at"))
+    fetched_at = _market_briefing_toss_timestamp(payload.get("fetched_at"))
+    timestamp_parts = []
+    if ranked_at:
+        timestamp_parts.append(f"랭킹 기준 {ranked_at}")
+    if fetched_at:
+        timestamp_parts.append(f"조회 {fetched_at}")
+    timestamp = " · ".join(timestamp_parts) or "기준 시각 확인 불가"
+    return [
+        f"당일 실시간 Toss 시장 참고 · {timestamp}",
+        *_build_market_briefing_toss_market_context_lines(toss_context),
+    ]
+
+
 def _build_market_briefing_toss_market_context_sections(
     toss_context: dict[str, object],
 ) -> tuple[list[str], list[str], list[str]]:
@@ -24019,6 +24210,71 @@ def _build_market_briefing_toss_market_context_lines(toss_context: dict[str, obj
     return [*ranking_lines, *overlap_lines, *market_lines]
 
 
+def _build_daily_briefing_live_toss_market_context_lines(
+    toss_context: dict[str, object],
+    *,
+    business_date: date,
+) -> list[str]:
+    availability_lines = _build_market_briefing_live_toss_market_context_lines(
+        toss_context,
+        business_date=business_date,
+    )
+    unavailable = next(
+        (line for line in availability_lines[1:] if "당일 실시간 시장 데이터 확인 불가" in line),
+        None,
+    )
+    if unavailable:
+        return ["Toss 실시간 시장 참고", unavailable]
+
+    payload = toss_context.get("market_context") if isinstance(toss_context.get("market_context"), dict) else {}
+    market_prices = payload.get("market_prices") if isinstance(payload.get("market_prices"), list) else []
+    current_market_prices = [
+        item
+        for item in market_prices
+        if isinstance(item, dict)
+        and item.get("lastPrice") is not None
+        and _market_briefing_toss_quote_row_is_current(item, business_date=business_date)
+    ]
+    investor_flow = payload.get("investor_flow") if isinstance(payload.get("investor_flow"), dict) else {}
+    current_investor_flow = {}
+    for market in ("KOSPI", "KOSDAQ"):
+        record = investor_flow.get(market)
+        updated_at = _parse_market_briefing_toss_timestamp(record.get("updatedAt")) if isinstance(record, dict) else None
+        current_investor_flow[market] = (
+            record
+            if isinstance(record, dict)
+            and record.get("date") == business_date.isoformat()
+            and updated_at is not None
+            and updated_at.date() == business_date
+            else None
+        )
+    current_payload = {
+        **payload,
+        "market_prices": current_market_prices,
+        "investor_flow": current_investor_flow,
+    }
+    current_context = {**toss_context, "market_context": current_payload}
+    market_lines, overlap_lines, ranking_lines = _build_market_briefing_toss_market_context_sections(current_context)
+
+    changes = current_payload.get("market_price_changes")
+    changes = changes if isinstance(changes, dict) else {}
+    index_lines = []
+    for item in current_market_prices:
+        timestamp = _market_briefing_toss_timestamp(item.get("timestamp"))
+        if timestamp is None:
+            continue
+        index_lines.append(f"{_format_market_index_price(item, changes)} · 기준 {timestamp}")
+    market_lines = [line for line in market_lines if not line.startswith("- 당일 지수:")]
+    if index_lines:
+        market_lines.insert(0, "- 당일 지수: " + ", ".join(index_lines))
+
+    timestamp_suffix = availability_lines[0].partition(" · ")[2]
+    heading = "Toss 실시간 시장 참고"
+    if timestamp_suffix:
+        heading += f" · {timestamp_suffix}"
+    return [heading, *ranking_lines, *overlap_lines, *market_lines]
+
+
 def _build_market_briefing_source_freshness_summary(
     repository: StockMonitorRepository,
     business_date: date,
@@ -24114,7 +24370,14 @@ def _market_briefing_source_freshness_lines(summary: dict) -> list[str]:
 def _market_briefing_source_freshness_item_text(item: dict[str, object]) -> str:
     status = _market_briefing_source_freshness_status_text(str(item.get("status") or "missing"))
     if item.get("key") == "toss_openapi":
-        suffix = "우선확인 현재가" if item.get("live_fetch") else "호출 없음"
+        if item.get("quote_timestamp_mismatch"):
+            suffix = "종목별 시각 확인 불가"
+        elif item.get("date_mismatch"):
+            suffix = "조회 기준일 불일치"
+        elif item.get("request_current") and item.get("status") == "missing":
+            suffix = "조회 결과 없음"
+        else:
+            suffix = "우선확인 현재가" if item.get("live_fetch") else "호출 없음"
         return f"{status} ({suffix})"
     reference_date = _market_briefing_source_reference_date_text(item.get("reference_date"))
     count = item.get("count")
@@ -24206,6 +24469,14 @@ def _build_market_briefing_news_observation_lines(
 
 def _insert_market_briefing_section_before_check_points(message: str, section_lines: list[str]) -> str:
     marker = "\n\n확인 포인트"
+    section = "\n\n" + "\n".join(section_lines)
+    if marker in message:
+        return message.replace(marker, section + marker, 1)
+    return message + section
+
+
+def _insert_market_briefing_section_before_previous_close(message: str, section_lines: list[str]) -> str:
+    marker = "\n\n이전 종가 비교"
     section = "\n\n" + "\n".join(section_lines)
     if marker in message:
         return message.replace(marker, section + marker, 1)
@@ -24530,6 +24801,9 @@ def _run_send_test_notification(
         datetime.now(ZoneInfo(config.timezone)).date(),
         config.holiday_overrides,
     )
+    is_briefing = notification_format == "briefing" and custom_message is None
+    briefing_date = next_business_day(business_date, config.holiday_overrides) if is_briefing else None
+    local_today = datetime.now(ZoneInfo(config.timezone)).date() if is_briefing else None
     already_sent = repository.has_successful_delivery(business_date, delivery_channel)
     summaries = repository.list_daily_summaries(business_date)
     if not summaries:
@@ -24549,26 +24823,50 @@ def _run_send_test_notification(
         require_target_price=require_target_price,
     )
     effective_limit = limit
-    quotes_by_stock_code = _fetch_daily_summary_quotes_by_stock_code(config, summaries, repository=repository)
+    if is_briefing and briefing_date != local_today:
+        quotes_by_stock_code = _fill_daily_summary_quote_metadata_fallbacks(repository, summaries, {})
+    else:
+        quotes_by_stock_code = _fetch_daily_summary_quotes_by_stock_code(config, summaries, repository=repository)
     if custom_message:
         messages = [custom_message]
     elif notification_format == "briefing":
+        assert briefing_date is not None
         market_reference_lines = _build_daily_briefing_market_reference_lines(repository, business_date)
         flow_reference_lines = _build_daily_briefing_flow_reference_lines(repository, business_date)
-        core_point_lines = _build_daily_briefing_core_point_lines(
+        report_core_point_lines, stored_core_point_lines = _build_daily_briefing_core_point_lines(
             repository,
             business_date,
             summaries,
             quotes_by_stock_code,
         )
+        live_market_context_lines: list[str] = []
+        if delivery_channel == PRODUCTION_DELIVERY_CHANNEL:
+            if briefing_date == local_today:
+                toss_context = _build_market_briefing_toss_priority_context(
+                    config,
+                    repository,
+                    business_date=briefing_date,
+                    candidate_rows=[],
+                )
+                live_market_context_lines = _build_daily_briefing_live_toss_market_context_lines(
+                    toss_context,
+                    business_date=briefing_date,
+                )
+            else:
+                live_market_context_lines = [
+                    "Toss 실시간 시장 참고",
+                    "- 과거 날짜 브리핑이므로 실시간 조회를 생략했습니다.",
+                ]
         messages = format_daily_briefing_messages(
             business_date,
             summaries,
-            briefing_date=next_business_day(business_date, config.holiday_overrides),
+            briefing_date=briefing_date,
             quotes_by_stock_code=quotes_by_stock_code,
             market_reference_lines=market_reference_lines,
             flow_reference_lines=flow_reference_lines,
-            core_point_lines=core_point_lines,
+            core_point_lines=report_core_point_lines,
+            stored_core_point_lines=stored_core_point_lines,
+            live_market_context_lines=live_market_context_lines,
             max_items=effective_limit or 5,
         )
     elif effective_limit is None:

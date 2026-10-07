@@ -16,13 +16,14 @@ The repository is in live-market validation and operational hardening, not initi
 
 Current contracts describe the Naver report-to-summary/Telegram pipeline, the operator-only `admin-gui`, and a GET-only, stored-data-first `web-view`. Toss 20:00 snapshots own stored current market/ETF/flow context; bounded live Top2/Top20 references are read-only API overlays and do not reorder candidates or persist values. Existing KRX rows are historical analysis/recovery data only. See [AGENTS.md](../../AGENTS.md), [surface-guide.md](surface-guide.md), [data-governance.md](data-governance.md), [market-data-runbook.md](market-data-runbook.md), and [mini-pc-runbook.md](mini-pc-runbook.md).
 
-### Local implementation status (2026-10-01)
+### Local implementation status (2026-10-07)
 
 1. Candidate and nested daily DTOs strip the internal numeric sort field and identify Toss-backed dates/scope as Toss. `TODO2-WV-CONTENT-QA` completed on 2026-09-28; see its recent-date and responsive smoke evidence below.
 2. Local Toss capture reports required-domain coverage, marks incomplete events partial/empty, preserves explicit security classification, and excludes candidate-only rows from snapshot dates. Web-view and market-briefing freshness carry partial status/missing domains; operator status warns when a healthy Toss task lacks a due capture; mini-PC preflight includes that task and no longer requires retired KRX backfill tasks. A late skipped capture warns as missing, while suppression and a prior successful capture remain non-alerting. The focused regression set recorded on 2026-09-28 passed 470 tests. Real host/date validation remains in `TODO2-DATA-FRESHNESS-LIVE`.
 3. Web-view first-load query work now bounds recent-date reads by source and reuses the already loaded Toss snapshot date. Authenticated browser/API timing remains pending in `TODO2-WV-FIRST-LOAD`.
 4. The current working tree propagates Telegram send failures, records empty-alert delivery failures, and includes intraday failures in operator health. This is local code/test evidence only; no real Telegram send, scheduler run, or operating-DB validation was performed.
 5. Retry policy for an accepted Telegram send whose response is lost remains undecided and unchanged; it is tracked in `TODO2-TG-LIVE-DRYRUN`.
+6. Lunch/pre-close briefings lead with same-day Toss context and its ranking/query timestamps. The 08:20 pre-open briefing labels prior-day report content as `전일 리포트`, saved market/flow values as `이전 종가 비교`, and adds generic Toss market-wide context only for the current briefing date with date-valid ranking/index/flow timestamps. Naver KRX quote enrichment appears as current only when its trade date matches the briefing date. Toss ranking venue inclusion for NXT remains unverified and is not labeled NXT. Mood remains unchanged.
 
 These code, test, and documentation changes are local only. No live host state or Telegram delivery is inferred from repository code or dated history.
 ## Work Todo Board
