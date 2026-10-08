@@ -112,8 +112,8 @@ Use official Toss Securities documents first:
 | <https://openapi.tossinvest.com/openapi-docs/latest/api-reference/README.md> | Markdown API reference index. |
 | <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json> | Canonical OpenAPI document for exact endpoints and schemas. |
 
-Observed official-doc facts as of `2026-10-07` (`1.2.21`, `33` paths, `36`
-operations, `90` schemas):
+Observed official-doc facts as of `2026-10-08` (`1.2.24`, `38` paths, `41`
+operations, `101` schemas):
 
 - Base server is `https://openapi.tossinvest.com`.
 - Authentication uses OAuth 2.0 Client Credentials Grant.
@@ -375,13 +375,13 @@ This is not an approval to call Toss runtime APIs. The active safety contract is
 
 | Item | Value |
 | --- | --- |
-| Snapshot date | `2026-10-07` |
-| Official spec version | `1.2.21` |
+| Snapshot date | `2026-10-08` |
+| Official spec version | `1.2.24` |
 | OpenAPI document version | `3.1.0` |
 | Base server | `https://openapi.tossinvest.com` |
-| Paths | 33 |
-| Operations | 36 |
-| Schema count | 90 |
+| Paths | 38 |
+| Operations | 41 |
+| Schema count | 101 |
 | Auth model | OAuth 2.0 Client Credentials |
 | Runtime calls made during inventory | None |
 | Keys/accounts/tokens used | None |
@@ -469,6 +469,11 @@ Default retry policy for any future lab client:
 | Market Info | `GET` | `/api/v1/market-calendar/KR` | `getKrMarketCalendar` | No | optional `date` | `MARKET_INFO` | Explicit operator date-check command only; read-only, no rule or scheduler mutation. |
 | Market Info | `GET` | `/api/v1/market-calendar/US` | `getUsMarketCalendar` | No | optional `date` | `MARKET_INFO` | Future only if US scope is approved. |
 | Ranking | `GET` | `/api/v1/rankings` | `getRankings` | No | `type`, `marketCountry`, `duration`, optional caution exclusion/count | `RANKING` | Promoted only as fixed `MARKET_TRADING_AMOUNT / KR / realtime / count=20` market context; never changes candidate priority. |
+| Sector | `GET` | `/api/v1/sectors` | `listSectors` | No | none | `SECTOR` | Document only. No runtime allowlist or surface expansion. |
+| Sector | `GET` | `/api/v1/sectors/rankings` | `getSectorRankings` | No | `type`, `marketCountry`, `duration` | `SECTOR_RANKING` | Document only. No runtime allowlist or surface expansion. |
+| Sector | `GET` | `/api/v1/sectors/{sectorId}` | `getSector` | No | path `sectorId`, `marketCountry` | `SECTOR` | Document only. No runtime allowlist or surface expansion. |
+| Sector | `GET` | `/api/v1/sectors/{sectorId}/stocks` | `getSectorStocks` | No | path `sectorId`, `marketCountry` | `SECTOR` | Document only. No runtime allowlist or surface expansion. |
+| Sector | `GET` | `/api/v1/sectors/{sectorId}/etfs` | `getSectorEtfs` | No | path `sectorId`, `marketCountry` | `SECTOR` | Document only. No runtime allowlist or surface expansion. |
 | Market Indicators | `GET` | `/api/v1/market-indicators/prices` | `getMarketIndicatorPrices` | No | `symbols` | `MARKET_INDICATOR` | Future market-context lab only. |
 | Market Indicators | `GET` | `/api/v1/market-indicators/{symbol}/candles` | `getMarketIndicatorCandles` | No | path `symbol`, `interval`, `count`, optional `before` | `MARKET_INDICATOR_CHART` | Future market-context lab only; no broad backfill. |
 | Market Indicators | `GET` | `/api/v1/market-indicators/{symbol}/investor-trading` | `getMarketIndicatorInvestorTrading` | No | path `symbol`, `interval`, `count`, optional `until` | `MARKET_INDICATOR` | Promoted only as fixed previous-business-day KOSPI/KOSDAQ aggregate context; never replaces stock-level KRX flow. |
@@ -680,6 +685,11 @@ This inventory was built from official documentation endpoints only:
 - The `2026-10-07` `1.2.21` recheck kept all `33` paths, `36` operations,
   `90` schemas, and every documented method/path/operationId unchanged. No
   runtime allowlist or surface decision changed.
+- The `2026-10-08` `1.2.24` recheck expanded the spec to `38` paths, `41`
+  operations, and `101` schemas with five Sector reads: `listSectors`,
+  `getSectorRankings`, `getSector`, `getSectorStocks`, and `getSectorEtfs`.
+  They remain documentation-only; no runtime allowlist or surface decision
+  changed.
 
 
 <!-- Merged from: docs/codex/toss-openapi-lab.md -->
@@ -713,7 +723,7 @@ invalidates the client's previously issued token.
 
 ## Official Basis
 
-Verified on `2026-10-07` against:
+Verified on `2026-10-08` against:
 
 - <https://developers.tossinvest.com/docs>
 - <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json>
@@ -723,10 +733,10 @@ Current official spec snapshot:
 | Item | Value |
 | --- | --- |
 | OpenAPI document version | `3.1.0` |
-| Official spec version | `1.2.21` |
-| Paths | `33` |
-| Operations | `36` |
-| Schemas | `90` |
+| Official spec version | `1.2.24` |
+| Paths | `38` |
+| Operations | `41` |
+| Schemas | `101` |
 
 ## Local Key Input
 
