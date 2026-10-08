@@ -4281,20 +4281,21 @@ def test_web_view_main_has_toss_market_context_panel() -> None:
     assert 'data-view-tab="rotation"' not in html
     assert "toss-priority-candles" not in html
     assert 'id="top2-daily-range"' in html
+    assert 'id="top2-indicator-series"' in html
+    assert 'id="newbby-indicator-refresh"' in html
     assert '<option value="30">30거래일</option>' in html
     assert '<option value="90" selected>90거래일</option>' in html
     assert '<option value="180">180거래일</option>' in html
-    assert "/api/toss-priority-daily-candles" in html
-    assert "function renderDailyCandleChart" in html
-    assert "daily-candle-month-boundary" in html
-    assert "수정주가" in html
-    daily_chart_body = html.split("function renderDailyCandleChart(candles", 1)[1].split(
-        "function renderDailyCandlePanels", 1
-    )[0]
-    assert 'String(item.timestamp || "").slice(0, 7)' in daily_chart_body
-    assert "month !== previousMonth" in daily_chart_body
+    assert "function renderPriorityIndicatorPriceChart" in html
+    assert "function renderPriorityIndicatorAuxChart" in html
+    assert "SMA 20/60/120/200" not in html
+    assert "const colors = {sma20:" in html
+    assert "선택 날짜 Main Top2의 수정주가 일봉과 기술 지표를 조회합니다." in html
+    assert "RSI 14" in html
+    assert "MACD 12·26·9" in html
+    assert "/api/priority-indicators?date=" in html
     assert "loadTopTwoDailyCandles" not in active_tab_body
-    assert 'loadTopTwoDailyCandles(selectedDate);' in html
+    assert 'loadNewbbyIndicatorSnapshot(selectedDate);' in html
     assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in html
     assert "moodCard.headline" in briefing_body
     assert "priorityNames" not in briefing_body
@@ -4317,8 +4318,8 @@ def test_web_view_html_labels_top_two_toss_flow_as_unstored_query_reference() ->
 
     assert "Toss 조회 수급 참고(미저장)" not in top_two_body
     assert "Toss 당일 수급" not in top_two_body
-    assert "data-toss-investor-trading" in top_two_body
-    assert '<strong>수급</strong>' in top_two_body
+    assert '<strong>당일 수급</strong>' in top_two_body
+    assert 'class="top-two-evidence-details"' in top_two_body
     assert "loadTossPriorityQuotes(tossPriorityDate)" in html
 
 
@@ -6707,8 +6708,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     main_priority_body = html.split('id="main-priority-card"', 1)[1].split(
         'class="card span-12 daily-briefing"', 1
     )[0]
-    daily_candle_query_body = html.split("async function loadTopTwoDailyCandles(date)", 1)[1].split(
-        "function renderTopTwoReviewCandidates", 1
+    indicator_query_body = html.split("async function loadNewbbyIndicatorSnapshot(date)", 1)[1].split(
+        "function tossQuoteTimeLabel", 1
     )[0]
     daily_briefing_body = html.split('class="card span-12 daily-briefing"', 1)[1].split(
         'id="main-market-context-card"', 1
@@ -6716,12 +6717,14 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert 'id="intraday-market-top-check"' in main_priority_body
     assert 'id="intraday-market-top-status"' in main_priority_body
     assert 'id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden' in main_priority_body
-    assert 'id="top2-daily-candle-status"' in main_priority_body
+    assert 'id="newbby-indicator-refresh"' in main_priority_body
+    assert 'id="newbby-indicator-status"' in main_priority_body
+    assert 'id="newbby-indicator-panel"' in main_priority_body
     assert 'class="main-priority-controls"' in main_priority_body
-    assert 'HTTP ${response.status}' in daily_candle_query_body
-    assert 'data.upstream_status' in daily_candle_query_body
-    assert 'data.provider_code' in daily_candle_query_body
-    assert "no_candles_before_top2_business_date" in daily_candle_query_body
+    assert '`/api/priority-indicators?date=${encodeURIComponent(date)}`' in indicator_query_body
+    assert 'cache: "no-store"' in indicator_query_body
+    assert "newbbyIndicatorData = data" in indicator_query_body
+    assert 'method: "POST"' not in indicator_query_body
     assert "메인은 오늘 먼저 볼 2종만 압축합니다." not in html
     assert 'class="live-source-pill"' not in main_priority_body
     assert ".live-source-pill" not in html
@@ -6775,7 +6778,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "<strong>근거</strong>" in top_two_body
     assert "<strong>확인 필요</strong>" in top_two_body
     assert 'targetRevisionLine === "최근 조정 없음"' in top_two_body
-    assert '<details class="candidate-research-focus">' in top_two_body
+    assert 'class="top-two-evidence-details"' in top_two_body
+    assert 'candidate-research-focus-body' in html
     assert "당일 Toss 20:00 저장 예정" in top_two_body
     assert "오늘 누적 뉴스" in html
     assert "topTwoCurrentEvidenceLine(item)" in top_two_body
@@ -6806,7 +6810,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "목표가 범위(일자 집계)" in top_two_body
     assert '<span>뉴스: ${esc(candidateNewsCompactLine(candidate.news_observation_badge))}</span>' in html
     assert "확인 전" in html
-    assert "candidateCompactLabel(whyItems, 3)" in html
+    assert "candidateCompactLabel(whyItems, 2)" in html
     assert "candidateCompactLabel(candidateWhyDisplayItems(layers.primary), 3)" in html
     assert "candidateCompactLabel(gapItems, 1)" not in html
     assert "candidateEvidenceLayers(item)" in html
@@ -8332,7 +8336,7 @@ def test_web_view_exposes_failed_toss_capture_without_new_snapshot_rows(tmp_path
     assert market_snapshot["snapshot_date"] is None
 
 
-def test_web_view_newbby_indicators_only_fetches_the_server_derived_top_two(tmp_path, monkeypatch) -> None:
+def test_web_view_priority_indicators_fetches_server_top_two_from_toss(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     config.ensure_runtime_dirs()
@@ -8367,134 +8371,120 @@ def test_web_view_newbby_indicators_only_fetches_the_server_derived_top_two(tmp_
     monkeypatch.setattr(
         repository,
         "get_toss_stock_universe_entry_as_of",
-        lambda code, *, as_of_date: SimpleNamespace(
-            stock_code=code,
-            market="KOSDAQ",
-            business_date=as_of_date,
-        ) if code == "035420" else None,
+        lambda code, *, as_of_date: (
+            SimpleNamespace(
+                stock_code=code,
+                market="KOSDAQ" if code == "035420" else "KOSPI",
+                business_date=as_of_date,
+            )
+            if code == "035420" or code == "005930" and as_of_date == date(2026, 7, 12)
+            else None
+        ),
     )
-    real_urlopen = urllib.request.urlopen
-    provider_requests = []
 
-    class FakeResponse:
-        status = 200
+    class FakeTossProvider:
+        configured = True
 
-        def __init__(self, body: dict[str, object]) -> None:
-            self.body = json.dumps(body).encode("utf-8")
+        def __init__(self) -> None:
+            self.calls = []
 
-        def __enter__(self):
-            return self
+        def get_priority_stock_daily_history(self, *, priority_symbols, as_of):
+            self.calls.append((priority_symbols, as_of))
+            if as_of == date(2026, 7, 12):
+                return {
+                    "configured": True,
+                    "live_fetch": True,
+                    "page_size": 200,
+                    "max_pages": 4,
+                    "fetched_at": f"{as_of.isoformat()}T16:00:00+09:00",
+                    "items": [
+                        {
+                            "symbol": "005930",
+                            "candles": [
+                                {
+                                    "timestamp": f"{as_of.isoformat()}T00:00:00+09:00",
+                                    "openPrice": "700",
+                                    "highPrice": "702",
+                                    "lowPrice": "698",
+                                    "closePrice": "701",
+                                    "volume": "100",
+                                }
+                            ],
+                            "pages_fetched": 1,
+                            "history_status": "complete",
+                        },
+                        {
+                            "symbol": "035420",
+                            "candles": [],
+                            "pages_fetched": 0,
+                            "history_status": "provider_error",
+                            "reason": "provider_http_error",
+                            "upstream_status": 429,
+                        },
+                    ],
+                }
+            items = []
+            for code in priority_symbols:
+                base_price = 700 if code == "005930" else 1200
+                candles = []
+                for offset in range(220):
+                    candle_date = date.fromordinal(as_of.toordinal() - offset)
+                    close = base_price + (220 - offset) / 10
+                    candles.append({
+                        "timestamp": f"{candle_date.isoformat()}T00:00:00+09:00",
+                        "openPrice": str(close - 1),
+                        "highPrice": str(close + 2),
+                        "lowPrice": str(close - 2),
+                        "closePrice": str(close),
+                        "volume": str(100 + offset),
+                    })
+                items.append({
+                    "symbol": code,
+                    "candles": candles,
+                    "pages_fetched": 2,
+                    "history_status": "complete",
+                })
+            return {
+                "configured": True,
+                "live_fetch": True,
+                "page_size": 200,
+                "max_pages": 4,
+                "fetched_at": f"{as_of.isoformat()}T16:00:00+09:00",
+                "items": items,
+            }
 
-        def __exit__(self, *_args) -> None:
-            return None
-
-        def read(self) -> bytes:
-            return self.body
-
-    def valid_snapshot(code: str, market: str, as_of: str) -> dict[str, object]:
-        return {
-            "schemaVersion": 1,
-            "code": code,
-            "symbol": f"{code}{'.KS' if market == 'KOSPI' else '.KQ'}",
-            "market": market,
-            "timeframe": "D",
-            "requestedAsOf": as_of,
-            "barAsOf": as_of,
-            "source": "fixture",
-            "sourceFetchedAt": "2026-07-10T16:00:00+09:00",
-            "sourceDate": as_of,
-            "barStatus": "confirmed",
-            "confirmedPolicy": "fixture policy",
-            "cacheHit": False,
-            "cacheAge": 0,
-            "stale": False,
-            "lastSuccessAt": "2026-07-10T16:00:00+09:00",
-            "dataRevision": "fixture-data-v1",
-            "calculationVersion": "indicator-snapshot-v1",
-            "sourceCalculationVersion": "cache-v1",
-            "calculationBasis": {
-                "ohlcv": "provider-adjusted daily candles",
-                "cutoff": "last candle through requestedAsOf",
-                "candlePrecision": "OHLC 4 decimals",
-                "sourceSeries": "aligned dashboard series",
-            },
-            "price": {"open": 1, "high": 2, "low": 1, "close": 2, "volume": 3},
-            "indicators": {
-                "movingAverages": {
-                    **{f"{kind}{period}": None for kind in ("sma", "ema", "wma") for period in (20, 60, 120, 200)},
-                    "status": "insufficient-data",
-                    "calculationVersion": "technical-v3",
-                    "emaSeedPolicy": "sma-period",
-                    "wmaWeights": "linear-oldest-1-newest-period",
-                },
-                "bollinger20": {"middle": None, "upper": None, "lower": None, "status": "insufficient-data", "period": 20, "multiplier": 2, "stddev": "population", "calculationVersion": "technical-v3"},
-                "donchian20": {"upper": None, "middle": None, "lower": None, "status": "insufficient-data", "period": 20, "includeCurrent": True, "calculationVersion": "technical-v3"},
-                "rsi14": {"value": None, "status": "insufficient-data", "provisional": False, "method": "wilder", "seedPolicy": "simple-average-14-changes"},
-                "atr14": {"value": None, "status": "insufficient-data", "provisional": False, "method": "wilder", "seedPolicy": "simple-average-14-true-ranges"},
-                "volume": {"barVolume": 3, "ratio20": None, "status": "partial-data", "period": 20, "includeCurrent": True},
-                "macd129": {"macd": None, "signal": None, "histogram": None, "status": "insufficient-data", "fast": 12, "slow": 26, "signalPeriod": 9, "seedPolicy": "sma-period", "calculationVersion": "technical-v3"},
-                "obv": {"value": 3, "delta5": None, "seedTime": as_of, "status": "partial-data", "delta5Status": "insufficient-data", "seedPolicy": "first-bar-zero-stop-on-gap", "calculationVersion": "technical-v3"},
-                "volumeProfile12": {"version": "vp-1", "method": "hlc3", "from": None, "to": None, "count": 1, "total": 0, "bins": [], "status": "insufficient-data"},
-            },
-            "structures": [],
-            "structureStatus": {"horizontal": "no-geometry", "flag": "disabled", "triangle": "disabled"},
-        }
-
-    def fake_newbby_open(request, *, timeout):
-        parsed = cli_module.url_parse.urlsplit(request.full_url)
-        assert parsed.path == "/api/indicator-snapshot"
-        params = cli_module.url_parse.parse_qs(parsed.query)
-        provider_requests.append((parsed.netloc, params, timeout))
-        code = params["code"][0]
-        market = params["market"][0]
-        if code == "035420" and params["asOf"][0] in {"2026-07-10", "2026-07-11"}:
-            raise urllib.error.URLError(TimeoutError("fixture timeout"))
-        provider_payload = valid_snapshot(code, market, params["asOf"][0])
-        if params["asOf"][0] == "2026-07-12":
-            provider_payload["indicators"]["rsi14"]["status"] = "BUY"
-        nested_identity_mismatches = {
-            "2026-07-13": ("code", "005930"),
-            "2026-07-14": ("market", "KOSPI"),
-            "2026-07-15": ("requestedAsOf", "2026-07-14"),
-            "2026-07-16": ("symbol", "035420.KS"),
-        }
-        if code == "035420" and params["asOf"][0] in nested_identity_mismatches:
-            field, value = nested_identity_mismatches[params["asOf"][0]]
-            provider_payload[field] = value
-        return FakeResponse(provider_payload)
-
-    monkeypatch.setattr(cli_module, "_open_newbby_indicator_request", fake_newbby_open)
+    provider = FakeTossProvider()
     server = cli_module.create_web_view_server(
         config,
         repository,
         host="127.0.0.1",
         port=0,
         limit=5,
-        newbby_base_url="http://127.0.0.1:9134",
+        toss_quote_provider=provider,
     )
+    real_urlopen = urllib.request.urlopen
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
         base_url = f"http://127.0.0.1:{server.server_port}"
         with real_urlopen(base_url + "/", timeout=5) as response:
             page = response.read().decode("utf-8")
-        assert provider_requests == []
+        assert provider.calls == []
         assert 'id="newbby-indicator-refresh"' in page
-        with real_urlopen(base_url + "/api/newbby-indicators?date=2026-07-10", timeout=5) as response:
+        assert "/api/indicator-snapshot" not in page
+        assert "시장 분류 미확인 · 6자리 코드 조회" in page
+        with real_urlopen(base_url + "/api/priority-indicators?date=2026-07-10", timeout=5) as response:
             payload = json.loads(response.read().decode("utf-8"))
-        with real_urlopen(base_url + "/api/newbby-indicators?date=2026-07-10", timeout=5):
-            assert len(provider_requests) == 2
+        with real_urlopen(base_url + "/api/priority-indicators?date=2026-07-10", timeout=5):
+            assert len(provider.calls) == 1
         try:
-            real_urlopen(
-                base_url + "/api/newbby-indicators?date=2026-07-10&symbols=999999",
-                timeout=5,
-            )
+            real_urlopen(base_url + "/api/priority-indicators?date=2026-07-10&symbols=999999", timeout=5)
         except urllib.error.HTTPError as exc:
             arbitrary_symbol_status = exc.code
         else:
             arbitrary_symbol_status = HTTPStatus.OK
         request = urllib.request.Request(
-            base_url + "/api/newbby-indicators?date=2026-07-10",
+            base_url + "/api/priority-indicators?date=2026-07-10",
             data=b"",
             method="POST",
         )
@@ -8504,14 +8494,10 @@ def test_web_view_newbby_indicators_only_fetches_the_server_derived_top_two(tmp_
             post_status = exc.code
         else:
             post_status = HTTPStatus.OK
-        with real_urlopen(base_url + "/api/newbby-indicators?date=2026-07-11", timeout=5) as response:
-            missing_market_payload = json.loads(response.read().decode("utf-8"))
-        with real_urlopen(base_url + "/api/newbby-indicators?date=2026-07-12", timeout=5) as response:
-            unsupported_schema_payload = json.loads(response.read().decode("utf-8"))
-        identity_mismatch_payloads = {}
-        for mismatch_date in ("2026-07-13", "2026-07-14", "2026-07-15", "2026-07-16"):
-            with real_urlopen(base_url + f"/api/newbby-indicators?date={mismatch_date}", timeout=5) as response:
-                identity_mismatch_payloads[mismatch_date] = json.loads(response.read().decode("utf-8"))
+        with real_urlopen(base_url + "/api/priority-indicators?date=2026-07-11", timeout=5) as response:
+            unclassified_market_payload = json.loads(response.read().decode("utf-8"))
+        with real_urlopen(base_url + "/api/priority-indicators?date=2026-07-12", timeout=5) as response:
+            invalid_provider_payload = json.loads(response.read().decode("utf-8"))
     finally:
         server.shutdown()
         server.server_close()
@@ -8519,29 +8505,42 @@ def test_web_view_newbby_indicators_only_fetches_the_server_derived_top_two(tmp_
 
     assert arbitrary_symbol_status == HTTPStatus.BAD_REQUEST
     assert post_status == HTTPStatus.METHOD_NOT_ALLOWED
+    assert payload["surface"] == "web-view-priority-indicators"
     assert payload["derived_from"] == "web_view_candidate_evidence_top_2"
-    assert payload["stock_monitor_read_only"] is True
-    assert payload["provider_may_be_called_on_cache_miss"] is True
+    assert payload["read_only"] is True
+    assert payload["live_fetch"] is True
     assert payload["writes_stock_monitor_db"] is False
-    assert payload["newbby_cache_may_update"] is True
     assert [item["stock_code"] for item in payload["items"]] == ["005930", "035420"]
-    assert payload["items"][0]["available"] is True
-    assert payload["items"][1]["reason"] == "provider_timeout"
+    assert all(item["available"] is True for item in payload["items"])
+    assert payload["items"][0]["snapshot"]["source"] == "Toss OpenAPI · 조정 일봉"
+    assert payload["items"][0]["snapshot"]["indicators"]["movingAverages"]["sma200"] is not None
+    assert payload["items"][0]["candle_count"] == 220
+    assert payload["items"][0]["pages_fetched"] == 2
+    assert payload["items"][0]["history_status"] == "complete"
+    chart_bars = payload["items"][0]["chart"]["bars"]
+    assert len(chart_bars) == 220
+    assert [item["time"] for item in chart_bars] == sorted(item["time"] for item in chart_bars)
+    assert chart_bars[-1]["sma200"] is not None
+    assert chart_bars[-1]["rsi14"] is not None
+    assert chart_bars[-1]["macd"] is not None
+    assert chart_bars[-1]["macdSignal"] is not None
+    assert chart_bars[-1]["obv"] is not None
+    assert chart_bars[-1]["atr14"] is not None
     assert payload["items"][1]["market_source"] == "stored_toss_stock_universe"
-    assert missing_market_payload["items"][0]["reason"] == "missing_toss_market_classification"
-    assert missing_market_payload["items"][1]["reason"] == "provider_timeout"
-    assert unsupported_schema_payload["items"][0]["reason"] == "missing_toss_market_classification"
-    assert unsupported_schema_payload["items"][1]["reason"] == "unsupported_schema"
-    for mismatch_payload in identity_mismatch_payloads.values():
-        assert mismatch_payload["items"][1]["available"] is False
-        assert mismatch_payload["items"][1]["reason"] == "provider_response_mismatch"
-    assert [request[1]["code"][0] for request in provider_requests] == ["005930", "035420", "035420", "035420", "035420", "035420", "035420", "035420"]
-    assert [request[1]["market"][0] for request in provider_requests] == ["KOSPI", "KOSDAQ", "KOSDAQ", "KOSDAQ", "KOSDAQ", "KOSDAQ", "KOSDAQ", "KOSDAQ"]
-    assert all(request[0] == "127.0.0.1:9134" for request in provider_requests)
-    assert all(set(request[1]) == {"code", "market", "asOf"} for request in provider_requests)
-    assert [request[1]["asOf"][0] for request in provider_requests] == ["2026-07-10", "2026-07-10", "2026-07-11", "2026-07-12", "2026-07-13", "2026-07-14", "2026-07-15", "2026-07-16"]
-    assert all(request[2] <= 25 for request in provider_requests)
-
+    assert unclassified_market_payload["items"][0]["available"] is True
+    assert unclassified_market_payload["items"][0]["market"] is None
+    assert unclassified_market_payload["items"][0]["snapshot"]["market"] == "unknown"
+    assert unclassified_market_payload["items"][0]["snapshot"]["symbol"] == "005930"
+    assert unclassified_market_payload["items"][1]["available"] is True
+    assert invalid_provider_payload["items"][0]["available"] is True
+    assert invalid_provider_payload["items"][1]["reason"] == "provider_http_error"
+    assert invalid_provider_payload["items"][1]["upstream_status"] == 429
+    assert "chart" not in invalid_provider_payload["items"][1]
+    assert provider.calls == [
+        (("005930", "035420"), business_date),
+        (("005930", "035420"), date(2026, 7, 11)),
+        (("005930", "035420"), date(2026, 7, 12)),
+    ]
 
 def test_web_view_newbby_indicator_snapshot_keeps_missing_states_and_neutral_fields() -> None:
     snapshot = {
@@ -8811,24 +8810,28 @@ def test_web_view_newbby_indicator_snapshot_keeps_missing_states_and_neutral_fie
         cli_module._web_view_public_newbby_indicator_snapshot(ready_profile_without_count)
 
     page = cli_module._render_web_view_html()
-    assert "function renderNewbbyIndicatorValue" in page
-    assert "indicatorValue == null" in page
+    assert "function renderPriorityIndicatorPriceChart" in page
+    assert "function renderPriorityIndicatorAuxChart" in page
+    assert "function renderPriorityIndicatorSummary" in page
     assert "loadNewbbyIndicatorSnapshot(selectedDate)" in page
     assert "sourceFetchedAt" in page
-    assert "cacheAge" in page
     assert "barAsOf" in page
-    assert "Newbby 캐시 경과" in page
-    assert "구조 계산 상태" in page
-    assert "sourceCalculationVersion" in page
-    assert "calculationBasis" in page
-    assert "servedAt" in page
-    assert "SMA 20봉" in page
-    assert "EMA 200봉" in page
-    assert "WMA 120봉" in page
-    assert "지원하지 않는 Newbby 지표 형식입니다." in page
-    assert "Newbby 로컬 캐시 갱신이 일어날 수 있습니다" in page
-    with pytest.raises(ValueError, match="loopback"):
-        cli_module._validate_newbby_indicator_origin("http://example.com:8734")
+    assert "SMA 20/60/120/200" not in page
+    assert "const colors = {sma20:" in page
+    assert "MACD 12·26·9" in page
+    assert "OBV · 누적 거래량" in page
+    assert "RSI 14" in page
+    assert "ATR 14" in page
+    assert 'Toss ${number(item.candle_count)}봉' in page
+    assert '차트 ${number(chartBarCount)}봉' in page
+    assert "시그널" in page
+    assert "파랑은 MACD, 주황은 시그널" in page
+    assert "차트 · 지표 확인" in page
+    assert "geometry 없음은 반대 방향의 근거로 취급하지 않습니다." in page
+    assert "삼각형 교점 값은 직선 외삽 측정값이며 목표가가 아닙니다." in page
+    assert "지원하지 않는 기술 지표 형식입니다." in page
+    assert "선택 날짜 Main Top2의 수정주가 일봉과 기술 지표를 조회합니다." in page
+    assert "/api/priority-indicators?date=" in page
 
 
 def test_web_view_newbby_v1_structure_allowlist_covers_all_analyzer_measurement_paths() -> None:
@@ -8865,48 +8868,65 @@ def test_web_view_newbby_v1_structure_allowlist_covers_all_analyzer_measurement_
     assert not cli_module._newbby_structure_measurement_name_allowed("unknown", "type")
 
 
-def test_newbby_indicator_request_does_not_follow_loopback_redirects() -> None:
-    target_requests = []
+def test_calculated_flag_and_triangle_snapshots_pass_public_indicator_allowlist() -> None:
+    as_of = date(2026, 7, 10)
 
-    class TargetHandler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            target_requests.append(self.path)
-            self.send_response(200)
-            self.end_headers()
-
-        def log_message(self, *_args) -> None:
-            return
-
-    target_server = ThreadingHTTPServer(("127.0.0.1", 0), TargetHandler)
-
-    class RedirectHandler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            self.send_response(302)
-            self.send_header("Location", f"http://127.0.0.1:{target_server.server_port}/redirect-target")
-            self.end_headers()
-
-        def log_message(self, *_args) -> None:
-            return
-
-    redirect_server = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
-    target_thread = threading.Thread(target=target_server.serve_forever, daemon=True)
-    redirect_thread = threading.Thread(target=redirect_server.serve_forever, daemon=True)
-    target_thread.start()
-    redirect_thread.start()
-    try:
-        request = urllib.request.Request(
-            f"http://127.0.0.1:{redirect_server.server_port}/api/indicator-snapshot",
-            method="GET",
+    def project(bars: list[dict[str, object]]) -> dict[str, object]:
+        return cli_module._web_view_public_newbby_indicator_snapshot(
+            cli_module.build_indicator_snapshot(
+                code="005930",
+                symbol="005930.KS",
+                market="KOSPI",
+                requested_as_of=bars[-1]["time"],
+                candles=bars,
+                source="Toss OpenAPI",
+                source_fetched_at=f"{as_of.isoformat()}T16:00:00+09:00",
+                bar_status="unknown",
+                confirmed_policy="Toss candle finality is not identified.",
+            )
         )
-        with pytest.raises(urllib.error.HTTPError) as error:
-            cli_module._open_newbby_indicator_request(request, timeout=3)
-        assert error.value.code == HTTPStatus.FOUND
-    finally:
-        redirect_server.shutdown()
-        redirect_server.server_close()
-        redirect_thread.join(timeout=3)
-        target_server.shutdown()
-        target_server.server_close()
-        target_thread.join(timeout=3)
 
-    assert target_requests == []
+    flag_bars = []
+    for index in range(40):
+        if index < 15:
+            close, high, low = 100.0, 102.0, 98.0
+        elif index < 20:
+            close = 100.0 + 6.0 * (index - 14)
+            high, low = close + 2.0, close - 2.0
+        else:
+            close = 130.0
+            high = 137.0 if index in {22, 26, 30, 34} else 134.0
+            low = 126.0 if index in {24, 28, 32, 36} else 129.0
+        flag_bars.append({
+            "time": date.fromordinal(as_of.toordinal() - (39 - index)).isoformat(),
+            "open": close,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": 100 + index,
+        })
+    flag_snapshot = project(flag_bars)
+    flag_structure = next(item for item in flag_snapshot["structures"] if item["family"] == "flag")
+    flag_type = next(item for item in flag_structure["measurements"] if item["name"] == "type")
+    assert flag_type["value"] == "channel"
+
+    highs = {18, 22, 26, 30}
+    lows = {20, 24, 28, 32}
+    triangle_bars = []
+    for index in range(35):
+        upper = 160 - 1.3 * index
+        lower = 60 + 1.3 * index
+        high = upper if index in highs else upper - 4
+        low = lower if index in lows else lower + 4
+        triangle_bars.append({
+            "time": date.fromordinal(as_of.toordinal() - 34 + index).isoformat(),
+            "open": 110.0,
+            "high": high,
+            "low": low,
+            "close": 110.0,
+            "volume": 1000 + index,
+        })
+    triangle_snapshot = project(triangle_bars)
+    triangle = next(item for item in triangle_snapshot["structures"] if item["family"] == "triangle")
+    triangle_type = next(item for item in triangle["measurements"] if item["name"] == "type")
+    assert triangle_type["value"] == "triangle"

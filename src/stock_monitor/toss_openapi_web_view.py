@@ -7,16 +7,19 @@ from datetime import date, datetime
 
 from stock_monitor.fetch.toss_openapi import (
     TossAccessToken,
+    TossOpenApiHttpError,
     TossOpenApiLabConfig,
     TossOpenApiSafetyError,
     TossReadonlyEndpoint,
     TossReadonlyResponse,
     TOSS_PRIORITY_DAILY_CANDLE_COUNTS,
+    TOSS_PRIORITY_DAILY_HISTORY_PAGE_SIZE,
     fetch_toss_readonly_endpoint,
     issue_toss_access_token,
     resolve_toss_market_context_endpoint,
-    resolve_toss_readonly_endpoint,
     resolve_toss_priority_daily_candles_endpoint,
+    resolve_toss_readonly_endpoint,
+    resolve_toss_priority_daily_history_endpoint,
     resolve_toss_stock_universe_endpoint,
     TOSS_KR_STOCK_UNIVERSE_MARKETS,
 )
@@ -349,6 +352,152 @@ class TossPriorityQuoteProvider:
                 "items": items,
                 "rate_limit": rate_limit,
                 "fetched_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "available": any(item["candles"] for item in items),
+            }
+        )
+        return payload
+
+    def get_priority_stock_daily_history(
+        self,
+        *,
+        priority_symbols: tuple[str, ...],
+        as_of: date,
+    ) -> dict[str, object]:
+        if not isinstance(as_of, date) or isinstance(as_of, datetime):
+            raise TossOpenApiSafetyError("Priority stock history as_of must be a date.")
+        if not isinstance(priority_symbols, tuple) or any(not isinstance(symbol, str) for symbol in priority_symbols):
+            raise TossOpenApiSafetyError("Priority stock history requires server-supplied stock symbols.")
+
+        symbols = tuple(dict.fromkeys(symbol.strip() for symbol in priority_symbols if symbol.strip()))
+        if len(symbols) > 2 or any(len(symbol) != 6 or not symbol.isdigit() for symbol in symbols):
+            raise TossOpenApiSafetyError("Priority stock history accepts at most two six-digit Korean stock codes.")
+
+        first_before = datetime.fromisoformat(f"{as_of.isoformat()}T23:59:59+09:00")
+        payload: dict[str, object] = {
+            "surface": "web-view-toss-priority-daily-history",
+            "read_only": True,
+            "configured": self.configured,
+            "live_fetch": False,
+            "writes_db": False,
+            "sends_telegram": False,
+            "registers_scheduler": False,
+            "affects_ordering": False,
+            "as_of": as_of.isoformat(),
+            "interval": "1d",
+            "adjusted": True,
+            "page_size": TOSS_PRIORITY_DAILY_HISTORY_PAGE_SIZE,
+            "max_pages": 4,
+            "symbols": list(symbols),
+            "items": [],
+            "rate_limit": {},
+            "cache": "disabled" if not self.configured else "empty" if not symbols else "miss",
+            "available": False,
+        }
+        if not self.configured:
+            payload["reason"] = "not_configured"
+            return payload
+        if not symbols:
+            payload["reason"] = "no_priority_symbols"
+            return payload
+
+        endpoint = resolve_toss_priority_daily_history_endpoint()
+        items: list[dict[str, object]] = []
+        rate_limit: dict[str, list[dict[str, str]]] = {}
+        started = time.perf_counter()
+        for symbol in symbols:
+            cursor = first_before
+            cursor_text = cursor.isoformat(timespec="seconds")
+            seen_cursors = {cursor_text}
+            seen_timestamps: set[str] = set()
+            candles: list[dict[str, object]] = []
+            symbol_rate_limits: list[dict[str, str]] = []
+            pages_fetched = 0
+            history_status = "complete"
+            try:
+                for page_index in range(4):
+                    response = self._fetch_endpoint_with_token_recovery(
+                        endpoint=endpoint,
+                        params={
+                            "symbol": symbol,
+                            "interval": "1d",
+                            "count": str(TOSS_PRIORITY_DAILY_HISTORY_PAGE_SIZE),
+                            "before": cursor_text,
+                            "adjusted": "true",
+                        },
+                    )
+                    pages_fetched += 1
+                    if response.rate_limit:
+                        symbol_rate_limits.append(response.rate_limit)
+                    page = response.result if isinstance(response.result, dict) else {}
+                    page_candles = page.get("candles") if isinstance(page.get("candles"), list) else []
+                    for candle in page_candles:
+                        if not isinstance(candle, dict):
+                            continue
+                        timestamp = candle.get("timestamp")
+                        if not isinstance(timestamp, str) or timestamp[:10] > as_of.isoformat() or timestamp in seen_timestamps:
+                            continue
+                        seen_timestamps.add(timestamp)
+                        candles.append(candle)
+
+                    if "nextBefore" not in page:
+                        history_status = "cursor_not_provided"
+                        break
+                    next_before = page["nextBefore"]
+                    if next_before is None:
+                        break
+                    if not isinstance(next_before, str):
+                        raise TossOpenApiSafetyError("Toss daily-history response could not advance its cursor.")
+                    try:
+                        next_cursor = datetime.fromisoformat(next_before)
+                    except ValueError as exc:
+                        raise TossOpenApiSafetyError("Toss daily-history cursor was malformed.") from exc
+                    if (
+                        next_cursor.tzinfo is None
+                        or next_cursor.utcoffset() is None
+                        or next_cursor >= cursor
+                        or next_before in seen_cursors
+                    ):
+                        raise TossOpenApiSafetyError("Toss daily-history cursor did not move backwards.")
+                    if page_index == 3:
+                        history_status = "page_limit_reached"
+                        break
+                    seen_cursors.add(next_before)
+                    cursor = next_cursor
+                    cursor_text = next_before
+
+                candles.sort(key=lambda candle: str(candle.get("timestamp") or ""), reverse=True)
+                item: dict[str, object] = {
+                    "symbol": symbol,
+                    "candles": candles[:800],
+                    "pages_fetched": pages_fetched,
+                    "history_status": history_status,
+                }
+            except Exception as exc:
+                reason = "provider_unavailable"
+                item = {
+                    "symbol": symbol,
+                    "candles": [],
+                    "pages_fetched": pages_fetched,
+                    "history_status": "provider_error",
+                }
+                if isinstance(exc, TossOpenApiHttpError):
+                    reason = "provider_http_error"
+                    item["upstream_status"] = exc.status_code
+                elif isinstance(exc, TossOpenApiSafetyError):
+                    reason = "invalid_provider_response"
+                elif isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError):
+                    reason = "provider_timeout"
+                item["reason"] = reason
+            items.append(item)
+            rate_limit[symbol] = symbol_rate_limits
+
+        payload.update(
+            {
+                "live_fetch": True,
+                "items": items,
+                "rate_limit": rate_limit,
+                "fetched_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "latency_ms": round((time.perf_counter() - started) * 1000, 1),
                 "available": any(item["candles"] for item in items),
             }
         )

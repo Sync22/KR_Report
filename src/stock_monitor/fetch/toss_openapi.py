@@ -57,6 +57,7 @@ _MARKET_INDICATOR_CANDLE_FIELDS = frozenset(
     {"timestamp", "openPrice", "highPrice", "lowPrice", "closePrice", "volume", "currency"}
 )
 TOSS_PRIORITY_DAILY_CANDLE_COUNTS = frozenset({30, 90, 180})
+TOSS_PRIORITY_DAILY_HISTORY_PAGE_SIZE = 200
 _INVESTOR_TRADING_RESPONSE_FIELDS = frozenset({"nextUntil", "records"})
 _INVESTOR_TRADING_RECORD_FIELDS = frozenset(
     {"date", "updatedAt", "individual", "foreigner", "institution", "otherCorporation"}
@@ -230,6 +231,12 @@ _PRIORITY_STOCK_DAILY_CANDLES_ENDPOINT = TossReadonlyEndpoint(
     "/api/v1/candles",
     "MARKET_DATA_CHART",
 )
+_PRIORITY_STOCK_DAILY_HISTORY_ENDPOINT = TossReadonlyEndpoint(
+    "priority-stock-daily-history",
+    "getCandles",
+    "/api/v1/candles",
+    "MARKET_DATA_CHART",
+)
 _STOCK_UNIVERSE_ENDPOINTS = tuple(
     TossReadonlyEndpoint(
         f"stock-universe-{market.lower().replace('_', '-')}",
@@ -243,7 +250,7 @@ _STOCK_UNIVERSE_ENDPOINTS = tuple(
 _FIXED_READONLY_ENDPOINTS = (
     _PROBE_READONLY_ENDPOINTS
     + _MARKET_CONTEXT_ENDPOINTS
-    + (_PRIORITY_STOCK_DAILY_CANDLES_ENDPOINT,)
+    + (_PRIORITY_STOCK_DAILY_CANDLES_ENDPOINT, _PRIORITY_STOCK_DAILY_HISTORY_ENDPOINT)
     + _STOCK_UNIVERSE_ENDPOINTS
 )
 TOSS_READONLY_ENDPOINTS: Mapping[str, TossReadonlyEndpoint] = MappingProxyType(
@@ -298,6 +305,10 @@ def resolve_toss_stock_universe_endpoint(market: str) -> TossReadonlyEndpoint:
 
 def resolve_toss_priority_daily_candles_endpoint() -> TossReadonlyEndpoint:
     return _PRIORITY_STOCK_DAILY_CANDLES_ENDPOINT
+
+
+def resolve_toss_priority_daily_history_endpoint() -> TossReadonlyEndpoint:
+    return _PRIORITY_STOCK_DAILY_HISTORY_ENDPOINT
 
 
 def build_toss_readonly_probe_plan(
@@ -435,6 +446,7 @@ def fetch_toss_readonly_endpoint(
         "market-indicator-kospi-daily-candles",
         "market-indicator-kosdaq-daily-candles",
         "priority-stock-daily-candles",
+        "priority-stock-daily-history",
         "priority-investor-trading",
     } else list
     if not isinstance(result, expected_type):
@@ -537,7 +549,7 @@ def _build_readonly_params(
 
 
 def _validate_fetch_params(endpoint: TossReadonlyEndpoint, params: dict[str, str]) -> None:
-    if endpoint.key == "priority-stock-daily-candles":
+    if endpoint.key in {"priority-stock-daily-candles", "priority-stock-daily-history"}:
         if set(params) != {"symbol", "interval", "count", "before", "adjusted"}:
             raise TossOpenApiSafetyError("Toss priority daily candles require the fixed bounded query fields.")
         if any(not isinstance(value, str) for value in params.values()):
@@ -547,17 +559,24 @@ def _validate_fetch_params(endpoint: TossReadonlyEndpoint, params: dict[str, str
             raise TossOpenApiSafetyError("Toss priority daily candles accept only six-digit Korean stock codes.")
         if params["interval"] != "1d":
             raise TossOpenApiSafetyError("Toss priority daily candles allow only the daily interval.")
-        if params["count"] not in {str(count) for count in TOSS_PRIORITY_DAILY_CANDLE_COUNTS}:
-            raise TossOpenApiSafetyError("Toss priority daily candles allow only 30, 90, or 180 rows.")
+        allowed_counts = (
+            {str(count) for count in TOSS_PRIORITY_DAILY_CANDLE_COUNTS}
+            if endpoint.key == "priority-stock-daily-candles"
+            else {str(TOSS_PRIORITY_DAILY_HISTORY_PAGE_SIZE)}
+        )
+        if params["count"] not in allowed_counts:
+            raise TossOpenApiSafetyError("Toss priority daily candle count is not allowed for this surface.")
         if params["adjusted"] != "true":
             raise TossOpenApiSafetyError("Toss priority daily candles require adjusted prices.")
         try:
             before = datetime.fromisoformat(params["before"])
         except (TypeError, ValueError):
             raise TossOpenApiSafetyError("Toss priority daily candles require an ISO timestamp with timezone.") from None
-        if before.tzinfo is None or before.utcoffset() is None or before.microsecond:
-            raise TossOpenApiSafetyError("Toss priority daily candles require a second-precision timezone-aware timestamp.")
-        if before.isoformat(timespec="seconds") != params["before"]:
+        if before.tzinfo is None or before.utcoffset() is None:
+            raise TossOpenApiSafetyError("Toss priority daily candles require a timezone-aware timestamp.")
+        if endpoint.key == "priority-stock-daily-candles" and (
+            before.microsecond or before.isoformat(timespec="seconds") != params["before"]
+        ):
             raise TossOpenApiSafetyError("Toss priority daily candles require a canonical ISO timestamp.")
         return
     if endpoint.fixed_params:
@@ -692,7 +711,7 @@ def _validate_readonly_result(
         for row in rows:
             _validate_scalar_values(row, nested_fields=frozenset(), label="market indicator price")
         return
-    if endpoint.key == "priority-stock-daily-candles":
+    if endpoint.key in {"priority-stock-daily-candles", "priority-stock-daily-history"}:
         page = _validate_object(result, allowed=_MARKET_INDICATOR_CANDLE_PAGE_FIELDS, label="priority stock daily candles")
         candles = _validate_object_list(
             page.get("candles"),

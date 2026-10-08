@@ -13,6 +13,7 @@ import stock_monitor.fetch.toss_openapi as toss_openapi_module
 from stock_monitor.fetch.toss_openapi import (
     TOSS_OPENAPI_BASE_URL,
     TOSS_READONLY_ENDPOINTS,
+    TossOpenApiHttpError,
     TossOpenApiLabConfig,
     TossOpenApiSafetyError,
     TossReadonlyEndpoint,
@@ -319,6 +320,64 @@ def test_priority_daily_candle_fetch_rejects_unbounded_or_unadjusted_queries() -
     assert calls == 0
 
 
+def test_priority_daily_history_fetch_allows_only_fixed_200_bar_page() -> None:
+    endpoint = toss_openapi_module.resolve_toss_priority_daily_history_endpoint()
+    calls = 0
+
+    def urlopen(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return FakeResponse(b'{"result":{"candles":[],"nextBefore":null}}')
+
+    response = fetch_toss_readonly_endpoint(
+        base_url=TOSS_OPENAPI_BASE_URL,
+        access_token="token-value",
+        endpoint=endpoint,
+        params={
+            "symbol": "005930",
+            "interval": "1d",
+            "count": "200",
+            "before": "2026-09-29T23:59:59+09:00",
+            "adjusted": "true",
+        },
+        timeout_seconds=1,
+        live_enabled=True,
+        urlopen=urlopen,
+    )
+
+    assert calls == 1
+    assert response.result == {"candles": [], "nextBefore": None}
+
+
+def test_priority_daily_history_fetch_accepts_fractional_iso_cursor() -> None:
+    endpoint = toss_openapi_module.resolve_toss_priority_daily_history_endpoint()
+    calls = 0
+
+    def urlopen(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return FakeResponse(b'{"result":{"candles":[],"nextBefore":null}}')
+
+    response = fetch_toss_readonly_endpoint(
+        base_url=TOSS_OPENAPI_BASE_URL,
+        access_token="token-value",
+        endpoint=endpoint,
+        params={
+            "symbol": "005930",
+            "interval": "1d",
+            "count": "200",
+            "before": "2026-09-29T00:00:00.000+09:00",
+            "adjusted": "true",
+        },
+        timeout_seconds=1,
+        live_enabled=True,
+        urlopen=urlopen,
+    )
+
+    assert calls == 1
+    assert response.result == {"candles": [], "nextBefore": None}
+
+
 def test_priority_daily_candle_provider_fetches_only_server_supplied_top_two() -> None:
     config = TossOpenApiLabConfig(
         client_id="client-value",
@@ -417,6 +476,265 @@ def test_priority_daily_candle_provider_fetches_only_server_supplied_top_two() -
         },
     ]
     assert result["rate_limit"] == {"005930": {"remaining": "10"}, "000660": {"remaining": "10"}}
+
+
+def test_priority_daily_history_pages_deduplicates_and_cuts_off_after_selected_date() -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    calls: list[dict[str, str]] = []
+    pages = [
+        {
+            "candles": [
+                {"timestamp": "2026-10-01T00:00:00+09:00", "openPrice": "1", "highPrice": "1", "lowPrice": "1", "closePrice": "1", "volume": "1"},
+                {"timestamp": "2026-09-29T00:00:00+09:00", "openPrice": "2", "highPrice": "2", "lowPrice": "2", "closePrice": "2", "volume": "2"},
+            ],
+            "nextBefore": "2026-09-29T00:00:00+09:00",
+        },
+        {
+            "candles": [
+                {"timestamp": "2026-09-29T00:00:00+09:00", "openPrice": "2", "highPrice": "2", "lowPrice": "2", "closePrice": "2", "volume": "2"},
+                {"timestamp": "2026-09-28T00:00:00+09:00", "openPrice": "3", "highPrice": "3", "lowPrice": "3", "closePrice": "3", "volume": "3"},
+            ],
+            "nextBefore": "2026-09-28T00:00:00+09:00",
+        },
+        {
+            "candles": [
+                {"timestamp": "2026-09-28T00:00:00+09:00", "openPrice": "3", "highPrice": "3", "lowPrice": "3", "closePrice": "3", "volume": "3"},
+                {"timestamp": "2026-09-27T00:00:00+09:00", "openPrice": "4", "highPrice": "4", "lowPrice": "4", "closePrice": "4", "volume": "4"},
+            ],
+            "nextBefore": "2026-09-27T00:00:00+09:00",
+        },
+        {
+            "candles": [
+                {"timestamp": "2026-09-27T00:00:00+09:00", "openPrice": "4", "highPrice": "4", "lowPrice": "4", "closePrice": "4", "volume": "4"},
+            ],
+            "nextBefore": None,
+        },
+    ]
+
+    def fetch(**kwargs):
+        calls.append(kwargs["params"])
+        return SimpleNamespace(result=pages[len(calls) - 1], rate_limit={"remaining": "10"})
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch,
+    )
+    result = provider.get_priority_stock_daily_history(priority_symbols=("005930",), as_of=date(2026, 9, 29))
+
+    assert len(calls) == 4
+    assert [call["count"] for call in calls] == ["200"] * 4
+    assert [call["before"] for call in calls] == [
+        "2026-09-29T23:59:59+09:00",
+        "2026-09-29T00:00:00+09:00",
+        "2026-09-28T00:00:00+09:00",
+        "2026-09-27T00:00:00+09:00",
+    ]
+    candles = result["items"][0]["candles"]
+    assert [candle["timestamp"] for candle in candles] == [
+        "2026-09-29T00:00:00+09:00",
+        "2026-09-28T00:00:00+09:00",
+        "2026-09-27T00:00:00+09:00",
+    ]
+    assert result["items"][0]["pages_fetched"] == 4
+    assert result["page_size"] == 200
+    assert result["max_pages"] == 4
+    assert result["available"] is True
+
+
+def test_priority_daily_history_reuses_fractional_cursor_exactly() -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    fractional_cursor = "2026-09-29T00:00:00.000+09:00"
+    calls: list[dict[str, str]] = []
+    pages = [
+        {
+            "candles": [
+                {"timestamp": fractional_cursor, "openPrice": "2", "highPrice": "2", "lowPrice": "2", "closePrice": "2", "volume": "2"}
+            ],
+            "nextBefore": fractional_cursor,
+        },
+        {
+            "candles": [
+                {"timestamp": fractional_cursor, "openPrice": "2", "highPrice": "2", "lowPrice": "2", "closePrice": "2", "volume": "2"},
+                {"timestamp": "2026-09-28T00:00:00+09:00", "openPrice": "1", "highPrice": "1", "lowPrice": "1", "closePrice": "1", "volume": "1"},
+            ],
+            "nextBefore": None,
+        },
+    ]
+
+    def fetch(**kwargs):
+        calls.append(kwargs["params"])
+        return SimpleNamespace(result=pages[len(calls) - 1], rate_limit={})
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch,
+    )
+    result = provider.get_priority_stock_daily_history(priority_symbols=("005930",), as_of=date(2026, 9, 29))
+
+    assert [call["before"] for call in calls] == ["2026-09-29T23:59:59+09:00", fractional_cursor]
+    assert [candle["timestamp"] for candle in result["items"][0]["candles"]] == [
+        fractional_cursor,
+        "2026-09-28T00:00:00+09:00",
+    ]
+
+
+def test_priority_daily_history_stops_after_four_pages() -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    calls = 0
+
+    def fetch(**kwargs):
+        nonlocal calls
+        calls += 1
+        day = 29 - calls
+        return SimpleNamespace(
+            result={
+                "candles": [
+                    {"timestamp": f"2026-09-{day:02d}T00:00:00+09:00", "openPrice": "1", "highPrice": "1", "lowPrice": "1", "closePrice": "1", "volume": "1"}
+                ],
+                "nextBefore": f"2026-09-{day:02d}T00:00:00+09:00",
+            },
+            rate_limit={},
+        )
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch,
+    )
+    result = provider.get_priority_stock_daily_history(priority_symbols=("005930",), as_of=date(2026, 9, 29))
+
+    assert calls == 4
+    assert result["items"][0]["pages_fetched"] == 4
+    assert len(result["items"][0]["candles"]) == 4
+
+
+@pytest.mark.parametrize("next_before", ["2026-09-30T00:00:00+09:00", "not-a-date"])
+def test_priority_daily_history_rejects_invalid_cursor(next_before: str) -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    calls = 0
+
+    def fetch(**_kwargs):
+        nonlocal calls
+        calls += 1
+        return SimpleNamespace(
+            result={
+                "candles": [
+                    {"timestamp": "2026-09-29T00:00:00+09:00", "openPrice": "1", "highPrice": "1", "lowPrice": "1", "closePrice": "1", "volume": "1"}
+                ],
+                "nextBefore": next_before,
+            },
+            rate_limit={},
+        )
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch,
+    )
+    result = provider.get_priority_stock_daily_history(priority_symbols=("005930",), as_of=date(2026, 9, 29))
+    assert calls == 1
+    assert result["items"][0]["candles"] == []
+    assert result["items"][0]["history_status"] == "provider_error"
+    assert result["items"][0]["reason"] == "invalid_provider_response"
+
+
+def test_priority_daily_history_accepts_optional_missing_cursor_and_marks_it() -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=lambda **_kwargs: SimpleNamespace(
+            result={
+                "candles": [
+                    {"timestamp": "2026-09-29T00:00:00+09:00", "openPrice": "1", "highPrice": "1", "lowPrice": "1", "closePrice": "1", "volume": "1"}
+                ]
+            },
+            rate_limit={},
+        ),
+    )
+
+    result = provider.get_priority_stock_daily_history(priority_symbols=("005930",), as_of=date(2026, 9, 29))
+
+    assert result["items"][0]["history_status"] == "cursor_not_provided"
+    assert len(result["items"][0]["candles"]) == 1
+
+
+def test_priority_daily_history_keeps_first_symbol_when_second_hits_http_error() -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+
+    def fetch(**kwargs):
+        if kwargs["params"]["symbol"] == "000660":
+            raise TossOpenApiHttpError("rate limited", status_code=429)
+        return SimpleNamespace(
+            result={
+                "candles": [
+                    {"timestamp": "2026-09-29T00:00:00+09:00", "openPrice": "1", "highPrice": "2", "lowPrice": "1", "closePrice": "2", "volume": "10"}
+                ],
+                "nextBefore": None,
+            },
+            rate_limit={"remaining": "9"},
+        )
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch,
+    )
+    result = provider.get_priority_stock_daily_history(
+        priority_symbols=("005930", "000660"),
+        as_of=date(2026, 9, 29),
+    )
+
+    assert result["available"] is True
+    assert result["items"][0]["symbol"] == "005930"
+    assert len(result["items"][0]["candles"]) == 1
+    assert result["items"][0]["history_status"] == "complete"
+    assert result["items"][1] == {
+        "symbol": "000660",
+        "candles": [],
+        "pages_fetched": 0,
+        "history_status": "provider_error",
+        "upstream_status": 429,
+        "reason": "provider_http_error",
+    }
 
 
 @pytest.mark.parametrize(

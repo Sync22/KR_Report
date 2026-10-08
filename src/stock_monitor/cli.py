@@ -31,9 +31,7 @@ from datetime import date, datetime, time as datetime_time, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib import error as url_error
 from urllib import parse as url_parse
-from urllib import request as url_request
 from zoneinfo import ZoneInfo
 
 import stock_monitor.web_view_server as web_view_server_module
@@ -89,10 +87,12 @@ from stock_monitor.fetch.naver_stock_theme import (
 from stock_monitor.fetch.toss_openapi import (
     TOSS_KR_STOCK_UNIVERSE_MARKETS,
     TossOpenApiLabConfig,
+    TossOpenApiSafetyError,
     build_toss_readonly_probe_plan,
     run_toss_readonly_probe,
 )
 from stock_monitor.toss_openapi_web_view import TossPriorityQuoteProvider
+from stock_monitor.web_view_indicators import build_indicator_chart_data, build_indicator_snapshot
 from stock_monitor.web_perf import (
     ApiPerfLogger,
     RequestMetrics,
@@ -175,7 +175,6 @@ ACCESS_CODE_SESSION_MAX_AGE_SECONDS = 12 * 60 * 60
 SCRAPLING_EXE_ENV_VAR = "SCRAPLING_EXE"
 WEB_VIEW_DEFAULT_HOST = "127.0.0.1"
 WEB_VIEW_DEFAULT_PORT = 87 * 100 + 80
-NEWBBY_INDICATOR_DEFAULT_BASE_URL = "http://127.0.0.1:8734"
 SCHEDULED_NOTIFY_EARLIEST_TIME = datetime_time(hour=8, minute=0)
 SCHEDULED_NOTIFY_LATEST_TIME = datetime_time(hour=8, minute=30)
 SCHEDULED_TOSS_PRIORITY_BASELINE_EARLIEST_TIME = datetime_time(hour=20, minute=5)
@@ -1767,11 +1766,6 @@ def build_parser() -> argparse.ArgumentParser:
     web_view_parser.add_argument("--port", type=int, default=WEB_VIEW_DEFAULT_PORT)
     web_view_parser.add_argument("--limit", type=int, default=20)
     web_view_parser.add_argument("--no-open", action="store_true")
-    web_view_parser.add_argument(
-        "--newbby-base-url",
-        default=NEWBBY_INDICATOR_DEFAULT_BASE_URL,
-        help="Loopback Stock-Newbby API origin used by the explicit Main indicator lookup.",
-    )
     web_view_parser.add_argument(
         "--allow-non-loopback",
         action="store_true",
@@ -25478,7 +25472,6 @@ def _run_web_view(
     limit: int,
     open_browser: bool,
     allow_non_loopback: bool,
-    newbby_base_url: str = NEWBBY_INDICATOR_DEFAULT_BASE_URL,
 ) -> int:
     server = create_web_view_server(
         config,
@@ -25487,7 +25480,6 @@ def _run_web_view(
         port=port,
         limit=limit,
         allow_non_loopback=allow_non_loopback,
-        newbby_base_url=newbby_base_url,
     )
     url = f"http://{host}:{server.server_port}/"
     print(f"Stock Monitor web view: {url}")
@@ -26564,13 +26556,11 @@ def create_web_view_server(
     limit: int,
     allow_non_loopback: bool = False,
     toss_quote_provider: TossPriorityQuoteProvider | None = None,
-    newbby_base_url: str = NEWBBY_INDICATOR_DEFAULT_BASE_URL,
 ) -> ThreadingHTTPServer:
     return web_view_server_module.create_web_view_server(
         config, repository, host=host, port=port, limit=limit, make_handler=_make_web_view_handler,
         allow_non_loopback=allow_non_loopback,
         toss_quote_provider=toss_quote_provider,
-        newbby_base_url=newbby_base_url,
     )
 
 
@@ -26700,7 +26690,6 @@ def _make_web_view_handler(
     *,
     limit: int,
     toss_quote_provider: TossPriorityQuoteProvider | None = None,
-    newbby_base_url: str = NEWBBY_INDICATOR_DEFAULT_BASE_URL,
 ) -> type[BaseHTTPRequestHandler]:
     response_cache: dict[str, tuple[float, bytes]] = {}
     response_cache_lock = threading.Lock()
@@ -26710,7 +26699,6 @@ def _make_web_view_handler(
     toss_provider = toss_quote_provider or TossPriorityQuoteProvider(
         config=TossOpenApiLabConfig.from_env(config.root_dir)
     )
-    newbby_origin = _validate_newbby_indicator_origin(newbby_base_url)
 
     def read_cached_json_payload(cache_key: str) -> dict | None:
         now_monotonic = time.monotonic()
@@ -26774,16 +26762,11 @@ def _make_web_view_handler(
     def priority_candidate_codes(business_date: date) -> tuple[str, ...]:
         return tuple(str(row.get("stock_code") or "").strip() for row in priority_candidate_rows(business_date))
 
-    def build_newbby_indicator_payload(business_date: date, candidate_rows: list[dict[str, object]]) -> dict:
+    def build_priority_indicator_payload(business_date: date, candidate_rows: list[dict[str, object]]) -> dict:
+        eligible: list[tuple[dict[str, object], dict[str, object], str, str]] = []
         items: list[dict[str, object]] = []
         for row in candidate_rows[:2]:
             code = str(row.get("stock_code") or "").strip()
-            item: dict[str, object] = {
-                "stock_code": code,
-                "stock_name": str(row.get("stock_name") or code),
-                "available": False,
-                "requested_as_of": business_date.isoformat(),
-            }
             market_reference = row.get("market_reference")
             reference = market_reference if isinstance(market_reference, dict) else {}
             market = None
@@ -26801,63 +26784,146 @@ def _make_web_view_handler(
                     market = universe_entry.market
                     market_source = "stored_toss_stock_universe"
                     market_source_date = universe_entry.business_date.isoformat()
-            item.update(
-                {
-                    "market": market,
-                    "market_source": market_source,
-                    "market_source_date": market_source_date,
-                }
-            )
-            if market is None:
-                item["reason"] = "missing_toss_market_classification"
-                items.append(item)
-                continue
+            item: dict[str, object] = {
+                "stock_code": code,
+                "stock_name": str(row.get("stock_name") or code),
+                "market": market,
+                "market_source": market_source,
+                "market_source_date": market_source_date,
+                "available": False,
+                "requested_as_of": business_date.isoformat(),
+            }
+            items.append(item)
+            eligible.append((row, item, code, market or "unknown"))
 
-            provider_url = f"{newbby_origin}/api/indicator-snapshot?{url_parse.urlencode({'code': code, 'market': market, 'asOf': business_date.isoformat()})}"
-            request = url_request.Request(provider_url, headers={"Accept": "application/json"}, method="GET")
-            try:
-                with _open_newbby_indicator_request(request, timeout=25) as response:
-                    status_code = getattr(response, "status", None)
-                    if status_code is None:
-                        status_code = response.getcode()
-                    if status_code != HTTPStatus.OK:
-                        raise ValueError("unexpected_provider_status")
-                    provider_payload = json.loads(response.read().decode("utf-8"))
-                if not isinstance(provider_payload, dict):
-                    raise ValueError("invalid_provider_payload")
-                if (
-                    str(provider_payload.get("code") or "") != code
-                    or str(provider_payload.get("market") or "") != market
-                    or str(provider_payload.get("requestedAsOf") or "") != business_date.isoformat()
-                ):
-                    item["reason"] = "provider_response_mismatch"
-                    items.append(item)
-                    continue
-            except url_error.HTTPError as exc:
-                item["reason"] = "provider_http_error"
-                item["upstream_status"] = exc.code
-                items.append(item)
+        history_payload: dict[str, object] = {}
+        provider_error = False
+        provider_error_reason = "provider_unavailable"
+        if eligible:
+            fetch_history = getattr(toss_provider, "get_priority_stock_daily_history", None)
+            if callable(fetch_history):
+                try:
+                    result = fetch_history(
+                        priority_symbols=tuple(code for _row, _item, code, _market in eligible),
+                        as_of=business_date,
+                    )
+                    if isinstance(result, dict):
+                        history_payload = result
+                    else:
+                        provider_error = True
+                except Exception as exc:
+                    provider_error = True
+                    if isinstance(exc, TossOpenApiSafetyError):
+                        provider_error_reason = "invalid_provider_response"
+                    elif isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError):
+                        provider_error_reason = "provider_timeout"
+            else:
+                provider_error = True
+
+        history_items = history_payload.get("items") if isinstance(history_payload.get("items"), list) else []
+        candles_by_symbol = {
+            str(history_item.get("symbol") or ""): history_item
+            for history_item in history_items
+            if isinstance(history_item, dict)
+        }
+        fetched_at = history_payload.get("fetched_at")
+        source_fetched_at = fetched_at if isinstance(fetched_at, str) else None
+        for _row, item, code, market in eligible:
+            history_item = candles_by_symbol.get(code)
+            if provider_error:
+                item["reason"] = provider_error_reason
                 continue
-            except (TimeoutError, url_error.URLError) as exc:
-                reason = getattr(exc, "reason", None)
-                item["reason"] = "provider_timeout" if isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError) else "provider_unavailable"
-                items.append(item)
+            if history_payload.get("configured") is False:
+                item["reason"] = "toss_not_configured"
                 continue
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
-                item["reason"] = "invalid_provider_response"
-                items.append(item)
-                continue
-            except Exception:
+            if not isinstance(history_item, dict):
                 item["reason"] = "provider_unavailable"
-                items.append(item)
+                continue
+            raw_candles = history_item.get("candles")
+            pages_fetched = history_item.get("pages_fetched")
+            history_status = history_item.get("history_status")
+            if (
+                not isinstance(raw_candles, list)
+                or type(pages_fetched) is not int
+                or not 0 <= pages_fetched <= 4
+                or not isinstance(history_status, str)
+            ):
+                item["reason"] = "invalid_provider_response"
+                continue
+            if history_status == "provider_error":
+                reason = history_item.get("reason")
+                if not isinstance(reason, str) or reason not in {"invalid_provider_response", "provider_timeout", "provider_unavailable", "provider_http_error"}:
+                    item["reason"] = "invalid_provider_response"
+                    continue
+                if reason == "provider_http_error":
+                    upstream_status = history_item.get("upstream_status")
+                    if type(upstream_status) is not int or not 100 <= upstream_status <= 599:
+                        item["reason"] = "invalid_provider_response"
+                        continue
+                    item["upstream_status"] = upstream_status
+                item["reason"] = reason
+                continue
+            if (
+                not 1 <= pages_fetched <= 4
+                or history_status not in {"complete", "cursor_not_provided", "page_limit_reached"}
+            ):
+                item["reason"] = "invalid_provider_response"
                 continue
             try:
-                public_snapshot = _web_view_public_newbby_indicator_snapshot(provider_payload)
+                candles: list[dict[str, object]] = []
+                for candle in raw_candles:
+                    if not isinstance(candle, dict):
+                        raise ValueError("invalid candle")
+                    timestamp = candle.get("timestamp")
+                    if not isinstance(timestamp, str) or len(timestamp) < 10:
+                        raise ValueError("invalid candle timestamp")
+                    candle_date = date.fromisoformat(timestamp[:10])
+                    if candle_date.isoformat() != timestamp[:10]:
+                        raise ValueError("invalid candle timestamp")
+                    candles.append(
+                        {
+                            "time": candle_date.isoformat(),
+                            "open": candle.get("openPrice"),
+                            "high": candle.get("highPrice"),
+                            "low": candle.get("lowPrice"),
+                            "close": candle.get("closePrice"),
+                            "volume": candle.get("volume"),
+                        }
+                    )
+                source_date = max((str(candle["time"]) for candle in candles), default=None)
+                symbol = f"{code}.KS" if market == "KOSPI" else f"{code}.KQ" if market == "KOSDAQ" else code
+                snapshot = build_indicator_snapshot(
+                    code=code,
+                    symbol=symbol,
+                    market=market,
+                    requested_as_of=business_date.isoformat(),
+                    candles=candles,
+                    source="Toss OpenAPI · 조정 일봉",
+                    source_fetched_at=source_fetched_at,
+                    source_date=source_date,
+                    bar_status="unknown",
+                    confirmed_policy="Toss daily candles do not identify finality; status is not inferred.",
+                    cache_hit=False,
+                    stale=False,
+                    last_success_at=source_fetched_at,
+                    source_calculation_version="toss-adjusted-daily-v1",
+                )
+                public_snapshot = _web_view_public_newbby_indicator_snapshot(snapshot)
+                chart_data = build_indicator_chart_data(candles, business_date.isoformat())
             except _UnsupportedNewbbyIndicatorSchema:
                 item["reason"] = "unsupported_schema"
-                items.append(item)
                 continue
-            expected_symbol = f"{code}{'.KS' if market == 'KOSPI' else '.KQ'}"
+            except (TypeError, ValueError, OverflowError):
+                item["reason"] = "invalid_provider_response"
+                continue
+            item.update(
+                {
+                    "candle_count": len(candles),
+                    "pages_fetched": pages_fetched,
+                    "history_status": history_status,
+                }
+            )
+            expected_symbol = f"{code}.KS" if market == "KOSPI" else f"{code}.KQ" if market == "KOSDAQ" else code
             if (
                 public_snapshot.get("code") != code
                 or public_snapshot.get("market") != market
@@ -26865,15 +26931,21 @@ def _make_web_view_handler(
                 or public_snapshot.get("symbol") != expected_symbol
             ):
                 item["reason"] = "provider_response_mismatch"
-                items.append(item)
                 continue
-            item.update({"available": True, "snapshot": public_snapshot})
-            items.append(item)
+            if not public_snapshot.get("barAsOf"):
+                item["reason"] = "no_daily_candles"
+                continue
+            item.update({"available": True, "snapshot": public_snapshot, "chart": chart_data})
+
         return {
-            "surface": "web-view-newbby-indicators",
-            "stock_monitor_read_only": True,
-            "provider_may_be_called_on_cache_miss": True,
-            "newbby_cache_may_update": True,
+            "surface": "web-view-priority-indicators",
+            "read_only": True,
+            "configured": getattr(toss_provider, "configured", False),
+            "live_fetch": history_payload.get("live_fetch", False) is True,
+            "source": "toss-openapi-adjusted-daily",
+            "adjusted": True,
+            "page_size": history_payload.get("page_size", 200),
+            "max_pages": history_payload.get("max_pages", 4),
             "writes_stock_monitor_db": False,
             "sends_telegram": False,
             "registers_scheduler": False,
@@ -27342,7 +27414,7 @@ def _make_web_view_handler(
                     content_type="application/json; charset=utf-8",
                 )
                 return
-            if path == "/api/newbby-indicators":
+            if path == "/api/priority-indicators":
                 query_params = url_parse.parse_qs(query)
                 raw_date = query_params.get("date", [None])[0]
                 if (
@@ -27362,8 +27434,8 @@ def _make_web_view_handler(
                 cache_codes = ",".join(str(row.get("stock_code") or "") for row in candidate_rows)
                 write_cached_json_response(
                     self,
-                    f"newbby-indicators:{business_date.isoformat()}:{cache_codes}",
-                    lambda: build_newbby_indicator_payload(business_date, candidate_rows),
+                    f"priority-indicators:{business_date.isoformat()}:{cache_codes}",
+                    lambda: build_priority_indicator_payload(business_date, candidate_rows),
                 )
                 return
             if path == "/api/toss-priority-quotes":
@@ -30067,21 +30139,34 @@ def _render_web_view_html() -> str:
     .main-market-context-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     .main-market-context-block { min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: #fffaf1; }
     .main-market-context-block b { display: block; margin-bottom: 6px; font-size: 13px; }
-    .newbby-indicator-candidate { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 10px; }
-    .newbby-indicator-group { border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; padding: 9px; }
-    .newbby-indicator-group h4 { margin: 0 0 8px; font-size: 13px; }
-    .newbby-indicator-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; }
-    .newbby-indicator-field { display: flex; flex-direction: column; gap: 3px; overflow-wrap: anywhere; padding: 5px; }
-    .newbby-indicator-field b { color: var(--muted); font-size: 11px; font-weight: 600; }
-    .newbby-indicator-field span { font-size: 13px; }
+    .newbby-indicator-candidate { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 14px; }
+    .newbby-indicator-candidate h3 { margin: 0 0 4px; font-size: 19px; }
+    .newbby-indicator-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; margin: 0 0 8px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .newbby-indicator-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; margin: 8px 0; }
+    .newbby-indicator-stat { min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 8px 9px; background: #fffaf1; }
+    .newbby-indicator-stat dt { color: var(--muted); font-size: 11px; font-weight: 700; line-height: 1.3; }
+    .newbby-indicator-stat dd { margin: 4px 0 0; font-size: 13px; font-weight: 750; line-height: 1.35; overflow-wrap: anywhere; }
+    .newbby-indicator-chart-wrap { border: 1px solid var(--line); border-radius: 12px; padding: 8px; background: #fff; }
+    .newbby-indicator-chart { display: block; width: 100%; height: auto; min-height: 190px; }
+    .newbby-indicator-aux-chart { display: block; width: 100%; height: auto; min-height: 90px; margin-top: 8px; border-top: 1px solid var(--line); }
+    .newbby-indicator-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 6px 2px 0; color: var(--muted); font-size: 12px; }
+    .newbby-indicator-legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .newbby-indicator-legend i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; }
+    .newbby-indicator-details { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+    .newbby-indicator-details summary { color: var(--muted); cursor: pointer; font-size: 13px; }
+    .newbby-indicator-measurements { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 4px 12px; padding: 8px 0; }
+    .newbby-indicator-measurements div { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
     .top-two-candidates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 4px; }
     .top-two-entry { min-width: 0; }
     .top-two-entry .top-two-card { width: 100%; }
-    .candidate-research-focus { margin: 6px 0 0; border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; background: #fff; font-size: 12px; overflow-wrap: anywhere; }
-    .candidate-research-focus > summary { color: var(--muted); cursor: pointer; font-weight: 700; }
-    .candidate-research-focus[open] > summary { margin-bottom: 6px; }
-    .candidate-research-focus p { margin: 6px 0; }
-    .candidate-research-focus a { color: var(--accent); text-decoration: underline; }
+    .top-two-why { display: block; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .top-two-evidence-details { margin-top: 6px; border: 1px solid var(--line); border-radius: 10px; padding: 7px 9px; background: #fff; color: var(--muted); font-size: 11px; }
+    .top-two-evidence-details > summary { cursor: pointer; font-weight: 750; line-height: 1.35; }
+    .top-two-evidence-details[open] > summary { margin-bottom: 7px; }
+    .top-two-evidence-details-body { display: grid; gap: 6px; color: var(--ink); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+    .top-two-detail-line { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 6px; }
+    .candidate-research-focus-body p { margin: 4px 0; }
+    .candidate-research-focus-body a { color: var(--accent); text-decoration: underline; }
     .top-two-card { border: 1px solid var(--line); border-radius: 16px; padding: 12px; background: #fff; color: inherit; cursor: pointer; text-align: left; font: inherit; }
     .top-two-card b { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 5px; color: var(--accent); font-size: 14px; }
     .top-two-card .status-pill { font-size: 11px; padding: 2px 7px; }
@@ -30256,6 +30341,7 @@ def _render_web_view_html() -> str:
       .main-priority-controls { grid-template-columns: 1fr; }
       .daily-candle-grid { grid-template-columns: 1fr; }
       .top-two-candidates { grid-template-columns: 1fr; }
+      .newbby-indicator-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .rotation-evidence { grid-template-columns: 1fr; }
       .candidate-evidence-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .candidate-quality-grid { grid-template-columns: 1fr; }
@@ -30341,22 +30427,33 @@ def _render_web_view_html() -> str:
             <button id="toss-priority-refresh" class="ghost-button" type="button" disabled>Toss 현재가 · 수급</button>
             <button id="intraday-market-top-check" class="ghost-button" type="button" disabled>거래대금 겹침</button>
           </div>
-          <div class="main-priority-control-group" aria-label="일봉 차트 기간과 조회">
-            <label class="daily-candle-range" for="top2-daily-range">일봉 기간
-              <select id="top2-daily-range" aria-label="Top2 일봉 기간">
+          <div class="main-priority-control-group" aria-label="차트 범위와 보조 지표">
+            <label class="daily-candle-range" for="top2-daily-range">일봉 범위
+              <select id="top2-daily-range" aria-label="Top2 일봉 범위">
                 <option value="30">30거래일</option>
                 <option value="90" selected>90거래일</option>
                 <option value="180">180거래일</option>
               </select>
             </label>
-            <button id="top2-daily-candle-refresh" class="ghost-button" type="button" disabled>차트 확인</button>
+            <label class="daily-candle-range" for="top2-indicator-series">보조 지표
+              <select id="top2-indicator-series" aria-label="차트 보조 지표">
+                <option value="obv" selected>OBV</option>
+                <option value="rsi14">RSI 14</option>
+                <option value="macd">MACD 12·26·9</option>
+                <option value="atr14">ATR 14</option>
+                <option value="volume">거래량</option>
+                <option value="hidden">숨김</option>
+              </select>
+            </label>
+            <button id="newbby-indicator-refresh" class="ghost-button" type="button" disabled>차트 · 지표 확인</button>
           </div>
         </div>
         <div id="main-priority-rows" class="main-priority-list"><span class="muted">날짜를 선택하세요.</span></div>
+        <p class="brief">선택 날짜 Main Top2의 수정주가 일봉과 기술 지표를 조회합니다.</p>
         <p class="briefing-live-status" id="intraday-market-top-status">장중 거래대금 겹침 결과가 여기에 표시됩니다.</p>
         <div id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden></div>
-        <p class="main-priority-note" id="top2-daily-candle-status">수정주가 · 선택한 Top2 기준일까지 · 월 경계 표시</p>
-        <div id="top2-daily-candle-panels" class="daily-candle-grid" hidden></div>
+        <p id="newbby-indicator-status" class="muted" aria-live="polite">날짜와 Main Top2를 불러온 뒤 차트 · 지표 확인을 누르세요.</p>
+        <div id="newbby-indicator-panel" class="newbby-indicator-panel" aria-live="polite" hidden></div>
       </div>
 
       <div class="card span-12 daily-briefing" data-view-panel="main">
@@ -30386,16 +30483,6 @@ def _render_web_view_html() -> str:
         <p class="brief">지수는 조회 시각, 수급은 기준일을 함께 표시합니다.</p>
         <p id="toss-market-context-status" class="muted" aria-live="polite">날짜를 선택하고 버튼을 눌러 조회하세요.</p>
         <div id="toss-market-context" class="intraday-overlap-panel" aria-live="polite" hidden></div>
-      </div>
-
-      <div class="card span-12 main-market-card" id="main-newbby-indicator-card" data-view-panel="main">
-        <div class="section-header">
-          <h2>Top2 기술 지표 참고</h2>
-          <button id="newbby-indicator-refresh" class="ghost-button" type="button" disabled>기술 지표 확인</button>
-        </div>
-        <p class="brief">버튼을 눌렀을 때 선택 날짜 Main Top2만 조회합니다. Newbby 캐시가 비어 있거나 만료되면 Newbby 제공자 조회와 Newbby 로컬 캐시 갱신이 일어날 수 있습니다. Stock Monitor 저장, 후보 순서, 스케줄러, Telegram에는 반영하지 않습니다.</p>
-        <p id="newbby-indicator-status" class="muted" aria-live="polite">날짜를 선택하고 버튼을 눌러 조회하세요.</p>
-        <div id="newbby-indicator-panel" class="newbby-indicator-panel" aria-live="polite" hidden></div>
       </div>
 
       <div class="card span-12" id="candidate-evidence-card" data-view-panel="watch" hidden>
@@ -30672,10 +30759,7 @@ def _render_web_view_html() -> str:
     let tossMarketContextLoading = false;
     let newbbyIndicatorRequestId = 0;
     let newbbyIndicatorLoading = false;
-    let dailyCandleRequestId = 0;
-    let dailyCandleLoading = false;
-    let dailyCandleBySymbol = new Map();
-    let dailyCandleLoadedKey = null;
+    let newbbyIndicatorData = null;
     let mainPriorityCohort = { date: null, codes: [] };
     let showSingleReportStocks = false;
     let dailyStockVisibleLimit = DAILY_STOCK_DEFAULT_LIMIT;
@@ -31040,15 +31124,9 @@ def _render_web_view_html() -> str:
       document.getElementById("newbby-indicator-panel").hidden = true;
       document.getElementById("newbby-indicator-panel").innerHTML = "";
       document.getElementById("newbby-indicator-status").textContent = "날짜를 선택하고 버튼을 눌러 조회하세요.";
+      newbbyIndicatorData = null;
+      updateNewbbyIndicatorRefreshButton();
       tossPriorityRows = [];
-      dailyCandleRequestId += 1;
-      dailyCandleLoading = false;
-      dailyCandleBySymbol = new Map();
-      dailyCandleLoadedKey = null;
-      document.getElementById("top2-daily-candle-panels").innerHTML = "";
-      document.getElementById("top2-daily-candle-panels").hidden = true;
-      document.getElementById("top2-daily-candle-status").textContent = "수정주가 · 선택한 Top2 기준일까지 · 월 경계 표시";
-      updateDailyCandleButton();
       updateTossMarketRefreshButton();
       selectedStockCode = null;
       selectedStockLabel = null;
@@ -32149,15 +32227,14 @@ def _render_web_view_html() -> str:
         tossPriorityQuoteByCode = new Map();
         tossPriorityInvestorTradingByCode = new Map();
         tossPriorityDate = evidence?.business_date || selectedDate;
-        dailyCandleRequestId += 1;
-        dailyCandleLoading = false;
-        dailyCandleBySymbol = new Map();
-        dailyCandleLoadedKey = null;
-        document.getElementById("top2-daily-candle-panels").innerHTML = "";
-        document.getElementById("top2-daily-candle-panels").hidden = true;
-        document.getElementById("top2-daily-candle-status").textContent = "이 날짜의 우선 확인 종목이 없어 일봉을 조회할 수 없습니다.";
+        newbbyIndicatorRequestId += 1;
+        newbbyIndicatorLoading = false;
+        newbbyIndicatorData = null;
+        document.getElementById("newbby-indicator-panel").innerHTML = "";
+        document.getElementById("newbby-indicator-panel").hidden = true;
+        document.getElementById("newbby-indicator-status").textContent = "이 날짜의 Main Top2 후보가 없습니다.";
         updateTossPriorityRefreshButton();
-        updateDailyCandleButton();
+        updateNewbbyIndicatorRefreshButton();
         updateTossMarketRefreshButton();
         refreshViewPanels();
         return;
@@ -32171,17 +32248,16 @@ def _render_web_view_html() -> str:
         tossPriorityCohortKey = nextTossCohortKey;
         tossPriorityQuoteByCode = new Map();
         tossPriorityInvestorTradingByCode = new Map();
-        dailyCandleRequestId += 1;
-        dailyCandleLoading = false;
-        dailyCandleBySymbol = new Map();
-        dailyCandleLoadedKey = null;
-        document.getElementById("top2-daily-candle-panels").innerHTML = "";
-        document.getElementById("top2-daily-candle-panels").hidden = true;
-        document.getElementById("top2-daily-candle-status").textContent = "수정주가 · 선택한 Top2 기준일까지 · 월 경계 표시";
+        newbbyIndicatorRequestId += 1;
+        newbbyIndicatorLoading = false;
+        newbbyIndicatorData = null;
+        document.getElementById("newbby-indicator-panel").innerHTML = "";
+        document.getElementById("newbby-indicator-panel").hidden = true;
+        document.getElementById("newbby-indicator-status").textContent = "Main Top2 후보가 바뀌었습니다. 차트 · 지표 확인을 눌러 조회하세요.";
       }
       document.getElementById("main-priority-rows").innerHTML = renderTopTwoReviewCandidates(priorityRows);
       updateTossPriorityRefreshButton();
-      updateDailyCandleButton();
+      updateNewbbyIndicatorRefreshButton();
       updateTossMarketRefreshButton();
       if (tossCohortChanged) {
         loadTossPriorityQuotes(tossPriorityDate);
@@ -32217,171 +32293,6 @@ def _render_web_view_html() -> str:
       await Promise.all(requests);
     }
 
-    function dailyCandleSelectedCount() {
-      const count = Number(document.getElementById("top2-daily-range")?.value || 90);
-      return [30, 90, 180].includes(count) ? count : 90;
-    }
-
-    function dailyCandleKey(date, count = dailyCandleSelectedCount()) {
-      return `${date || ""}:${count}:${tossPriorityRows.map((row) => String(row?.stock_code || "")).join(",")}`;
-    }
-
-    function updateDailyCandleButton() {
-      const button = document.getElementById("top2-daily-candle-refresh");
-      if (!button) return;
-      button.disabled = !validDate(selectedDate) || !tossPriorityRows.length || dailyCandleLoading;
-      button.textContent = dailyCandleLoading
-        ? "일봉 조회 중"
-        : dailyCandleLoadedKey === dailyCandleKey(selectedDate) ? "일봉 차트 새로 확인" : "일봉 차트 확인";
-    }
-
-    function renderDailyCandleChart(candles, stockName, selectedDateText, requestedCount, fetchedAt) {
-      const points = (Array.isArray(candles) ? candles : []).slice(0, requestedCount).filter((item) => {
-        const open = Number(item?.openPrice);
-        const high = Number(item?.highPrice);
-        const low = Number(item?.lowPrice);
-        const close = Number(item?.closePrice);
-        const volume = Number(item?.volume);
-        return [open, high, low, close, volume].every(Number.isFinite)
-          && low > 0 && volume >= 0 && low <= Math.min(open, close) && high >= Math.max(open, close);
-      }).reverse();
-      if (!points.length) return '<div class="daily-candle-card"><p class="muted">표시할 일봉 데이터가 없습니다.</p></div>';
-      const highs = points.map((item) => Number(item.highPrice));
-      const lows = points.map((item) => Number(item.lowPrice));
-      const maxPrice = Math.max(...highs);
-      const minPrice = Math.min(...lows);
-      const priceRange = maxPrice - minPrice || Math.max(Math.abs(maxPrice) * 0.001, 1);
-      const maxVolume = Math.max(...points.map((item) => Number(item.volume)), 1);
-      const width = 1000;
-      const height = 330;
-      const left = 62;
-      const right = 10;
-      const priceTop = 24;
-      const priceBottom = 225;
-      const volumeTop = 265;
-      const volumeBottom = 310;
-      const plotWidth = width - left - right;
-      const slotWidth = plotWidth / points.length;
-      const x = (index) => left + ((index + 0.5) * slotWidth);
-      const y = (value) => priceTop + ((maxPrice - value) / priceRange) * (priceBottom - priceTop);
-      const barWidth = Math.max(1, Math.min(8, slotWidth * 0.62));
-      let previousMonth = "";
-      const monthMarkers = [];
-      const candleSvg = points.map((item, index) => {
-        const open = Number(item.openPrice);
-        const high = Number(item.highPrice);
-        const low = Number(item.lowPrice);
-        const close = Number(item.closePrice);
-        const volume = Number(item.volume);
-        const month = String(item.timestamp || "").slice(0, 7);
-        const candleX = x(index);
-        if (month && month !== previousMonth) {
-          const boundaryX = candleX - slotWidth / 2;
-          monthMarkers.push(`<line class="daily-candle-month-boundary" x1="${boundaryX.toFixed(2)}" y1="${priceTop}" x2="${boundaryX.toFixed(2)}" y2="${volumeBottom}"/>`);
-          monthMarkers.push(`<text class="daily-candle-month-label" x="${Math.min(boundaryX + 3, width - 52).toFixed(2)}" y="15">${esc(month)}</text>`);
-          previousMonth = month;
-        }
-        const color = close > open ? "up" : close < open ? "down" : "flat";
-        const bodyTop = Math.min(y(open), y(close));
-        const bodyHeight = Math.max(Math.abs(y(open) - y(close)), 1);
-        const volumeHeight = (volume / maxVolume) * (volumeBottom - volumeTop);
-        return `<g class="daily-candle-${color}"><line x1="${candleX.toFixed(2)}" y1="${y(high).toFixed(2)}" x2="${candleX.toFixed(2)}" y2="${y(low).toFixed(2)}" stroke-width="1"/><rect x="${(candleX - barWidth / 2).toFixed(2)}" y="${bodyTop.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${bodyHeight.toFixed(2)}"/><rect class="daily-candle-volume" x="${(candleX - barWidth / 2).toFixed(2)}" y="${(volumeBottom - volumeHeight).toFixed(2)}" width="${barWidth.toFixed(2)}" height="${volumeHeight.toFixed(2)}"/></g>`;
-      }).join("");
-      const formatPrice = (value) => Number(value).toLocaleString("ko-KR", { maximumFractionDigits: 2 });
-      const firstDate = String(points[0]?.timestamp || "").slice(0, 10);
-      const lastDate = String(points[points.length - 1]?.timestamp || "").slice(0, 10);
-      const responseTime = fetchedAt ? String(fetchedAt).replace("T", " ").slice(0, 16) : "";
-      return `<div class="daily-candle-card">
-        <h3>${esc(stockName || "종목")}</h3>
-        <p class="daily-candle-meta">${number(points.length)}거래일 · 수정주가 · ${esc(firstDate)}–${esc(lastDate)} · 기준 ${esc(selectedDateText)}${responseTime ? ` · 조회 ${esc(responseTime)}` : ""}</p>
-        <svg class="daily-candle-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(stockName || "종목")} 일봉 캔들, 거래량 및 월 경계">
-          ${monthMarkers.join("")}
-          <line class="daily-candle-axis" x1="${left}" y1="${priceBottom}" x2="${width - right}" y2="${priceBottom}"/>
-          <line class="daily-candle-axis" x1="${left}" y1="${volumeBottom}" x2="${width - right}" y2="${volumeBottom}"/>
-          <text x="2" y="${priceTop + 8}" font-size="11" fill="currentColor">${esc(formatPrice(maxPrice))}</text>
-          <text x="2" y="${priceBottom}" font-size="11" fill="currentColor">${esc(formatPrice(minPrice))}</text>
-          ${candleSvg}
-        </svg>
-      </div>`;
-    }
-
-    function renderDailyCandlePanels() {
-      const panel = document.getElementById("top2-daily-candle-panels");
-      const count = dailyCandleSelectedCount();
-      const rows = (Array.isArray(tossPriorityRows) ? tossPriorityRows : []).slice(0, 2);
-      const rendered = rows.map((row) => {
-        const code = String(row?.stock_code || "");
-        const data = dailyCandleBySymbol.get(code);
-        return renderDailyCandleChart(
-          data?.candles,
-          `${row?.stock_name || code} (${code})`,
-          selectedDate,
-          count,
-          data?.fetched_at,
-        );
-      });
-      panel.innerHTML = rendered.join("");
-      panel.hidden = rendered.length === 0;
-    }
-
-    async function loadTopTwoDailyCandles(date) {
-      if (!validDate(date) || !tossPriorityRows.length) return;
-      const count = dailyCandleSelectedCount();
-      const requestId = ++dailyCandleRequestId;
-      dailyCandleLoading = true;
-      dailyCandleBySymbol = new Map();
-      dailyCandleLoadedKey = null;
-      document.getElementById("top2-daily-candle-panels").innerHTML = "";
-      document.getElementById("top2-daily-candle-panels").hidden = true;
-      updateDailyCandleButton();
-      document.getElementById("top2-daily-candle-status").textContent = `Top2 기준일 ${date}까지 ${number(count)}거래일 수정주가 일봉을 조회 중입니다.`;
-      try {
-        const response = await fetch(`/api/toss-priority-daily-candles?date=${encodeURIComponent(date)}&days=${count}`, { cache: "no-store" });
-        const data = await response.json();
-        if (requestId !== dailyCandleRequestId || date !== selectedDate) return;
-        if (!response.ok) {
-          const upstreamStatus = Number(data.upstream_status);
-          const statusLabel = Number.isInteger(upstreamStatus) && upstreamStatus >= 100 && upstreamStatus <= 599
-            ? `Toss HTTP ${upstreamStatus}`
-            : `HTTP ${response.status}`;
-          const providerCode = typeof data.provider_code === "string" ? ` · ${data.provider_code}` : "";
-          const message = data.reason === "no_candles_before_top2_business_date"
-            ? "선택한 기준일까지 일봉 데이터가 없습니다."
-            : data.reason === "provider_unavailable"
-              ? "Toss 일봉 조회 공급자가 준비되지 않았습니다."
-              : data.reason === "upstream_unavailable"
-                ? `Toss 일봉 조회 실패 (${statusLabel}${providerCode}).`
-                : `일봉 조회 실패 (HTTP ${response.status}).`;
-          document.getElementById("top2-daily-candle-status").textContent = message;
-          return;
-        }
-        if (data.configured === false) {
-          document.getElementById("top2-daily-candle-status").textContent = "Toss OpenAPI 실시간 조회가 설정되어 있지 않습니다.";
-          return;
-        }
-        const items = Array.isArray(data.items) ? data.items : [];
-        dailyCandleBySymbol = new Map(items.map((item) => [String(item?.symbol || ""), {
-          candles: Array.isArray(item?.candles) ? item.candles : [],
-          fetched_at: item?.fetched_at || data.fetched_at,
-        }]));
-        dailyCandleLoadedKey = dailyCandleKey(date, count);
-        renderDailyCandlePanels();
-        const receivedCount = [...dailyCandleBySymbol.values()].reduce((total, item) => total + item.candles.length, 0);
-        document.getElementById("top2-daily-candle-status").textContent = receivedCount
-          ? ""
-          : "선택한 Top2의 기간 일봉 데이터가 없습니다.";
-      } catch (_error) {
-        if (requestId === dailyCandleRequestId) {
-          document.getElementById("top2-daily-candle-status").textContent = "일봉 요청 중 연결 오류가 발생했습니다. 다시 요청해 주세요.";
-        }
-      } finally {
-        if (requestId === dailyCandleRequestId) {
-          dailyCandleLoading = false;
-          updateDailyCandleButton();
-        }
-      }
-    }
-
     function renderTopTwoReviewCandidates(rows) {
       const picked = (Array.isArray(rows) ? rows : []).filter((item) => item?.selected !== false).slice(0, 2);
       if (!picked.length) return "";
@@ -32389,7 +32300,7 @@ def _render_web_view_html() -> str:
         const layers = candidateEvidenceLayers(item);
         const whyItems = candidateWhyDisplayItems(layers.primary);
         const why = whyItems.length
-          ? candidateCompactLabel(whyItems, 3)
+          ? candidateCompactLabel(whyItems, 2)
           : "리포트 저장 근거";
         const tossQuote = tossPriorityQuoteByCode.get(String(item?.stock_code || ""));
         const tossInvestorTrading = tossPriorityInvestorTradingByCode.get(String(item?.stock_code || ""));
@@ -32405,14 +32316,26 @@ def _render_web_view_html() -> str:
         const targetRevisionBlock = targetRevisionLine === "최근 조정 없음"
           ? ""
           : `<span class="target-revision-line">${esc(targetRevisionLine)}</span>`;
+        const flowBlock = tossInvestorTrading
+          ? `<div class="top-two-detail-line"><strong>당일 수급</strong><span>${esc(tossInvestorTrading)}</span></div>`
+          : "";
+        const researchItems = Array.isArray(item?.research_focus?.items) ? item.research_focus.items.slice(0, 3) : [];
+        const researchBlock = renderCandidateResearchFocus(item.research_focus);
+        const details = [currentEvidenceBlock, flowBlock, missingEvidenceBlock, targetRevisionBlock, researchBlock].filter(Boolean);
+        const detailSummary = [
+          currentEvidenceBlock ? "근거" : "",
+          flowBlock ? "수급" : "",
+          missingEvidenceBlock ? "확인 공백" : "",
+          targetRevisionBlock ? "목표가 변경" : "",
+          researchItems.length ? `뉴스 검색 ${number(researchItems.length)}` : "",
+        ].filter(Boolean).join(" · ") || "세부 정보";
+        const detailDisclosure = details.length
+          ? `<details class="top-two-evidence-details"><summary>${esc(detailSummary)}</summary><div class="top-two-evidence-details-body">${details.join("")}</div></details>`
+          : "";
         return `<div class="top-two-entry"><button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote-context="main" data-toss-quote="${esc(item.stock_code || "")}">${esc(tossQuote || "Toss 현재가 확인 중")}</span></b>
-          <span class="muted">${esc(why)}</span>
-          ${currentEvidenceBlock}
-          <span class="top-two-evidence-line"><strong>수급</strong><span class="top-two-evidence-text priority-toss-investor-trading muted" data-toss-investor-trading="${esc(item.stock_code || "")}">${esc(tossInvestorTrading || "확인 중")}</span></span>
-          ${missingEvidenceBlock}
-          ${targetRevisionBlock}
-        </button>${renderCandidateResearchFocus(item.research_focus)}</div>`;
+          <span class="top-two-why">${esc(why)}</span>
+        </button>${detailDisclosure}</div>`;
       }).join("")}</section>`;
       return `${cards}${renderTopTwoCloseReassessment(currentCandidateEvidenceData?.close_reassessment)}`;
     }
@@ -32420,11 +32343,11 @@ def _render_web_view_html() -> str:
     function renderCandidateResearchFocus(focus) {
       const items = (Array.isArray(focus?.items) ? focus.items : []).slice(0, 3);
       if (!items.length) return "";
-      return `<details class="candidate-research-focus"><summary>리포트 주제 · 뉴스 검색 ${number(items.length)}</summary>${items.map((item) => {
+      return `<div class="candidate-research-focus-body">${items.map((item) => {
         const query = String(item?.query || "");
         const href = "https://search.naver.com/search.naver?where=news&query=" + encodeURIComponent(query);
         return `<p><span>${esc(item.source_kind || "리포트")} · ${esc(item.topic || item.source_title || "")}</span> <a href="${esc(href)}" target="_blank" rel="noopener noreferrer">뉴스 검색</a></p>`;
-      }).join("")}</details>`;
+      }).join("")}</div>`;
     }
 
     function renderTopTwoCloseReassessment(reassessment) {
@@ -32803,180 +32726,362 @@ def _render_web_view_html() -> str:
     function updateNewbbyIndicatorRefreshButton() {
       const button = document.getElementById("newbby-indicator-refresh");
       if (!button) return;
-      button.disabled = !validDate(selectedDate) || newbbyIndicatorLoading;
-      button.textContent = newbbyIndicatorLoading ? "기술 지표 조회 중" : "기술 지표 확인";
+      button.disabled = !validDate(selectedDate) || !tossPriorityRows.length || tossPriorityDate !== selectedDate || newbbyIndicatorLoading;
+      button.textContent = newbbyIndicatorLoading ? "Toss 일봉 조회 중" : "차트 · 지표 확인";
     }
 
-    function newbbyIndicatorFieldLabel(key) {
-      const labels = {
-        schemaVersion: "응답 형식",
-        code: "종목 코드",
-        symbol: "종목 기호",
-        market: "시장",
-        timeframe: "시간 단위",
-        requestedAsOf: "요청 기준일",
-        barAsOf: "실제 봉 기준일",
-        source: "출처",
-        sourceFetchedAt: "출처 조회 시각",
-        sourceDate: "출처 기준일",
-        barStatus: "봉 상태",
-        confirmedPolicy: "봉 확인 기준",
-        cacheHit: "Newbby 캐시 사용",
-        cacheAge: "Newbby 캐시 경과",
-        stale: "Newbby 캐시 오래됨",
-        lastSuccessAt: "Newbby 최근 성공 시각",
-        dataRevision: "자료 버전",
-        calculationVersion: "계산 버전",
-        sourceCalculationVersion: "원천 계산 버전",
-        servedAt: "Newbby 응답 시각",
-        calculationBasis: "계산 기준",
-        ohlcv: "가격·거래량 원천",
-        cutoff: "계산 기준 봉",
-        candlePrecision: "봉 정밀도",
-        sourceSeries: "원천 지표 계열",
-        price: "일봉 가격 · 거래량",
-        open: "시가",
-        high: "고가",
-        low: "저가",
-        close: "종가",
-        volume: "거래량",
-        indicators: "지표",
-        movingAverages: "이동평균",
-        sma20: "SMA 20봉",
-        sma60: "SMA 60봉",
-        sma120: "SMA 120봉",
-        sma200: "SMA 200봉",
-        ema20: "EMA 20봉",
-        ema60: "EMA 60봉",
-        ema120: "EMA 120봉",
-        ema200: "EMA 200봉",
-        wma20: "WMA 20봉",
-        wma60: "WMA 60봉",
-        wma120: "WMA 120봉",
-        wma200: "WMA 200봉",
-        bollinger20: "볼린저 밴드 20",
-        donchian20: "돈치안 채널 20",
-        rsi14: "RSI 14",
-        atr14: "ATR 14",
-        macd129: "MACD 12/26/9",
-        obv: "OBV",
-        volumeProfile12: "거래량 프로파일 12구간",
-        emaSeedPolicy: "EMA 초기값 기준",
-        wmaWeights: "WMA 가중치 기준",
-        period: "기간",
-        multiplier: "표준편차 배수",
-        stddev: "표준편차 방식",
-        includeCurrent: "현재 봉 포함",
-        method: "계산 방식",
-        seedPolicy: "초기값 기준",
-        fast: "MACD 단기 기간",
-        slow: "MACD 장기 기간",
-        signalPeriod: "MACD 시그널 기간",
-        delta5Status: "5봉 OBV 변화 상태",
-        binCount: "가격 구간 수",
-        structureStatus: "구조 계산 상태",
-        horizontal: "수평 구조",
-        flag: "플래그 구조",
-        triangle: "삼각 구조",
-        middle: "중심값",
-        upper: "상단값",
-        lower: "하단값",
-        value: "값",
-        barVolume: "해당 봉 거래량",
-        ratio20: "20봉 거래량 비율",
-        macd: "MACD 값",
-        signal: "MACD 시그널 값",
-        histogram: "MACD 히스토그램",
-        delta5: "5봉 OBV 변화",
-        seedTime: "OBV 시작 시각",
-        version: "버전",
-        from: "시작 기준일",
-        to: "끝 기준일",
-        count: "구간 수",
-        total: "전체 거래량",
-        bins: "가격 구간",
-        share: "비중",
-        peak: "최대 구간",
-        structures: "중립적 차트 구조 측정값",
-        family: "구조 유형",
-        status: "상태",
-        barTime: "봉 시각",
-        measurements: "측정값",
-        name: "측정 항목",
-        label: "측정 설명",
-        unit: "단위",
-      };
-      if (labels[key]) return labels[key];
-      return String(key).replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ");
+    function priorityIndicatorRange() {
+      const value = Number(document.getElementById("top2-daily-range")?.value || 90);
+      return [30, 90, 180].includes(value) ? value : 90;
     }
 
-    function renderNewbbyIndicatorValue(indicatorValue, fieldName) {
-      const rawName = String(fieldName || "");
-      const label = newbbyIndicatorFieldLabel(rawName);
-      if (indicatorValue == null) {
-        return `<div class="newbby-indicator-field"><b>${esc(label)}</b><span>값 없음</span></div>`;
+    function priorityIndicatorSeries() {
+      const value = document.getElementById("top2-indicator-series")?.value || "obv";
+      return ["rsi14", "macd", "obv", "atr14", "volume", "hidden"].includes(value) ? value : "obv";
+    }
+
+    function formatIndicatorNumber(value, digits = 2) {
+      if (value === null || value === undefined || value === "") return "값 없음";
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed.toLocaleString("ko-KR", { maximumFractionDigits: digits }) : "값 없음";
+    }
+
+    function indicatorStat(label, value) {
+      return `<div class="newbby-indicator-stat"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`;
+    }
+
+    function renderPriorityIndicatorSummary(item) {
+      const snapshot = item?.snapshot || {};
+      const price = snapshot.price || {};
+      const indicators = snapshot.indicators || {};
+      const volume = indicators.volume || {};
+      const fmt = (value, digits = 2) => formatIndicatorNumber(value, digits);
+      const ratio = volume.ratio20 == null ? "값 없음" : `${fmt(volume.ratio20, 2)}배`;
+      const chartBars = Array.isArray(item?.chart?.bars) ? item.chart.bars : [];
+      const latestClose = Number(chartBars[chartBars.length - 1]?.close);
+      const previousClose = Number(chartBars[chartBars.length - 2]?.close);
+      const closeValue = price.close ?? latestClose;
+      const volumeValue = price.volume ?? chartBars[chartBars.length - 1]?.volume;
+      const change = latestClose - previousClose;
+      const changeRate = previousClose > 0 ? change / previousClose * 100 : NaN;
+      const changeText = Number.isFinite(change) && Number.isFinite(changeRate)
+        ? `${change > 0 ? "+" : change < 0 ? "−" : ""}${fmt(Math.abs(change))} (${changeRate > 0 ? "+" : changeRate < 0 ? "−" : ""}${fmt(Math.abs(changeRate))}%)`
+        : "값 없음";
+      const fields = [
+        ["기준 봉", snapshot.barAsOf || "값 없음"],
+        ["종가 · 이전 봉 대비", `${fmt(closeValue, 0)}원 · ${changeText}`],
+        ["시가 · 고가 · 저가", `${fmt(price.open, 0)} · ${fmt(price.high, 0)} · ${fmt(price.low, 0)}원`],
+        ["거래량 · 20일 평균 대비", `${fmt(volumeValue, 0)} · ${ratio}`],
+      ];
+      return `<dl class="newbby-indicator-summary">${fields.map(([label, value]) => indicatorStat(label, value)).join("")}</dl>`;
+    }
+
+    function indicatorMeasurementMap(structure) {
+      return new Map((Array.isArray(structure?.measurements) ? structure.measurements : [])
+        .filter((item) => item && typeof item.name === "string")
+        .map((item) => [item.name, item.value]));
+    }
+
+    function renderIndicatorStructureOverlay(snapshot, bars, dateIndex, x, y, priceTop, priceBottom) {
+      const output = [];
+      const statuses = snapshot?.structureStatus || {};
+      const structures = Array.isArray(snapshot?.structures) ? snapshot.structures : [];
+      for (const structure of structures) {
+        const values = indicatorMeasurementMap(structure);
+        if (structure.family === "horizontal") {
+          const boundary = Number(values.get("boundary"));
+          if (!Number.isFinite(boundary) || boundary < Math.min(...bars.map((bar) => Number(bar.low)))
+            || boundary > Math.max(...bars.map((bar) => Number(bar.high)))) continue;
+          const rawType = values.get("type");
+          const label = rawType === "prior-20-high" ? "20봉 고가" : rawType === "prior-10-low" ? "10봉 저가" : "수평 기준";
+          const lineY = y(boundary);
+          output.push(`<line x1="62" y1="${lineY.toFixed(2)}" x2="990" y2="${lineY.toFixed(2)}" stroke="#7c6aa6" stroke-dasharray="6 4" stroke-width="1.5"/><text x="70" y="${Math.max(priceTop + 12, lineY - 4).toFixed(2)}" fill="#6c568f" font-size="11">${esc(label)}</text>`);
+          continue;
+        }
+        let polygon = [];
+        let label = "";
+        if (structure.family === "flag") {
+          polygon = [1, 2, 3, 4].map((point) => {
+            const at = values.get(`geometry.points.${point}.time`);
+            const price = Number(values.get(`geometry.points.${point}.price`));
+            const index = dateIndex.get(String(at || ""));
+            return index === undefined || !Number.isFinite(price) ? null : `${x(index).toFixed(2)},${y(price).toFixed(2)}`;
+          });
+          label = "채널 측정 구간";
+        } else if (structure.family === "triangle") {
+          const startTime = String(values.get("geometry.points.1.time") || "");
+          const endTime = String(structure.barTime || "");
+          const start = dateIndex.get(startTime);
+          const end = dateIndex.get(endTime);
+          const upperStart = Number(values.get("geometry.points.1.price"));
+          const lowerStart = Number(values.get("geometry.points.3.price"));
+          const upperEnd = Number(values.get("upperPrice"));
+          const lowerEnd = Number(values.get("lowerPrice"));
+          polygon = start === undefined || end === undefined
+            || ![upperStart, lowerStart, upperEnd, lowerEnd].every(Number.isFinite)
+            ? []
+            : [
+              `${x(start).toFixed(2)},${y(upperStart).toFixed(2)}`,
+              `${x(end).toFixed(2)},${y(upperEnd).toFixed(2)}`,
+              `${x(end).toFixed(2)},${y(lowerEnd).toFixed(2)}`,
+              `${x(start).toFixed(2)},${y(lowerStart).toFixed(2)}`,
+            ];
+          label = "삼각 측정 구간 · 관측 봉";
+        }
+        if (polygon.length && polygon.every(Boolean)) {
+          output.push(`<polygon points="${polygon.join(" ")}" fill="#2563eb" fill-opacity=".08" stroke="#2563eb" stroke-opacity=".75" stroke-width="1.6"/><text x="${polygon[0].split(",")[0]}" y="${Math.max(priceTop + 14, Number(polygon[0].split(",")[1]) - 7).toFixed(2)}" fill="#1d4ed8" font-size="11">${esc(label)}</text>`);
+        }
       }
-      if (Array.isArray(indicatorValue)) {
-        if (!indicatorValue.length) return `<div class="muted">${esc(label)} · 데이터 없음</div>`;
-        return `<section class="newbby-indicator-group"><h4>${esc(label)}</h4><div class="newbby-indicator-fields">${indicatorValue.map((item, index) => renderNewbbyIndicatorValue(item, `${rawName} ${index + 1}`)).join("")}</div></section>`;
+      return { svg: output.join(""), statuses };
+    }
+
+    function renderPriorityIndicatorPriceChart(item, period) {
+      const rawBars = Array.isArray(item?.chart?.bars) ? item.chart.bars : [];
+      const bars = rawBars.slice(-period).filter((bar) => {
+        if (!bar || typeof bar.time !== "string") return false;
+        const values = [bar.open, bar.high, bar.low, bar.close, bar.volume].map(Number);
+        return values.every(Number.isFinite) && values[2] > 0 && values[4] >= 0
+          && values[2] <= Math.min(values[0], values[3]) && values[1] >= Math.max(values[0], values[3]);
+      });
+      if (!bars.length) return '<p class="muted">표시할 수정주가 일봉이 없습니다.</p>';
+      const width = 1000;
+      const height = 350;
+      const left = 62;
+      const right = 10;
+      const priceTop = 28;
+      const priceBottom = 236;
+      const volumeTop = 278;
+      const volumeBottom = 326;
+      const plotWidth = width - left - right;
+      const slotWidth = plotWidth / bars.length;
+      const x = (index) => left + ((index + .5) * slotWidth);
+      const rawPrices = bars.flatMap((bar) => [bar.high, bar.low, ...[20, 60, 120, 200].map((periodValue) => bar[`sma${periodValue}`])]
+        .filter((value) => value !== null && value !== undefined && Number.isFinite(Number(value))).map(Number));
+      let minPrice = Math.min(...rawPrices);
+      let maxPrice = Math.max(...rawPrices);
+      const padding = Math.max((maxPrice - minPrice) * .04, Math.abs(maxPrice) * .002, .01);
+      minPrice -= padding;
+      maxPrice += padding;
+      const priceRange = maxPrice - minPrice || 1;
+      const y = (value) => priceTop + ((maxPrice - value) / priceRange) * (priceBottom - priceTop);
+      const maxVolume = Math.max(1, ...bars.map((bar) => Number(bar.volume)));
+      const barWidth = Math.max(1.2, Math.min(9, slotWidth * .68));
+      const dateIndex = new Map(bars.map((bar, index) => [bar.time, index]));
+      const grid = Array.from({length: 5}, (_unused, index) => {
+        const value = maxPrice - ((maxPrice - minPrice) * index / 4);
+        const lineY = y(value);
+        return `<line x1="${left}" y1="${lineY.toFixed(2)}" x2="${width-right}" y2="${lineY.toFixed(2)}" stroke="#e7ebf0" stroke-width="1"/><text x="2" y="${(lineY + 4).toFixed(2)}" fill="#687384" font-size="11">${esc(formatIndicatorNumber(value))}</text>`;
+      }).join("");
+      let previousMonth = "";
+      const monthMarks = [];
+      const candles = bars.map((bar, index) => {
+        const open = Number(bar.open), high = Number(bar.high), low = Number(bar.low), close = Number(bar.close);
+        const volume = Number(bar.volume), month = bar.time.slice(0, 7), candleX = x(index);
+        if (month !== previousMonth) {
+          const boundaryX = candleX - slotWidth / 2;
+          monthMarks.push(`<line x1="${boundaryX.toFixed(2)}" y1="${priceTop}" x2="${boundaryX.toFixed(2)}" y2="${volumeBottom}" stroke="#99a3b1" stroke-dasharray="4 4" stroke-width="1"/><text x="${Math.min(boundaryX + 3, width - 52).toFixed(2)}" y="15" fill="#687384" font-size="11">${esc(month.slice(5))}</text>`);
+          previousMonth = month;
+        }
+        const color = close > open ? "#d34b43" : close < open ? "#3577c8" : "#7b8790";
+        const volumeHeight = volume / maxVolume * (volumeBottom - volumeTop);
+        return `<g><line x1="${candleX.toFixed(2)}" y1="${y(high).toFixed(2)}" x2="${candleX.toFixed(2)}" y2="${y(low).toFixed(2)}" stroke="${color}" stroke-width="1.2"/><rect x="${(candleX-barWidth/2).toFixed(2)}" y="${Math.min(y(open),y(close)).toFixed(2)}" width="${barWidth.toFixed(2)}" height="${Math.max(1,Math.abs(y(open)-y(close))).toFixed(2)}" fill="${color}"/><rect x="${(candleX-barWidth/2).toFixed(2)}" y="${(volumeBottom-volumeHeight).toFixed(2)}" width="${barWidth.toFixed(2)}" height="${volumeHeight.toFixed(2)}" fill="${color}" fill-opacity=".32"/></g>`;
+      }).join("");
+      const colors = {sma20:"#2563eb", sma60:"#f97316", sma120:"#8b5cf6", sma200:"#0f766e"};
+      const averages = Object.entries(colors).map(([key, color]) => {
+        let segment = [];
+        const paths = [];
+        for (let index = 0; index < bars.length; index++) {
+          const value = Number(bars[index][key]);
+          if (bars[index][key] == null || !Number.isFinite(value)) {
+            if (segment.length > 1) paths.push(`<polyline points="${segment.join(" ")}" fill="none" stroke="${color}" stroke-width="2.2"/>`);
+            segment = [];
+            continue;
+          }
+          segment.push(`${x(index).toFixed(2)},${y(value).toFixed(2)}`);
+        }
+        if (segment.length > 1) paths.push(`<polyline points="${segment.join(" ")}" fill="none" stroke="${color}" stroke-width="2.2"/>`);
+        return paths.join("");
+      }).join("");
+      const structure = renderIndicatorStructureOverlay(item.snapshot, bars, dateIndex, x, y, priceTop, priceBottom);
+      const latestClose = Number(bars[bars.length - 1].close);
+      return `<svg class="newbby-indicator-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(item.stock_name || item.stock_code)} 일봉 캔들, 이동평균, 거래량">
+        ${grid}${monthMarks.join("")}${structure.svg}${candles}${averages}
+        <line x1="${left}" y1="${y(latestClose).toFixed(2)}" x2="${width-right}" y2="${y(latestClose).toFixed(2)}" stroke="#c94d46" stroke-dasharray="3 3" stroke-width="1"/>
+        <line x1="${left}" y1="${volumeBottom}" x2="${width-right}" y2="${volumeBottom}" stroke="#cbd2dc" stroke-width="1"/>
+        <text x="${left}" y="${height-4}" fill="#687384" font-size="11">${esc(bars[0].time)}</text>
+        <text x="${width-right-70}" y="${height-4}" fill="#687384" font-size="11">${esc(bars[bars.length-1].time)}</text>
+        <text x="2" y="${volumeTop+8}" fill="#687384" font-size="11">거래량</text>
+      </svg>
+      <div class="newbby-indicator-legend">
+        ${Object.entries(colors).map(([key,color])=>`<span><i style="background:${color}"></i>${key.toUpperCase()} · ${formatIndicatorNumber(bars[bars.length-1][key])}</span>`).join("")}
+        <span>캔들 · 수정주가</span><span>거래량</span>
+      </div>`;
+    }
+
+    function renderPriorityIndicatorAuxChart(item, period, kind) {
+      if (kind === "hidden") return '<p class="muted">보조 지표 표시를 숨겼습니다.</p>';
+      const rawBars = Array.isArray(item?.chart?.bars) ? item.chart.bars : [];
+      const bars = rawBars.slice(-period);
+      const width = 1000, height = 155, left = 62, right = 10, top = 18, bottom = 126;
+      const plotWidth = width - left - right, slotWidth = plotWidth / Math.max(1, bars.length);
+      const x = (index) => left + ((index + .5) * slotWidth);
+      const title = ({rsi14:"RSI 14", macd:"MACD 12·26·9", obv:"OBV · 누적 거래량", atr14:"ATR 14", volume:"거래량"})[kind] || "보조 지표";
+      const key = ({rsi14:"rsi14", obv:"obv", atr14:"atr14", volume:"volume"})[kind];
+      const values = bars.flatMap((bar) => kind === "macd"
+        ? [bar.macd, bar.macdSignal, bar.macdHistogram]
+        : [bar[key]]).filter((value) => value !== null && value !== undefined && Number.isFinite(Number(value))).map(Number);
+      if (!values.length) return `<p class="muted">${esc(title)} · 계산에 필요한 봉이 부족합니다.</p>`;
+      let minValue = kind === "rsi14" ? 0 : Math.min(...values);
+      let maxValue = kind === "rsi14" ? 100 : Math.max(...values);
+      if (kind === "macd") { const extent = Math.max(Math.abs(minValue), Math.abs(maxValue), .001); minValue = -extent; maxValue = extent; }
+      if (maxValue === minValue) { maxValue += 1; minValue -= 1; }
+      const y = (value) => top + ((maxValue - value) / (maxValue - minValue)) * (bottom - top);
+      const zeroY = y(kind === "macd" ? 0 : minValue);
+      const grid = kind === "rsi14"
+        ? [30, 50, 70].map((value) => `<line x1="${left}" y1="${y(value).toFixed(2)}" x2="${width-right}" y2="${y(value).toFixed(2)}" stroke="#d8dee7" stroke-dasharray="4 4"/><text x="8" y="${(y(value)+4).toFixed(2)}" fill="#687384" font-size="11">${value}</text>`).join("")
+        : `<line x1="${left}" y1="${zeroY.toFixed(2)}" x2="${width-right}" y2="${zeroY.toFixed(2)}" stroke="#cbd2dc"/>`;
+      let plot = "";
+      if (kind === "macd") {
+        const barWidth = Math.max(1.2, Math.min(8, slotWidth * .62));
+        const histogram = bars.map((bar,index) => {
+          const value = Number(bar.macdHistogram);
+          if (bar.macdHistogram == null || !Number.isFinite(value)) return "";
+          const barY = Math.min(y(value),zeroY), barH = Math.max(1,Math.abs(zeroY-y(value)));
+          const color = value >= 0 ? "#d34b43" : "#3577c8";
+          return `<rect x="${(x(index)-barWidth/2).toFixed(2)}" y="${barY.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${barH.toFixed(2)}" fill="${color}" fill-opacity=".65"/>`;
+        }).join("");
+        const line = (field,color) => {
+          const points = bars.map((bar,index) => bar[field] == null || !Number.isFinite(Number(bar[field])) ? null : `${x(index).toFixed(2)},${y(Number(bar[field])).toFixed(2)}`).filter(Boolean);
+          return points.length > 1 ? `<polyline points="${points.join(" ")}" fill="none" stroke="${color}" stroke-width="2"/>` : "";
+        };
+        plot = `${histogram}${line("macd","#2563eb")}${line("macdSignal","#f97316")}`;
+      } else if (kind === "volume") {
+        const maxVolume = Math.max(...values, 1), barWidth = Math.max(1.2, Math.min(8, slotWidth * .62));
+        plot = bars.map((bar,index) => {
+          const value = Number(bar.volume), previous = index ? Number(bars[index-1].close) : Number(bar.open);
+          if (!Number.isFinite(value)) return "";
+          const barHeight = value / maxVolume * (bottom-top);
+          const color = Number(bar.close) >= previous ? "#d34b43" : "#3577c8";
+          return `<rect x="${(x(index)-barWidth/2).toFixed(2)}" y="${(bottom-barHeight).toFixed(2)}" width="${barWidth.toFixed(2)}" height="${barHeight.toFixed(2)}" fill="${color}" fill-opacity=".72"/>`;
+        }).join("");
+      } else {
+        const points = bars.map((bar,index) => bar[key] == null || !Number.isFinite(Number(bar[key])) ? null : `${x(index).toFixed(2)},${y(Number(bar[key])).toFixed(2)}`).filter(Boolean);
+        plot = points.length > 1 ? `<polyline points="${points.join(" ")}" fill="none" stroke="#147d78" stroke-width="2.4"/>` : "";
       }
-      if (typeof indicatorValue === "object") {
-        const entries = Object.entries(indicatorValue);
-        if (!entries.length) return `<div class="muted">${esc(label)} · 데이터 없음</div>`;
-        const title = label ? `<h4>${esc(label)}</h4>` : "";
-        return `<section class="newbby-indicator-group">${title}<div class="newbby-indicator-fields">${entries.map(([key, value]) => renderNewbbyIndicatorValue(value, key)).join("")}</div></section>`;
+      const currentValue = bars[bars.length-1]?.[kind === "macd" ? "macd" : key];
+      const help = {
+        rsi14: "RSI 14는 상승·하락의 상대적 힘입니다. 30·70 선은 참고 기준이며 매매 지시가 아닙니다.",
+        macd: "파랑은 MACD, 주황은 시그널, 막대는 두 선의 차이입니다. 모두 가격과 같은 단위입니다.",
+        obv: "종가 상승 봉은 거래량을 더하고 하락 봉은 빼서 누적합니다. 첫 Toss 봉을 0으로 시작하므로 절대값은 수집 이력에 따라 달라집니다.",
+        atr14: "ATR 14는 봉의 가격 변동폭입니다. 상승·하락 방향을 뜻하지 않습니다.",
+        volume: "일별 거래량입니다. 순매수 금액이나 투자자 수급을 뜻하지 않습니다.",
+      }[kind] || "보조 지표 참고값입니다.";
+      const legend = kind === "macd"
+        ? `<div class="newbby-indicator-legend"><span><i style="background:#2563eb"></i>MACD</span><span><i style="background:#f97316"></i>시그널</span><span><i style="background:#d34b43"></i>0선 위 차이</span><span><i style="background:#3577c8"></i>0선 아래 차이</span></div>`
+        : kind === "rsi14"
+          ? `<div class="newbby-indicator-legend"><span><i style="background:#147d78"></i>RSI 14</span><span>점선 30 / 50 / 70</span></div>`
+          : `<div class="newbby-indicator-legend"><span><i style="background:${kind === "obv" ? "#147d78" : kind === "atr14" ? "#7c3aed" : "#3577c8"}"></i>${esc(title)}</span></div>`;
+      return `<div class="newbby-indicator-subhead"><b>${esc(title)}</b><span class="muted">최근값 ${esc(formatIndicatorNumber(currentValue))}</span></div>
+        <svg class="newbby-indicator-aux-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(title)} 보조 지표 차트">${grid}${plot}
+          <text x="${left}" y="${height-6}" fill="#687384" font-size="11">${esc(bars[0]?.time || "")}</text>
+          <text x="${width-right-70}" y="${height-6}" fill="#687384" font-size="11">${esc(bars[bars.length-1]?.time || "")}</text>
+        </svg>${legend}<p class="muted">${esc(help)}</p>`;
+    }
+
+    function renderPriorityIndicatorDetails(item) {
+      const snapshot = item?.snapshot || {};
+      const statuses = snapshot.structureStatus || {};
+      const labels = {horizontal:"수평 기준", flag:"채널 구조", triangle:"삼각 구조"};
+      const statusLabels = {ready:"측정 가능", "no-geometry":"측정 geometry 없음", "insufficient-data":"데이터 부족", "partial-data":"일부 데이터", paused:"계산 보류", disabled:"비활성", unsupported:"미지원", error:"계산 오류"};
+      const statusHtml = Object.entries(labels).map(([key,label]) => `<span class="status-pill">${esc(label)} · ${esc(statusLabels[statuses[key]] || "상태 미확인")}</span>`).join(" ");
+      const structures = Array.isArray(snapshot.structures) ? snapshot.structures : [];
+      const rows = structures.flatMap((structure) => (Array.isArray(structure.measurements) ? structure.measurements : []).map((measurement) => {
+        const value = typeof measurement.value === "number" ? formatIndicatorNumber(measurement.value) : String(measurement.value ?? "값 없음");
+        return `<div><span>${esc(measurement.label || measurement.name || "측정값")}</span><b>${esc(value)}${measurement.unit === "price" ? "원" : measurement.unit === "bars" || measurement.unit === "projected-bars" ? "봉" : ""}</b></div>`;
+      })).join("");
+      const source = `<div><span>출처 · 기준일</span><b>${esc(snapshot.source || "Toss OpenAPI")} · ${esc(snapshot.sourceDate || "기준일 없음")}</b></div>
+        <div><span>요청 · 조회 시각</span><b>${esc(snapshot.requestedAsOf || "기준일 없음")} · ${esc(snapshot.sourceFetchedAt || "시각 없음")}</b></div>
+        <div><span>봉 상태</span><b>${snapshot.barStatus === "unknown" ? "확정 여부 미확인" : esc(snapshot.barStatus || "미확인")}</b></div>`;
+      const historyStatus = {complete:"이력 종료", cursor_not_provided:"추가 이력 cursor 미제공", page_limit_reached:"800봉 요청 상한"}[item.history_status] || "이력 상태 미확인";
+      const chartBarCount = Array.isArray(item.chart?.bars) ? item.chart.bars.length : 0;
+      const history = `<div><span>가져온 일봉</span><b>Toss ${number(item.candle_count)}봉 · 차트 ${number(chartBarCount)}봉 · ${number(item.pages_fetched)}페이지 · ${esc(historyStatus)}</b></div>`;
+      const note = rows || '<p class="muted">표시 가능한 구조 측정값이 없습니다. geometry 없음은 반대 방향의 근거로 취급하지 않습니다.</p>';
+      return `<details class="newbby-indicator-details"><summary>출처 · 데이터 상태 · 구조 측정</summary>
+        <div class="newbby-indicator-measurements">${source}${history}</div><p>${statusHtml}</p><div class="newbby-indicator-measurements">${note}</div>
+        <p class="muted">삼각형 교점 값은 직선 외삽 측정값이며 목표가가 아닙니다. 본 차트는 기술 데이터 참고용이며 매매 신호를 제공하지 않습니다.</p>
+      </details>`;
+    }
+
+    function renderPriorityIndicatorCandidate(item, period, series) {
+      const candidate = `${item.stock_name || item.stock_code || "Main 후보"} · ${item.stock_code || ""}`;
+      const snapshot = item.snapshot || {};
+      if (item.available !== true || typeof snapshot !== "object") {
+        const messages = {
+          toss_not_configured: "Toss API 설정 또는 live 사용 설정이 꺼져 있습니다.",
+          provider_timeout: "Toss 응답 시간 초과 · 잠시 후 다시 확인하세요.",
+          provider_unavailable: "Toss API에 연결할 수 없습니다.",
+          provider_http_error: `Toss 응답 오류 · HTTP ${number(item.upstream_status)}`,
+          invalid_provider_response: "Toss 일봉 응답을 읽을 수 없습니다.",
+          provider_response_mismatch: "Toss 종목·시장·기준일 응답이 요청과 일치하지 않습니다.",
+          no_daily_candles: "선택 기준일까지 받은 수정주가 일봉이 없습니다.",
+          unsupported_schema: "지원하지 않는 기술 지표 형식입니다.",
+        };
+        return `<article class="newbby-indicator-candidate"><h3>${esc(candidate)}</h3><p class="muted">${esc(messages[item.reason] || "기술 지표를 확인할 수 없습니다.")}</p></article>`;
       }
-      const displayValue = typeof indicatorValue === "boolean" ? (indicatorValue ? "예" : "아니요") : String(indicatorValue);
-      return `<div class="newbby-indicator-field"><b>${esc(label)}</b><span>${esc(displayValue)}</span></div>`;
+      const market = [item.market, snapshot.market].find((value) => value && value !== "unknown");
+      const marketLabel = market ? `Toss 분류 ${market} · ${item.market_source_date || "기준일 없음"}` : "시장 분류 미확인 · 6자리 코드 조회";
+      const fetchedAt = String(snapshot.sourceFetchedAt || "");
+      const fetchedTime = fetchedAt.includes("T") ? fetchedAt.slice(11, 16) : fetchedAt || "시각 없음";
+      const barStatus = {confirmed:"확정", provisional:"잠정", unknown:"확정 여부 미확인"}[snapshot.barStatus] || "확정 여부 미확인";
+      return `<article class="newbby-indicator-candidate">
+        <h3>${esc(candidate)}</h3>
+        <p class="newbby-indicator-meta"><span>Toss 조정 일봉 · ${esc(marketLabel)}</span><span>선택 ${esc(snapshot.requestedAsOf || item.requested_as_of || "기준일 없음")} · 실제 봉 ${esc(snapshot.barAsOf || "없음")}</span><span>봉 ${esc(barStatus)} · 조회 ${esc(fetchedTime)}</span></p>
+        ${renderPriorityIndicatorSummary(item)}
+        <div class="newbby-indicator-chart-wrap">${renderPriorityIndicatorPriceChart(item, period)}${renderPriorityIndicatorAuxChart(item, period, series)}</div>
+        ${renderPriorityIndicatorDetails(item)}
+      </article>`;
     }
 
     function renderNewbbyIndicatorItems(data) {
       const items = Array.isArray(data?.items) ? data.items.slice(0, 2) : [];
       if (!items.length) return '<p class="muted">선택 날짜의 Main Top2 후보가 없습니다.</p>';
-      return items.map((item) => {
-        const candidate = `${item.stock_name || item.stock_code || "Main 후보"} · ${item.stock_code || ""}`;
-        if (item.available !== true || !item.snapshot || typeof item.snapshot !== "object") {
-          const messages = {
-            missing_toss_market_classification: "선택 날짜 이전의 저장된 Toss 시장 분류가 없어 조회하지 않았습니다.",
-            provider_timeout: "Newbby 응답 시간 초과 · 잠시 후 다시 확인하세요.",
-            provider_unavailable: "Newbby 서버에 연결할 수 없습니다.",
-            provider_http_error: `Newbby 응답 오류 · HTTP ${number(item.upstream_status)}`,
-            invalid_provider_response: "Newbby 응답을 읽을 수 없습니다.",
-            provider_response_mismatch: "Newbby 종목·시장·기준일 응답이 요청과 일치하지 않습니다.",
-            unsupported_schema: "지원하지 않는 Newbby 지표 형식입니다.",
-          };
-          const reason = messages[item.reason] || "Newbby 지표를 확인할 수 없습니다.";
-          const market = item.market ? ` · ${esc(item.market)} (${esc(item.market_source_date || "Toss 저장")})` : "";
-          return `<article class="newbby-indicator-candidate"><h3>${esc(candidate)}</h3><p class="muted">${esc(reason)}${market}</p></article>`;
-        }
-        const fields = Object.entries(item.snapshot)
-          .map(([key, value]) => renderNewbbyIndicatorValue(value, key))
-          .join("");
-        return `<article class="newbby-indicator-candidate"><h3>${esc(candidate)} · ${esc(item.market || item.snapshot.market || "시장 미상")}</h3><p class="muted">Toss 시장 구분 · ${esc(item.market_source_date || "저장 기준일 없음")}</p>${fields}</article>`;
-      }).join("");
+      const period = priorityIndicatorRange();
+      const series = priorityIndicatorSeries();
+      return items.map((item) => renderPriorityIndicatorCandidate(item, period, series)).join("");
+    }
+
+    function rerenderNewbbyIndicatorPanel() {
+      if (!newbbyIndicatorData) return;
+      const panel = document.getElementById("newbby-indicator-panel");
+      const scrollY = window.scrollY;
+      panel.innerHTML = renderNewbbyIndicatorItems(newbbyIndicatorData);
+      window.scrollTo(window.scrollX, scrollY);
     }
 
     async function loadNewbbyIndicatorSnapshot(date) {
       const panel = document.getElementById("newbby-indicator-panel");
       const status = document.getElementById("newbby-indicator-status");
-      if (!validDate(date)) return;
+      if (!validDate(date) || !tossPriorityRows.length || tossPriorityDate !== date) return;
       const requestId = ++newbbyIndicatorRequestId;
       newbbyIndicatorLoading = true;
+      newbbyIndicatorData = null;
       updateNewbbyIndicatorRefreshButton();
       panel.hidden = false;
-      panel.innerHTML = '<p class="muted">Main Top2의 Newbby 기술 지표를 확인 중입니다.</p>';
-      status.textContent = `${date} · Newbby 응답 대기`;
+      panel.innerHTML = '<p class="muted">Main Top2의 Toss 수정주가 일봉을 조회 중입니다.</p>';
+      status.textContent = `${date} · Toss 응답 대기`;
       try {
-        const response = await fetch(`/api/newbby-indicators?date=${encodeURIComponent(date)}`, { cache: "no-store" });
+        const response = await fetch(`/api/priority-indicators?date=${encodeURIComponent(date)}`, { cache: "no-store" });
         const data = await response.json();
         if (requestId !== newbbyIndicatorRequestId || date !== selectedDate) return;
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        newbbyIndicatorData = data;
         panel.innerHTML = renderNewbbyIndicatorItems(data);
-        status.textContent = `${date} · ${Array.isArray(data.items) ? data.items.length : 0}개 Main 후보 · Newbby 출처 조회 시각과 봉 기준일은 각 항목에 표시`;
+        status.textContent = `${date} · ${Array.isArray(data.items) ? data.items.length : 0}개 Main Top2 · ${priorityIndicatorRange()}거래일 표시 · 실제 봉 기준일과 Toss 조회 시각을 항목별로 표시`;
       } catch (_error) {
         if (requestId === newbbyIndicatorRequestId) {
-          panel.innerHTML = '<p class="muted">Newbby 기술 지표 응답을 받을 수 없습니다.</p>';
-          status.textContent = "Newbby 연결 실패 · 캐시된 응답이 만료된 뒤 다시 요청할 수 있습니다.";
+          newbbyIndicatorData = null;
+          panel.innerHTML = '<p class="muted">Toss 기술 지표 응답을 받을 수 없습니다.</p>';
+          status.textContent = "Toss 연결 실패 · 잠시 뒤 다시 요청할 수 있습니다.";
         }
       } finally {
         if (requestId === newbbyIndicatorRequestId) {
@@ -33528,17 +33633,12 @@ def _render_web_view_html() -> str:
       loadTossPriorityQuotes(tossPriorityDate || selectedDate, { force: true });
     });
     document.getElementById("top2-daily-range").addEventListener("change", () => {
-      dailyCandleRequestId += 1;
-      dailyCandleLoading = false;
-      dailyCandleBySymbol = new Map();
-      dailyCandleLoadedKey = null;
-      document.getElementById("top2-daily-candle-panels").innerHTML = "";
-      document.getElementById("top2-daily-candle-panels").hidden = true;
-      document.getElementById("top2-daily-candle-status").textContent = "수정주가 · 선택한 Top2 기준일까지 · 월 경계 표시";
-      updateDailyCandleButton();
+      if (!newbbyIndicatorData) return;
+      rerenderNewbbyIndicatorPanel();
+      document.getElementById("newbby-indicator-status").textContent = `${selectedDate} · ${priorityIndicatorRange()}거래일 표시 · 같은 Toss 조회 결과에서 다시 그림`;
     });
-    document.getElementById("top2-daily-candle-refresh").addEventListener("click", () => {
-      loadTopTwoDailyCandles(selectedDate);
+    document.getElementById("top2-indicator-series").addEventListener("change", () => {
+      rerenderNewbbyIndicatorPanel();
     });
     document.getElementById("toss-market-refresh").addEventListener("click", () => {
       loadTossMarketContext(selectedDate);
@@ -39165,40 +39265,6 @@ def _web_view_selected_candidate_rows(rows: object, *, limit: int = 2) -> list[d
         for row in (rows if isinstance(rows, list) else [])
         if isinstance(row, dict) and row.get("selected") is not False
     ][:limit]
-
-
-class _NewbbyNoRedirectHandler(url_request.HTTPRedirectHandler):
-    def redirect_request(self, *_args, **_kwargs):
-        return None
-
-
-def _open_newbby_indicator_request(request: url_request.Request, *, timeout: float):
-    return url_request.build_opener(_NewbbyNoRedirectHandler()).open(request, timeout=timeout)
-
-
-def _validate_newbby_indicator_origin(base_url: str) -> str:
-    try:
-        parsed = url_parse.urlsplit(base_url.strip())
-        hostname = parsed.hostname or ""
-        port = parsed.port
-    except (AttributeError, ValueError):
-        raise ValueError("Newbby indicator API origin must be a loopback HTTP origin.") from None
-    try:
-        loopback = hostname.lower() == "localhost" or ipaddress.ip_address(hostname).is_loopback
-    except ValueError:
-        loopback = False
-    if (
-        parsed.scheme != "http"
-        or not loopback
-        or port == 0
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in {"", "/"}
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise ValueError("Newbby indicator API origin must be a loopback HTTP origin.")
-    return f"http://{parsed.netloc}".rstrip("/")
 
 
 class _UnsupportedNewbbyIndicatorSchema(ValueError):
