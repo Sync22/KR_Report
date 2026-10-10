@@ -30199,8 +30199,8 @@ def _render_web_view_html() -> str:
     .newbby-indicator-price-level b { color: var(--accent); font-size: 12px; }
     .newbby-indicator-price-level span, .newbby-indicator-price-level small { font-size: 12px; line-height: 1.35; }
     .newbby-indicator-price-level small { color: var(--muted); }
-    .newbby-indicator-confirmation { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
-    .newbby-indicator-confirmation span { border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; background: #fff; color: var(--muted); font-size: 12px; line-height: 1.35; }
+    .newbby-indicator-confirmation { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 8px; margin-top: 4px; }
+    .newbby-indicator-confirmation span { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; background: #fff; color: var(--muted); font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
     .newbby-indicator-chart-wrap { border: 1px solid var(--line); border-radius: 12px; padding: 8px; background: #fff; }
     .newbby-indicator-chart { display: block; width: 100%; height: auto; min-height: 190px; }
     .newbby-indicator-aux-chart { display: block; width: 100%; height: auto; min-height: 90px; margin-top: 8px; border-top: 1px solid var(--line); }
@@ -30409,6 +30409,7 @@ def _render_web_view_html() -> str:
       .daily-candle-grid { grid-template-columns: 1fr; }
       .top-two-candidates { grid-template-columns: 1fr; }
       .newbby-indicator-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .newbby-indicator-confirmation { grid-template-columns: 1fr; }
       .rotation-evidence { grid-template-columns: 1fr; }
       .candidate-evidence-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .candidate-quality-grid { grid-template-columns: 1fr; }
@@ -30496,6 +30497,7 @@ def _render_web_view_html() -> str:
           <h2>오늘의 우선순위</h2>
           <button id="toss-market-refresh" class="ghost-button" type="button" disabled>지수 · 수급 확인</button>
         </div>
+        <p id="main-daily-status" class="main-priority-status" aria-live="polite">날짜를 선택하세요.</p>
         <div class="main-market-card" id="main-market-context-card" data-view-panel="main" data-view-when="market-context" hidden>
           <div class="section-header">
             <h2 id="main-market-context-heading" hidden>당일 시장 · 수급</h2>
@@ -30838,11 +30840,13 @@ def _render_web_view_html() -> str:
     let hideNoOpinionReports = false;
     let rotationLoadedDate = null;
     let rotationLoadingDate = null;
+    let candidateEvidenceRequestId = 0;
     let candidateEvidenceLoadedDate = null;
     let candidateEvidenceLoadedLimit = 0;
     let watchDataLoading = false;
     let etfTrendLoadedDate = null;
     let flowTrendLoadedDate = null;
+    let flowTrendRequestId = 0;
     let dailyLoadSequence = 0;
     let stockSearchQuery = "";
     let stockSearchResults = [];
@@ -31144,6 +31148,7 @@ def _render_web_view_html() -> str:
     }
 
     async function loadCandidateEvidence(date, options = {}) {
+      if (date !== selectedDate || currentDailyData?.business_date !== date) return;
       const requestedLimit = Math.max(1, Number(options.limit || 8));
       if (options.initialData) {
         currentCandidateEvidenceData = options.initialData;
@@ -31155,7 +31160,18 @@ def _render_web_view_html() -> str:
       if (!options.force && candidateEvidenceLoadedDate === date && currentCandidateEvidenceData && candidateEvidenceLoadedLimit >= requestedLimit) return;
       document.getElementById("candidate-evidence-date").textContent = `(${date})`;
       document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">관찰 후보를 불러오는 중입니다.</span>';
-      const data = await fetch(`/api/candidate-evidence?date=${encodeURIComponent(date)}&limit=${requestedLimit}`, { cache: "no-store" }).then((response) => response.json());
+      const requestId = ++candidateEvidenceRequestId;
+      let response;
+      let data;
+      try {
+        response = await fetch(`/api/candidate-evidence?date=${encodeURIComponent(date)}&limit=${requestedLimit}`, { cache: "no-store" });
+        data = await response.json();
+      } catch (error) {
+        if (requestId !== candidateEvidenceRequestId || date !== selectedDate || currentDailyData?.business_date !== date) return;
+        throw error;
+      }
+      if (requestId !== candidateEvidenceRequestId || date !== selectedDate || currentDailyData?.business_date !== date) return;
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       currentCandidateEvidenceData = data;
       candidateEvidenceLoadedDate = date;
       candidateEvidenceLoadedLimit = Array.isArray(data.rows) ? data.rows.length : 0;
@@ -31188,6 +31204,21 @@ def _render_web_view_html() -> str:
       const requestedInitialStockCode = String(options.initialStockCode || "").trim();
       const initialStockCode = validStockCode(requestedInitialStockCode) ? requestedInitialStockCode : "";
       selectedDate = date;
+      currentDailyData = null;
+      candidateEvidenceRequestId += 1;
+      currentCandidateEvidenceData = null;
+      candidateEvidenceLoadedDate = null;
+      candidateEvidenceLoadedLimit = 0;
+      watchDataLoading = false;
+      setMainDailyLoadState(date, "loading");
+      document.getElementById("daily-date").textContent = `(${date})`;
+      document.getElementById("candidate-evidence-date").textContent = `(${date})`;
+      document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">선택 날짜 자료를 불러오는 중입니다.</span>';
+      flowTrendRequestId += 1;
+      flowTrendLoadedDate = null;
+      document.getElementById("flow-trend-title").textContent = `(${date})`;
+      document.getElementById("flow-trend-rows").innerHTML = '<tr><td colspan="2" class="muted">선택 날짜 수급 흐름을 불러오는 중입니다.</td></tr>';
+      if (document.getElementById("flow-trend-details").open && validDate(date)) loadFlowTrend(date);
       tossMarketContextRequestId += 1;
       tossMarketContextLoading = false;
       tossMarketContextVisible = false;
@@ -31232,17 +31263,27 @@ def _render_web_view_html() -> str:
       }
       renderArchiveButtons();
       updateArchiveNavigation();
-      const data = await fetch(`/api/daily/${date}`, { cache: "no-store" }).then((response) => response.json());
+      let data;
+      try {
+        const response = await fetch(`/api/daily/${date}`, { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        data = await response.json();
+      } catch (_error) {
+        if (loadSequence !== dailyLoadSequence) return;
+        currentDailyData = null;
+        candidateEvidenceRequestId += 1;
+        currentCandidateEvidenceData = null;
+        candidateEvidenceLoadedDate = null;
+        candidateEvidenceLoadedLimit = 0;
+        setMainDailyLoadState(date, "failed");
+        document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">선택 날짜 자료를 불러오지 못했습니다.</span>';
+        return;
+      }
       if (loadSequence !== dailyLoadSequence) return;
       document.getElementById("daily-date").textContent = `(${data.business_date})`;
       currentDailyData = data;
-      currentCandidateEvidenceData = null;
-      candidateEvidenceLoadedDate = null;
-      candidateEvidenceLoadedLimit = 0;
-      watchDataLoading = false;
       etfTrendLoadedDate = null;
       etfTrendAvailable = false;
-      flowTrendLoadedDate = null;
       dailyStockVisibleLimit = DAILY_STOCK_DEFAULT_LIMIT;
       stockSearchQuery = "";
       document.getElementById("stock-search-input").value = "";
@@ -31251,6 +31292,7 @@ def _render_web_view_html() -> str:
       renderDailyBriefing(data);
       renderSourceFreshnessSummary(data.source_freshness_summary);
       renderNewsObservationSummary(data.news_observation_summary);
+      setMainDailyLoadState(date, "ready");
       document.getElementById("main-priority-rows").innerHTML = '<span class="muted">오늘 우선순위를 불러오는 중입니다.</span>';
       tossPriorityRows = [];
       tossPriorityDate = date;
@@ -31266,9 +31308,6 @@ def _render_web_view_html() -> str:
       renderInvestorFlow(data.toss_investor_flow);
       document.getElementById("etf-tab-title").textContent = `(${date})`;
       document.getElementById("etf-tab-rows").innerHTML = '<tr><td colspan="2" class="muted">업종·ETF 참고를 펼치면 저장된 ETF 흐름을 확인합니다.</td></tr>';
-      document.getElementById("flow-trend-title").textContent = `(${date})`;
-      document.getElementById("flow-trend-rows").innerHTML = '<tr><td colspan="2" class="muted">수급 흐름 참고를 펼치면 최근 저장값을 확인합니다.</td></tr>';
-      flowTrendLoadedDate = null;
       etfTrendLoadedDate = null;
       rotationLoadedDate = null;
       document.getElementById("rotation-title").textContent = `(${date})`;
@@ -31276,8 +31315,10 @@ def _render_web_view_html() -> str:
       document.getElementById("rotation-evidence").innerHTML = "";
       if (document.getElementById("industry-etf-details").open) {
         await loadIndustryReference(date).catch((error) => {
+          if (loadSequence !== dailyLoadSequence) return;
           document.getElementById("rotation-overlay").innerHTML = `<span class="muted">오류: ${esc(error)}</span>`;
         });
+        if (loadSequence !== dailyLoadSequence) return;
       }
       document.getElementById("detail-title").textContent = "";
       document.getElementById("stock-context").innerHTML = data.stocks.length
@@ -31304,12 +31345,43 @@ def _render_web_view_html() -> str:
         const stockItem = (currentDailyData?.stocks || []).find((item) => item.stock_code === initialStockCode);
         setViewTab("stock");
         await loadStockDetail(date, initialStockCode, { scrollToDetail: false, updateUrl: false }).then(() => {
+          if (loadSequence !== dailyLoadSequence) return;
           syncCategoryFromStock(stockItem);
         }).catch((error) => {
+          if (loadSequence !== dailyLoadSequence) return;
           document.getElementById("stock-detail").innerHTML = `<span class="muted">오류: ${esc(error)}</span>`;
         });
       }
+      if (loadSequence !== dailyLoadSequence) return;
       await loadTabDataForActiveView(date);
+    }
+
+    function setMainDailyLoadState(date, state) {
+      const status = document.getElementById("main-daily-status");
+      if (state === "ready") {
+        status.textContent = "";
+        status.hidden = true;
+        return;
+      }
+      const messages = {
+        loading: "불러오는 중",
+        failed: "조회 실패 · 다시 요청할 수 있습니다",
+      };
+      status.textContent = `${date} · ${messages[state] || messages.failed}`;
+      status.hidden = false;
+      const loading = state === "loading";
+      document.getElementById("main-priority-rows").innerHTML = `<span class="muted">${loading ? "선택 날짜 우선순위를 불러오는 중입니다." : "선택 날짜 우선순위를 불러오지 못했습니다."}</span>`;
+      document.getElementById("daily-briefing-headline").textContent = loading
+        ? "선택 날짜 요약을 불러오는 중입니다."
+        : "선택 날짜 요약을 불러오지 못했습니다.";
+      document.getElementById("briefing-check-points").innerHTML = `<li>${loading ? "요약을 준비하고 있습니다." : "다시 날짜를 선택해 조회할 수 있습니다."}</li>`;
+      document.getElementById("source-freshness-summary").innerHTML = `<span class="muted">${loading ? "선택 날짜 자료를 기다리고 있습니다." : "출처 상태를 조회하지 못했습니다."}</span>`;
+      document.getElementById("news-observation-summary").innerHTML = `<span class="muted">${loading ? "선택 날짜 뉴스 관찰을 기다리고 있습니다." : "뉴스 관찰 상태를 조회하지 못했습니다."}</span>`;
+      document.getElementById("intraday-market-top-status").textContent = loading
+        ? "선택 날짜 자료를 불러오는 중입니다."
+        : "선택 날짜 자료를 불러오지 못했습니다.";
+      document.getElementById("intraday-market-top-overlap").innerHTML = "";
+      document.getElementById("intraday-market-top-overlap").hidden = true;
     }
 
     function renderDailyBriefing(data) {
@@ -32709,6 +32781,14 @@ def _render_web_view_html() -> str:
         status.textContent = data?.configured === false ? "연결 설정 대기" : "조회 실패 또는 데이터 없음";
         return;
       }
+      const fetchedAt = String(data.fetched_at || data.last_success_at || "").trim();
+      if (data.cache === "stale" || data.stale === true) {
+        status.textContent = `이전 조회값 · ${fetchedAt ? `마지막 성공 ${fetchedAt}` : "마지막 성공 시각 확인 불가"} · 최신 조회 실패`;
+        status.hidden = false;
+      } else {
+        status.textContent = "";
+        status.hidden = true;
+      }
       const marketPrices = Array.isArray(data.market_prices) ? data.market_prices : [];
       const marketPriceChanges = data.market_price_changes && typeof data.market_price_changes === "object"
         ? data.market_price_changes
@@ -32774,8 +32854,6 @@ def _render_web_view_html() -> str:
           <div class="main-market-context-block"><div class="main-market-flow-header"><b>시장 수급 · ${esc(flowStatusSummary)}</b><small class="main-market-flow-cutoff">마감 기준 20:20 KST · Toss 확정값 없음</small><span class="main-market-flow-reference">${esc(flowReferenceMetadata)}</span></div><div class="main-market-flow-rows">${flowLabel(flow.KOSPI, "코스피")}${flowLabel(flow.KOSDAQ, "코스닥")}</div></div>
         </div>
       `;
-      status.textContent = "";
-      status.hidden = true;
     }
 
     async function loadTossMarketContext(date) {
@@ -32877,7 +32955,6 @@ def _render_web_view_html() -> str:
         return value !== null && value !== undefined && Number.isFinite(parsed) ? `${fmt(parsed, 0)}원` : "자료 부족";
       };
       const fields = [
-        ["기준 봉", snapshot.barAsOf || "값 없음"],
         ["종가 · 이전 봉 대비", `${fmt(closeValue, 0)}원 · ${changeText}`],
         ["시가 · 고가 · 저가", `${fmt(price.open, 0)} · ${fmt(price.high, 0)} · ${fmt(price.low, 0)}원`],
         ["거래량 · 20일 평균 대비", `${fmt(volumeValue, 0)} · ${ratio}`],
@@ -33666,8 +33743,20 @@ def _render_web_view_html() -> str:
     }
 
     async function loadFlowTrend(date) {
-      const data = await fetch(`/api/flow-trend?date=${encodeURIComponent(date)}&limit=5`, { cache: "no-store" }).then((response) => response.json());
-      renderFlowTrend(data);
+      const requestId = ++flowTrendRequestId;
+      flowTrendLoadedDate = null;
+      try {
+        const response = await fetch(`/api/flow-trend?date=${encodeURIComponent(date)}&limit=5`, { cache: "no-store" });
+        const data = await response.json();
+        if (requestId !== flowTrendRequestId || date !== selectedDate || !document.getElementById("flow-trend-details").open) return;
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        renderFlowTrend(data);
+        flowTrendLoadedDate = date;
+      } catch (_error) {
+        if (requestId === flowTrendRequestId && date === selectedDate && document.getElementById("flow-trend-details").open) {
+          document.getElementById("flow-trend-rows").innerHTML = '<tr><td colspan="2" class="muted">수급 흐름 조회에 실패했습니다. 다시 펼쳐 조회하세요.</td></tr>';
+        }
+      }
     }
 
     async function loadEtfTrend(date) {
@@ -33872,11 +33961,7 @@ def _render_web_view_html() -> str:
     });
     document.getElementById("flow-trend-details").addEventListener("toggle", (event) => {
       if (!event.target.open || !selectedDate || flowTrendLoadedDate === selectedDate) return;
-      loadFlowTrend(selectedDate).then(() => {
-        flowTrendLoadedDate = selectedDate;
-      }).catch((error) => {
-        document.getElementById("flow-trend-rows").innerHTML = `<tr><td colspan="2" class="muted">오류: ${esc(error)}</td></tr>`;
-      });
+      loadFlowTrend(selectedDate);
     });
     loadArchive().catch((error) => {
       document.getElementById("archive-calendar").innerHTML = `<span class="muted">오류: ${esc(error)}</span>`;

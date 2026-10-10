@@ -4425,6 +4425,7 @@ def test_web_view_toss_market_context_browser_states() -> None:
     """
     success_payload = {
         "live_fetch": True,
+        "fetched_at": "2026-10-08T10:01:00+09:00",
         "market_prices": [
             {"symbol": "KOSPI", "lastPrice": "6200"},
             {"symbol": "KOSDAQ", "lastPrice": "890"},
@@ -4500,6 +4501,23 @@ def test_web_view_toss_market_context_browser_states() -> None:
             assert "마감 기준 충족" not in page.locator(".main-market-flow-row").nth(0).inner_text()
             assert "확인 필요" in page.locator(".main-market-flow-row").nth(1).inner_text()
 
+            stale_payload = {
+                **success_payload,
+                "cache": "stale",
+                "stale_reason": "upstream_unavailable",
+                "fetched_at": "2026-10-08T09:56:00+09:00",
+            }
+            page.evaluate(
+                "payload => { window.fetchPayload = payload; }",
+                stale_payload,
+            )
+            page.get_by_role("button", name="지수 · 수급 확인").click()
+            page.wait_for_function("!document.getElementById('toss-market-refresh').disabled")
+            assert page.locator("#toss-market-context").is_visible()
+            assert page.locator("#toss-market-context-status").is_visible()
+            assert "이전 조회값" in page.locator("#toss-market-context-status").inner_text()
+            assert "마지막 성공 2026-10-08T09:56:00+09:00" in page.locator("#toss-market-context-status").inner_text()
+
             page.evaluate(
                 "([status, payload]) => { window.fetchStatus = status; window.fetchPayload = payload; }",
                 [409, {"latest_business_date": "2026-10-09"}],
@@ -4514,6 +4532,215 @@ def test_web_view_toss_market_context_browser_states() -> None:
             page.wait_for_function("document.getElementById('toss-market-context-status').textContent.includes('다시 요청')")
             assert page.locator("#toss-market-context").is_hidden()
             assert "조회 실패 · 다시 요청할 수 있습니다." in page.locator("#toss-market-context-status").inner_text()
+        finally:
+            browser.close()
+
+
+def test_web_view_main_daily_load_failure_replaces_previous_main_content() -> None:
+    from playwright.sync_api import sync_playwright
+
+    html = cli_module._render_web_view_html()
+    load_daily = html.split("async function loadDaily(date, options = {})", 1)[1].split(
+        "function renderDailyBriefing", 1
+    )[0]
+    load_daily = "async function loadDaily(date, options = {})" + load_daily
+    browser_harness = f"""
+      <p id="main-daily-status" aria-live="polite"></p>
+      <div id="main-priority-rows">이전 날짜 Top2</div>
+      <p id="daily-briefing-headline">이전 날짜 요약</p>
+      <ul id="briefing-check-points"><li>이전 날짜 근거</li></ul>
+      <div id="source-freshness-summary"></div><div id="news-observation-summary"></div>
+      <script>
+        let selectedDate = "2026-10-07";
+        let currentDailyData = {{ business_date: "2026-10-07" }};
+        let currentCandidateEvidenceData = {{ business_date: "2026-10-07" }};
+        let candidateEvidenceLoadedDate = "2026-10-07";
+        let candidateEvidenceLoadedLimit = 8;
+        let dailyLoadSequence = 0;
+        let candidateEvidenceRequestId = 0;
+        let activeViewTab = "main";
+        let tossMarketContextRequestId = 0, tossMarketContextLoading = false, tossMarketContextVisible = false;
+        let newbbyIndicatorRequestId = 0, newbbyIndicatorLoading = false, newbbyIndicatorData = null;
+        let tossPriorityRows = [], tossPriorityDate = null, selectedStockCode = null, selectedStockLabel = null;
+        let selectedStockSource = null, selectedCategoryType = null, selectedPublicCategoryId = null;
+        let selectedCategoryDisplayName = null, selectedCategoryLabel = null, selectedCategorySource = null;
+        let stockSearchResults = [], stockSearchRequestId = 0, dailyFlowExpanded = false;
+        let rotationLoadedDate = null, etfTrendLoadedDate = null, flowTrendLoadedDate = null;
+        let flowTrendRequestId = 0;
+        const getOriginalElementById = document.getElementById.bind(document);
+        const el = (id) => {{
+          let node = getOriginalElementById(id);
+          if (!node) {{ node = document.createElement("div"); node.id = id; document.body.append(node); }}
+          return node;
+        }};
+        document.getElementById = (id) => getOriginalElementById(id) || el(id);
+        const validStockCode = () => false, validDate = () => false, isKnownCategory = () => false;
+        const updateNewbbyIndicatorRefreshButton = () => {{}}, updateTossPriorityRefreshButton = () => {{}};
+        const updateTossMarketRefreshButton = () => {{}}, updateSelectionStatus = () => {{}}, refreshViewPanels = () => {{}};
+        const renderArchiveButtons = () => {{}}, updateArchiveNavigation = () => {{}}, renderDailyStocks = () => {{}};
+        const renderDailyBriefing = () => {{}}, renderSourceFreshnessSummary = () => {{}}, renderNewsObservationSummary = () => {{}};
+        const syncStockSearchInput = () => {{}}, renderStockSearchResults = () => {{}}, renderKrxContext = () => {{}};
+        const renderKrxRecentFlow = () => {{}}, renderInvestorFlow = () => {{}}, setActiveStockSelection = () => {{}};
+        const setActiveCategorySelection = () => {{}}, loadTabDataForActiveView = async () => {{}};
+        window.fetch = () => new Promise((_resolve, reject) => {{ window.rejectDaily = reject; }});
+        {load_daily}
+        window.beginDailyLoad = () => {{ window.dailyLoadPromise = loadDaily("2026-10-08"); }};
+      </script>
+    """
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content(browser_harness)
+            page.evaluate("() => window.beginDailyLoad()")
+            page.wait_for_function("typeof window.rejectDaily === 'function'")
+            assert "불러오는 중" in page.locator("#main-daily-status").inner_text()
+            assert "이전 날짜 Top2" not in page.locator("#main-priority-rows").inner_text()
+            assert "이전 날짜 요약" not in page.locator("#daily-briefing-headline").inner_text()
+            page.evaluate("() => window.rejectDaily(new Error('offline'))")
+            page.wait_for_function("document.getElementById('main-daily-status').textContent.includes('실패')")
+            assert "2026-10-08" in page.locator("#main-daily-status").inner_text()
+            assert "이전 날짜 요약" not in page.locator("#daily-briefing-headline").inner_text()
+            assert "이전 날짜 Top2" not in page.locator("#main-priority-rows").inner_text()
+            assert page.evaluate("() => currentDailyData") is None
+        finally:
+            browser.close()
+
+
+def test_web_view_candidate_evidence_ignores_response_after_date_or_tab_change() -> None:
+    from playwright.sync_api import sync_playwright
+
+    html = cli_module._render_web_view_html()
+    load_candidates = html.split("async function loadCandidateEvidence(date, options = {})", 1)[1].split(
+        "async function loadTabDataForActiveView", 1
+    )[0]
+    load_candidates = "async function loadCandidateEvidence(date, options = {})" + load_candidates
+    browser_harness = f"""
+      <span id="candidate-evidence-date"></span><div id="candidate-evidence-rows"></div>
+      <script>
+        let selectedDate = "2026-10-08", activeViewTab = "watch";
+        let candidateEvidenceRequestId = 0, candidateEvidenceLoadedDate = null, candidateEvidenceLoadedLimit = 0;
+        let currentCandidateEvidenceData = null, currentDailyData = {{ business_date: "2026-10-08" }};
+        const rendered = [];
+        const renderCandidateEvidence = (data) => rendered.push(data.business_date);
+        window.fetch = async () => ({{ ok: true, json: () => new Promise((resolve) => {{ window.resolveEvidence = resolve; }}) }});
+        {load_candidates}
+        window.startCandidateRequest = () => loadCandidateEvidence(selectedDate, {{ limit: 8 }});
+        window.finishCandidateRequest = async (date, tab) => {{
+          const pending = window.startCandidateRequest();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          selectedDate = date;
+          activeViewTab = tab;
+          window.resolveEvidence({{ business_date: "2026-10-08", rows: [{{ stock_code: "000001" }}] }});
+          await pending;
+        }};
+      </script>
+    """
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content(browser_harness)
+            page.evaluate("() => window.finishCandidateRequest('2026-10-09', 'watch')")
+            assert page.evaluate("() => rendered.length") == 0
+            assert page.evaluate("() => currentCandidateEvidenceData") is None
+
+            page.evaluate("() => { selectedDate = '2026-10-08'; activeViewTab = 'watch'; }")
+            page.evaluate("() => window.finishCandidateRequest('2026-10-08', 'main')")
+            assert page.evaluate("() => rendered.length") == 1
+            assert page.evaluate("() => currentCandidateEvidenceData.business_date") == "2026-10-08"
+        finally:
+            browser.close()
+
+
+def test_web_view_candidate_evidence_latest_request_wins_for_same_date() -> None:
+    from playwright.sync_api import sync_playwright
+
+    html = cli_module._render_web_view_html()
+    load_candidates = html.split("async function loadCandidateEvidence(date, options = {})", 1)[1].split(
+        "async function loadTabDataForActiveView", 1
+    )[0]
+    load_candidates = "async function loadCandidateEvidence(date, options = {})" + load_candidates
+    browser_harness = f"""
+      <span id="candidate-evidence-date"></span><div id="candidate-evidence-rows"></div>
+      <script>
+        let selectedDate = "2026-10-08", activeViewTab = "watch";
+        let candidateEvidenceRequestId = 0, candidateEvidenceLoadedDate = null, candidateEvidenceLoadedLimit = 0;
+        let currentCandidateEvidenceData = null, currentDailyData = {{ business_date: "2026-10-08" }};
+        const rendered = [];
+        const evidenceResolvers = [];
+        const renderCandidateEvidence = (data) => rendered.push(data.rows[0].stock_code);
+        window.fetch = async () => ({{ ok: true, json: () => new Promise((resolve) => evidenceResolvers.push(resolve)) }});
+        {load_candidates}
+        window.runOverlappingCandidateRequests = async () => {{
+          const older = loadCandidateEvidence(selectedDate, {{ limit: 8, force: true }});
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          const latest = loadCandidateEvidence(selectedDate, {{ limit: 8, force: true }});
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          evidenceResolvers[0]({{ business_date: selectedDate, rows: [{{ stock_code: "older" }}] }});
+          await older;
+          evidenceResolvers[1]({{ business_date: selectedDate, rows: [{{ stock_code: "latest" }}] }});
+          await latest;
+        }};
+      </script>
+    """
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content(browser_harness)
+            page.evaluate("() => window.runOverlappingCandidateRequests()")
+            assert page.evaluate("() => rendered") == ["latest"]
+            assert page.evaluate("() => currentCandidateEvidenceData.rows[0].stock_code") == "latest"
+        finally:
+            browser.close()
+
+
+def test_web_view_flow_trend_ignores_stale_date_response_and_records_request_date() -> None:
+    from playwright.sync_api import sync_playwright
+
+    html = cli_module._render_web_view_html()
+    load_flow = html.split("async function loadFlowTrend(date)", 1)[1].split(
+        "async function loadEtfTrend", 1
+    )[0]
+    load_flow = "async function loadFlowTrend(date)" + load_flow
+    browser_harness = f"""
+      <details id="flow-trend-details" open><table><tbody id="flow-trend-rows"></tbody></table></details>
+      <span id="flow-trend-title"></span><p id="flow-trend-notice"></p>
+      <script>
+        let selectedDate = "2026-10-08", flowTrendRequestId = 0, flowTrendLoadedDate = null;
+        const renderedDates = [];
+        const renderFlowTrend = (data) => renderedDates.push(data.business_date);
+        window.fetch = async () => ({{ ok: true, json: () => new Promise((resolve) => {{ window.resolveFlow = resolve; }}) }});
+        {load_flow}
+        window.beginFlowLoad = () => loadFlowTrend(selectedDate);
+        window.finishFlowLoad = async () => {{
+          const pending = window.beginFlowLoad();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          selectedDate = "2026-10-09";
+          window.resolveFlow({{ business_date: "2026-10-08", available: true, items: [{{}}] }});
+          await pending;
+        }};
+        window.completeCurrentFlowLoad = async () => {{
+          const pending = window.beginFlowLoad();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          window.resolveFlow({{ business_date: selectedDate, available: true, items: [{{}}] }});
+          await pending;
+        }};
+      </script>
+    """
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content(browser_harness)
+            page.evaluate("() => window.finishFlowLoad()")
+            assert page.evaluate("() => renderedDates.length") == 0
+            assert page.evaluate("() => flowTrendLoadedDate") is None
+            page.evaluate("() => { selectedDate = '2026-10-08'; }")
+            page.evaluate("() => window.completeCurrentFlowLoad()")
+            assert page.evaluate("() => renderedDates") == ["2026-10-08"]
+            assert page.evaluate("() => flowTrendLoadedDate") == "2026-10-08"
         finally:
             browser.close()
 
@@ -7142,7 +7369,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     )[0]
     assert "loadBacktestObservation(date)" not in load_daily_body
     assert "loadEtfTrend(date)" not in load_daily_body
-    assert "loadFlowTrend(date)" not in load_daily_body
+    assert 'if (document.getElementById("flow-trend-details").open && validDate(date)) loadFlowTrend(date);' in load_daily_body
     assert "loadTabDataForActiveView(date)" in load_daily_body
     assert "candidateDisplayFlags(item.quality_flags)" not in html
     assert 'new Set(["missing_stock_flow", "rank_not_present"])' not in html
