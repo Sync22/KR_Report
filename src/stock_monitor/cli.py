@@ -10199,11 +10199,11 @@ def _partial_krx_daily_snapshot_dates(
         """
         SELECT business_date
         FROM (
-            SELECT business_date FROM stock_market_daily
+            SELECT business_date FROM stock_market_daily WHERE source = 'krx'
             UNION
-            SELECT business_date FROM etf_daily_snapshots
+            SELECT business_date FROM etf_daily_snapshots WHERE source = 'krx'
             UNION
-            SELECT business_date FROM market_index_daily
+            SELECT business_date FROM market_index_daily WHERE source = 'krx'
         )
         ORDER BY business_date DESC
         """
@@ -10216,7 +10216,7 @@ def _partial_krx_daily_snapshot_dates(
         counts = {
             "etf-daily": int(
                 connection.execute(
-                    "SELECT COUNT(*) FROM etf_daily_snapshots WHERE business_date = ?",
+                    "SELECT COUNT(*) FROM etf_daily_snapshots WHERE business_date = ? AND source = 'krx'",
                     (business_date,),
                 ).fetchone()[0]
             ),
@@ -10227,6 +10227,7 @@ def _partial_krx_daily_snapshot_dates(
                     FROM stock_market_daily
                     WHERE business_date = ?
                       AND market = 'KOSPI'
+                      AND source = 'krx'
                     """,
                     (business_date,),
                 ).fetchone()[0]
@@ -10238,6 +10239,7 @@ def _partial_krx_daily_snapshot_dates(
                     FROM stock_market_daily
                     WHERE business_date = ?
                       AND market = 'KOSDAQ'
+                      AND source = 'krx'
                     """,
                     (business_date,),
                 ).fetchone()[0]
@@ -10249,6 +10251,7 @@ def _partial_krx_daily_snapshot_dates(
                     FROM market_index_daily
                     WHERE business_date = ?
                       AND index_series = 'KRX'
+                      AND source = 'krx'
                     """,
                     (business_date,),
                 ).fetchone()[0]
@@ -10260,6 +10263,7 @@ def _partial_krx_daily_snapshot_dates(
                     FROM market_index_daily
                     WHERE business_date = ?
                       AND index_series = 'KOSPI'
+                      AND source = 'krx'
                     """,
                     (business_date,),
                 ).fetchone()[0]
@@ -10271,6 +10275,7 @@ def _partial_krx_daily_snapshot_dates(
                     FROM market_index_daily
                     WHERE business_date = ?
                       AND index_series = 'KOSDAQ'
+                      AND source = 'krx'
                     """,
                     (business_date,),
                 ).fetchone()[0]
@@ -10460,10 +10465,10 @@ def _investor_flow_quality_issue_counts(connection: sqlite3.Connection, tables: 
                 """
                 SELECT COUNT(*)
                 FROM stock_investor_flow_daily
-                WHERE volume_unit IS NULL
-                   OR TRIM(volume_unit) = ''
-                   OR amount_unit IS NULL
-                   OR TRIM(amount_unit) = ''
+                WHERE ((sell_volume IS NOT NULL OR buy_volume IS NOT NULL OR net_buy_volume IS NOT NULL)
+                       AND (volume_unit IS NULL OR TRIM(volume_unit) = ''))
+                   OR ((sell_amount IS NOT NULL OR buy_amount IS NOT NULL OR net_buy_amount IS NOT NULL)
+                       AND (amount_unit IS NULL OR TRIM(amount_unit) = ''))
                 """
             ).fetchone()[0]
         )
@@ -10487,10 +10492,10 @@ def _investor_flow_quality_issue_counts(connection: sqlite3.Connection, tables: 
                 """
                 SELECT COUNT(*)
                 FROM market_investor_flow_daily
-                WHERE volume_unit IS NULL
-                   OR TRIM(volume_unit) = ''
-                   OR amount_unit IS NULL
-                   OR TRIM(amount_unit) = ''
+                WHERE ((sell_volume IS NOT NULL OR buy_volume IS NOT NULL OR net_buy_volume IS NOT NULL)
+                       AND (volume_unit IS NULL OR TRIM(volume_unit) = ''))
+                   OR ((sell_amount IS NOT NULL OR buy_amount IS NOT NULL OR net_buy_amount IS NOT NULL)
+                       AND (amount_unit IS NULL OR TRIM(amount_unit) = ''))
                 """
             ).fetchone()[0]
         )

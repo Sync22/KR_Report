@@ -10854,7 +10854,13 @@ def test_market_briefing_readiness_reports_preview_and_manual_review_gate(tmp_pa
     assert payload["dates"][0]["time_slot_mood_source_gap_count"] == 0
 
 
-def test_next_phase_readiness_summarizes_read_only_blockers(tmp_path, capsys) -> None:
+def test_next_phase_readiness_summarizes_read_only_blockers(tmp_path, capsys, monkeypatch) -> None:
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 5, 14, 9, 0, tzinfo=tz)
+
+    monkeypatch.setattr(cli_module, "datetime", FixedDateTime)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
     repository.initialize()
@@ -13182,7 +13188,7 @@ def test_web_view_value_qa_fails_on_unresolved_toss_market_reference(tmp_path, m
     assert any(issue["code"] == "missing_market_reference" for issue in payload["issues"])
 
 
-def test_db_verify_fails_on_investor_flow_quality_issue(tmp_path, capsys) -> None:
+def test_db_verify_requires_units_only_for_present_investor_flow_values(tmp_path, capsys) -> None:
     repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
     repository.initialize()
     with repository.connect() as connection:
@@ -13194,25 +13200,61 @@ def test_db_verify_fails_on_investor_flow_quality_issue(tmp_path, capsys) -> Non
                     stock_code,
                     investor_type,
                     fetched_at,
-                    source
+                    source,
+                    net_buy_volume,
+                    volume_unit,
+                    net_buy_amount,
+                    amount_unit
                 ) VALUES (
                     '2026-05-08',
                     'BAD',
                     '외국인',
                     '2026-05-08T16:50:00',
-                    'krx_data_market'
+                    'krx_data_market',
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL
                 )
                 """
+            )
+            connection.executemany(
+                """
+                INSERT INTO stock_investor_flow_daily (
+                    business_date, stock_code, investor_type, fetched_at, source,
+                    net_buy_volume, volume_unit, net_buy_amount, amount_unit
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    ("2026-05-08", "005930", "외국인", "2026-05-08T16:50:00", "toss_openapi", 100, "주", None, None),
+                    ("2026-05-08", "000660", "기관", "2026-05-08T16:50:00", "toss_openapi", None, None, 200, "원"),
+                    ("2026-05-08", "005380", "기관", "2026-05-08T16:50:00", "toss_openapi", 50, None, None, None),
+                    ("2026-05-08", "000270", "외국인", "2026-05-08T16:50:00", "toss_openapi", None, None, 75, None),
+                ],
+            )
+            connection.executemany(
+                """
+                INSERT INTO market_investor_flow_daily (
+                    business_date, market, investor_type, fetched_at, source,
+                    net_buy_volume, volume_unit, net_buy_amount, amount_unit
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    ("2026-05-08", "KOSPI", "외국인", "2026-05-08T16:50:00", "toss_openapi", None, None, 100, "원"),
+                    ("2026-05-08", "KOSDAQ", "기관", "2026-05-08T16:50:00", "toss_openapi", 50, None, None, None),
+                    ("2026-05-08", "KOSPI", "기관", "2026-05-08T16:50:00", "toss_openapi", None, None, 75, None),
+                ],
             )
 
     exit_code = _run_db_verify(repository, as_json=False)
 
     output = capsys.readouterr().out
     assert exit_code == 1
-    assert "- investor-flow quality issues: 3" in output
+    assert "- investor-flow quality issues: 6" in output
     assert "stock_invalid_code: 1" in output
-    assert "stock_missing_units: 1" in output
+    assert "stock_missing_units: 2" in output
     assert "stock_no_numeric_flow: 1" in output
+    assert "market_missing_units: 2" in output
 
 
 def test_observation_feature_audit_prints_read_only_coverage(tmp_path, capsys) -> None:
@@ -14232,6 +14274,87 @@ def test_db_verify_fails_on_partial_krx_daily_snapshot(tmp_path, capsys) -> None
                 etf_code="069500",
                 etf_name="KODEX 200",
                 fetched_at=datetime(2026, 5, 8, 18, 0, 0),
+            )
+        ]
+    )
+
+    exit_code = _run_db_verify(repository, as_json=False)
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "- partial KRX daily snapshot dates: 1" in output
+    assert "2026-05-08: missing etf-daily, stock-kospi-daily" in output
+
+
+def test_db_verify_ignores_toss_snapshots_for_partial_krx_check(tmp_path, capsys) -> None:
+    from stock_monitor.models import MarketIndexDailySnapshot, StockMarketDailySnapshot
+
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+    business_date = date(2026, 5, 8)
+    fetched_at = datetime(2026, 5, 8, 20, 0, 0)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                fetched_at=fetched_at,
+                source="toss_openapi",
+            )
+        ]
+    )
+    repository.upsert_market_index_daily(
+        [
+            MarketIndexDailySnapshot(
+                business_date=business_date,
+                index_series="KOSPI",
+                index_class="toss",
+                index_name="코스피",
+                fetched_at=fetched_at,
+                source="toss_openapi",
+            )
+        ]
+    )
+
+    exit_code = _run_db_verify(repository, as_json=False)
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "- partial KRX daily snapshot dates: 0" in output
+
+
+def test_db_verify_does_not_count_toss_rows_toward_krx_endpoint_minimums(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    from stock_monitor.models import EtfDailySnapshot, StockMarketDailySnapshot
+
+    monkeypatch.setitem(cli_module.KRX_DAILY_BACKFILL_MIN_ROWS, "etf-daily", 1)
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+    business_date = date(2026, 5, 8)
+    fetched_at = datetime(2026, 5, 8, 20, 0, 0)
+    repository.upsert_stock_market_daily(
+        [
+            StockMarketDailySnapshot(
+                business_date=business_date,
+                stock_code="005930",
+                stock_name="삼성전자",
+                market="KOSPI",
+                fetched_at=fetched_at,
+                source="krx",
+            )
+        ]
+    )
+    repository.upsert_etf_daily_snapshots(
+        [
+            EtfDailySnapshot(
+                business_date=business_date,
+                etf_code="069500",
+                etf_name="KODEX 200",
+                fetched_at=fetched_at,
+                source="toss_openapi",
             )
         ]
     )
