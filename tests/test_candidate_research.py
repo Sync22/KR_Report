@@ -12,6 +12,26 @@ def test_known_keywords_use_stage2_queries_and_preserve_source():
     assert focus["items"][0]["basis"] == "keywords"
 
 
+def test_report_source_url_is_carried_only_when_present():
+    report = CoreKeywordDocument(
+        "report", "삼성전자", "005930", "HBM4 고객 인증", "",
+        source_url="https://example.test/reports/123",
+    )
+    report_without_url = CoreKeywordDocument("report", "삼성전자", "005930", "HBM4 공급 확대", "")
+    news = CoreKeywordDocument(
+        "news", "삼성전자", "005930", "HBM4 공급 확대", "",
+        source_url="https://example.test/news/456",
+    )
+
+    report_items = build_candidate_research_focus("삼성전자", (report,))["items"]
+    report_items_without_url = build_candidate_research_focus("삼성전자", (report_without_url,))["items"]
+    news_items = build_candidate_research_focus("삼성전자", (news,))["items"]
+
+    assert report_items[0]["source_url"] == report.source_url
+    assert "source_url" not in report_items_without_url[0]
+    assert all("source_url" not in item for item in news_items)
+
+
 def test_unseen_report_keeps_source_title_instead_of_inventing_keywords():
     title = "아시아 유일 통합 AI 팩토리 사업자로의 부상"
     document = CoreKeywordDocument("report", "NAVER", "035420", title, "")
@@ -56,6 +76,7 @@ def test_actual_candidate_snapshot_attaches_focus_only_to_selected_rows(tmp_path
         broker_name="증권사", published_at=datetime(2026, 9, 8, 9), business_date=day,
         collected_at=datetime(2026, 9, 8, 9), target_price_value=10000,
         opinion_normalized="buy", identity_key=f"research-{i}", source_id=f"research-{i}",
+        source_url=f"https://stock.naver.com/research/company/{i}",
     ) for i in range(3)]
     repository.insert_reports(reports + [replace(
         report, broker_name="다른증권사", title=report.title + " 후속",
@@ -69,15 +90,20 @@ def test_actual_candidate_snapshot_attaches_focus_only_to_selected_rows(tmp_path
         item = row["research_focus"]["items"][0]
         assert item["query"].startswith(row["stock_name"] + " ")
         assert item["basis"] == "source_title"
+        assert item["source_url"].startswith("https://stock.naver.com/research/company/")
     assert all("research_focus" not in row for row in snapshot["rows"] if not row["selected"])
 
 
 def test_main_renders_research_link_outside_stock_detail_button():
     from stock_monitor import cli
     html = cli._render_web_view_html()
-    assert '</button>${renderCandidateResearchFocus(item.research_focus)}</div>' in html
+    assert "const researchBlock = renderCandidateResearchFocus(item.research_focus);" in html
+    assert "const details = [flowBlock, researchBlock, missingEvidenceBlock, targetRevisionBlock]" in html
+    assert "</button>${detailDisclosure}</div>" in html
     assert "encodeURIComponent(query)" in html
-    assert "esc(item.topic || item.source_title" in html
+    assert "item?.source_title || item?.topic" in html
+    assert "safeReportUrl(item?.source_url)" in html
+    assert 'item?.source_kind === "리포트"' in html
     assert 'rel="noopener noreferrer"' in html
 
 

@@ -30133,14 +30133,20 @@ def _render_web_view_html() -> str:
     .additional-candidates > summary { cursor: pointer; color: var(--accent); font-size: 13px; font-weight: 800; }
     .additional-candidates > summary::marker { color: var(--accent); }
     .additional-candidates .candidate-list { margin-top: 10px; }
-    .main-priority-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .main-priority-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
     .main-priority-control-group { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 8px; }
     .main-priority-control-label { color: var(--muted); font-size: 12px; font-weight: 800; }
     .main-priority-card .ghost-button, .main-market-card .ghost-button { min-height: 36px; padding: 8px 12px; color: var(--ink); font-size: 13px; }
+    .main-priority-heading { align-items: center; }
+    .main-priority-heading h2 { margin: 0; }
     .main-priority-list { display: grid; gap: 10px; }
     .main-priority-list:empty { display: none; }
     .main-priority-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
     .main-priority-note:empty { display: none; }
+    .main-priority-status { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
+    .main-priority-status:empty { display: none; }
+    .main-market-card { margin-bottom: 14px; }
+    .main-market-card .intraday-overlap-panel { margin: 10px 0 12px; border: 0; border-radius: 0; padding: 0; background: transparent; }
     .daily-candle-range { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
     .daily-candle-range select { min-height: 36px; border: 1px solid var(--line); border-radius: 9px; padding: 4px 8px; background: #fff; color: var(--ink); font: inherit; }
     .daily-candle-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 10px; }
@@ -30158,13 +30164,38 @@ def _render_web_view_html() -> str:
     .main-market-context-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     .main-market-context-block { min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: #fffaf1; }
     .main-market-context-block b { display: block; margin-bottom: 6px; font-size: 13px; }
+    .main-market-index-table th, .main-market-index-table td { white-space: nowrap; }
+    .main-market-flow-rows { display: grid; gap: 0; }
+    .main-market-flow-row { display: grid; grid-template-columns: minmax(64px, .7fr) repeat(3, minmax(0, 1fr)); align-items: stretch; gap: 6px; border-top: 1px solid var(--line); margin-top: 8px; padding-top: 8px; }
+    .main-market-flow-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin-bottom: 6px; }
+    .main-market-flow-header b { display: inline; margin: 0; font-size: 13px; }
+    .main-market-flow-cutoff { color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .main-market-flow-reference { color: var(--muted); font-size: 12px; text-align: right; }
+    .main-market-flow-market { display: grid; align-content: center; gap: 3px; min-width: 0; }
+    .main-market-flow-market b { display: block; margin: 0; font-size: 12px; }
+    .main-market-flow-market small { color: var(--muted); font-size: 10px; line-height: 1.25; }
+    .main-market-flow-item { min-width: 0; display: grid; align-content: start; gap: 2px; border-radius: 8px; padding: 7px; background: #fff; }
+    .main-market-flow-item span { color: var(--muted); font-size: 12px; line-height: 1.35; }
+    .main-market-flow-item strong { font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
     .newbby-indicator-candidate { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 14px; }
     .newbby-indicator-candidate h3 { margin: 0 0 4px; font-size: 19px; }
     .newbby-indicator-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; margin: 0 0 8px; color: var(--muted); font-size: 12px; line-height: 1.4; }
-    .newbby-indicator-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; margin: 8px 0; }
+    .newbby-indicator-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin: 8px 0; }
     .newbby-indicator-stat { min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 8px 9px; background: #fffaf1; }
-    .newbby-indicator-stat dt { color: var(--muted); font-size: 11px; font-weight: 700; line-height: 1.3; }
-    .newbby-indicator-stat dd { margin: 4px 0 0; font-size: 13px; font-weight: 750; line-height: 1.35; overflow-wrap: anywhere; }
+    .newbby-indicator-stat dt { color: var(--muted); font-size: 12px; font-weight: 700; line-height: 1.3; }
+    .newbby-indicator-stat dd { margin: 4px 0 0; font-size: 14px; font-weight: 750; line-height: 1.35; overflow-wrap: anywhere; }
+    .newbby-indicator-level-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .newbby-indicator-condition { display: grid; gap: 3px; margin: 8px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #f7faf8; }
+    .newbby-indicator-condition b { font-size: 14px; }
+    .newbby-indicator-condition span { font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+    .newbby-indicator-explanation { font-size: 13px; line-height: 1.45; }
+    .newbby-indicator-price-levels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 4px 0; }
+    .newbby-indicator-price-level { display: grid; gap: 2px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+    .newbby-indicator-price-level b { color: var(--accent); font-size: 12px; }
+    .newbby-indicator-price-level span, .newbby-indicator-price-level small { font-size: 12px; line-height: 1.35; }
+    .newbby-indicator-price-level small { color: var(--muted); }
+    .newbby-indicator-confirmation { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+    .newbby-indicator-confirmation span { border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; background: #fff; color: var(--muted); font-size: 12px; line-height: 1.35; }
     .newbby-indicator-chart-wrap { border: 1px solid var(--line); border-radius: 12px; padding: 8px; background: #fff; }
     .newbby-indicator-chart { display: block; width: 100%; height: auto; min-height: 190px; }
     .newbby-indicator-aux-chart { display: block; width: 100%; height: auto; min-height: 90px; margin-top: 8px; border-top: 1px solid var(--line); }
@@ -30178,30 +30209,42 @@ def _render_web_view_html() -> str:
     .top-two-candidates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 4px; }
     .top-two-entry { min-width: 0; }
     .top-two-entry .top-two-card { width: 100%; }
-    .top-two-why { display: block; color: var(--muted); font-size: 12px; line-height: 1.4; }
-    .top-two-evidence-details { margin-top: 6px; border: 1px solid var(--line); border-radius: 10px; padding: 7px 9px; background: #fff; color: var(--muted); font-size: 11px; }
-    .top-two-evidence-details > summary { cursor: pointer; font-weight: 750; line-height: 1.35; }
+    .top-two-why { display: block; color: var(--muted); font-size: 13px; line-height: 1.4; }
+    .top-two-evidence-details { margin-top: 6px; border: 1px solid var(--line); border-radius: 10px; padding: 7px 9px; background: #fff; color: var(--muted); font-size: 12px; }
+    .top-two-evidence-details > summary { display: flex; flex-wrap: wrap; justify-content: flex-start; align-items: baseline; gap: 6px; cursor: pointer; font-weight: 750; line-height: 1.35; }
+    .top-two-evidence-details > summary::-webkit-details-marker { display: none; }
+    .top-two-evidence-details > summary::marker { content: ""; }
+    .top-two-evidence-summary-label { flex: 1 1 auto; }
+    .top-two-evidence-caret { flex: 0 0 auto; align-self: center; width: 0; height: 0; border-top: 8px solid var(--accent); border-right: 6px solid transparent; border-left: 6px solid transparent; transition: transform .15s ease; }
+    .top-two-evidence-details[open] > summary .top-two-evidence-caret { transform: rotate(180deg); }
+    .top-two-evidence-summary-meta { margin-left: auto; color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
     .top-two-evidence-details[open] > summary { margin-bottom: 7px; }
-    .top-two-evidence-details-body { display: grid; gap: 6px; color: var(--ink); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+    .top-two-evidence-details-body { display: grid; gap: 4px; color: var(--ink); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
     .top-two-detail-line { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 6px; }
-    .candidate-research-focus-body p { margin: 4px 0; }
+    .top-two-detail-line strong { color: var(--accent); font-size: 13px; }
+    .target-revision-line { grid-template-columns: 142px minmax(0, 1fr); border-top: 1px solid var(--line); margin-top: 5px; padding-top: 8px; }
+    .target-revision-line strong { font-size: 13px; }
+    .target-revision-values { display: grid; grid-template-columns: 1fr; gap: 4px; }
+    .target-revision-values span { font-size: 13px; font-weight: 400; }
+    .target-revision-values .target-revision-current { color: var(--accent); }
+    .candidate-research-focus-body { display: grid; gap: 4px; }
+    .candidate-research-focus-body p { display: flex; align-items: baseline; gap: 4px; margin: 0; }
+    .candidate-research-focus-body strong { color: var(--accent); font-size: 13px; }
+    .candidate-research-focus-body span { min-width: 0; color: var(--ink); }
     .candidate-research-focus-body a { color: var(--accent); text-decoration: underline; }
     .top-two-card { border: 1px solid var(--line); border-radius: 16px; padding: 12px; background: #fff; color: inherit; cursor: pointer; text-align: left; font: inherit; }
-    .top-two-card b { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 5px; color: var(--accent); font-size: 14px; }
-    .top-two-card .status-pill { font-size: 11px; padding: 2px 7px; }
+    .top-two-card b { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 5px; color: var(--accent); font-size: 15px; }
+    .top-two-card .status-pill { font-size: 12px; padding: 2px 7px; }
     .top-two-card span { display: block; color: var(--muted); font-size: 13px; line-height: 1.45; }
     .top-two-news-line { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 6px; color: var(--ink); }
-    .top-two-news-line strong { color: var(--accent); font-size: 11px; }
+    .top-two-news-line strong { color: var(--accent); font-size: 12px; }
     .top-two-news-line .top-two-news-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--ink); }
     .top-two-evidence-line { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 6px; color: var(--ink); }
     .top-two-evidence-line strong { color: var(--accent); font-size: 12px; }
     .top-two-evidence-line .top-two-evidence-text { color: var(--ink); overflow-wrap: anywhere; }
-    .top-two-card .priority-toss-quote { display: inline-flex; width: fit-content; border-radius: 999px; padding: 2px 7px; background: #eef7f2; color: #245746; font-size: 11px; font-weight: 900; }
+    .top-two-card .priority-toss-quote { display: inline-flex; width: fit-content; border-radius: 999px; padding: 2px 7px; background: #eef7f2; color: #245746; font-size: 12px; font-weight: 900; }
     .top-two-card .priority-toss-quote.muted { background: #eef1f2; color: #5d676d; }
     .top-two-card .priority-toss-quote.stale { background: #fff0cf; color: #7a5400; }
-    .top-two-close-reassessment { margin-top: 10px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 12px; background: #f7faf8; }
-    .top-two-close-reassessment p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
-    .top-two-close-reassessment-list { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 7px; font-size: 12px; }
     .candidate-card { border: 1px solid var(--line); border-radius: 18px; padding: 14px; background: #fffaf1; cursor: pointer; }
     .candidate-card:hover { border-color: var(--accent); box-shadow: inset 4px 0 0 var(--accent); }
     .candidate-card h3 { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 8px; font-size: 16px; }
@@ -30370,6 +30413,7 @@ def _render_web_view_html() -> str:
     @media (max-width: 640px) {
       main { width: min(100vw - 20px, 1120px); padding-top: 20px; }
       .card { border-radius: 18px; padding: 14px; }
+      .newbby-indicator-price-levels { grid-template-columns: 1fr; }
       .hero { align-items: stretch; }
       .hero-title-row { gap: 8px; }
       .calendar-trigger { width: 32px; height: 32px; }
@@ -30378,6 +30422,12 @@ def _render_web_view_html() -> str:
       .calendar-dialog .date-calendar-cell { min-height: 44px; padding: 6px; border-radius: 10px; }
       .calendar-dialog .date-calendar-cell .report-count, .calendar-dialog .date-calendar-cell .news-count { display: none; }
       .main-priority-card .section-header { align-items: flex-start; flex-direction: column; }
+      .main-priority-card .section-header.main-priority-heading { align-items: center; flex-direction: row; }
+      .top-two-evidence-details > summary { align-items: flex-start; gap: 4px 6px; }
+      .target-revision-line { grid-template-columns: 1fr; gap: 3px; }
+      .main-market-flow-row { grid-template-columns: 54px repeat(3, minmax(0, 1fr)); gap: 4px; }
+      .main-market-flow-item { padding: 6px 4px; }
+      .main-market-flow-item span { font-size: 10px; }
       .main-priority-control-group { align-items: flex-start; }
       .stock-context-panel { max-height: none; overflow: visible; padding-right: 0; }
       .target-trail-line { grid-template-columns: 62px minmax(0, 1fr); }
@@ -30437,8 +30487,16 @@ def _render_web_view_html() -> str:
     </dialog>
     <section class="grid">
       <div class="card span-12 main-priority-card" id="main-priority-card" data-view-panel="main">
-        <div class="section-header">
+        <div class="section-header main-priority-heading">
           <h2>오늘의 우선순위</h2>
+          <button id="toss-market-refresh" class="ghost-button" type="button" disabled>지수 · 수급 확인</button>
+        </div>
+        <div class="main-market-card" id="main-market-context-card" data-view-panel="main" data-view-when="market-context" hidden>
+          <div class="section-header">
+            <h2 id="main-market-context-heading" hidden>당일 시장 · 수급</h2>
+          </div>
+          <p id="toss-market-context-status" class="muted" aria-live="polite" hidden></p>
+          <div id="toss-market-context" class="intraday-overlap-panel" aria-live="polite" hidden></div>
         </div>
         <div class="main-priority-controls">
           <div class="main-priority-control-group" aria-label="장중 참고">
@@ -30449,15 +30507,15 @@ def _render_web_view_html() -> str:
           <div class="main-priority-control-group" aria-label="차트 범위와 보조 지표">
             <label class="daily-candle-range" for="top2-daily-range">일봉 범위
               <select id="top2-daily-range" aria-label="Top2 일봉 범위">
-                <option value="30">30거래일</option>
-                <option value="90" selected>90거래일</option>
-                <option value="180">180거래일</option>
+                <option value="50">50거래일</option>
+                <option value="100">100거래일</option>
+                <option value="200" selected>200거래일</option>
               </select>
             </label>
             <label class="daily-candle-range" for="top2-indicator-series">보조 지표
               <select id="top2-indicator-series" aria-label="차트 보조 지표">
-                <option value="obv" selected>OBV</option>
-                <option value="rsi14">RSI 14</option>
+                <option value="rsi14" selected>RSI 14</option>
+                <option value="obv">OBV</option>
                 <option value="macd">MACD 12·26·9</option>
                 <option value="atr14">ATR 14</option>
                 <option value="volume">거래량</option>
@@ -30468,10 +30526,9 @@ def _render_web_view_html() -> str:
           </div>
         </div>
         <div id="main-priority-rows" class="main-priority-list"><span class="muted">날짜를 선택하세요.</span></div>
-        <p class="brief">선택 날짜 Main Top2의 수정주가 일봉과 기술 지표를 조회합니다.</p>
-        <p class="briefing-live-status" id="intraday-market-top-status">장중 거래대금 겹침 결과가 여기에 표시됩니다.</p>
+        <p class="main-priority-status" id="intraday-market-top-status">장중 거래대금 겹침 결과가 여기에 표시됩니다.</p>
         <div id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden></div>
-        <p id="newbby-indicator-status" class="muted" aria-live="polite">날짜와 Main Top2를 불러온 뒤 차트 · 지표 확인을 누르세요.</p>
+        <p id="newbby-indicator-status" class="main-priority-status" aria-live="polite">날짜와 Main Top2를 불러온 뒤 차트 · 지표 확인을 누르세요.</p>
         <div id="newbby-indicator-panel" class="newbby-indicator-panel" aria-live="polite" hidden></div>
       </div>
 
@@ -30492,16 +30549,6 @@ def _render_web_view_html() -> str:
           <div class="news-observation-summary-head"><b>뉴스 관찰</b></div>
           <p class="news-observation-summary-reason">날짜를 선택하면 저장된 뉴스 관찰을 확인합니다.</p>
         </div>
-      </div>
-
-      <div class="card span-12 main-market-card" id="main-market-context-card" data-view-panel="main">
-        <div class="section-header">
-          <h2>당일 시장 · 수급</h2>
-          <button id="toss-market-refresh" class="ghost-button" type="button" disabled>지수 · 수급 확인</button>
-        </div>
-        <p class="brief">지수는 조회 시각, 수급은 기준일을 함께 표시합니다.</p>
-        <p id="toss-market-context-status" class="muted" aria-live="polite">날짜를 선택하고 버튼을 눌러 조회하세요.</p>
-        <div id="toss-market-context" class="intraday-overlap-panel" aria-live="polite" hidden></div>
       </div>
 
       <div class="card span-12" id="candidate-evidence-card" data-view-panel="watch" hidden>
@@ -30532,24 +30579,6 @@ def _render_web_view_html() -> str:
         <p class="brief" id="report-filter-status">종목 행을 선택하세요.</p>
         <div id="stock-detail" class="detail-list scroll-panel stock-report-panel"><span class="muted">종목 행을 선택하세요.</span></div>
       </div>
-
-      <details class="card span-12 compact-details" id="industry-etf-details" data-view-panel="main">
-        <summary><h2>업종 · ETF 참고 <span class="muted" id="rotation-title"></span></h2></summary>
-        <p class="brief">리포트 분류와 저장 ETF 값의 참고 화면입니다. 실제 자금 순환을 계산하지 않습니다.</p>
-        <h3>거래대금 상위 ETF <span class="muted" id="etf-tab-title"></span></h3>
-        <div class="scroll-panel">
-          <table class="mobile-card-table">
-            <thead><tr><th>날짜</th><th>거래대금 상위 ETF</th></tr></thead>
-            <tbody id="etf-tab-rows"><tr><td colspan="2" class="muted">날짜를 선택하세요.</td></tr></tbody>
-          </table>
-        </div>
-        <p class="notice" id="etf-tab-notice">저장된 ETF 데이터 기준입니다.</p>
-        <h3>업종 · 테마 위치 참고</h3>
-        <p class="brief">저장된 업종/테마 요약 중 수동 좌표가 있는 항목만 예시 이미지에 표시합니다.</p>
-        <div id="rotation-overlay" class="rotation-wrap"><span class="muted">날짜를 선택하세요.</span></div>
-        <div id="rotation-evidence" class="rotation-evidence"></div>
-        <p class="notice" id="rotation-notice">저장된 리포트 분류 요약 기준입니다.</p>
-      </details>
 
       <div class="card span-12" data-view-panel="stock" hidden>
         <div class="section-header">
@@ -30644,6 +30673,24 @@ def _render_web_view_html() -> str:
           </table>
           <p class="notice" id="flow-trend-notice">저장된 수급 데이터 기준입니다.</p>
         </details>
+      </details>
+
+      <details class="card span-12 compact-details" id="industry-etf-details" data-view-panel="main">
+        <summary><h2>업종 · ETF 참고 <span class="muted" id="rotation-title"></span></h2></summary>
+        <p class="brief">리포트 분류와 저장 ETF 값의 참고 화면입니다. 실제 자금 순환을 계산하지 않습니다.</p>
+        <h3>거래대금 상위 ETF <span class="muted" id="etf-tab-title"></span></h3>
+        <div class="scroll-panel">
+          <table class="mobile-card-table">
+            <thead><tr><th>날짜</th><th>거래대금 상위 ETF</th></tr></thead>
+            <tbody id="etf-tab-rows"><tr><td colspan="2" class="muted">날짜를 선택하세요.</td></tr></tbody>
+          </table>
+        </div>
+        <p class="notice" id="etf-tab-notice">저장된 ETF 데이터 기준입니다.</p>
+        <h3>업종 · 테마 위치 참고</h3>
+        <p class="brief">저장된 업종/테마 요약 중 수동 좌표가 있는 항목만 예시 이미지에 표시합니다.</p>
+        <div id="rotation-overlay" class="rotation-wrap"><span class="muted">날짜를 선택하세요.</span></div>
+        <div id="rotation-evidence" class="rotation-evidence"></div>
+        <p class="notice" id="rotation-notice">저장된 리포트 분류 요약 기준입니다.</p>
       </details>
     </section>
   </main>
@@ -30776,6 +30823,7 @@ def _render_web_view_html() -> str:
     let tossPriorityDate = null;
     let tossMarketContextRequestId = 0;
     let tossMarketContextLoading = false;
+    let tossMarketContextVisible = false;
     let newbbyIndicatorRequestId = 0;
     let newbbyIndicatorLoading = false;
     let newbbyIndicatorData = null;
@@ -30797,11 +30845,13 @@ def _render_web_view_html() -> str:
     let activeViewTab = "main";
     let tossPriorityQuoteByCode = new Map();
     let tossPriorityInvestorTradingByCode = new Map();
+    let tossPriorityInvestorTradingReferenceByCode = new Map();
     let tossPriorityCohortKey = null;
 
     function viewPanelHasRequiredData(panel) {
       if (panel.dataset.viewWhen === "stock-selection") return Boolean(selectedStockCode);
       if (panel.dataset.viewWhen === "category-selection") return Boolean(selectedCategoryDisplayName);
+      if (panel.dataset.viewWhen === "market-context") return tossMarketContextVisible;
       return true;
     }
 
@@ -31135,9 +31185,13 @@ def _render_web_view_html() -> str:
       selectedDate = date;
       tossMarketContextRequestId += 1;
       tossMarketContextLoading = false;
+      tossMarketContextVisible = false;
+      document.getElementById("main-market-context-heading").hidden = true;
+      document.getElementById("main-market-context-card").hidden = true;
       document.getElementById("toss-market-context").hidden = true;
       document.getElementById("toss-market-context").innerHTML = "";
-      document.getElementById("toss-market-context-status").textContent = "날짜를 선택하고 버튼을 눌러 조회하세요.";
+      document.getElementById("toss-market-context-status").textContent = "";
+      document.getElementById("toss-market-context-status").hidden = true;
       newbbyIndicatorRequestId += 1;
       newbbyIndicatorLoading = false;
       document.getElementById("newbby-indicator-panel").hidden = true;
@@ -31271,7 +31325,9 @@ def _render_web_view_html() -> str:
         : "선택 날짜에 저장된 리포트 요약이 없습니다.");
       renderIntradayMarketTopStatus(data?.market_commentary);
       renderIntradayMarketTopOverlap(data?.market_commentary);
-      const concentrationPoint = `2건 이상 ${number(multiCount)}종목 · 1건 ${number(singleCount)}종목은 종목 탭에서 기본 숨김`;
+      const concentrationPoint = multiCount > 0
+        ? `2건 이상 ${number(multiCount)}종목${singleCount > 0 ? ` · 1건 ${number(singleCount)}종목은 종목 탭에서 기본 숨김` : ""}`
+        : singleCount > 0 ? `1건 ${number(singleCount)}종목은 종목 탭에서 기본 숨김` : null;
       const marketPoint = corePoints.find((item) => !String(item).startsWith("리포트 "));
       const candidateNames = (row) => String(row.stock_name || row.stock_code || "관찰 후보");
       const candidateWhy = priorityEvidenceRows.map((row) => {
@@ -31368,6 +31424,8 @@ def _render_web_view_html() -> str:
         node.textContent = `Naver 거래대금 상위 겹침 ${number(items.length)}종 · ${names}${extra} · ${intradayMarketTopReferenceMeta(reference)}`;
       } else if (reference.live_fetch && reference.empty_reason) {
         node.textContent = `${reference.empty_reason} · ${intradayMarketTopReferenceMeta(reference)}`;
+      } else if (status.reason === "오늘 정규장 시간에만 확인 할 수 있습니다.") {
+        node.textContent = "";
       } else if (status.reason) {
         node.textContent = status.reason;
       } else {
@@ -32222,18 +32280,6 @@ def _render_web_view_html() -> str:
       if (selectedStockCode) setActiveStockSelection(selectedStockCode, selectedStockLabel, selectedStockSource);
     }
 
-    function evidenceFlowLabel(flow) {
-      if (!flow || !flow.available) return "수급 없음";
-      const parts = [];
-      if (flow.foreign_net_buy_volume !== null && flow.foreign_net_buy_volume !== undefined) {
-        parts.push(`외국인 ${Number(flow.foreign_net_buy_volume) >= 0 ? "순유입" : "순유출"}`);
-      }
-      if (flow.institution_net_buy_volume !== null && flow.institution_net_buy_volume !== undefined) {
-        parts.push(`기관 ${Number(flow.institution_net_buy_volume) >= 0 ? "순유입" : "순유출"}`);
-      }
-      return parts.length ? parts.join(" · ") : "수급 참고 있음";
-    }
-
     function renderCandidateEvidence(evidence) {
       document.getElementById("candidate-evidence-date").textContent = evidence?.business_date ? `(${evidence.business_date})` : "";
       if (currentDailyData) renderDailyBriefing({ ...currentDailyData, priority_candidate_evidence: evidence });
@@ -32245,6 +32291,7 @@ def _render_web_view_html() -> str:
         tossPriorityCohortKey = null;
         tossPriorityQuoteByCode = new Map();
         tossPriorityInvestorTradingByCode = new Map();
+        tossPriorityInvestorTradingReferenceByCode = new Map();
         tossPriorityDate = evidence?.business_date || selectedDate;
         newbbyIndicatorRequestId += 1;
         newbbyIndicatorLoading = false;
@@ -32267,6 +32314,7 @@ def _render_web_view_html() -> str:
         tossPriorityCohortKey = nextTossCohortKey;
         tossPriorityQuoteByCode = new Map();
         tossPriorityInvestorTradingByCode = new Map();
+        tossPriorityInvestorTradingReferenceByCode = new Map();
         newbbyIndicatorRequestId += 1;
         newbbyIndicatorLoading = false;
         newbbyIndicatorData = null;
@@ -32321,42 +32369,41 @@ def _render_web_view_html() -> str:
         const why = whyItems.length
           ? candidateCompactLabel(whyItems, 2)
           : "리포트 저장 근거";
-        const tossQuote = tossPriorityQuoteByCode.get(String(item?.stock_code || ""));
-        const tossInvestorTrading = tossPriorityInvestorTradingByCode.get(String(item?.stock_code || ""));
+        const stockCode = String(item?.stock_code || "");
+        const tossQuote = tossPriorityQuoteByCode.get(stockCode);
+        const tossInvestorTrading = tossPriorityInvestorTradingByCode.get(stockCode);
+        const flowReferenceLabel = tossPriorityInvestorTradingReferenceByCode.get(stockCode);
         const targetRevisionLine = targetRevisionTrailLine(item);
-        const currentEvidenceLine = topTwoCurrentEvidenceLine(item);
         const missingEvidenceLine = topTwoMissingEvidenceLine(item, tossQuote);
-        const currentEvidenceBlock = currentEvidenceLine
-          ? `<span class="top-two-evidence-line"><strong>근거</strong><span class="top-two-evidence-text">${esc(currentEvidenceLine)}</span></span>`
-          : "";
         const missingEvidenceBlock = missingEvidenceLine === "추가 공백 없음"
           ? ""
           : `<span class="top-two-evidence-line"><strong>확인 필요</strong><span class="top-two-evidence-text">${esc(missingEvidenceLine)}</span></span>`;
-        const targetRevisionBlock = targetRevisionLine === "최근 조정 없음"
-          ? ""
-          : `<span class="target-revision-line">${esc(targetRevisionLine)}</span>`;
-        const flowBlock = tossInvestorTrading
-          ? `<div class="top-two-detail-line"><strong>당일 수급</strong><span>${esc(tossInvestorTrading)}</span></div>`
-          : "";
+        const targetRevisionBlock = targetRevisionLine || "";
+        const flowBlock = `<div class="top-two-detail-line"><strong>당일 수급</strong><span>${esc(tossInvestorTrading || "Toss 조회 수급 확인 전")}</span></div>`;
         const researchItems = Array.isArray(item?.research_focus?.items) ? item.research_focus.items.slice(0, 3) : [];
+        const reportCount = researchItems.filter((research) => research?.source_kind === "리포트").length;
+        const savedNewsCount = researchItems.filter((research) => research?.source_kind === "저장 뉴스").length;
+        const researchSummary = [reportCount ? "리포트" : "", savedNewsCount ? "저장 뉴스" : ""].filter(Boolean).join(" · ");
         const researchBlock = renderCandidateResearchFocus(item.research_focus);
-        const details = [currentEvidenceBlock, flowBlock, missingEvidenceBlock, targetRevisionBlock, researchBlock].filter(Boolean);
+        const details = [flowBlock, researchBlock, missingEvidenceBlock, targetRevisionBlock].filter(Boolean);
         const detailSummary = [
-          currentEvidenceBlock ? "근거" : "",
           flowBlock ? "수급" : "",
+          researchSummary,
           missingEvidenceBlock ? "확인 공백" : "",
           targetRevisionBlock ? "목표가 변경" : "",
-          researchItems.length ? `뉴스 검색 ${number(researchItems.length)}` : "",
         ].filter(Boolean).join(" · ") || "세부 정보";
+        const flowReferenceMarkup = flowReferenceLabel
+          ? `<small class="top-two-evidence-summary-meta">${esc(flowReferenceLabel)}</small>`
+          : "";
         const detailDisclosure = details.length
-          ? `<details class="top-two-evidence-details"><summary>${esc(detailSummary)}</summary><div class="top-two-evidence-details-body">${details.join("")}</div></details>`
+          ? `<details class="top-two-evidence-details"><summary><span class="top-two-evidence-caret" aria-hidden="true"></span><span class="top-two-evidence-summary-label">${esc(detailSummary)}</span>${flowReferenceMarkup}</summary><div class="top-two-evidence-details-body">${details.join("")}</div></details>`
           : "";
         return `<div class="top-two-entry"><button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
           <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote-context="main" data-toss-quote="${esc(item.stock_code || "")}">${esc(tossQuote || "Toss 현재가 확인 중")}</span></b>
           <span class="top-two-why">${esc(why)}</span>
         </button>${detailDisclosure}</div>`;
       }).join("")}</section>`;
-      return `${cards}${renderTopTwoCloseReassessment(currentCandidateEvidenceData?.close_reassessment)}`;
+      return cards;
     }
 
     function renderCandidateResearchFocus(focus) {
@@ -32364,37 +32411,23 @@ def _render_web_view_html() -> str:
       if (!items.length) return "";
       return `<div class="candidate-research-focus-body">${items.map((item) => {
         const query = String(item?.query || "");
-        const href = "https://search.naver.com/search.naver?where=news&query=" + encodeURIComponent(query);
-        return `<p><span>${esc(item.source_kind || "리포트")} · ${esc(item.topic || item.source_title || "")}</span> <a href="${esc(href)}" target="_blank" rel="noopener noreferrer">뉴스 검색</a></p>`;
+        const isReport = item?.source_kind === "리포트";
+        const reportUrl = isReport ? safeReportUrl(item?.source_url) : "";
+        const searchUrl = isReport ? "" : "https://search.naver.com/search.naver?where=news&query=" + encodeURIComponent(query);
+        const href = reportUrl || searchUrl;
+        const linkLabel = reportUrl ? "원문" : searchUrl ? "뉴스 검색" : "";
+        const link = href ? ` <a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${linkLabel}</a>` : "";
+        return `<p><strong>${esc(item?.source_kind || "저장 뉴스")}</strong><span>· ${esc(item?.source_title || item?.topic || "")}${link}</span></p>`;
       }).join("")}</div>`;
     }
 
-    function renderTopTwoCloseReassessment(reassessment) {
-      if (reassessment?.available !== true || reassessment?.changed !== true) return "";
-      const items = (Array.isArray(reassessment.rows) ? reassessment.rows : []).slice(0, 2);
-      if (!items.length) return "";
-      return `<aside class="top-two-close-reassessment"><b>종가 재평가</b><p>${esc(reassessment.notice || "정규장 Top2는 유지하고 종가 기준 변화는 다음 영업일 참고로 분리합니다.")}</p><div class="top-two-close-reassessment-list">${items.map((item) => {
-        const priceLabel = item?.last_price ? price(item.last_price) : "종가 확인 전";
-        const changeLabel = item?.change_percent === null || item?.change_percent === undefined ? "" : ` · ${percent(item.change_percent)}`;
-        return `<span>${esc(item?.stock_name || "-")} <span class="muted">${esc(item?.stock_code || "")}</span> · ${esc(priceLabel + changeLabel)}</span>`;
-      }).join("")}</div></aside>`;
-    }
-
-    function topTwoCurrentEvidenceLine(item) {
-      const parts = [];
-      if (candidateNewsHasActionableEvidence(item?.news_observation_badge)) {
-        parts.push(candidateNewsDigestLine(item.news_observation_badge));
+    function safeReportUrl(value) {
+      try {
+        const url = new URL(String(value || ""));
+        return url.protocol === "https:" && ["stock.naver.com", "finance.naver.com"].includes(url.hostname) ? url.href : "";
+      } catch (_error) {
+        return "";
       }
-      if (item?.intraday_reference?.available === true) {
-        parts.push(`장중 ${candidateIntradayReferenceLabel(item.intraday_reference)}`);
-      }
-      if (item?.toss_baseline_reference?.available === true) {
-        parts.push(`Toss 종가 ${price(item.toss_baseline_reference.last_price)}`);
-      }
-      if (item?.stock_flow_reference?.available === true) {
-        parts.push(evidenceFlowLabel(item.stock_flow_reference));
-      }
-      return parts.join(" · ");
     }
 
     function topTwoMissingEvidenceLine(item, tossQuote) {
@@ -32451,18 +32484,21 @@ def _render_web_view_html() -> str:
 
     function targetRevisionTrailLine(item) {
       const revision = item?.target_price_revision || {};
-      if (!revision.available) return "최근 조정 없음";
+      if (!revision.available) return "";
       const currentMin = revision.current_min;
       const currentMax = revision.current_max;
       const previousMin = revision.previous_min;
       const previousMax = revision.previous_max;
       const current = targetPriceRange(currentMin, currentMax);
       const previous = targetPriceRange(previousMin, previousMax);
-      if (!current) return "최근 조정 없음";
-      if (revision.direction === "up" && previous) return `목표가 범위(일자 집계) ↑ ${previous} → ${current}`;
-      if (revision.direction === "down" && previous) return `목표가 범위(일자 집계) ↓ ${previous} → ${current}`;
-      if (revision.direction === "flat") return `목표가 범위(일자 집계) 유지 ${current}`;
-      return "최근 조정 없음";
+      if (!current) return "";
+      const directionLabel = {up:"상향", down:"하향", flat:"유지"}[revision.direction] || "변경";
+      const currentDate = String(item?.business_date || selectedDate || "기준일 없음");
+      const previousDate = String(revision.previous_date || "기준일 미확인");
+      const previousLine = previous
+        ? `<span>${esc(previousDate)} · ${esc(previous)} <span aria-hidden="true">→</span></span>`
+        : "";
+      return `<div class="top-two-detail-line target-revision-line"><strong>목표가 범위(일자 집계)</strong><div class="target-revision-values">${previousLine}<span class="target-revision-current">${esc(currentDate)} · ${esc(current)} (${directionLabel})</span></div></div>`;
     }
 
     function targetPriceRange(minimum, maximum) {
@@ -32499,8 +32535,10 @@ def _render_web_view_html() -> str:
       if (currentStockDetailData?.stock_code === stockCode) renderStockContext(currentStockDetailData);
     }
 
-    function setTossInvestorTradingNode(stockCode, label, className = "") {
-      tossPriorityInvestorTradingByCode.set(String(stockCode || ""), label);
+    function setTossInvestorTradingNode(stockCode, label, className = "", referenceLabel = "") {
+      const code = String(stockCode || "");
+      tossPriorityInvestorTradingByCode.set(code, label);
+      tossPriorityInvestorTradingReferenceByCode.set(code, referenceLabel);
       document.querySelectorAll("[data-toss-investor-trading]").forEach((node) => {
         if (node.dataset.tossInvestorTrading !== String(stockCode || "")) return;
         node.textContent = label;
@@ -32511,16 +32549,26 @@ def _render_web_view_html() -> str:
     function tossInvestorTradingLabel(item) {
       const part = (label, value) => {
         const numeric = Number(value);
-        if (!Number.isFinite(numeric)) return "";
-        return `${label} ${numeric >= 0 ? "순매수" : "순매도"} ${number(Math.abs(numeric))}주`;
+        if (value === null || value === undefined) return `${label} 자료 없음`;
+        if (!Number.isFinite(numeric)) return `${label} 값 확인 필요`;
+        const direction = numeric > 0 ? "순매수" : numeric < 0 ? "순매도" : "보합";
+        return `${label} ${direction} ${number(Math.abs(numeric))}주`;
       };
       const parts = [
+        part("개인", item?.individual_net_buy_volume),
         part("외국인", item?.foreigner_net_buy_volume),
         part("기관", item?.institution_net_buy_volume)
       ].filter(Boolean);
       if (!parts.length) return "Toss 조회 수급 없음";
+      return parts.join(" · ");
+    }
+
+    function tossInvestorTradingReference(item) {
+      const parts = [];
+      if (item?.business_date) parts.push(`기준 ${item.business_date}`);
       const checkedAt = tossQuoteTimeLabel({ timestamp: item?.updated_at }, {});
-      return `${parts.join(" · ")}${checkedAt ? ` · ${checkedAt}` : ""}`;
+      if (checkedAt) parts.push(checkedAt);
+      return parts.join(" · ");
     }
 
     function updateTossSourceFreshness(data) {
@@ -32584,6 +32632,7 @@ def _render_web_view_html() -> str:
             code,
             investorTrading ? tossInvestorTradingLabel(investorTrading) : "Toss 조회 수급 없음",
             data.cache === "stale" ? "stale" : "",
+            investorTrading ? tossInvestorTradingReference(investorTrading) : "",
           );
           if (!quote) {
             hasMissingTossQuote = true;
@@ -32650,8 +32699,8 @@ def _render_web_view_html() -> str:
       const panel = document.getElementById("toss-market-context");
       const status = document.getElementById("toss-market-context-status");
       if (!data || data.live_fetch !== true) {
-        panel.hidden = false;
-        panel.textContent = data?.configured === false ? "Toss OpenAPI 연결 설정을 기다리고 있습니다." : "지수와 시장 수급을 확인할 수 없습니다.";
+        panel.hidden = true;
+        status.hidden = false;
         status.textContent = data?.configured === false ? "연결 설정 대기" : "조회 실패 또는 데이터 없음";
         return;
       }
@@ -32659,7 +32708,7 @@ def _render_web_view_html() -> str:
       const marketPriceChanges = data.market_price_changes && typeof data.market_price_changes === "object"
         ? data.market_price_changes
         : {};
-      const indexItems = marketPrices
+      const indexRows = marketPrices
         .filter((item) => item && item.symbol && item.lastPrice !== null && item.lastPrice !== undefined)
         .map((item) => {
           const symbol = String(item.symbol);
@@ -32667,35 +32716,61 @@ def _render_web_view_html() -> str:
           const level = Number(item.lastPrice);
           const priceLabel = Number.isFinite(level) ? level.toLocaleString("ko-KR", { maximumFractionDigits: 2 }) : "값 확인 필요";
           const changeRate = Number(marketPriceChanges[symbol]?.change_rate);
-          const changeLabel = Number.isFinite(changeRate) ? ` · ${percent(changeRate * 100)}` : "";
-          return `${esc(label)} ${esc(priceLabel)}${changeLabel}`;
+          const changeLabel = Number.isFinite(changeRate) ? percent(changeRate * 100) : "—";
+          return `<tr><td>${esc(label)}</td><td>${esc(priceLabel)}</td><td>${esc(changeLabel)}</td></tr>`;
         });
-      const flowLabel = (record, market) => {
-        if (!record || typeof record !== "object") return `${market} 기준일 데이터 없음`;
-        const parts = [["개인", record.individual], ["외국인", record.foreigner], ["기관", record.institution]].flatMap(([label, amount]) => {
-          const buy = Number(amount?.buyAmount);
-          const sell = Number(amount?.sellAmount);
-          if (!Number.isFinite(buy) || !Number.isFinite(sell)) return [];
-          const net = buy - sell;
-          return [`${label} ${net >= 0 ? "순매수" : "순매도"} ${compactTurnover(Math.abs(net))}`];
-        });
-        const updatedAt = tossQuoteTimeLabel({ timestamp: record.updatedAt }, data);
-        const flowDate = record.date ? ` · 기준 ${record.date}` : "";
-        return `${market} ${parts.join(" · ") || "집계값 확인 필요"}${flowDate}${updatedAt ? ` · ${updatedAt}` : ""}`;
-      };
       const flow = data.investor_flow || {};
+      const flowReferenceByMarket = [["코스피", flow.KOSPI], ["코스닥", flow.KOSDAQ]].map(([market, record]) => {
+        const updatedAt = String(record?.updatedAt || "");
+        const updatedAtLabel = updatedAt
+          ? tossQuoteTimeLabel({ timestamp: updatedAt }, data).replace(/^조회 /, "갱신 ")
+          : "";
+        const cutoff = record?.date ? Date.parse(`${record.date}T20:20:00+09:00`) : NaN;
+        const updatedAtMs = updatedAt ? Date.parse(updatedAt) : NaN;
+        const status = !Number.isFinite(cutoff) || !Number.isFinite(updatedAtMs)
+          ? "확인 필요"
+          : updatedAtMs >= cutoff ? "마감 기준 충족" : "잠정";
+        const metadata = [record?.date ? `기준 ${record.date}` : record ? "기준일 데이터 없음" : "", updatedAtLabel].filter(Boolean).join(" · ");
+        return { market, record, metadata, status };
+      });
+      const availableFlowReferences = flowReferenceByMarket.filter(({ record }) => record);
+      const hasSharedFlowReference = availableFlowReferences.length === 2
+        && availableFlowReferences.every(({ metadata }) => metadata === availableFlowReferences[0].metadata);
+      const flowReferenceMetadata = hasSharedFlowReference && availableFlowReferences[0].metadata
+        ? availableFlowReferences[0].metadata
+        : availableFlowReferences.length
+          ? availableFlowReferences.map(({ market, metadata }) => `${market} ${metadata || "기준 정보 없음"}`).join(" · ")
+          : "기준 정보 없음";
+      const flowStatusSummary = flowReferenceByMarket.some(({ record, status }) => !record || status === "확인 필요")
+        ? "확인 필요"
+        : flowReferenceByMarket.every(({ status }) => status === "마감 기준 충족")
+          ? "마감 기준 충족"
+          : "잠정";
+      const flowLabel = (record, market) => {
+        const investors = [["개인", record?.individual], ["외국인", record?.foreigner], ["기관", record?.institution]].map(([label, amount]) => {
+          const rawBuy = amount?.buyAmount;
+          const rawSell = amount?.sellAmount;
+          const buy = Number(rawBuy);
+          const sell = Number(rawSell);
+          const complete = [rawBuy, rawSell].every((value) => value !== null && value !== undefined && String(value).trim() !== "");
+          const hasAmounts = complete && Number.isFinite(buy) && Number.isFinite(sell);
+          const net = buy - sell;
+          const direction = hasAmounts ? (net > 0 ? "순매수" : net < 0 ? "순매도" : "보합") : (record ? "집계 없음" : "자료 없음");
+          const value = hasAmounts ? compactTurnover(Math.abs(net)) : "—";
+          return `<div class="main-market-flow-item"><span>${esc(label)} · ${direction}</span><strong>${esc(value)}</strong></div>`;
+        }).join("");
+        const statusLabel = flowReferenceByMarket.find((item) => item.market === market)?.status || "확인 필요";
+        return `<div class="main-market-flow-row"><div class="main-market-flow-market"><b>${esc(market)}</b><small>${esc(statusLabel)}</small></div>${investors}</div>`;
+      };
       panel.hidden = false;
       panel.innerHTML = `
         <div class="main-market-context-grid">
-          <div class="main-market-context-block"><b>지수</b><span>${indexItems.length ? indexItems.join(" · ") : "지수값 없음"}</span></div>
-          <div class="main-market-context-block"><b>시장 수급 · 잠정</b><span>${esc(flowLabel(flow.KOSPI, "KOSPI"))}</span><br><span>${esc(flowLabel(flow.KOSDAQ, "KOSDAQ"))}</span></div>
+          <div class="main-market-context-block"><b>주요 지수</b><table class="mobile-card-table main-market-index-table"><thead><tr><th>지수</th><th>종가</th><th>등락률</th></tr></thead><tbody>${indexRows.length ? indexRows.join("") : '<tr><td colspan="3">지수값 없음</td></tr>'}</tbody></table></div>
+          <div class="main-market-context-block"><div class="main-market-flow-header"><b>시장 수급 · ${esc(flowStatusSummary)}</b><small class="main-market-flow-cutoff">마감 기준 20:20 KST · Toss 확정값 없음</small><span class="main-market-flow-reference">${esc(flowReferenceMetadata)}</span></div><div class="main-market-flow-rows">${flowLabel(flow.KOSPI, "코스피")}${flowLabel(flow.KOSDAQ, "코스닥")}</div></div>
         </div>
       `;
-      const fetchedAt = tossQuoteTimeLabel({ timestamp: data.fetched_at }, data).replace(/^조회 /, "");
-      const staleLabel = data.cache === "stale"
-        ? "이전 조회값 · 최신성 미확인"
-        : ["hit", "shared"].includes(data.cache) ? "Toss 캐시값" : "Toss 요청 결과";
-      status.textContent = `${data.reference_date || data.latest_business_date || "최신 영업일"} · ${staleLabel}${fetchedAt ? ` · 응답 ${fetchedAt}` : ""}`;
+      status.textContent = "";
+      status.hidden = true;
     }
 
     async function loadTossMarketContext(date) {
@@ -32705,8 +32780,11 @@ def _render_web_view_html() -> str:
       const requestId = ++tossMarketContextRequestId;
       tossMarketContextLoading = true;
       updateTossMarketRefreshButton();
-      panel.hidden = false;
-      panel.textContent = "지수와 시장 수급을 확인 중입니다.";
+      tossMarketContextVisible = true;
+      document.getElementById("main-market-context-heading").hidden = false;
+      refreshViewPanels();
+      panel.hidden = true;
+      status.hidden = false;
       status.textContent = "Toss 조회 중";
       try {
         const response = await fetch(`/api/toss-market-context?date=${encodeURIComponent(date)}`, { cache: "no-store" });
@@ -32714,6 +32792,7 @@ def _render_web_view_html() -> str:
         if (requestId !== tossMarketContextRequestId || date !== selectedDate) return;
         if (response.status === 409) {
           panel.hidden = true;
+          status.hidden = false;
           status.textContent = data.latest_business_date
             ? `실시간 조회는 최신 영업일(${data.latest_business_date})만 가능합니다.`
             : "저장된 최신 기준일이 없어 Toss 시장 조회를 중단했습니다.";
@@ -32723,7 +32802,8 @@ def _render_web_view_html() -> str:
         renderTossMarketContext(data);
       } catch (_error) {
         if (requestId === tossMarketContextRequestId) {
-          panel.textContent = "Toss 시장 문맥을 지금 확인할 수 없습니다.";
+          panel.hidden = true;
+          status.hidden = false;
           status.textContent = "조회 실패 · 다시 요청할 수 있습니다.";
         }
       } finally {
@@ -32750,13 +32830,13 @@ def _render_web_view_html() -> str:
     }
 
     function priorityIndicatorRange() {
-      const value = Number(document.getElementById("top2-daily-range")?.value || 90);
-      return [30, 90, 180].includes(value) ? value : 90;
+      const value = Number(document.getElementById("top2-daily-range")?.value || 200);
+      return [50, 100, 200].includes(value) ? value : 200;
     }
 
     function priorityIndicatorSeries() {
-      const value = document.getElementById("top2-indicator-series")?.value || "obv";
-      return ["rsi14", "macd", "obv", "atr14", "volume", "hidden"].includes(value) ? value : "obv";
+      const value = document.getElementById("top2-indicator-series")?.value || "rsi14";
+      return ["rsi14", "macd", "obv", "atr14", "volume", "hidden"].includes(value) ? value : "rsi14";
     }
 
     function formatIndicatorNumber(value, digits = 2) {
@@ -32774,6 +32854,7 @@ def _render_web_view_html() -> str:
       const price = snapshot.price || {};
       const indicators = snapshot.indicators || {};
       const volume = indicators.volume || {};
+      const conditions = item?.price_conditions || {};
       const fmt = (value, digits = 2) => formatIndicatorNumber(value, digits);
       const ratio = volume.ratio20 == null ? "값 없음" : `${fmt(volume.ratio20, 2)}배`;
       const chartBars = Array.isArray(item?.chart?.bars) ? item.chart.bars : [];
@@ -32786,13 +32867,94 @@ def _render_web_view_html() -> str:
       const changeText = Number.isFinite(change) && Number.isFinite(changeRate)
         ? `${change > 0 ? "+" : change < 0 ? "−" : ""}${fmt(Math.abs(change))} (${changeRate > 0 ? "+" : changeRate < 0 ? "−" : ""}${fmt(Math.abs(changeRate))}%)`
         : "값 없음";
+      const referencePriceLabel = (value) => {
+        const parsed = Number(value);
+        return value !== null && value !== undefined && Number.isFinite(parsed) ? `${fmt(parsed, 0)}원` : "자료 부족";
+      };
       const fields = [
         ["기준 봉", snapshot.barAsOf || "값 없음"],
         ["종가 · 이전 봉 대비", `${fmt(closeValue, 0)}원 · ${changeText}`],
         ["시가 · 고가 · 저가", `${fmt(price.open, 0)} · ${fmt(price.high, 0)} · ${fmt(price.low, 0)}원`],
         ["거래량 · 20일 평균 대비", `${fmt(volumeValue, 0)} · ${ratio}`],
+        ["직전 20봉 고가", referencePriceLabel(conditions.prior_20_bar_high)],
+        ["직전 10봉 저가", referencePriceLabel(conditions.prior_10_bar_low)],
       ];
-      return `<dl class="newbby-indicator-summary">${fields.map(([label, value]) => indicatorStat(label, value)).join("")}</dl>`;
+      return `<dl class="newbby-indicator-summary">${fields.map(([label, value]) => indicatorStat(label, value)).join("")}</dl><p class="newbby-indicator-level-note">현재 봉 직전의 수정주가 기간 참고값입니다.</p>`;
+    }
+
+    function renderPriorityIndicatorCondition(item) {
+      const conditions = item?.price_conditions || {};
+      const confirmation = item?.indicator_confirmation || {};
+      const state = conditions.price_condition_state;
+      const formatPrice = (value) => value === null || value === undefined || !Number.isFinite(Number(value))
+        ? "자료 부족"
+        : `${formatIndicatorNumber(value, 0)}원`;
+      const date = String(conditions.reference_bar_date || item?.snapshot?.barAsOf || "기준 봉 없음");
+      const close = formatPrice(conditions.reference_close);
+      const high = formatPrice(conditions.prior_20_bar_high);
+      const low = formatPrice(conditions.prior_10_bar_low);
+      const indicatorLabels = {
+        up: "상승",
+        down: "하락",
+        neutral: "중립",
+        rising: "상승",
+        falling: "하락",
+        flat: "보합",
+        ascending_stack: "상승 배열",
+        descending_stack: "하락 배열",
+        up_aligned: "상승 지표 일치",
+        down_aligned: "하락 지표 일치",
+        mixed: "혼합",
+        insufficient_data: "자료 부족",
+        confirmed: "활동 확인",
+        below_threshold: "활동 미확인",
+        missing: "자료 부족",
+        above_peak_volume_bins: "최고 거래량 bin 위",
+        below_peak_volume_bins: "최고 거래량 bin 아래",
+        within_peak_volume_bins: "최고 거래량 bin 안",
+        between_peak_volume_bins: "최고 거래량 bin 사이",
+      };
+      const label = (value) => indicatorLabels[value] || "자료 부족";
+      const snapshotIndicators = item?.snapshot?.indicators || {};
+      const volume = snapshotIndicators.volume || {};
+      const macd = snapshotIndicators.macd129 || {};
+      const obv = snapshotIndicators.obv || {};
+      const moving = snapshotIndicators.movingAverages || {};
+      const bollinger = snapshotIndicators.bollinger20 || {};
+      const donchian = snapshotIndicators.donchian20 || {};
+      const averageStack = (kind) => [20, 60, 120, 200].map((period) => {
+        const value = moving[`${kind}${period}`];
+        return value == null ? "자료 부족" : formatIndicatorNumber(value, 2);
+      }).join(" / ");
+      const peakBins = Array.isArray(confirmation.peak_volume_bins) ? confirmation.peak_volume_bins : [];
+      const peakBinText = peakBins.length
+        ? peakBins.map((bin) => `${formatPrice(bin.low)}~${formatPrice(bin.high)}`).join(" · ")
+        : "자료 부족";
+      const technical = [
+        `RSI 14 ${formatIndicatorNumber(snapshotIndicators.rsi14?.value, 1)} · ${label(confirmation.rsi_state)}`,
+        `MACD ${formatIndicatorNumber(macd.macd, 2)} / 시그널 ${formatIndicatorNumber(macd.signal, 2)} · ${label(confirmation.macd_state)}`,
+        `SMA 20/60/120/200 ${averageStack("sma")}원 · ${label(confirmation.sma_state)}`,
+        `EMA 20/60/120/200 ${averageStack("ema")}원 · ${label(confirmation.ema_state)}`,
+        `WMA 20/60/120/200 ${averageStack("wma")}원 · ${label(confirmation.wma_state)}`,
+        `볼린저20 상/중/하 ${formatPrice(bollinger.upper)} / ${formatPrice(bollinger.middle)} / ${formatPrice(bollinger.lower)} · ${label(confirmation.bollinger_state)}`,
+        `돈치안20 상/중/하 ${formatPrice(donchian.upper)} / ${formatPrice(donchian.middle)} / ${formatPrice(donchian.lower)} · ${label(confirmation.donchian_state)}`,
+        `OBV Δ5 ${formatIndicatorNumber(obv.delta5, 0)} · ${label(confirmation.obv_state)}`,
+        `거래량 ${volume.ratio20 == null ? "자료 부족" : `${formatIndicatorNumber(volume.ratio20, 2)}배`} · ${label(confirmation.volume_confirmation_state)}`,
+        `ATR 14 ${formatPrice(confirmation.atr14_value)} · 종가 대비 ${confirmation.atr14_percent_of_close == null ? "자료 부족" : `${formatIndicatorNumber(confirmation.atr14_percent_of_close, 1)}%`}`,
+        `거래량 프로파일 최고 bin ${peakBinText} · ${label(confirmation.volume_profile_state)}`,
+      ];
+      const directional = confirmation.directional_alignment_state;
+      const heading = item?.condition_status || "판정 불가";
+      const unavailable = state === "insufficient_data";
+      const entryReached = state === "above_prior_20_bar_high";
+      const exitReached = state === "below_prior_10_bar_low";
+      const reachedLabel = (reached) => unavailable ? "자료 부족" : reached ? "가격 기준 도달" : "아직 미도달";
+      const priceLevels = `<div class="newbby-indicator-price-levels">
+        <div class="newbby-indicator-price-level"><b>진입 확인 기준</b><span>종가가 직전 20봉 고가 ${esc(high)} 초과</span><small>${esc(date)} 종가 ${esc(close)} · ${reachedLabel(entryReached)}</small></div>
+        <div class="newbby-indicator-price-level"><b>탈출 확인 기준</b><span>종가가 직전 10봉 저가 ${esc(low)} 하회</span><small>${esc(date)} 종가 ${esc(close)} · ${reachedLabel(exitReached)}</small></div>
+      </div>`;
+      const explanation = item?.condition_explanation || "가격·방향 지표·거래량 기준을 확인할 자료가 부족합니다.";
+      return `<div class="newbby-indicator-condition"><b>${esc(heading)}</b><strong class="newbby-indicator-explanation">${esc(explanation)}</strong>${priceLevels}<span>방향 지표 ${esc(label(directional))} · 거래량 기준 ${esc(label(confirmation.volume_confirmation_state))}</span><div class="newbby-indicator-confirmation">${technical.map((item) => `<span>${esc(item)}</span>`).join("")}</div><span class="muted">가격 기준선은 조건 확인용 참고값입니다. ATR은 변동성, 거래량 프로파일은 가격대별 거래량 문맥입니다. 구조 측정은 아래 상세를 참고하세요.</span></div>`;
     }
 
     function indicatorMeasurementMap(structure) {
@@ -32812,9 +32974,10 @@ def _render_web_view_html() -> str:
           if (!Number.isFinite(boundary) || boundary < Math.min(...bars.map((bar) => Number(bar.low)))
             || boundary > Math.max(...bars.map((bar) => Number(bar.high)))) continue;
           const rawType = values.get("type");
-          const label = rawType === "prior-20-high" ? "20봉 고가" : rawType === "prior-10-low" ? "10봉 저가" : "수평 기준";
+          const amount = `${formatIndicatorNumber(boundary, 0)}원`;
+          const label = rawType === "prior-20-high" ? `직전 20봉 고가 ${amount}` : rawType === "prior-10-low" ? `직전 10봉 저가 ${amount}` : "수평 기준";
           const lineY = y(boundary);
-          output.push(`<line x1="62" y1="${lineY.toFixed(2)}" x2="990" y2="${lineY.toFixed(2)}" stroke="#7c6aa6" stroke-dasharray="6 4" stroke-width="1.5"/><text x="70" y="${Math.max(priceTop + 12, lineY - 4).toFixed(2)}" fill="#6c568f" font-size="11">${esc(label)}</text>`);
+          output.push(`<line x1="62" y1="${lineY.toFixed(2)}" x2="990" y2="${lineY.toFixed(2)}" stroke="#7c6aa6" stroke-dasharray="6 4" stroke-width="1.5"/><text x="70" y="${Math.max(priceTop + 12, lineY - 4).toFixed(2)}" fill="#6c568f" font-size="12">${esc(label)}</text>`);
           continue;
         }
         let polygon = [];
@@ -33010,9 +33173,16 @@ def _render_web_view_html() -> str:
     function renderPriorityIndicatorDetails(item) {
       const snapshot = item?.snapshot || {};
       const statuses = snapshot.structureStatus || {};
-      const labels = {horizontal:"수평 기준", flag:"채널 구조", triangle:"삼각 구조"};
-      const statusLabels = {ready:"측정 가능", "no-geometry":"측정 geometry 없음", "insufficient-data":"데이터 부족", "partial-data":"일부 데이터", paused:"계산 보류", disabled:"비활성", unsupported:"미지원", error:"계산 오류"};
-      const statusHtml = Object.entries(labels).map(([key,label]) => `<span class="status-pill">${esc(label)} · ${esc(statusLabels[statuses[key]] || "상태 미확인")}</span>`).join(" ");
+      const labels = {horizontal:"수평 가격 기준", flag:"채널 구조", triangle:"삼각 구조"};
+      const statusLabels = {"insufficient-data":"자료 부족", "partial-data":"일부 자료", paused:"계산 보류", disabled:"비활성", unsupported:"미지원", error:"계산 오류"};
+      const structureStatusLabel = (family, status) => {
+        if (status === "ready" && family === "horizontal") return "기준선 계산됨";
+        if (status === "ready") return "구조 측정값 있음";
+        if (status === "no-geometry" && family === "flag") return "조건에 맞는 채널 구조 없음";
+        if (status === "no-geometry" && family === "triangle") return "조건에 맞는 삼각형 구조 없음";
+        return statusLabels[status] || "상태 미확인";
+      };
+      const statusHtml = Object.entries(labels).map(([key,label]) => `<span class="status-pill">${esc(label)} · ${esc(structureStatusLabel(key, statuses[key]))}</span>`).join(" ");
       const structures = Array.isArray(snapshot.structures) ? snapshot.structures : [];
       const rows = structures.flatMap((structure) => (Array.isArray(structure.measurements) ? structure.measurements : []).map((measurement) => {
         const value = typeof measurement.value === "number" ? formatIndicatorNumber(measurement.value) : String(measurement.value ?? "값 없음");
@@ -33024,10 +33194,11 @@ def _render_web_view_html() -> str:
       const historyStatus = {complete:"이력 종료", cursor_not_provided:"추가 이력 cursor 미제공", page_limit_reached:"800봉 요청 상한"}[item.history_status] || "이력 상태 미확인";
       const chartBarCount = Array.isArray(item.chart?.bars) ? item.chart.bars.length : 0;
       const history = `<div><span>가져온 일봉</span><b>Toss ${number(item.candle_count)}봉 · 차트 ${number(chartBarCount)}봉 · ${number(item.pages_fetched)}페이지 · ${esc(historyStatus)}</b></div>`;
-      const note = rows || '<p class="muted">표시 가능한 구조 측정값이 없습니다. geometry 없음은 반대 방향의 근거로 취급하지 않습니다.</p>';
+      const note = rows || '<p class="muted">표시 가능한 구조 측정값이 없습니다.</p>';
       return `<details class="newbby-indicator-details"><summary>출처 · 데이터 상태 · 구조 측정</summary>
         <div class="newbby-indicator-measurements">${source}${history}</div><p>${statusHtml}</p><div class="newbby-indicator-measurements">${note}</div>
-        <p class="muted">삼각형 교점 값은 직선 외삽 측정값이며 목표가가 아닙니다. 본 차트는 기술 데이터 참고용이며 매매 신호를 제공하지 않습니다.</p>
+        <p class="muted">모양이 관찰되지 않은 것은 반대 방향 근거가 아닙니다.</p>
+        <p class="muted">조건은 선택일 수정종가의 직전 20/10봉 가격 기준과 모든 방향 지표, 거래량 확인을 함께 봅니다. ATR·거래량 프로파일은 문맥 정보이며 구조 측정은 별도로 표시합니다. 주문은 실행하지 않습니다. 삼각형 교점 값은 직선 외삽 측정값이며 목표가가 아닙니다.</p>
       </details>`;
     }
 
@@ -33054,8 +33225,9 @@ def _render_web_view_html() -> str:
       const barStatus = {confirmed:"확정", provisional:"잠정", unknown:"확정 여부 미확인"}[snapshot.barStatus] || "확정 여부 미확인";
       return `<article class="newbby-indicator-candidate">
         <h3>${esc(candidate)}</h3>
-        <p class="newbby-indicator-meta"><span>Toss 조정 일봉 · ${esc(marketLabel)}</span><span>선택 ${esc(snapshot.requestedAsOf || item.requested_as_of || "기준일 없음")} · 실제 봉 ${esc(snapshot.barAsOf || "없음")}</span><span>봉 ${esc(barStatus)} · 조회 ${esc(fetchedTime)}</span></p>
+        <p class="newbby-indicator-meta"><span>Toss 조정 일봉 · 기준 ${esc(snapshot.sourceDate || "기준일 없음")} · ${esc(marketLabel)}</span><span>선택 ${esc(snapshot.requestedAsOf || item.requested_as_of || "기준일 없음")} · 실제 봉 ${esc(snapshot.barAsOf || "없음")}</span><span>봉 ${esc(barStatus)} · 조회 ${esc(fetchedTime)}</span></p>
         ${renderPriorityIndicatorSummary(item)}
+        ${renderPriorityIndicatorCondition(item)}
         <div class="newbby-indicator-chart-wrap">${renderPriorityIndicatorPriceChart(item, period)}${renderPriorityIndicatorAuxChart(item, period, series)}</div>
         ${renderPriorityIndicatorDetails(item)}
       </article>`;
@@ -33603,7 +33775,7 @@ def _render_web_view_html() -> str:
         const viewName = journeyTarget.dataset.journeyView;
         if (viewName !== "main-market") return;
         setViewTab("main");
-        window.setTimeout(() => focusDetailCard("main-market-context-card"), 0);
+        window.setTimeout(() => focusDetailCard("toss-market-refresh"), 0);
         return;
       }
     });
@@ -38694,7 +38866,7 @@ def _candidate_research_focus(
     from stock_monitor.news.core_keywords import CoreKeywordDocument
 
     documents = tuple(
-        CoreKeywordDocument("report", stock_name, stock_code, report.title, "")
+        CoreKeywordDocument("report", stock_name, stock_code, report.title, "", source_url=report.source_url)
         for report in reports if report.stock_code == stock_code
     ) + tuple(CoreKeywordDocument("news", stock_name, stock_code, title, "") for title in news_titles)
     return build_candidate_research_focus(stock_name, documents)

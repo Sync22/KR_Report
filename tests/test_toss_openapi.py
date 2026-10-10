@@ -805,6 +805,7 @@ def test_toss_priority_quote_provider_adds_same_day_investor_trading_context() -
                     {
                         "date": "2026-07-10",
                         "updatedAt": "2026-07-10T10:15:00+09:00",
+                        "individual": {"netBuyVolume": "25"},
                         "foreigner": {"buyVolume": "100", "sellVolume": "40", "netBuyVolume": "60"},
                         "institution": {"buyVolume": "30", "sellVolume": "50", "netBuyVolume": "-20"},
                     }
@@ -838,11 +839,68 @@ def test_toss_priority_quote_provider_adds_same_day_investor_trading_context() -
                 "symbol": "005930",
                 "business_date": "2026-07-10",
                 "updated_at": "2026-07-10T10:15:00+09:00",
+                "individual_net_buy_volume": 25,
                 "foreigner_net_buy_volume": 60,
                 "institution_net_buy_volume": -20,
             }
         ],
     }
+
+
+@pytest.mark.parametrize("individual", [None, {}, {"netBuyVolume": None}])
+def test_toss_priority_quote_provider_keeps_missing_individual_flow_nullable(individual) -> None:  # noqa: ANN001
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+
+    def fetch(**kwargs):
+        if kwargs["endpoint"].key == "prices":
+            return SimpleNamespace(result=[{"symbol": "005930", "lastPrice": "72000", "currency": "KRW"}], rate_limit={})
+        record = {
+            "date": "2026-07-10",
+            "updatedAt": "2026-07-10T20:05:00+09:00",
+            "foreigner": {"netBuyVolume": "60"},
+            "institution": {"netBuyVolume": "-20"},
+        }
+        if individual is not None:
+            record["individual"] = individual
+        return SimpleNamespace(result={"records": [record]}, rate_limit={})
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        endpoint=resolve_toss_readonly_endpoint("prices"),
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch,
+    )
+
+    payload = provider.get_quotes(
+        priority_date=date(2026, 7, 10),
+        symbols=("005930",),
+        include_investor_trading=True,
+    )
+
+    assert payload["investor_trading"]["items"][0]["business_date"] == "2026-07-10"
+    assert payload["investor_trading"]["items"][0]["individual_net_buy_volume"] is None
+
+
+def test_priority_investor_validation_rejects_malformed_individual_object() -> None:
+    with pytest.raises(RuntimeError, match="priority investor trading record.individual"):
+        fetch_toss_readonly_endpoint(
+            base_url=TOSS_OPENAPI_BASE_URL,
+            access_token="token-value",
+            endpoint=resolve_toss_market_context_endpoint("priority-investor-trading"),
+            params={"symbol": "005930", "count": "1", "until": "2026-07-10"},
+            timeout_seconds=12,
+            live_enabled=True,
+            urlopen=lambda *_args, **_kwargs: FakeResponse(
+                b'{"result":{"records":[{"date":"2026-07-10","updatedAt":"2026-07-10T20:05:00+09:00",'
+                b'"individual":{"netBuyVolume":"25","mystery":"1"}}]}}'
+            ),
+        )
 
 
 def test_toss_priority_quote_provider_keeps_investor_trading_off_outside_web_view() -> None:
@@ -1245,7 +1303,8 @@ def test_fetch_toss_priority_investor_trading_uses_fixed_symbol_path_and_query()
         seen["headers"] = dict(http_request.header_items())
         return FakeResponse(
             b'{"result":{"nextUntil":"2026-07-09","records":[{"date":"2026-07-10",'
-            b'"updatedAt":"2026-07-10T10:15:00+09:00","foreigner":{"buyVolume":"100",'
+            b'"updatedAt":"2026-07-10T10:15:00+09:00","individual":{"netBuyVolume":"25"},'
+            b'"foreigner":{"buyVolume":"100",'
             b'"sellVolume":"40","netBuyVolume":"60"},"institution":{"buyVolume":"30",'
             b'"sellVolume":"50","netBuyVolume":"-20"}}]}}'
         )
@@ -1265,6 +1324,7 @@ def test_fetch_toss_priority_investor_trading_uses_fixed_symbol_path_and_query()
     )
     assert seen["method"] == "GET"
     assert "x-tossinvest-account" not in {str(key).lower() for key in seen["headers"]}
+    assert response.result["records"][0]["individual"]["netBuyVolume"] == "25"
     assert response.result["records"][0]["foreigner"]["netBuyVolume"] == "60"
 
 

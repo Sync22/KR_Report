@@ -15463,7 +15463,7 @@ def test_admin_boundary_audit_json_reports_surface_split_without_leaking_status(
     assert payload["status_payload"]["forbidden_token_count"] == 0
     assert payload["web_view"]["separate_handler"] is True
     assert payload["web_view"]["expected_api_status"] == 404
-    assert payload["operator_review"]["implemented"] is False
+    assert payload["operator_review"]["implemented"] is True
     assert payload["operator_review"]["route_present_in_admin_html"] is False
     assert any("web-view-browser-smoke" in command for command in payload["verification_commands"])
     assert "db_path" not in payload_text

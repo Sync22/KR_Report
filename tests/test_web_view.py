@@ -4260,21 +4260,44 @@ def test_web_view_main_has_toss_market_context_panel() -> None:
 
     assert 'id="toss-market-context"' in html
     assert "/api/toss-market-context" in html
-    assert "지수와 시장 수급을 확인 중입니다." in html
+    assert "지수와 시장 수급을 확인 중입니다." not in html
+    assert "Toss 조회 중" in html
     assert "당일 시장 · 수급" in html
+    assert "지수는 조회 시각, 수급은 기준일을 함께 표시합니다." not in html
+    assert "지수 · 수급 확인을 눌러 조회하세요." not in html
+    assert 'class="section-header main-priority-heading"' in html
+    assert 'id="toss-market-refresh" class="ghost-button"' in html.split(
+        'class="section-header main-priority-heading"', 1
+    )[1].split("</div>", 1)[0]
     assert 'id="toss-market-context" class="intraday-overlap-panel" aria-live="polite"' in html
+    assert 'id="toss-market-context-status" class="muted" aria-live="polite" hidden></p>' in html
+    assert "border: 0;" in html.split(".main-market-card .intraday-overlap-panel {", 1)[1].split("}", 1)[0]
     assert "전일 Toss 저장값/수급/ETF는 참고 영역입니다." not in html
     assert "후보 수급 [12009]은 관찰 후보·종목 상세에서 확인" not in html
     assert "data.stock_names" not in market_context_body
     assert "data.etf_symbols" not in market_context_body
     assert "data.market_price_changes" in market_context_body
-    assert '["개인", record.individual]' in market_context_body
-    assert 'data.cache === "stale"' in market_context_body
-    assert '["hit", "shared"].includes(data.cache)' in market_context_body
+    assert '["개인", record?.individual]' in market_context_body
+    assert 'net > 0 ? "순매수" : net < 0 ? "순매도" : "보합"' in market_context_body
+    assert 'class="main-market-flow-market"' in market_context_body
+    assert 'class="main-market-flow-item"' in market_context_body
+    assert '<div class="main-market-flow-header"><b>시장 수급 · ${esc(flowStatusSummary)}</b><small class="main-market-flow-cutoff">마감 기준 20:20 KST · Toss 확정값 없음</small><span class="main-market-flow-reference">${esc(flowReferenceMetadata)}</span></div>' in market_context_body
+    assert 'class="main-market-flow-row"><div class="main-market-flow-market"><b>${esc(market)}</b><small>${esc(statusLabel)}</small></div>${investors}</div>' in market_context_body
+    assert 'Date.parse(`${record.date}T20:20:00+09:00`)' in market_context_body
+    assert 'availableFlowReferences.length === 2' in market_context_body
+    assert '`${market} ${metadata || "기준 정보 없음"}`' in market_context_body
+    assert "status.textContent = `${data.reference_date" not in market_context_body
+    assert '응답 ${fetchedAt}' not in market_context_body
+    assert '<th>지수</th><th>종가</th><th>등락률</th>' in market_context_body
+    assert 'class="mobile-card-table main-market-index-table"' in market_context_body
+    assert '<th>거래대금</th>' not in market_context_body
+    assert 'record?.date ? `기준 ${record.date}` : record ? "기준일 데이터 없음" : ""' in market_context_body
     assert "Toss 거래대금 상위 Top10" not in market_context_body
     assert "Toss 거래대금 상위 ETF Top5" not in market_context_body
-    assert "시장 수급 · 잠정" in market_context_body
-    assert 'id="main-market-context-card" data-view-panel="main"' in html
+    assert "Toss 요청 결과" not in market_context_body
+    assert 'id="main-market-context-card" data-view-panel="main" data-view-when="market-context" hidden' in html
+    assert 'id="main-market-context-heading" hidden>당일 시장 · 수급</h2>' in html
+    assert html.count('id="main-market-context-card"') == 1
     assert 'id="toss-market-refresh"' in html
     assert 'id="market-reference-card" data-view-panel="main"' in html
     assert 'data-view-tab="market"' not in html
@@ -4283,14 +4306,46 @@ def test_web_view_main_has_toss_market_context_panel() -> None:
     assert 'id="top2-daily-range"' in html
     assert 'id="top2-indicator-series"' in html
     assert 'id="newbby-indicator-refresh"' in html
-    assert '<option value="30">30거래일</option>' in html
-    assert '<option value="90" selected>90거래일</option>' in html
-    assert '<option value="180">180거래일</option>' in html
+    assert '<option value="50">50거래일</option>' in html
+    assert '<option value="100">100거래일</option>' in html
+    assert '<option value="200" selected>200거래일</option>' in html
+    assert '<option value="rsi14" selected>RSI 14</option>' in html
+    assert "const value = Number(document.getElementById(\"top2-daily-range\")?.value || 200);" in html
+    assert "[50, 100, 200].includes(value) ? value : 200" in html
+    assert '?.value || "rsi14"' in html
+    assert 'return ["rsi14", "macd", "obv", "atr14", "volume", "hidden"].includes(value) ? value : "rsi14"' in html
+    assert "margin-bottom: 12px;" in html.split(".main-priority-controls {", 1)[1].split("}", 1)[0]
     assert "function renderPriorityIndicatorPriceChart" in html
     assert "function renderPriorityIndicatorAuxChart" in html
-    assert "SMA 20/60/120/200" not in html
+    assert "function renderPriorityIndicatorSummary" in html
+    assert "function renderPriorityIndicatorCondition" in html
+    assert 'state === "above_prior_20_bar_high"' in html
+    assert 'state === "below_prior_10_bar_low"' in html
+    assert 'item?.condition_status || "판정 불가"' in html
+    assert 'item?.condition_explanation' in html
+    assert "진입 확인 기준" in html
+    assert "탈출 확인 기준" in html
+    assert 'confirmation.directional_alignment_state' in html
+    assert 'confirmation.volume_confirmation_state' in html
+    assert 'SMA 20/60/120/200 ${averageStack("sma")}원 · ${label(confirmation.sma_state)}' in html
+    assert 'EMA 20/60/120/200 ${averageStack("ema")}원 · ${label(confirmation.ema_state)}' in html
+    assert 'WMA 20/60/120/200 ${averageStack("wma")}원 · ${label(confirmation.wma_state)}' in html
+    assert '볼린저20 상/중/하' in html
+    assert '돈치안20 상/중/하' in html
+    assert '거래량 프로파일 최고 bin ${peakBinText}' in html
+    assert '상방 가격 기준 도달 · 보조지표 확인 필요' not in html
+    assert '하방 가격 기준 도달 · 보조지표 확인 필요' not in html
+    assert 'OBV Δ5 ${formatIndicatorNumber(obv.delta5, 0)} · ${label(confirmation.obv_state)}' in html
+    assert "주문은 실행하지 않습니다." in html
+    indicator_summary_body = html.split("function renderPriorityIndicatorSummary(item)", 1)[1].split(
+        "function indicatorMeasurementMap", 1
+    )[0]
+    assert '["직전 20봉 고가", referencePriceLabel(conditions.prior_20_bar_high)]' in indicator_summary_body
+    assert '["직전 10봉 저가", referencePriceLabel(conditions.prior_10_bar_low)]' in indicator_summary_body
+    assert "현재 봉 직전의 수정주가 기간 참고값" in indicator_summary_body
+    assert "SMA 20/60/120/200" in html
     assert "const colors = {sma20:" in html
-    assert "선택 날짜 Main Top2의 수정주가 일봉과 기술 지표를 조회합니다." in html
+    assert "선택 날짜 Main Top2의 수정주가 일봉과 기술 지표를 조회합니다." not in html
     assert "RSI 14" in html
     assert "MACD 12·26·9" in html
     assert "/api/priority-indicators?date=" in html
@@ -4305,9 +4360,272 @@ def test_web_view_main_has_toss_market_context_panel() -> None:
     assert "관찰 근거" in briefing_body
     assert "확인 공백" in briefing_body
     assert "2건 이상" in briefing_body
+    assert "singleCount > 0" in briefing_body
+    assert "const concentrationPoint = multiCount > 0" in briefing_body
+    assert "1건 0종목은 종목 탭에서 기본 숨김" not in briefing_body
     assert "freshnessItems" not in briefing_body
+    assert ".top-two-card b {" in html and "font-size: 15px" in html
+    assert ".top-two-card .status-pill { font-size: 12px" in html
     assert "loadTossMarketContext" not in active_tab_body
     assert 'loadTossMarketContext(selectedDate);' in html
+
+
+def test_web_view_toss_market_context_browser_states() -> None:
+    from playwright.sync_api import sync_playwright
+
+    html = cli_module._render_web_view_html()
+    render_context = "function renderTossMarketContext(data)" + html.split(
+        "function renderTossMarketContext(data)", 1
+    )[1].split("async function loadTossMarketContext(date)", 1)[0]
+    load_context = "async function loadTossMarketContext(date)" + html.split(
+        "async function loadTossMarketContext(date)", 1
+    )[1].split("function updateTossMarketRefreshButton()", 1)[0]
+    time_label = "function tossQuoteTimeLabel(quote, payload)" + html.split(
+        "function tossQuoteTimeLabel(quote, payload)", 1
+    )[1].split("function candidateTossBaselineCompactLine", 1)[0]
+    browser_harness = f"""
+      <div id="main-market-context-card" hidden>
+        <h2 id="main-market-context-heading" hidden>당일 시장 · 수급</h2>
+      </div>
+      <p id="toss-market-context" hidden></p>
+      <p id="toss-market-context-status" hidden></p>
+      <button id="toss-market-refresh" type="button">지수 · 수급 확인</button>
+      <script>
+        let selectedDate = "2026-10-08";
+        let tossMarketContextVisible = false;
+        let tossMarketContextRequestId = 0;
+        let tossMarketContextLoading = false;
+        const validDate = (value) => /^\\d{{4}}-\\d{{2}}-\\d{{2}}$/.test(value);
+        const percent = (value) => `${{value}}%`;
+        const compactTurnover = (value) => String(value);
+        const esc = (value) => String(value ?? "");
+        {time_label}
+        {render_context}
+        {load_context}
+        window.fetch = async () => {{
+          if (window.fetchFailure) throw new Error("fixture fetch failure");
+          const response = {{
+            status: window.fetchStatus,
+            ok: window.fetchStatus >= 200 && window.fetchStatus < 300,
+            json: async () => window.fetchPayload,
+          }};
+          if (window.fetchPending) return await new Promise((resolve) => {{ window.resolveFetch = () => resolve(response); }});
+          return response;
+        }};
+        function updateTossMarketRefreshButton() {{
+          const button = document.getElementById("toss-market-refresh");
+          button.disabled = tossMarketContextLoading;
+          button.textContent = tossMarketContextLoading ? "시장 · 수급 조회 중" : "지수 · 수급 확인";
+        }}
+        function refreshViewPanels() {{
+          document.getElementById("main-market-context-card").hidden = !tossMarketContextVisible;
+        }}
+        document.getElementById("toss-market-refresh").addEventListener("click", () => loadTossMarketContext(selectedDate));
+      </script>
+    """
+    success_payload = {
+        "live_fetch": True,
+        "market_prices": [
+            {"symbol": "KOSPI", "lastPrice": "6200"},
+            {"symbol": "KOSDAQ", "lastPrice": "890"},
+        ],
+        "investor_flow": {
+            "KOSPI": {"date": "2026-10-08", "updatedAt": "2026-10-08T20:06:00+09:00"},
+            "KOSDAQ": {"date": "2026-10-07", "updatedAt": "2026-10-07T19:42:00+09:00"},
+        },
+    }
+    after_cutoff_payload = {
+        **success_payload,
+        "investor_flow": {
+            "KOSPI": {"date": "2026-10-08", "updatedAt": "2026-10-08T20:22:00+09:00"},
+            "KOSDAQ": {"date": "2026-10-08", "updatedAt": "2026-10-08T20:25:00+09:00"},
+        },
+    }
+    missing_timestamp_payload = {
+        **success_payload,
+        "investor_flow": {
+            "KOSPI": {"date": "2026-10-08"},
+            "KOSDAQ": {"date": "2026-10-08", "updatedAt": "invalid"},
+        },
+    }
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content(browser_harness)
+            assert page.locator("#main-market-context-card").is_hidden()
+            assert page.locator("#main-market-context-heading").is_hidden()
+
+            page.evaluate(
+                "([status, payload]) => { window.fetchPending = true; window.fetchStatus = status; window.fetchPayload = payload; }",
+                [200, success_payload],
+            )
+            page.get_by_role("button", name="지수 · 수급 확인").click()
+            page.wait_for_function(
+                "!document.getElementById('main-market-context-card').hidden && !document.getElementById('toss-market-context-status').hidden && document.getElementById('toss-market-refresh').disabled"
+            )
+            assert page.locator("#main-market-context-heading").is_visible()
+            assert page.locator("#toss-market-context-status").inner_text() == "Toss 조회 중"
+            assert page.locator("#toss-market-refresh").inner_text() == "시장 · 수급 조회 중"
+            page.evaluate("() => { window.fetchPending = false; window.resolveFetch(); }")
+            page.wait_for_function("document.getElementById('toss-market-context-status').hidden && !document.getElementById('toss-market-refresh').disabled")
+            assert page.locator("#toss-market-context").is_visible()
+            assert page.locator("#toss-market-context-status").inner_text() == ""
+            flow_header = page.locator(".main-market-flow-reference").inner_text()
+            assert "코스피 기준 2026-10-08 · 갱신 20:06" in flow_header
+            assert "코스닥 기준 2026-10-07 · 갱신 19:42" in flow_header
+            assert "마감 기준 20:20" in page.locator(".main-market-flow-cutoff").inner_text()
+            assert "Toss 확정값 없음" in page.locator(".main-market-flow-cutoff").inner_text()
+            assert "잠정" in page.locator(".main-market-flow-row").nth(0).inner_text()
+            assert "잠정" in page.locator(".main-market-flow-row").nth(1).inner_text()
+
+            page.evaluate(
+                "([status, payload]) => { window.fetchStatus = status; window.fetchPayload = payload; }",
+                [200, after_cutoff_payload],
+            )
+            page.get_by_role("button", name="지수 · 수급 확인").click()
+            page.wait_for_function("document.getElementById('toss-market-context-status').hidden")
+            assert "마감 기준 충족" in page.locator(".main-market-flow-header").inner_text()
+            assert "마감 기준 충족" in page.locator(".main-market-flow-row").nth(0).inner_text()
+
+            page.evaluate(
+                "([status, payload]) => { window.fetchStatus = status; window.fetchPayload = payload; }",
+                [200, missing_timestamp_payload],
+            )
+            page.get_by_role("button", name="지수 · 수급 확인").click()
+            page.wait_for_function("document.getElementById('toss-market-context-status').hidden")
+            assert "확인 필요" in page.locator(".main-market-flow-header").inner_text()
+            assert "확인 필요" in page.locator(".main-market-flow-row").nth(0).inner_text()
+            assert "마감 기준 충족" not in page.locator(".main-market-flow-row").nth(0).inner_text()
+            assert "확인 필요" in page.locator(".main-market-flow-row").nth(1).inner_text()
+
+            page.evaluate(
+                "([status, payload]) => { window.fetchStatus = status; window.fetchPayload = payload; }",
+                [409, {"latest_business_date": "2026-10-09"}],
+            )
+            page.get_by_role("button", name="지수 · 수급 확인").click()
+            page.wait_for_function("!document.getElementById('toss-market-context-status').hidden")
+            assert page.locator("#toss-market-context").is_hidden()
+            assert "최신 영업일(2026-10-09)" in page.locator("#toss-market-context-status").inner_text()
+
+            page.evaluate("() => { window.fetchFailure = true; }")
+            page.get_by_role("button", name="지수 · 수급 확인").click()
+            page.wait_for_function("document.getElementById('toss-market-context-status').textContent.includes('다시 요청')")
+            assert page.locator("#toss-market-context").is_hidden()
+            assert "조회 실패 · 다시 요청할 수 있습니다." in page.locator("#toss-market-context-status").inner_text()
+        finally:
+            browser.close()
+
+
+def test_web_view_priority_indicator_condition_browser_states() -> None:
+    from playwright.sync_api import sync_playwright
+
+    html = cli_module._render_web_view_html()
+    render_condition = "function renderPriorityIndicatorCondition(item)" + html.split(
+        "function renderPriorityIndicatorCondition(item)", 1
+    )[1].split("function indicatorMeasurementMap", 1)[0]
+    browser_harness = f"""
+      <div id="conditions"></div>
+      <script>
+        const esc = (value) => String(value ?? "");
+        const formatIndicatorNumber = (value, digits = 2) => value == null ? "값 없음" : Number(value).toFixed(digits);
+        {render_condition}
+        function renderConditions(items) {{
+          document.getElementById("conditions").innerHTML = items
+            .map((item) => renderPriorityIndicatorCondition(item))
+            .join("");
+        }}
+      </script>
+    """
+    base_item = {
+        "price_conditions": {
+            "price_condition_state": "above_prior_20_bar_high",
+            "reference_bar_date": "2026-10-08",
+            "reference_close": 105,
+            "prior_20_bar_high": 100,
+            "prior_10_bar_low": 90,
+        },
+        "indicator_confirmation": {
+            "directional_alignment_state": "up_aligned",
+            "volume_confirmation_state": "confirmed",
+            "rsi_state": "up",
+            "macd_state": "up",
+            "sma_state": "ascending_stack",
+            "ema_state": "ascending_stack",
+            "wma_state": "ascending_stack",
+            "bollinger_state": "up",
+            "donchian_state": "up",
+            "obv_state": "up",
+            "volume_profile_state": "above_peak_volume_bins",
+            "peak_volume_bins": [{"low": 80, "high": 85}],
+            "atr14_value": 3,
+            "atr14_percent_of_close": 2.9,
+        },
+        "snapshot": {
+            "indicators": {
+                "volume": {"ratio20": 1.3},
+                "rsi14": {"value": 60},
+                "macd129": {"macd": 2, "signal": 1},
+                "movingAverages": {
+                    f"{kind}{period}": value
+                    for kind in ("sma", "ema", "wma")
+                    for period, value in zip((20, 60, 120, 200), (104, 103, 102, 101))
+                },
+                "bollinger20": {"upper": 110, "middle": 100, "lower": 90},
+                "donchian20": {"upper": 115, "middle": 100, "lower": 85},
+                "obv": {"delta5": 10},
+            }
+        },
+        "condition_status": "진입 조건 충족",
+        "condition_explanation": "가격 기준과 상승 방향 지표 및 거래량 기준이 확인되었습니다.",
+    }
+    mixed_item = {
+        **base_item,
+        "indicator_confirmation": {
+            **base_item["indicator_confirmation"],
+            "directional_alignment_state": "mixed",
+            "sma_state": "mixed",
+        },
+        "condition_status": "가격 기준 도달 · 보조지표 확인 필요",
+        "condition_explanation": "가격 기준은 도달했으나 지표 방향이 혼합되어 있습니다.",
+    }
+    missing_item = {
+        **base_item,
+        "price_conditions": {
+            **base_item["price_conditions"],
+            "price_condition_state": "insufficient_data",
+            "reference_close": None,
+            "prior_20_bar_high": None,
+        },
+        "indicator_confirmation": {
+            **base_item["indicator_confirmation"],
+            "directional_alignment_state": "insufficient_data",
+            "volume_confirmation_state": "missing",
+        },
+        "condition_status": "판정 불가",
+        "condition_explanation": "필요한 가격·지표·거래량 자료가 부족합니다.",
+    }
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content(browser_harness)
+            page.evaluate("(items) => renderConditions(items)", [base_item, mixed_item, missing_item])
+
+            cards = page.locator(".newbby-indicator-condition")
+            assert cards.count() == 3
+            assert "진입 조건 충족" in cards.nth(0).inner_text()
+            assert "상승 지표 일치" in cards.nth(0).inner_text()
+            assert "1.30배 · 활동 확인" in cards.nth(0).inner_text()
+            assert "가격 기준 도달 · 보조지표 확인 필요" in cards.nth(1).inner_text()
+            assert "종가 105원 · 가격 기준 도달" in cards.nth(1).inner_text()
+            assert "혼합" in cards.nth(1).inner_text()
+            assert "판정 불가" in cards.nth(2).inner_text()
+            assert "자료 부족" in cards.nth(2).inner_text()
+        finally:
+            browser.close()
 
 
 def test_web_view_html_labels_top_two_toss_flow_as_unstored_query_reference() -> None:
@@ -4321,6 +4639,19 @@ def test_web_view_html_labels_top_two_toss_flow_as_unstored_query_reference() ->
     assert '<strong>당일 수급</strong>' in top_two_body
     assert 'class="top-two-evidence-details"' in top_two_body
     assert "loadTossPriorityQuotes(tossPriorityDate)" in html
+    assert "details = [flowBlock, researchBlock, missingEvidenceBlock, targetRevisionBlock]" in top_two_body
+    assert "market 참고" not in top_two_body
+    assert "시장 참고" not in top_two_body
+    assert "tossPriorityInvestorTradingReferenceByCode" in top_two_body
+    assert 'class="top-two-evidence-summary-meta"' in top_two_body
+    assert 'individual_net_buy_volume' in html
+    assert 'part("개인", item?.individual_net_buy_volume)' in html
+    assert "Toss 현재가 · 수급" in html
+    flow_reference_body = html.split("function tossInvestorTradingReference(item)", 1)[1].split(
+        "function updateTossSourceFreshness(data)", 1
+    )[0]
+    assert 'item?.business_date' in flow_reference_body
+    assert 'item?.updated_at' in flow_reference_body
 
 
 def test_web_view_main_separates_close_reassessment_from_regular_session_top_two() -> None:
@@ -4329,9 +4660,49 @@ def test_web_view_main_separates_close_reassessment_from_regular_session_top_two
         "function topTwoMissingEvidenceLine", 1
     )[0]
 
-    assert "종가 재평가" in top_two_body
-    assert "Toss 종가" in top_two_body
+    assert "종가 재평가" not in top_two_body
+    assert "renderTopTwoCloseReassessment" not in top_two_body
+    assert "top-two-close-reassessment" not in html
     assert "현재 근거 부족" not in top_two_body
+
+
+def test_web_view_main_uses_report_headlines_and_original_report_links() -> None:
+    html = cli_module._render_web_view_html()
+    top_two_body = html.split("function renderTopTwoReviewCandidates(rows)", 1)[1].split(
+        "function topTwoMissingEvidenceLine", 1
+    )[0]
+    report_link_body = html.split("function renderCandidateResearchFocus(focus)", 1)[1].split(
+        "function safeReportUrl", 1
+    )[0]
+
+    assert 'safeReportUrl(item?.source_url)' in report_link_body
+    assert 'item?.source_kind === "리포트"' in report_link_body
+    assert 'const searchUrl = isReport ? "" :' in report_link_body
+    assert 'href="${esc(href)}"' in report_link_body
+    assert "const href = reportUrl || searchUrl;" in report_link_body
+    assert "item?.source_title || item?.topic" in report_link_body
+    assert '<strong>${esc(item?.source_kind || "저장 뉴스")}</strong>' in report_link_body
+    assert 'candidate-research-focus-body strong { color: var(--accent);' in html
+    assert '.candidate-research-focus-body { display: grid; gap: 4px; }' in html
+    assert '.candidate-research-focus-body p { display: flex; align-items: baseline; gap: 4px; margin: 0; }' in html
+    assert "topTwoCurrentEvidenceLine" not in html
+    assert "시장 참고" not in top_two_body
+    target_revision_body = html.split("function targetRevisionTrailLine(item)", 1)[1].split(
+        "function targetPriceRange", 1
+    )[0]
+    assert 'revision.previous_date' in target_revision_body
+    assert 'selectedDate' in target_revision_body
+    assert '<strong>목표가 범위(일자 집계)</strong>' in target_revision_body
+    assert '이전 ${esc(previousDate)}' not in target_revision_body
+    assert '.target-revision-line { grid-template-columns: 142px minmax(0, 1fr);' in html
+    assert 'border-top: 1px solid var(--line);' in html
+    assert '.target-revision-values { display: grid; grid-template-columns: 1fr;' in html
+    assert 'esc(previous)} <span aria-hidden="true">→</span></span>' in target_revision_body
+    assert '.target-revision-values span { font-size: 13px; font-weight: 400; }' in html
+    assert '<summary><span class="top-two-evidence-caret" aria-hidden="true"></span><span class="top-two-evidence-summary-label">${esc(detailSummary)}</span>${flowReferenceMarkup}</summary>' in top_two_body
+    assert '.top-two-evidence-caret { flex: 0 0 auto;' in html
+    assert 'border-top: 8px solid var(--accent); border-right: 6px solid transparent; border-left: 6px solid transparent;' in html.split('.top-two-evidence-caret {', 1)[1].split('}', 1)[0]
+    assert '.top-two-evidence-details[open] > summary .top-two-evidence-caret' in html
 
 
 def test_web_view_stock_detail_missing_toss_flow_names_selected_date_stored_scope(tmp_path, monkeypatch) -> None:
@@ -5274,6 +5645,14 @@ def test_web_view_html_renders_target_revision_line_in_top_two_cards() -> None:
 
     assert "targetRevisionTrailLine(item)" in top_two_body
     assert "target-revision-line" in top_two_body
+    target_revision_body = html.split("function targetRevisionTrailLine(item)", 1)[1].split(
+        "function targetPriceRange", 1
+    )[0]
+    assert "revision.previous_date" in target_revision_body
+    assert "selectedDate" in target_revision_body
+    assert '<strong>목표가 범위(일자 집계)</strong>' in target_revision_body
+    assert ".target-revision-line { grid-template-columns:" in html
+    assert "target-revision-current" in html
 
 
 def test_web_view_html_renders_target_journey_in_stock_detail_only() -> None:
@@ -5324,7 +5703,7 @@ def test_web_view_html_exposes_toss_source_and_compact_evidence_ledger() -> None
     news_summary_body = html.split("function renderNewsObservationSummary(summary)", 1)[1].split(
         "function selectStablePriorityRows", 1
     )[0]
-    top_two_body = html.split("function topTwoCurrentEvidenceLine(item)", 1)[1].split(
+    top_two_body = html.split("function topTwoMissingEvidenceLine(item, tossQuote)", 1)[1].split(
         "function topTwoTossQuoteIsCurrent", 1
     )[0]
     stock_journey_body = html.split("function renderStockCandidateJourney(data)", 1)[1].split(
@@ -6689,7 +7068,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert 'page.keyboard.press("ArrowRight")' not in html
     assert 'class="card span-12 market-reference-card" id="market-reference-card" data-view-panel="main"' in html
     assert 'document.getElementById("market-reference-card").open = true' not in html
-    assert 'id="main-market-context-card" data-view-panel="main"' in html
+    assert 'id="main-market-context-card" data-view-panel="main" data-view-when="market-context" hidden' in html
     assert 'id="toss-market-refresh"' in html
     assert "눈에 띄는 종목" in html
     assert 'labeled("거래대금", compactTurnover(item.turnover))' in html
@@ -6712,8 +7091,15 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
         "function tossQuoteTimeLabel", 1
     )[0]
     daily_briefing_body = html.split('class="card span-12 daily-briefing"', 1)[1].split(
-        'id="main-market-context-card"', 1
+        'id="candidate-evidence-card" data-view-panel="watch"', 1
     )[0]
+    assert 'id="main-market-context-card"' in main_priority_body
+    assert 'data-view-when="market-context" hidden' in main_priority_body
+    assert main_priority_body.index('id="main-market-context-card"') < main_priority_body.index('class="main-priority-controls"')
+    assert 'class="card span-12 main-market-card"' not in html
+    assert 'focusDetailCard("toss-market-refresh")' in html
+    assert 'focusDetailCard("main-market-context-card")' not in html
+    assert html.rfind('id="industry-etf-details"') > html.rfind('id="market-reference-card"')
     assert 'id="intraday-market-top-check"' in main_priority_body
     assert 'id="intraday-market-top-status"' in main_priority_body
     assert 'id="intraday-market-top-overlap" class="intraday-overlap-panel" hidden' in main_priority_body
@@ -6721,6 +7107,11 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert 'id="newbby-indicator-status"' in main_priority_body
     assert 'id="newbby-indicator-panel"' in main_priority_body
     assert 'class="main-priority-controls"' in main_priority_body
+    assert 'id="newbby-indicator-status" class="main-priority-status"' in main_priority_body
+    assert 'class="main-priority-status" id="intraday-market-top-status"' in main_priority_body
+    assert "선택 날짜 Main Top2의 수정주가 일봉과 기술 지표를 조회합니다." not in main_priority_body
+    assert '"오늘 정규장 시간에만 확인 할 수 있습니다."' not in main_priority_body
+    assert ".main-priority-status {" in html
     assert '`/api/priority-indicators?date=${encodeURIComponent(date)}`' in indicator_query_body
     assert 'cache: "no-store"' in indicator_query_body
     assert "newbbyIndicatorData = data" in indicator_query_body
@@ -6755,7 +7146,7 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "loadTabDataForActiveView(date)" in load_daily_body
     assert "candidateDisplayFlags(item.quality_flags)" not in html
     assert 'new Set(["missing_stock_flow", "rank_not_present"])' not in html
-    assert "candidateIntradayReferenceLabel(item.intraday_reference)" in html
+    assert "candidateIntradayReferenceLabel(row?.intraday_reference)" in html
     assert "function candidateNewsCompactLine(badge)" in html
     assert "function candidateNewsDigestLine(badge)" in html
     assert "근거 상태:" not in html
@@ -6775,14 +7166,14 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     assert "esc(valueLine)" not in top_two_body
     assert "현재 근거:" not in top_two_body
     assert "현재 미확인:" not in top_two_body
-    assert "<strong>근거</strong>" in top_two_body
+    assert "<strong>시장 참고</strong>" not in top_two_body
     assert "<strong>확인 필요</strong>" in top_two_body
-    assert 'targetRevisionLine === "최근 조정 없음"' in top_two_body
+    assert 'const targetRevisionBlock = targetRevisionLine || ""' in top_two_body
     assert 'class="top-two-evidence-details"' in top_two_body
     assert 'candidate-research-focus-body' in html
     assert "당일 Toss 20:00 저장 예정" in top_two_body
     assert "오늘 누적 뉴스" in html
-    assert "topTwoCurrentEvidenceLine(item)" in top_two_body
+    assert "topTwoCurrentEvidenceLine(item)" not in html
     assert "topTwoMissingEvidenceLine(item, tossQuote)" in top_two_body
     assert "top-two-news-line" not in top_two_body
     assert "top-two-value-context" not in top_two_body
@@ -8513,7 +8904,48 @@ def test_web_view_priority_indicators_fetches_server_top_two_from_toss(tmp_path,
     assert [item["stock_code"] for item in payload["items"]] == ["005930", "035420"]
     assert all(item["available"] is True for item in payload["items"])
     assert payload["items"][0]["snapshot"]["source"] == "Toss OpenAPI · 조정 일봉"
+    assert payload["items"][0]["snapshot"]["calculationVersion"] == "stock-monitor-indicator-v2"
     assert payload["items"][0]["snapshot"]["indicators"]["movingAverages"]["sma200"] is not None
+    price_conditions = payload["items"][0]["price_conditions"]
+    indicator_confirmation = payload["items"][0]["indicator_confirmation"]
+    assert payload["items"][0]["condition_status"] in {
+        "판정 불가", "두 가격 조건 미충족", "진입 조건 충족", "청산 조건 충족",
+        "가격 기준 도달 · 보조지표 확인 필요",
+    }
+    assert payload["items"][0]["condition_explanation"]
+    condition_bars = payload["items"][0]["chart"]["bars"]
+    assert "price_conditions" not in payload["items"][0]["snapshot"]
+    assert "indicator_confirmation" not in payload["items"][0]["snapshot"]
+    assert "condition_status" not in payload["items"][0]["snapshot"]
+    assert "condition_explanation" not in payload["items"][0]["snapshot"]
+    assert indicator_confirmation["directional_alignment_state"] in {
+        "up_aligned", "down_aligned", "mixed", "insufficient_data",
+    }
+    assert indicator_confirmation["volume_confirmation_state"] in {
+        "confirmed", "below_threshold", "missing",
+    }
+    assert indicator_confirmation["moving_average_state"] in {
+        "up", "down", "mixed", "insufficient_data",
+    }
+    assert indicator_confirmation["bollinger_state"] in {"up", "down", "neutral", "insufficient_data"}
+    assert indicator_confirmation["donchian_state"] in {"up", "down", "neutral", "insufficient_data"}
+    assert indicator_confirmation["volume_profile_state"] in {
+        "above_peak_volume_bins", "below_peak_volume_bins", "within_peak_volume_bins",
+        "between_peak_volume_bins", "insufficient_data",
+    }
+    assert indicator_confirmation["atr14_percent_of_close"] is not None
+    assert price_conditions["reference_bar_date"] == condition_bars[-1]["time"]
+    assert price_conditions["reference_close"] == condition_bars[-1]["close"]
+    assert price_conditions["prior_20_bar_high"] == max(bar["high"] for bar in condition_bars[-21:-1])
+    assert price_conditions["prior_10_bar_low"] == min(bar["low"] for bar in condition_bars[-11:-1])
+    expected_condition = (
+        "above_prior_20_bar_high"
+        if price_conditions["reference_close"] > price_conditions["prior_20_bar_high"]
+        else "below_prior_10_bar_low"
+        if price_conditions["reference_close"] < price_conditions["prior_10_bar_low"]
+        else "within_reference_band"
+    )
+    assert price_conditions["price_condition_state"] == expected_condition
     assert payload["items"][0]["candle_count"] == 220
     assert payload["items"][0]["pages_fetched"] == 2
     assert payload["items"][0]["history_status"] == "complete"
@@ -8586,17 +9018,17 @@ def test_web_view_newbby_indicator_snapshot_keeps_missing_states_and_neutral_fie
                 "wma120": 3,
                 "wma200": 4,
                 "status": "partial-data",
-                "calculationVersion": "technical-v3",
+                "calculationVersion": "technical-v4",
                 "emaSeedPolicy": "sma-period",
                 "wmaWeights": "linear-oldest-1-newest-period",
             },
-            "bollinger20": {"middle": None, "upper": None, "lower": None, "status": "insufficient-data", "period": 20, "multiplier": 2, "stddev": "population", "calculationVersion": "technical-v3"},
-            "donchian20": {"upper": 3, "middle": 2, "lower": 1, "status": "ready", "period": 20, "includeCurrent": True, "calculationVersion": "technical-v3"},
+            "bollinger20": {"middle": None, "upper": None, "lower": None, "status": "insufficient-data", "period": 20, "multiplier": 2, "stddev": "population", "calculationVersion": "technical-v4"},
+            "donchian20": {"upper": 3, "middle": 2, "lower": 1, "status": "ready", "period": 20, "includeCurrent": True, "calculationVersion": "technical-v4"},
             "rsi14": {"value": None, "status": "insufficient-data", "provisional": True, "method": "wilder", "seedPolicy": "simple-average-14-changes"},
             "atr14": {"value": 1, "status": "ready", "provisional": False, "method": "wilder", "seedPolicy": "simple-average-14-true-ranges"},
             "volume": {"barVolume": 3, "ratio20": None, "status": "partial-data", "period": 20, "includeCurrent": True},
-            "macd129": {"macd": 1, "signal": None, "histogram": None, "status": "partial-data", "fast": 12, "slow": 26, "signalPeriod": 9, "seedPolicy": "sma-period", "calculationVersion": "technical-v3"},
-            "obv": {"value": 3, "delta5": None, "seedTime": "2026-07-09", "status": "partial-data", "delta5Status": "insufficient-data", "seedPolicy": "first-bar-zero-stop-on-gap", "calculationVersion": "technical-v3"},
+            "macd129": {"macd": 1, "signal": None, "histogram": None, "status": "partial-data", "fast": 12, "slow": 26, "signalPeriod": 9, "seedPolicy": "sma-period", "calculationVersion": "technical-v4"},
+            "obv": {"value": 3, "delta5": None, "seedTime": "2026-07-09", "status": "partial-data", "delta5Status": "insufficient-data", "seedPolicy": "first-bar-zero-stop-on-gap", "calculationVersion": "technical-v4"},
             "volumeProfile12": {
                 "version": "vp-1",
                 "method": "close-weighted",
@@ -8810,13 +9242,17 @@ def test_web_view_newbby_indicator_snapshot_keeps_missing_states_and_neutral_fie
         cli_module._web_view_public_newbby_indicator_snapshot(ready_profile_without_count)
 
     page = cli_module._render_web_view_html()
+    indicator_candidate_body = page.split("function renderPriorityIndicatorCandidate(item, period, series)", 1)[1].split(
+        "function renderNewbbyIndicatorItems", 1
+    )[0]
     assert "function renderPriorityIndicatorPriceChart" in page
     assert "function renderPriorityIndicatorAuxChart" in page
     assert "function renderPriorityIndicatorSummary" in page
+    assert 'snapshot.sourceDate || "기준일 없음"' in indicator_candidate_body
     assert "loadNewbbyIndicatorSnapshot(selectedDate)" in page
     assert "sourceFetchedAt" in page
     assert "barAsOf" in page
-    assert "SMA 20/60/120/200" not in page
+    assert "SMA 20/60/120/200" in page
     assert "const colors = {sma20:" in page
     assert "MACD 12·26·9" in page
     assert "OBV · 누적 거래량" in page
@@ -8827,10 +9263,14 @@ def test_web_view_newbby_indicator_snapshot_keeps_missing_states_and_neutral_fie
     assert "시그널" in page
     assert "파랑은 MACD, 주황은 시그널" in page
     assert "차트 · 지표 확인" in page
-    assert "geometry 없음은 반대 방향의 근거로 취급하지 않습니다." in page
+    assert 'horizontal:"수평 가격 기준"' in page
+    assert '"ready" && family === "horizontal"' in page
+    assert "조건에 맞는 채널 구조 없음" in page
+    assert "조건에 맞는 삼각형 구조 없음" in page
+    assert "모양이 관찰되지 않은 것은 반대 방향 근거가 아닙니다." in page
     assert "삼각형 교점 값은 직선 외삽 측정값이며 목표가가 아닙니다." in page
     assert "지원하지 않는 기술 지표 형식입니다." in page
-    assert "선택 날짜 Main Top2의 수정주가 일봉과 기술 지표를 조회합니다." in page
+    assert "선택 날짜 Main Top2의 수정주가 일봉과 기술 지표를 조회합니다." not in page
     assert "/api/priority-indicators?date=" in page
 
 

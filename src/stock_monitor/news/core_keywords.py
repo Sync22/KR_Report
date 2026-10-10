@@ -11,6 +11,7 @@ class CoreKeywordDocument:
     stock_code: str | None
     title: str
     summary: str
+    source_url: str | None = None
 
 
 @dataclass(frozen=True)

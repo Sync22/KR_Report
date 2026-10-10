@@ -810,6 +810,7 @@ class TossPriorityQuoteProvider:
                     "symbol": symbol,
                     "business_date": priority_date.isoformat(),
                     "updated_at": record["updatedAt"],
+                    "individual_net_buy_volume": _nested_int(record.get("individual"), "netBuyVolume"),
                     "foreigner_net_buy_volume": _nested_int(record.get("foreigner"), "netBuyVolume"),
                     "institution_net_buy_volume": _nested_int(record.get("institution"), "netBuyVolume"),
                 }

@@ -31,14 +31,17 @@ def build_candidate_research_focus(
             if identity in seen:
                 continue
             seen.add(identity)
-            items.append({
+            item = {
                 "topic": " · ".join(keyword.value for keyword in extraction.accepted[:2]) if queries else title,
                 "source_title": title,
                 "source_kind": "리포트" if document.document_type == "report" else "저장 뉴스",
                 "basis": "keywords" if queries else "source_title",
                 "query": query,
                 "search_url": "https://search.naver.com/search.naver?" + urlencode({"where": "news", "query": query}),
-            })
+            }
+            if document.document_type == "report" and document.source_url:
+                item["source_url"] = document.source_url
+            items.append(item)
             if len(items) == 3:
                 break
         if len(items) == 3:

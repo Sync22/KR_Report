@@ -757,6 +757,7 @@ def _validate_readonly_result(
                 label="priority investor trading record",
             )
             for key, allowed in (
+                ("individual", _INVESTOR_TRADING_VOLUME_FIELDS),
                 ("foreigner", _INVESTOR_TRADING_VOLUME_FIELDS),
                 ("institution", _STOCK_INSTITUTION_TRADING_VOLUME_FIELDS),
             ):

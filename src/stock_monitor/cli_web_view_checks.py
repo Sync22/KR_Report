@@ -662,13 +662,13 @@ def _collect_web_view_browser_render_smoke_issues(
                         )
                         page.locator("#calendar-close").click(timeout=timeout_ms)
                         page.wait_for_function(
-                            "expected => document.querySelector('#main-priority-date')?.textContent?.includes(expected)",
+                            "expected => document.querySelector('#calendar-selected-date')?.textContent?.includes(expected)",
                             arg=business_date.isoformat(),
                             timeout=timeout_ms,
                         )
                         body_text = page.locator("body").inner_text(timeout=timeout_ms)
                         rendered_business_date = (
-                            page.locator("#main-priority-date").inner_text(timeout=timeout_ms).strip().strip("()")
+                            page.locator("#calendar-selected-date").inner_text(timeout=timeout_ms).strip().strip("()")
                         )
                         view_tab_locator = page.locator("[data-view-tab]")
                         tab_count = view_tab_locator.count()
