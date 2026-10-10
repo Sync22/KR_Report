@@ -283,6 +283,41 @@ def test_format_daily_briefing_messages_builds_morning_briefing_without_recommen
     assert "전략 제안" not in message
 
 
+def test_format_daily_briefing_messages_keeps_market_context_when_summaries_overflow() -> None:
+    summaries = [
+        DailyStockSummary(
+            business_date=date(2026, 5, 13),
+            stock_name=f"Stock{i}",
+            stock_code=f"{i:06d}",
+            mention_count=3,
+            broker_display="BrokerA(2), BrokerB(1)",
+            target_price_min=10_000,
+            target_price_max=12_000,
+            dominant_opinion="buy",
+            generated_at=datetime(2026, 5, 13, 16, 0, 0),
+        )
+        for i in range(8)
+    ]
+    max_chars = 360
+
+    messages = format_daily_briefing_messages(
+        date(2026, 5, 13),
+        summaries,
+        briefing_date=date(2026, 5, 14),
+        live_market_context_lines=["LIVE-MARKET-CONTEXT", "- KOSPI intraday"],
+        market_reference_lines=["PREVIOUS-CLOSE-CONTEXT", "- KOSPI close"],
+        flow_reference_lines=["PREVIOUS-FLOW-CONTEXT", "- Foreign flow"],
+        max_items=8,
+        max_chars=max_chars,
+    )
+
+    assert len(messages) > 1
+    assert "LIVE-MARKET-CONTEXT" in messages[0]
+    assert "PREVIOUS-CLOSE-CONTEXT" in messages[0]
+    assert "PREVIOUS-FLOW-CONTEXT" in messages[0]
+    assert all(len(message) <= max_chars for message in messages)
+
+
 def test_format_market_close_briefing_message_keeps_observation_wording() -> None:
     message = format_market_close_briefing_message(
         date(2026, 5, 14),

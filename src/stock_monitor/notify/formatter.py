@@ -337,12 +337,29 @@ def format_daily_briefing_messages(
     )
     if len(full_message) <= max_chars:
         return [full_message]
-    return format_daily_summary_messages(
-        business_date,
-        summaries,
-        quotes_by_stock_code=current_quotes_by_stock_code,
-        max_chars=max_chars,
+    context = "\n\n".join(
+        section
+        for section in (
+            "\n".join([header, basis]),
+            "\n".join(live_market_context_lines) if live_market_context_lines else "",
+            "\n".join(["이전 종가 비교", *previous_close_lines]),
+        )
+        if section
     )
+    summary_max_chars = max_chars - len(context) - 2
+    while summary_max_chars > 0:
+        pages = format_daily_summary_messages(
+            business_date,
+            summaries,
+            quotes_by_stock_code=current_quotes_by_stock_code,
+            max_chars=summary_max_chars,
+        )
+        messages = [f"{context}\n\n{pages[0]}", *pages[1:]]
+        overflow = max(map(len, messages)) - max_chars
+        if overflow <= 0:
+            return messages
+        summary_max_chars -= overflow
+    raise ValueError("max_chars is too small to retain the briefing and summary")
 
 
 def format_market_close_briefing_message(
