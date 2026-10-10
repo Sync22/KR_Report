@@ -8,6 +8,7 @@ Historical restore, web-view hardening, and documentation reorganization records
 - Web-View Stored Evidence Hardening Handoff
 - Docs Role Reorganization Review - 2026-05-17
 - Docs Role Reorganization Review Prompt
+- Main Web-View Layout and Top2 Contract Reconciliation - 2026-10-10
 
 <!-- Merged from: docs/codex/history.md -->
 ## Mini PC Restore Change Log - 2026-05-16
@@ -814,3 +815,11 @@ operating-guide.md, operating-guide.md, operating-guide.md, documentation-index.
 - The operating-PC sync finished at `dev` commit `2fa1efc`; read-only `ops-sync-preview`, `db-verify`, and migration rehearsal passed after the configured `2026-06-03` holiday handling was corrected.
 - No real schema migration, scheduler change, Telegram send, or admin-GUI process action was performed in that closeout.
 - This is historical host evidence, not a statement about the current main-PC or mini-PC state; verify present state from current runbooks and operation events.
+
+## Main Web-View Layout and Top2 Contract Reconciliation (2026-10-10)
+
+- The authenticated local Main was reviewed after the Top2 chart and information-layout changes. The current page puts Main priority first, followed by the reading summary, source freshness and saved-news context; market and industry/ETF reference panels remain collapsed until opened.
+- The 2026-09-29 review's point-in-time sample, intentional multi-report default, and the unresolved morning-brief source decision are historical findings. The separate morning-brief integration remains on hold until its source and date contract are identified.
+- Main Top2's full Toss, indicator, condition, schemaVersion 1, provenance, and side-effect contract is consolidated in [Data governance](data-governance.md#main-top2-technical-indicator-projection). [Surface guide](surface-guide.md#main-top2-technical-indicator-block) now owns only controls and presentation; the Toss lab keeps setup and provider notes.
+- The Main date/evidence/flow race and stale-cache status fix was committed and pushed as `6557f398`; the full regression suite passed 1,256 tests. This confirms local code/UI behavior, not current mini-PC or production host state.
+- During the earlier 2026-09-29 read-only review, SQLite was opened with its default read/write mode and the DB modification time changed for an unknown reason. Future reviews must use a read-only SQLite URI and must not infer that the contents were unchanged from method names alone.

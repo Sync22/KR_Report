@@ -22,11 +22,17 @@ This is the documentation skeleton. Read this file first, then open only the bra
 ## Rules
 
 - `admin-gui` is operator-only; `web-view` is public-safe and GET-only.
-- No public numeric score/grade, generic buy/sell recommendation, or broker execution. The separate Main Top2 price condition is a narrow user-defined exception and requires the full indicator/volume confluence clarified 2026-10-10. The root `stock-monitor-indicator-v2` and indicator-group `technical-v4` provenance retain the schemaVersion 1 shape; see [Surface guide](surface-guide.md) and [Data governance](data-governance.md).
+- No public numeric score/grade, generic buy/sell recommendation, or broker execution. The complete Main Top2 source, indicator, condition, schema, and provenance contract is owned by [Data governance](data-governance.md#main-top2-technical-indicator-projection); [Surface guide](surface-guide.md#main-top2-technical-indicator-block) owns the user-visible controls and presentation.
 - Keep raw/source, parsed/storage, aggregate, and display values separate.
 - Web-view market, ETF, and flow projections use the stored Toss 20:00 close snapshot. Existing KRX rows are historical references only and no longer receive scheduled refreshes.
 - Current scheduler task names and timings live in [Mini PC runbook](mini-pc-runbook.md); current market-source ownership lives in [Market-data runbook](market-data-runbook.md). Older KRX task text elsewhere is historical unless those runbooks explicitly reintroduce it.
 - Lab/source probes must not connect directly to SQLite writes, Telegram, scheduler, admin GUI, or public web-view behavior.
+
+## Historical Material
+
+- `docs/superpowers/plans/` and `docs/superpowers/specs/` contain dated design and execution records, not current implementation instructions.
+- `stock_research_monitor_mvp.md` records product requirements and future intent. Verify present implementation in this index's canonical contracts and source.
+- Use [Operating guide](operating-guide.md) for current project work, [History](history.md) for durable dated decisions, and Git for routine code-change traceability.
 
 ## Maintenance
 

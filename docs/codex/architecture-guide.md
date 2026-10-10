@@ -353,7 +353,7 @@ The path and flow tables above are the architecture map. Current role routing an
 
 The ignored `{PROJECT_ROOT}\.codegraph\codegraph.db` is local navigation data, not a product or runtime dependency.
 
-**Last index snapshot (2026-09-27):** the upper-folder session refreshed CodeGraph after raising `maxFileSize` to 2 MiB so the 1.88 MiB `cli.py` was indexed. That snapshot contains 103 files, 3,831 nodes, and 8,672 edges, including 1,033 CLI nodes, 36 `web_perf.py` nodes, and 21 `news/evidence_review.py` nodes. `cli.py` and `repository.py` changed on 2026-09-28 and 2026-09-30; the current working tree also changes `cli.py`. Treat those indexed nodes and edges as stale until an updater runs. This runtime has no `codegraph` executable or configured MCP, so refresh from an environment that has the updater.
+The index is generated navigation data and can lag the source or omit details embedded in Python-rendered JavaScript. Use it to locate likely owners and call paths, then verify every claim against the current source and tests. Do not treat its file/node/edge counts or snapshot dates as implementation status.
 
 Treat CodeGraph as a code-navigation backend for existing agents, not as a new product dependency.
 

@@ -392,7 +392,7 @@ This document defines the safe path from current report/flow/reference data to f
 
 It approves observation-candidate recommendation and priority ordering, but it does not approve trading recommendations, public numeric scoring, investment grades, or buy/sell judgment.
 
-The exact CE-1 DTO and alias-mapping contract is fixed in [candidate-evidence.md](/docs/codex/candidate-evidence.md).
+The exact CE-1 DTO and alias-mapping contract is fixed in [candidate-evidence.md](candidate-evidence.md).
 
 Current rule:
 

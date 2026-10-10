@@ -3,6 +3,11 @@
 > 개인용 네이버 증권 리포트 모니터 `Stock Monitor`의 주요 변경 기록입니다.  
 > 초기 일부 항목은 대화 흐름과 실제 반영 시점을 기준으로 정리했습니다.
 
+## 2026-10-10
+
+- Main Top2 gained a user-triggered Toss adjusted-candle chart and factual indicator projection. Price thresholds require the separately documented indicator and volume confirmation; the projection stays outside schemaVersion 1 snapshots and does not change candidate order, persistence, scheduler, Telegram, or broker/order behavior.
+- Main date changes now discard late daily/evidence/flow responses and clear previous-date content while loading. Stale Toss market-context responses show the last successful fetch time. The regression suite passed 1,256 tests.
+
 ## 2026-08-12
 
 - Toss OpenAPI 시장 수급 응답의 기관 세부 분해(`institution.breakdown`)를 검증 가능한 중첩 구조로 수용했다. 웹뷰와 Telegram에 전달하는 시장 문맥은 기존처럼 기관·외국인 등의 매수/매도 합계만 투영하므로, 새 세부 분해값은 저장·노출되지 않는다.
@@ -867,5 +872,5 @@
 ## 메모
 
 - 이 문서는 실제 변경 사항 중심으로 유지합니다.
-- 판단 이유와 운영 원칙은 [docs/codex/decision-log.md](/docs/codex/decision-log.md)에 남깁니다.
-- 현재 상태와 다음 작업은 [docs/codex/current-work.md](/docs/codex/current-work.md)에서 이어갑니다.
+- Durable architecture decisions and code ownership live in [architecture-guide.md](docs/codex/architecture-guide.md) and [history.md](docs/codex/history.md).
+- Current state and next work live in [operating-guide.md](docs/codex/operating-guide.md).

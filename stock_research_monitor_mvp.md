@@ -1,5 +1,7 @@
 # Stock Research Monitor Requirements
 
+> This file records product requirements and future intent. It is not a statement that every item is implemented or currently enabled. For present behavior, use [the documentation index](docs/codex/documentation-index.md), then verify the linked contract against source and tests.
+
 ## 목적
 
 `02.Stock_Moniter`는 네이버 증권 `리서치 > 종목분석 > 국내종목` 리포트를 장중 수집하고,
@@ -20,9 +22,9 @@ SQLite에 저장한 뒤 Telegram, 관리자 화면, 사용자용 웹뷰로 읽�
 
 public/user-facing surface는 저장 데이터 근거로 관찰 대상을 정렬할 수 있지만 매매 판단이나 주문 기능을 제공하지 않는다. 현재 금지 문구와 surface 경계는 [surface-guide.md](docs/codex/surface-guide.md)에 따른다.
 
-실시간 데이터가 나중에 안정적으로 붙으면 그것도 같은 기준을 따른다. 실시간 값은 매매 실행 신호가 아니라 `우선 확인`, `관찰 우선순위`, 메인 카드 강조를 더 강하게 만드는 관찰 추천 입력이다. `read-only`는 DB write, Telegram/scheduler 자동화, broker secret, 주문 실행 금지를 뜻하며, 검증된 실시간 참고값이 관찰 순서에 영향을 주지 말아야 한다는 뜻이 아니다.
+현재는 Toss 현재가·당일 수급과 사용자가 요청한 Main Top2 조정 일봉/지표가 제한된 참고값으로 제공된다. 이 참고값은 저장 후보의 구성·순서를 바꾸거나 값을 저장하지 않는다. 향후 다른 실시간 source를 추가하거나 후보 순서에 반영하려면 별도 source·실패 처리 검토와 승인된 계약이 필요하다. `read-only`는 DB write, Telegram/scheduler 자동화, broker secret, 주문 실행 금지를 뜻한다.
 
-장기 목표는 실시간 확인이 가능해졌을 때 관찰 추천을 operator-only decision-support lane과 broker/execution-lab까지 단계적으로 끌어올리는 것이다. 즉, 현재 public surface의 매매 문구 제한은 영구적인 제품 목표 부정이 아니라, 아직 검증된 실시간 source, 권한, 실패 처리, 책임 경계, 실행 안전장치가 없기 때문에 적용하는 현재 단계 제한이다.
+향후 operator-only decision-support 또는 broker/execution-lab은 제품 의도일 뿐 현재 승인·구현 기능이 아니다. 별도 source, 권한, 실패 처리, 책임 경계, 실행 안전성을 먼저 검토해야 한다.
 
 ## 대상 데이터 소스
 
@@ -152,7 +154,7 @@ Telegram은 개인 운영용 알림과 명령 처리 채널이다.
 
 `web-view`는 별도 GET-only/read-only 사용자 화면이다. `admin-gui`의 read-only mode가 아니라 독립 surface로 유지한다. 구체적인 surface 계약은 [surface-guide.md](docs/codex/surface-guide.md)를 따른다.
 
-`web-view`의 목적은 저장 근거와 검증된 참고값을 바탕으로 무엇을 먼저 볼지 추천하는 것이다. 현재는 stored-data 기반이지만, 향후 승인된 실시간 source가 붙으면 top-2 `우선 확인`과 메인 노출 강도에 반영할 수 있다. 현재 public `web-view`에서 금지되는 것은 매매 판단/주문 실행이지 관찰 우선순위 추천이 아니다. 매매 판단으로 확장하는 작업은 public `web-view`가 아니라 별도 operator-only decision-support 또는 execution-lab에서 다룬다.
+`web-view`는 저장 근거와 검증된 참고값으로 무엇을 먼저 볼지 제공한다. 현재 화면은 저장 데이터와 명확히 출처를 표시한 Toss 참고값을 함께 사용한다. Main Top2의 user-triggered 차트·지표 투영과 현재가/수급 참고는 저장 후보 순서를 바꾸지 않으며, 추가 실시간 source나 순서 반영에는 별도 source·실패 처리 검토가 필요하다.
 
 노출 가능:
 
@@ -180,7 +182,7 @@ Telegram은 개인 운영용 알림과 명령 처리 채널이다.
 
 ## 관찰/백테스트/관찰 후보 추천/점수화 경계
 
-현재 관찰탭은 read-only evidence surface이며, 저장 데이터 기반 관찰 후보 추천과 우선 확인 정렬을 제공할 수 있다. 이 제한은 현재 public surface 기준이다. 실시간 source가 검증된 뒤에는 operator-only lane에서 매매 판단 후보까지 검토할 수 있지만, public `web-view`에 바로 매매 문구나 주문 기능을 노출하지 않는다.
+현재 관찰탭은 저장된 후보를 같은 순서로 보여주는 read-only evidence surface다. Main Top2의 제한된 Toss 참고 조회도 후보 순서를 바꾸지 않는다. 다른 실시간 source를 후보 판단에 반영하는 변경은 별도 승인·검증이 필요하며, public `web-view`에는 매매 문구나 주문 기능을 노출하지 않는다.
 
 허용:
 
@@ -217,7 +219,7 @@ Full news-analysis payloads, sentiment scores, impact labels, and operator judgm
 
 Saved news observations may be shown as compact labels, counts, and a few article titles when their candidate linkage and source/freshness state are clear. Missing, indirect-only, or market-context-heavy evidence is shown as `참고` / `추가 확인 필요`; KRX is historical-only and is not a current-source status fallback.
 
-The approved bounded Toss references already provide stored close context and limited Top2 current-price/same-day flow context. Any broader live source lane needs its own source/failure review; these references may support observation priority only, never public trading calls, broker execution, or order paths.
+The approved bounded Toss references provide stored close context, limited Top2 current-price/same-day flow, and a user-triggered adjusted-daily chart/indicator projection. These remain labeled observation references only and never create public trading calls, broker execution, or order paths.
 
 내부 scoring draft CLI는 research-only이며 public surface와 연결하지 않는다. 장기적으로 매매 판단까지 가려면 scoring draft가 아니라 별도 operator-only decision-support lane, source freshness 검증, 실패 처리, broker/execution-lab 안전장치가 먼저 필요하다.
 

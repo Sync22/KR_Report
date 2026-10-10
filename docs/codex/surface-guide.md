@@ -45,7 +45,7 @@ This is a permission and API boundary, not just a visual layout boundary.
 - `web-view` must be implemented with a separate handler/router and a separate read-only DTO contract.
 - Shared DB/repository code is allowed. Shared HTTP control handlers are not allowed.
 - Broker or execution API work, including all Toss Securities OpenAPI capabilities outside the approved bounded projections, must not be connected to `admin-gui`, unapproved production DB writes, broker secrets, or order routing. Account, asset, order, broad polling, and execution capabilities remain separate lab/hold lanes.
-- Toss OpenAPI public reads are limited to server-derived Top2 current-price/same-day flow, fixed latest-date Top20 market context, and the on-demand Top2 adjusted daily history used by the chart/indicator panel. The web-view remains GET-only and accepts no arbitrary symbols. The chart/indicator request does not persist data, run on a scheduler, or affect candidate ordering; its sole condition-status projection is defined below. Telegram does not gain a standalone trading alert or instruction.
+- Toss OpenAPI public reads are limited to server-derived Top2 current-price/same-day flow, fixed latest-date Top20 market context, and the on-demand Top2 adjusted daily history used by the chart/indicator panel. The web-view remains GET-only and accepts no arbitrary symbols. The chart/indicator request does not persist data, run on a scheduler, or affect candidate ordering. Its sole condition-status projection follows [Data governance](data-governance.md#main-top2-technical-indicator-projection). Telegram does not gain a standalone trading alert or instruction.
 - Stored web-view market, ETF, and flow sections use the bounded Toss `20:00` close snapshot. Existing KRX rows remain historical drilldown data and are not a current market fallback.
 - User resolution (2026-10-09, clarified 2026-10-10): the blanket public restriction on chart-derived trading conditions is replaced by the narrow selected-date Main Top2 projection below. A price threshold alone does not confirm a condition; all user-defined indicator/volume confirmations must align. This transparent rule is not a numeric score or an empirically validated error-reduction claim, and it does not authorize generic recommendations, execution, or other strategy behavior.
 - External sharing candidates are limited to Tailscale for owner-only remote operation and Cloudflare Tunnel for a future friend-facing read-only `web-view` URL.
@@ -92,27 +92,13 @@ The panel remains separate from both control and public surfaces: its route is a
 
 ## Main Top2 Technical Indicator Block
 
-The Main priority card has one `차트 · 지표 확인` button with a display-range selector and a supplementary-indicator selector. The display range offers 50, 100, and 200 trading days, defaulting to 200; RSI 14 is the initial supplementary-indicator selection. Page load and date selection do not fetch candles. The public GET-only route `GET /api/priority-indicators?date=YYYY-MM-DD` can also be called directly by web-view readers. It accepts only the date, derives the selected Main Top2 on the server, caches the same date/candidate response for 30 seconds, and preserves Main order. Browser-supplied symbols are rejected.
+The Main priority card provides an explicit chart/indicator check button, a 50/100/200-trading-day range selector (200 by default), and a supplementary-series selector (RSI 14 initially). Loading the page or changing the selected date does not fetch candles.
 
-For each candidate, the server uses that selected date's stored Toss `market_reference.market`. If it is missing, the latest stored Toss stock-universe classification on or before the selected date supplies the market and source date. Without either classification, the row remains usable with `market=unknown` and the six-digit Toss symbol; no `.KS`/`.KQ` suffix is guessed and no KRX classification is used.
+The public GET route /api/priority-indicators?date=YYYY-MM-DD derives at most the selected-date Main Top2 on the server; callers cannot choose symbols. In the Main browser, only the button triggers this GET; direct GET clients may also request the route. The chart displays candles, SMA 20/60/120/200, volume, and one selected supplementary series.
 
-Stock Monitor calls its Toss read-only provider with `interval=1d`, `adjusted=true`, up to 200 bars per request and at most four inclusive `nextBefore` pages (800 bars total). Cursor-boundary duplicates and candles after the requested date are removed. The local calculator follows Newbby's factual indicator settings: OHLCV, SMA/EMA/WMA 20/60/120/200, Bollinger and Donchian 20, Wilder RSI/ATR 14, current-inclusive volume ratio 20, MACD 12/26/9, OBV and five-bar delta, HLC3 volume profile, and neutral horizontal/flag/triangle geometry. Each successful item includes a separate aligned `chart.bars` series for OHLCV, SMA 20/60/120/200, RSI 14, MACD/signal/histogram, OBV, and ATR 14. The calculations use the full fetched prefix; the response carries up to the latest 380 bars so the page can display 50, 100, or 200 trading days, defaulting to 200, while retaining SMA 200 warmup. RSI 14 is the initial supplementary-indicator selection. The Main card draws candles, four SMA overlays, and volume, plus one selected supplementary series. No Newbby server, fork, or cache is used.
+Each result labels the requested date, actual bar date, Toss source/fetch time, and candle-finality/pagination state. Missing and provider-error states remain visible. This read-only projection does not change candidate order, write Stock Monitor data, or invoke the scheduler, Telegram, or a Stock-Newbby server.
 
-Keep the visible summary to the actual bar date, close and previous-bar change, OHLC, volume against its 20-bar average, and the prior 20-bar high / prior 10-bar low as adjusted-price reference values. Both high/low windows exclude the actual reference bar; a missing complete window makes the condition `판정 불가`.
-
-For selected-date Main Top2, the visible condition card has `진입 확인 기준` and `탈출 확인 기준` rows. Each shows its threshold, selected-date close, and reached/missed state; entry compares close above the prior 20-bar high and exit compares close below the prior 10-bar low, with both windows excluding the actual bar. The `condition_explanation` provides a plain-language explanation that reaching a price reference is not confirmation and names blockers such as mixed moving-average stacks or volume below 1.2. Keep the numeric criteria and component values/statuses visible alongside this explanation. Confirm entry only when every direction check is upward: RSI14 > 50, MACD > signal, each full adjusted-price stack `close > SMA20 > SMA60 > SMA120 > SMA200`, `close > EMA20 > EMA60 > EMA120 > EMA200`, and `close > WMA20 > WMA60 > WMA120 > WMA200`, close above Bollinger20 middle, close above Donchian20 middle, and OBV delta5 > 0. Confirm exit only when every check is downward, using the strict reverse of each condition. These are unanimity conditions, so neutral or mixed components do not confirm. Volume ratio20 >= 1.2 is a separate gate for both directions. Equality fails strict comparisons. The chart lists each SMA/EMA/WMA family's 20/60/120/200 values alongside its independent stack state. ATR14 and each individual `peak=true` bin from the HLC3 volume profile are context only, not direction checks; show close within a peak bin, between separate bins, above all peak bins, or below all peak bins without merging disjoint bins. Structure measurements are displayed separately.
-
-If a required price, direction-indicator, or volume input is missing, show `판정 불가`. Otherwise, show `진입 조건 충족` or `청산 조건 충족` only when the corresponding price trigger, every same-direction check, and the volume gate pass; show `가격 기준 도달 · 보조지표 확인 필요` when a price trigger is reached but direction checks are mixed or the volume gate fails; show `두 가격 조건 미충족` when neither price trigger is reached, with context. Show every component's value and pass/fail/missing status, including source/date/finality provenance. Each SMA/EMA/WMA family displays its individual period values and stack status; each HLC3 profile `peak=true` bin remains a separate range, with close location labeled across the set of bins. The RSI flat-window neutral correction is reflected in root `calculationVersion=stock-monitor-indicator-v2`; indicator-group provenance remains `TECHNICAL_VERSION=technical-v4`. schemaVersion 1 shape and allowlist are unchanged. Do not produce numeric scores or vote totals. Keep the projection separate from immutable schema-v1, candidate ranking, persistence, scheduler, Telegram, broker/order access, and automatic execution. This is the user's transparent condition, not a generic recommendation, guaranteed price, historically validated rule, or error-reduction claim.
-
-Show requested date, actual reference bar date, Toss source/fetch/sourceDate, and unknown candle-finality status with every result. Put the latest SMA values in the matching chart legend. Source/fetch time, market-label status, and bar-finality status stay beside the chart; fetch/page counts and neutral structure measurements remain in its collapsed details. The Top2 evidence header carries the live-flow reference date and query time. Do not repeat those fields in a market-reference row. Show target-range aggregate date(s) next to their amounts, below a separator under a bold title.
-
-The response preserves the requested date, actual `barAsOf`, Toss `source`/`sourceFetchedAt`/`sourceDate`, and unknown candle-finality status separately. The existing 30-second web-view response cache may serve repeat requests; the result is not stored in Stock Monitor SQLite and never changes candidates or contacts the scheduler or Telegram.
-
-Show the returned candle and page counts. Toss may omit optional `nextBefore`; keep the returned measurements visible but label the pagination cursor as unavailable. A malformed or non-monotonic cursor is a provider error, not a completed history. Reaching the four-page cap is explicitly labeled as the 800-bar limit.
-
-The renderer validates the full local schema-v1 factual snapshot: OHLCV, all moving-average fields, indicator groups and calculation provenance, all volume-profile bins, `structures`, and all three `structureStatus` families. `code`, market, and requested date are bound to the selected candidate. A known KOSPI/KOSDAQ market requires its `.KS`/`.KQ` symbol; an unknown market requires the bare six-digit code. Unknown fields/enums and missing required fields remain unsupported. The aligned chart series is an item-level display projection and does not alter that snapshot contract. `MACD.signal` is a factual line; generic action/signal, score, grade, buy/sell recommendation, and target advice fields are excluded. The separately approved threshold condition is not inserted into schema-v1.
-
-Explain structure labels as price reference lines versus recognized channel/triangle shapes. Show `수평 가격 기준 · 기준선 계산됨` when a horizontal price reference line is calculated, and show `조건에 맞는 채널 구조 없음` or `조건에 맞는 삼각형 구조 없음` when no recognized shape meets the criteria. A reference line may be available while a recognized shape is unavailable; no recognized shape is not evidence of the opposite direction. An empty measurement list means no measurement was returned, not a negative signal or completed check. Triangle apex values keep the straight-line extrapolation labels: `geometry.points.2.price` is `삼각형 교점 · 직선 외삽값(목표가 아님)` / `projected-price`, `geometry.points.2.logicalOffset` is `삼각형 시작점부터 교점까지 봉 수 · 직선 외삽` / `projected-bars`, and `apexRemainingBars` is `삼각형 교점까지 남은 봉 · 직선 외삽` / `projected-bars`. `null` values and group status remain visible as missing, partial, or warmup states. Toss timeout, unavailable, malformed response, or no candles renders an explicit candidate state. Missing classification is shown as unknown while still querying by the six-digit Toss code; there is no KRX fallback.
+The exact source/classification fallback, pagination, calculation set, schemaVersion 1 allowlist, condition formulas and states, provenance, and safety contract live in [Data governance](data-governance.md#main-top2-technical-indicator-projection). Local credential and provider setup notes live in [Toss OpenAPI Lab](toss-openapi-lab.md#promoted-main-top2-technical-indicators-2026-10-08).
 
 ## Shared User Surface
 
@@ -166,11 +152,11 @@ Disallowed examples:
 
 ## Current Main And Watch Hierarchy
 
-- Main uses one brief for report flow, stored market reference, and saved news context; the Top2 cards show only the observation reason, current evidence, missing information, and target-price revision.
-- Watch is a compact candidate selector. Each row uses the existing candidate DTO only for rank, name/code, observation label, and one visible evidence line; selecting a row opens the same stock-detail route used by search and Top2.
-- Stock detail is the single detailed evidence surface. It owns report rows, target-history/progress, stored news detail, selected-date historical KRX reference, and stock-level `[12009]` context.
-- Watch must not repeat the stock-detail evidence grids or render pending-only D+ windows, `계산 불가`, or `수급 없음` as if they were useful observations. Those values remain available only when a selected stock has stored detail to show.
-- Watch summary blocks remain candidate-linked and read-only. They may link to stock detail, but they do not perform a new source fetch.
+- Main first shows the selected-date stored priority Top2, concise observation reasons, current reference labels, and expandable evidence; the reading summary, source freshness, and saved-news context follow.
+- Toss current quote/flow and the adjusted-candle chart/indicator projection are labeled reference views initiated through their Main controls; they do not change stored candidate membership or order.
+- Historical market and industry/ETF references stay collapsed below Main until opened.
+- Watch remains a compact candidate selector; it does not repeat the stock-detail evidence grids or issue live source requests.
+- Stock detail owns the complete report, target-history/progress, saved-news, historical KRX, and stock-flow context.
 
 ## Canonical Evidence Composition Purpose
 
@@ -209,9 +195,9 @@ Source ownership and Korean display naming are fixed in [data-governance.md](dat
 
 The first `web-view` should prefer clarity over trading interpretation. It can say what was observed, identify what is still missing, and recommend what to check first, but should avoid unsupported scoring.
 
-Broker-origin data is currently allowed through bounded read-only GETs for Top2 current-price/same-day provisional investor-volume context, latest-date Top20 market context, and the user-triggered Top2 chart/indicator projection. Top2 quotes refresh when the server-derived cohort changes and may use the bounded Naver quote fallback if Toss is unavailable or incomplete. Market context and chart/indicator history require their respective user actions. The market-context response includes Top20/overlap, but the current panel renders indices and provisional aggregate flow only. Each projection must show source and checked time; none writes data, changes Top2 membership/order, or implies a generic trading recommendation. The separately approved Main threshold projection is limited to the exact reproducible condition contract in this guide.
+Broker-origin data is currently allowed through bounded read-only GETs for Top2 current-price/same-day provisional investor-volume context, latest-date Top20 market context, and the user-triggered Top2 chart/indicator projection. Top2 quotes refresh when the server-derived cohort changes and may use the bounded Naver quote fallback if Toss is unavailable or incomplete. Market context and chart/indicator history require their respective user actions. The market-context response includes Top20/overlap, but the current panel renders indices and provisional aggregate flow only. Each projection must show source and checked time; none writes data, changes Top2 membership/order, or implies a generic trading recommendation. The separately approved Main threshold projection is specified in [Data governance](data-governance.md#main-top2-technical-indicator-projection); this guide owns its controls and presentation.
 
-For this enabled reference lane, `read-only` means no DB write, Telegram/scheduler automation, admin control path, broker-secret exposure, or order routing. It supplies context for the fixed Top2 and does not change candidate membership or order. The narrow 2026-10-09 Main Top2 threshold projection defined above is the sole public chart-derived condition exception; any broader trading-decision support remains a separate operator-only lane.
+For this enabled reference lane, `read-only` means no DB write, Telegram/scheduler automation, admin control path, broker-secret exposure, or order routing. It supplies context for the fixed Top2 and does not change candidate membership or order. The narrow 2026-10-09 Main Top2 threshold projection specified in [Data governance](data-governance.md#main-top2-technical-indicator-projection) is the sole public chart-derived condition exception; any broader trading-decision support remains a separate operator-only lane.
 
 If a later phase adds trading-decision support beyond the exact user-defined Main Top2 threshold projection, keep that broader capability out of the public `web-view` contract. It should be an operator-only decision-support or execution-lab surface with its own permission, audit, source freshness, failure, and order-safety contract.
 
@@ -469,7 +455,7 @@ This document defines the sector-first rotation overlay based on `example/Cycle.
 
 The overlay is a descriptive review view. It can support observation-candidate recommendation, but not prediction, public numeric score, investment grade, or trading recommendation.
 
-The first alias-mapping boundary for the image text is fixed in [candidate-evidence.md](/docs/codex/candidate-evidence.md).
+The first alias-mapping boundary for the image text is fixed in [candidate-evidence.md](candidate-evidence.md).
 
 ## Current State
 
@@ -826,72 +812,6 @@ Skipped for this plan:
 
 
 <!-- Merged from: docs/codex/surface-guide.md -->
-## Web-View Main Layout First Pass
+## Historical Main Layout Review
 
-## Purpose
-
-Refine the public `web-view` main page into a faster briefing surface without changing data collection, scheduler behavior, Telegram behavior, or public API routes.
-
-## Scope
-
-- Keep the calendar, but remove the visible `날짜 선택` heading.
-- Reorder `오늘 읽을 요약` to show one-line comments first, then compact report summary, then pill-style watch candidates.
-- Improve `국장 관찰 요약` by using sentence-like `시장 분위기`, clearer item separators, and a single `시장 폭` block for sector/theme summary.
-- Remove separate sector/theme summary cards from the main page; keep `업종/테마 상세` drilldown.
-- Remove the selected-stock `현재 선택` strip.
-- Normalize selected-stock target trail rows.
-- Split investor-flow period totals into a distinct `기간합계` line using `|` separators.
-- Default daily flow/volume rows to the selected month, with an expand/collapse control for all stored rows.
-
-## Boundaries
-
-- No new public API route.
-- No admin-gui/control surface/secret/DB path exposure in `web-view`.
-- No Telegram or scheduler change.
-- No broad ingest or KRX automation policy change.
-- No generic trading recommendation wording, numeric score, grade, buy/sell signal, entry price, exit price, target return, or confidence wording. The exact separate Main Top2 all-confirmation condition statuses approved 2026-10-09 and clarified 2026-10-10 are the sole chart-derived wording exception.
-
-## Verification
-
-- `python -m pytest tests/test_web_view.py -q`
-- `python -m pytest tests/test_cli_commands.py -q`
-- `python -m stock_monitor web-view-value-qa --recent-business-days 4 --stock-limit 20 --json`
-- `python -m stock_monitor web-view-browser-smoke --date latest --json`
-
-## Implementation Notes
-
-- Implemented in `src/stock_monitor/cli.py`.
-- Regression coverage updated in `tests/test_web_view.py`.
-- Local `web-view` was restarted on `{LOCAL_WEB_VIEW_TARGET}` after verification.
-
-## User Review: Web-View Information Value (2026-09-29)
-
-Status: **the user-approved tab and information layout was implemented on 2026-09-29**. The external morning-briefing source remains unidentified and unintegrated.
-
-### Observed problems at the time (2026-09-29)
-
-- `오늘 읽을 요약` currently leads with a report/stock count, then generic check-point chips, freshness, news, turnover, and flow blocks. It does not synthesize what changed or why the Top2 is worth checking. A 2026-09-29 stored-data sample had 27 reports across 21 stocks, only two multi-report stocks, Toss market data from 9/28, investor flow from 9/23, no ETF snapshot, and no same-day stock-price references for the 21 rows. The stale values appear beside the selected date, which weakens the summary's usefulness.
-- The same sample's Top2 news badge had no independently classified article evidence; stored news was recap/unknown lineage. Candidate-level titles and labels still add context, but that sample does not support a sector-interest conclusion.
-- `종목` hides one-report rows whenever any multi-report row exists. On the sample date this hid 19 of 21 stocks. The user confirmed this is intentional noise filtering, not a defect; retain the default and keep the `1건 포함` path clear. Exact-date Toss price/flow absence is a separate freshness state.
-- The former `시장` tab invoked a user-triggered live Toss request. That layout has since been replaced by three top-level tabs and a collapsed Main panel with an explicit button; the current panel does not automatically fetch market context on page entry. The separately scheduled web morning briefing mentioned during that review remains unverified; identify its source/data contract before deciding to duplicate or relocate content.
-- `순환매` is a report-category rollup drawn over a manually mapped image, with optional manually mapped ETFs when exact-date ETF rows exist. It does not calculate capital rotation or sector flows. The 9/29 sample had no theme rollups and no stored ETF snapshot.
-
-These are point-in-time observations, not permanent source guarantees. During the earlier DTO inspection, SQLite was opened in its default read/write mode but only read methods were called; the DB file modification time changed and the cause is unknown. No write command, live Toss call, Telegram action, or scheduler change was issued during that assessment.
-
-Resolution (2026-10-07): the Main summary now names the selected Main candidates' stored `why_notable` evidence and `missing_information` gaps. It continues to use the existing stored candidate DTO; it adds no score, grade, or trading instruction.
-
-### Implemented layout and behavior
-
-- **Main summary:** `오늘의 우선순위` is first in both visual and document order. The `지수 · 수급 확인` button sits beside its heading. The `당일 시장 · 수급` panel follows beneath, without the blue outline or routine fresh-response metadata. Loading, 409 latest-date warnings, and errors remain visible; a stale cached response is labeled as a previous value and shows its last successful `fetched_at`. Main Top2 controls and candidates follow the panel. `오늘 읽을 요약` uses one market-mood headline and compact chips for why the stored Main candidates are notable, their recorded information gaps, and the existing market/concentration context. Source freshness and candidate-level news remain visible below. It uses no score or trading instruction. Main-summary typography uses 18px section titles and lead text, 14px body text, and 12px supporting status text; Top2 cards use 15px candidate names, 13px explanation/detail text, and 12px metadata.
-- **Top2 evidence:** Expanded cards show selected-date Toss individual, foreigner, and institution flow first. The shared flow reference date and query time sit beside the market-flow heading, not in a separate evidence header. Report and saved-news rows use the same bold, colored source-label treatment as the flow label, with consistent spacing between rows; report headlines link to their Naver source and saved news keeps its news-search link. A larger, bolder downward triangle appears before the disclosure title. Target-range revisions always use two date-led lines separated visually: the prior date and amount, then the selected date and amount with its direction label, beneath the bold `목표가 범위(일자 집계)` title. The date/amount lines use normal-weight text and omit the `이전` prefix. The close-reassessment card is temporarily hidden while its placement is under review.
-- **Main market panel:** the live Toss panel stays hidden until the user presses `지수 · 수급 확인`; the request is latest-business-day-only and does not poll or change scheduler behavior. It renders indices beside a compact aggregate market-flow row with three investor columns (individual, foreign, institution), while omitting Top20 ranking and ETF rows. Each flow row shows the source `updatedAt` as `갱신 HH:mm` at minute precision. Toss exposes no final/provisional flag or guaranteed finalization time. The project therefore uses 20:20 KST, the end of its scheduled capture window, as a display cutoff: an `updatedAt` at or after that time is labeled `마감 기준 충족`, an earlier update is `잠정`, and a missing/invalid timestamp is `확인 필요`. The UI says this is an operating convention and that Toss supplies no explicit confirmation value; it does not call the row final or guaranteed. The index table has no turnover column: Toss index quote/candle APIs expose no index trading amount, and ranking `tradingAmount` belongs to individual securities rather than the whole market. The request does not store values or affect Top2 ordering. Loading, 409 latest-date warnings, and errors remain visible; fresh results hide routine response metadata, while stale cached results keep a visible `이전 조회값 · 마지막 성공 … · 최신 조회 실패` status using the provider's `fetched_at` timestamp including its source offset. Historical stored market tables remain collapsed under Main, including when a selected-date market snapshot is missing; opening ETF/category details remains user-triggered.
-- **관찰:** candidate cards use two columns above 840px and one column at narrower widths.
-- **종목:** the intentional `2건 이상` default remains. The page shows the number of hidden one-report stocks and keeps the `1건 포함` toggle.
-- **Navigation:** top-level tabs are `메인`, `관찰`, and `종목`. Dated market history is collapsed under Main. Former Rotation content is a collapsed `업종 · ETF 참고` section at the bottom of the page, not a capital-rotation calculation. Selecting a category opens related detail under Stock.
-- **Top2 chart:** one explicit button now returns the selected-date Main Top2's adjusted daily chart and indicators. It shows candlesticks, SMA 20/60/120/200, volume, and a selectable RSI 14 / MACD 12·26·9 / OBV / ATR 14 / volume pane for a 50/100/200-trading-day display window, defaulting to 200 with RSI 14 initially selected. The condition card has `진입 확인 기준` / `탈출 확인 기준` rows showing threshold, selected-date close, and reached/missed state, plus a plain-language explanation of confirmation and blockers such as mixed MA stacks or volume below 1.2; detailed values and each component state remain visible. Confirmation requires unanimous RSI14, MACD, each full SMA/EMA/WMA stack, Bollinger20 middle, Donchian20 middle, and OBV delta5 direction checks; volume ratio20 >= 1.2 is a separate gate. Each MA family shows the 20/60/120/200 values with its own state. ATR14 and each separate HLC3 profile peak bin are context only; close location is described relative to individual bins, and structure measurements are separate. Structure labels distinguish available price reference lines (`수평 가격 기준 · 기준선 계산됨`) from unavailable recognized channel/triangle shapes (`조건에 맞는 채널 구조 없음`, `조건에 맞는 삼각형 구조 없음`); no recognized shape is not opposite-direction evidence. Missing required inputs show `판정 불가`; mixed or failed confirmations after the price trigger show `가격 기준 도달 · 보조지표 확인 필요`; neither trigger shows `두 가격 조건 미충족`. It shows component states rather than a score. Source, fetch time, requested/actual bar dates, candle-finality uncertainty, and neutral structure measurement status remain visible. The flat-RSI calculation is recorded as root `stock-monitor-indicator-v2`; indicator groups retain `technical-v4` provenance and schemaVersion 1 shape is unchanged. The condition projection is not persisted, changes no ranking, and supplies no generic trading recommendation or guaranteed price.
-
-### Remaining decision
-
-**Morning briefing integration: HOLD per user.** The separately scheduled web morning briefing was not found in the accessible project scheduler or local Codex automation inventory. It has not been duplicated or integrated. When the user revisits it, identify its product/source and schedule or provide its output/schema to compare fields and date basis. The current Main market request remains manual and latest-day-only until then.
-
-The user selected A for Top2 weighting (keep the fixed heuristic) and A for news scope (candidate-level evidence only); the current code already matches, so no ranking or news change was made. These selections and why B was not chosen are in [Candidate Evidence](candidate-evidence.md). The daily-chart choices B/A/A are implemented as recorded in [Toss OpenAPI Lab](toss-openapi-lab.md). Multi-date/content QA remains tracked by `TODO2-WV-CONTENT-QA`. Older CE-1 sections remain design history where they describe KRX as a current selected-date source or Top2 as the persistence universe; do not use them as current source instructions.
+The former layout proposal and the point-in-time 2026-09-29 user review are preserved in [History](history.md#main-web-view-layout-and-top2-contract-reconciliation-2026-10-10). The current UI contract is above; the full Main Top2 data and condition contract is in [Data governance](data-governance.md#main-top2-technical-indicator-projection).

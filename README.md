@@ -24,6 +24,7 @@
 
 | Area | User-facing output |
 | --- | --- |
+| Main priority | Stored-date Main Top2, plus user-triggered Toss quote/flow and adjusted daily chart/indicator references |
 | Reports | 일간 리포트 개요, 종목별 리포트 상세, 목표가 변화 |
 | Candidate evidence | `오늘의 관찰 후보`, `우선 확인`, `왜 눈에 띄는지`, 부족한 정보 |
 | Market reference | 저장된 Toss 20:00 시장/ETF/거래대금 참고값 |
@@ -34,7 +35,7 @@
 ## What It Does Not Do
 
 - 공개 숫자 점수나 투자 등급을 만들지 않습니다.
-- 매수/매도 추천, 진입가, 청산가, 익절가를 만들지 않습니다.
+- 일반적인 매수/매도 추천이나 특정 진입가·청산가·익절가를 제시하지 않습니다. Main Top2에 한해 사용자가 정의한 과거봉 가격 기준과 보조지표 확인 상태를 별도 참고값으로 표시합니다 ([세부 계약](docs/codex/data-governance.md#main-top2-technical-indicator-projection)).
 - 주문, 브로커 실행, 계좌/잔고/체결 경로를 연결하지 않습니다.
 - KRX Data Marketplace broad ingest를 자동화하지 않습니다.
 - `admin-gui`를 외부 공유 화면으로 쓰지 않습니다.
@@ -71,7 +72,7 @@ Source ownership stays explicit:
 | `web-view` | Trusted read-only viewers | GET-only data routes, stored-data first, no scheduler or settings exposure |
 | `admin-gui` | Local operator | Status, safe controls, settings, audit, scheduler recovery |
 | Telegram | Operator channel | Summary, alert, command worker, safe read-only status replies |
-| `operator-review` | Future operator-only review surface | Not implemented; reserved for raw evidence and judgment review |
+| `operator-review` | Local operator | Separate loopback-only GET panel for selected-date candidate evidence; read-only DB access |
 
 `web-view`의 `/v2`는 정보 구조 검토용 preview route입니다. 기본 공유 화면을 대체하려면 별도 문서, 테스트, 브라우저 검증을 거쳐야 합니다.
 
@@ -149,7 +150,7 @@ The current document map is [docs/codex/documentation-index.md](docs/codex/docum
 
 Key references:
 
-- [stock_research_monitor_mvp.md](stock_research_monitor_mvp.md): product requirements
+- [stock_research_monitor_mvp.md](stock_research_monitor_mvp.md): product requirements and future intent; not a current implementation or operating-status source
 - [surface-guide.md](docs/codex/surface-guide.md): `admin-gui` and GET-only `web-view` contract
 - [operating-guide.md](docs/codex/operating-guide.md): current state, open blockers, and execution criteria
 - [data-governance.md](docs/codex/data-governance.md): value rules and current source ownership

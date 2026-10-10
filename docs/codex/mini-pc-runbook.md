@@ -30,11 +30,10 @@ The new Codex session on the mini PC should start from this project folder and r
 1. `AGENTS.md`
 2. `docs/codex/documentation-index.md`
 3. `docs/codex/operating-guide.md`
-4. `docs/codex/operating-guide.md`
-5. `docs/codex/surface-guide.md`
-6. `docs/codex/market-data-runbook.md`
-7. `CHANGELOG.md`
-8. this file
+4. `docs/codex/surface-guide.md`
+5. `docs/codex/market-data-runbook.md`
+6. `CHANGELOG.md`
+7. this file
 
 ## Migration Readiness Snapshot
 
@@ -501,7 +500,7 @@ Current DB retention/backup policy:
 | Core source data | Keep `reports` and delivery safety state. Do not cleanup yet. |
 | Derived summaries | Rebuild from `reports` when needed. |
 | KRX snapshots | Keep 6 months; use 3 months as default flow window. |
-| KRX missing backfill | Use [data-governance.md](/docs/codex/data-governance.md) before migration. Normal operation uses 5-date batches; migration rebaseline may use 10-date batches only after backup, dry-run review, and `--allow-large-batch`. |
+| KRX missing backfill | Use [data-governance.md](data-governance.md) before migration. Normal operation uses 5-date batches; migration rebaseline may use 10-date batches only after backup, dry-run review, and `--allow-large-batch`. |
 | Backup cadence | Twice daily target after automation: after the early KRX retry window and around `16:35`. Manual backup before migration/backfill/cleanup. |
 | Backup pruning | Keep at least 30 recent backups initially; prune only after `--dry-run` review. |
 | Restore smoke | Use `python -m stock_monitor db-restore-smoke <backup.db>` to verify a backup copy without touching production DB. |
