@@ -22,7 +22,7 @@ This is the documentation skeleton. Read this file first, then open only the bra
 ## Rules
 
 - `admin-gui` is operator-only; `web-view` is public-safe and GET-only.
-- No public score, grade, buy/sell recommendation, or broker execution behavior.
+- No public numeric score/grade, generic buy/sell recommendation, or broker execution. The separate Main Top2 price condition is a narrow user-defined exception and requires the full indicator/volume confluence clarified 2026-10-10. The root `stock-monitor-indicator-v2` and indicator-group `technical-v4` provenance retain the schemaVersion 1 shape; see [Surface guide](surface-guide.md) and [Data governance](data-governance.md).
 - Keep raw/source, parsed/storage, aggregate, and display values separate.
 - Web-view market, ETF, and flow projections use the stored Toss 20:00 close snapshot. Existing KRX rows are historical references only and no longer receive scheduled refreshes.
 - Current scheduler task names and timings live in [Mini PC runbook](mini-pc-runbook.md); current market-source ownership lives in [Market-data runbook](market-data-runbook.md). Older KRX task text elsewhere is historical unless those runbooks explicitly reintroduce it.

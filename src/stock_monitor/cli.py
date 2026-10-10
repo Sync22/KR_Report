@@ -92,7 +92,14 @@ from stock_monitor.fetch.toss_openapi import (
     run_toss_readonly_probe,
 )
 from stock_monitor.toss_openapi_web_view import TossPriorityQuoteProvider
-from stock_monitor.web_view_indicators import build_indicator_chart_data, build_indicator_snapshot
+from stock_monitor.web_view_indicators import (
+    build_priority_condition_explanation,
+    build_priority_condition_status,
+    build_indicator_chart_data,
+    build_indicator_confirmation,
+    build_indicator_snapshot,
+    build_reference_conditions,
+)
 from stock_monitor.web_perf import (
     ApiPerfLogger,
     RequestMetrics,
@@ -26910,6 +26917,10 @@ def _make_web_view_handler(
                 )
                 public_snapshot = _web_view_public_newbby_indicator_snapshot(snapshot)
                 chart_data = build_indicator_chart_data(candles, business_date.isoformat())
+                price_conditions = build_reference_conditions(candles, business_date.isoformat())
+                indicator_confirmation = build_indicator_confirmation(public_snapshot)
+                condition_status = build_priority_condition_status(price_conditions, indicator_confirmation)
+                condition_explanation = build_priority_condition_explanation(price_conditions, indicator_confirmation)
             except _UnsupportedNewbbyIndicatorSchema:
                 item["reason"] = "unsupported_schema"
                 continue
@@ -26935,7 +26946,15 @@ def _make_web_view_handler(
             if not public_snapshot.get("barAsOf"):
                 item["reason"] = "no_daily_candles"
                 continue
-            item.update({"available": True, "snapshot": public_snapshot, "chart": chart_data})
+            item.update({
+                "available": True,
+                "snapshot": public_snapshot,
+                "chart": chart_data,
+                "price_conditions": price_conditions,
+                "indicator_confirmation": indicator_confirmation,
+                "condition_status": condition_status,
+                "condition_explanation": condition_explanation,
+            })
 
         return {
             "surface": "web-view-priority-indicators",

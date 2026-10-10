@@ -9,8 +9,8 @@ import math
 from typing import Mapping, Sequence
 
 
-CALCULATION_VERSION = "stock-monitor-indicator-v1"
-TECHNICAL_VERSION = "technical-v3"
+CALCULATION_VERSION = "stock-monitor-indicator-v2"
+TECHNICAL_VERSION = "technical-v4"
 PROFILE_VERSION = "vp-1"
 _PERIODS = (20, 60, 120, 200)
 _ACTION_TERMS = (
@@ -112,11 +112,11 @@ def _rsi_series(values: Sequence[float], period: int = 14) -> list[float | None]
     losses = [max(-change, 0.0) for change in changes]
     avg_gain = sum(gains[:period]) / period
     avg_loss = sum(losses[:period]) / period
-    result[period] = 100.0 if avg_loss == 0 else 100 - 100 / (1 + avg_gain / avg_loss)
+    result[period] = 50.0 if avg_gain == avg_loss == 0 else 100.0 if avg_loss == 0 else 100 - 100 / (1 + avg_gain / avg_loss)
     for index, (gain, loss) in enumerate(zip(gains[period:], losses[period:]), start=period + 1):
         avg_gain = (avg_gain * (period - 1) + gain) / period
         avg_loss = (avg_loss * (period - 1) + loss) / period
-        result[index] = 100.0 if avg_loss == 0 else 100 - 100 / (1 + avg_gain / avg_loss)
+        result[index] = 50.0 if avg_gain == avg_loss == 0 else 100.0 if avg_loss == 0 else 100 - 100 / (1 + avg_gain / avg_loss)
     return result
 
 
@@ -519,6 +519,261 @@ def _validate_bars(candles: Sequence[Mapping[str, object]], requested_as_of: str
         selected.append(row)
     selected.sort(key=lambda row: str(row["time"]))
     return selected
+
+
+def build_reference_conditions(
+    candles: Sequence[Mapping[str, object]], requested_as_of: str,
+) -> dict[str, object]:
+    """Compare the selected adjusted close with prior 20-bar high and 10-bar low."""
+    if not isinstance(requested_as_of, str):
+        raise ValueError("requested-as-of-must-be-YYYY-MM-DD")
+    try:
+        parsed_as_of = date.fromisoformat(requested_as_of)
+    except ValueError as error:
+        raise ValueError("requested-as-of-must-be-YYYY-MM-DD") from error
+    if parsed_as_of.isoformat() != requested_as_of:
+        raise ValueError("requested-as-of-must-be-YYYY-MM-DD")
+
+    try:
+        bars = _validate_bars(candles, requested_as_of)
+    except ValueError as error:
+        if str(error) != "invalid-daily-ohlcv":
+            raise
+        bars = []
+
+    if not bars:
+        return {
+            "price_condition_state": "insufficient_data",
+            "reference_bar_date": None,
+            "reference_close": None,
+            "prior_20_bar_high": None,
+            "prior_10_bar_low": None,
+        }
+
+    prior = bars[:-1]
+    prior_20_bar_high = max(float(bar["high"]) for bar in prior[-20:]) if len(prior) >= 20 else None
+    prior_10_bar_low = min(float(bar["low"]) for bar in prior[-10:]) if len(prior) >= 10 else None
+    close = float(bars[-1]["close"])
+    if prior_20_bar_high is None or prior_10_bar_low is None:
+        state = "insufficient_data"
+    elif close > prior_20_bar_high:
+        state = "above_prior_20_bar_high"
+    elif close < prior_10_bar_low:
+        state = "below_prior_10_bar_low"
+    else:
+        state = "within_reference_band"
+    return {
+        "price_condition_state": state,
+        "reference_bar_date": bars[-1]["time"],
+        "reference_close": close,
+        "prior_20_bar_high": prior_20_bar_high,
+        "prior_10_bar_low": prior_10_bar_low,
+    }
+
+
+def build_priority_condition_status(
+    price_conditions: Mapping[str, object],
+    indicator_confirmation: Mapping[str, object],
+) -> str:
+    """Return the visible Main Top2 condition label, prioritizing unavailable inputs."""
+    price_state = price_conditions.get("price_condition_state")
+    direction = indicator_confirmation.get("directional_alignment_state")
+    volume = indicator_confirmation.get("volume_confirmation_state")
+    if (
+        price_state not in {"above_prior_20_bar_high", "below_prior_10_bar_low", "within_reference_band"}
+        or direction not in {"up_aligned", "down_aligned", "mixed"}
+        or volume not in {"confirmed", "below_threshold"}
+    ):
+        return "판정 불가"
+    if price_state == "within_reference_band":
+        return "두 가격 조건 미충족"
+    if (
+        price_state == "above_prior_20_bar_high"
+        and direction == "up_aligned"
+        and volume == "confirmed"
+    ):
+        return "진입 조건 충족"
+    if (
+        price_state == "below_prior_10_bar_low"
+        and direction == "down_aligned"
+        and volume == "confirmed"
+    ):
+        return "청산 조건 충족"
+    return "가격 기준 도달 · 보조지표 확인 필요"
+
+
+def build_priority_condition_explanation(
+    price_conditions: Mapping[str, object],
+    indicator_confirmation: Mapping[str, object],
+) -> str:
+    """Explain the first unmet condition in plain language for the Main Top2 card."""
+    status = build_priority_condition_status(price_conditions, indicator_confirmation)
+    price_state = price_conditions.get("price_condition_state")
+    direction = indicator_confirmation.get("directional_alignment_state")
+    volume_state = indicator_confirmation.get("volume_confirmation_state")
+    if status == "판정 불가":
+        if price_state not in {"above_prior_20_bar_high", "below_prior_10_bar_low", "within_reference_band"}:
+            return "직전 20봉 고가와 10봉 저가를 계산할 자료가 부족합니다."
+        if direction == "insufficient_data":
+            return "필수 방향 보조지표 값이 부족해 조건을 확인할 수 없습니다."
+        if volume_state == "missing":
+            return "거래량 20일 비교값이 없어 조건을 확인할 수 없습니다."
+        return "조건 확인에 필요한 자료 상태를 판정할 수 없습니다."
+    if status == "두 가격 조건 미충족":
+        return "현재 종가는 진입 기준을 넘지 않았고 탈출 기준을 하회하지 않았습니다."
+    if status in {"진입 조건 충족", "청산 조건 충족"}:
+        return "가격 기준, 방향 지표, 거래량 기준이 모두 일치합니다."
+
+    expected = "up" if price_state == "above_prior_20_bar_high" else "down"
+    blockers: list[str] = []
+    moving_state = indicator_confirmation.get("moving_average_state")
+    if moving_state == "mixed":
+        blockers.append("SMA·EMA·WMA 이동평균 배열이 혼합")
+    elif moving_state != expected:
+        blockers.append("이동평균 배열이 가격 기준과 다른 방향")
+
+    for key, label in (
+        ("rsi_state", "RSI"),
+        ("macd_state", "MACD"),
+        ("bollinger_state", "볼린저"),
+        ("donchian_state", "돈치안"),
+        ("obv_state", "OBV"),
+    ):
+        component = indicator_confirmation.get(key)
+        if component == expected:
+            continue
+        if component == "neutral":
+            blockers.append(f"{label} 중립")
+        elif component == "mixed":
+            blockers.append(f"{label} 방향 혼합")
+        elif component == "insufficient_data":
+            blockers.append(f"{label} 자료 부족")
+        else:
+            blockers.append(f"{label} 방향이 가격 기준과 다름")
+
+    if volume_state == "below_threshold":
+        ratio = _number(indicator_confirmation.get("volume_ratio20"))
+        value = f"{ratio:.2f}배 " if ratio is not None else ""
+        blockers.append(f"거래량 {value}(1.2배 기준 미달)")
+    reason = " · ".join(blockers) or "방향 지표가 한 방향으로 모이지 않음"
+    trigger = "진입" if expected == "up" else "탈출"
+    return f"{trigger} 가격 조건은 도달했지만, 확인 항목은 {reason}입니다."
+
+
+def build_indicator_confirmation(snapshot: Mapping[str, object]) -> dict[str, object]:
+    """Summarize every directional indicator and non-directional context without a score."""
+    def section(value: object) -> Mapping[str, object]:
+        return value if isinstance(value, Mapping) else {}
+
+    root = section(snapshot)
+    price = section(root.get("price"))
+    indicators = section(root.get("indicators"))
+    close = _number(price.get("close"))
+
+    rsi = _number(section(indicators.get("rsi14")).get("value"))
+    rsi_state = ("insufficient_data" if rsi is None or not 0 <= rsi <= 100 else
+                 "up" if rsi > 50 else "down" if rsi < 50 else "neutral")
+
+    macd = section(indicators.get("macd129"))
+    macd_value, macd_signal = _number(macd.get("macd")), _number(macd.get("signal"))
+    macd_state = ("insufficient_data" if macd_value is None or macd_signal is None else
+                  "up" if macd_value > macd_signal else "down" if macd_value < macd_signal else "neutral")
+
+    moving = section(indicators.get("movingAverages"))
+    moving_average_states: dict[str, str] = {}
+    for kind in ("sma", "ema", "wma"):
+        averages = [_number(moving.get(f"{kind}{period}")) for period in _PERIODS]
+        if close is None or close <= 0 or any(value is None or value <= 0 for value in averages):
+            moving_average_states[kind] = "insufficient_data"
+        else:
+            stack = [close, *averages]
+            moving_average_states[kind] = (
+                "up" if all(left > right for left, right in zip(stack, stack[1:])) else
+                "down" if all(left < right for left, right in zip(stack, stack[1:])) else
+                "mixed"
+            )
+    moving_average_state = (
+        "insufficient_data" if "insufficient_data" in moving_average_states.values() else
+        "up" if all(value == "up" for value in moving_average_states.values()) else
+        "down" if all(value == "down" for value in moving_average_states.values()) else
+        "mixed"
+    )
+
+    bollinger = section(indicators.get("bollinger20"))
+    bollinger_middle = _number(bollinger.get("middle"))
+    bollinger_state = (
+        "insufficient_data" if close is None or bollinger_middle is None else
+        "up" if close > bollinger_middle else "down" if close < bollinger_middle else "neutral"
+    )
+
+    donchian = section(indicators.get("donchian20"))
+    donchian_middle = _number(donchian.get("middle"))
+    donchian_state = (
+        "insufficient_data" if close is None or donchian_middle is None else
+        "up" if close > donchian_middle else "down" if close < donchian_middle else "neutral"
+    )
+
+    obv_delta = _number(section(indicators.get("obv")).get("delta5"))
+    obv_state = ("insufficient_data" if obv_delta is None else
+                 "up" if obv_delta > 0 else "down" if obv_delta < 0 else "neutral")
+
+    directional_states = (
+        rsi_state, macd_state, moving_average_state,
+        bollinger_state, donchian_state, obv_state,
+    )
+    if "insufficient_data" in directional_states:
+        alignment = "insufficient_data"
+    elif all(state == "up" for state in directional_states):
+        alignment = "up_aligned"
+    elif all(state == "down" for state in directional_states):
+        alignment = "down_aligned"
+    else:
+        alignment = "mixed"
+
+    volume_ratio = _number(section(indicators.get("volume")).get("ratio20"))
+    volume_state = ("missing" if volume_ratio is None or volume_ratio < 0 else
+                    "confirmed" if volume_ratio >= 1.2 else "below_threshold")
+
+    atr = _number(section(indicators.get("atr14")).get("value"))
+    atr = atr if atr is not None and atr >= 0 else None
+    atr_percent = atr / close * 100 if atr is not None and close is not None and close > 0 else None
+    profile = section(indicators.get("volumeProfile12"))
+    bins = profile.get("bins")
+    peak_bins = []
+    if isinstance(bins, list):
+        for row in bins:
+            if not isinstance(row, Mapping) or row.get("peak") is not True:
+                continue
+            low, high = _number(row.get("low")), _number(row.get("high"))
+            if low is not None and high is not None and low <= high:
+                peak_bins.append({"low": low, "high": high})
+    peak_lows = [row["low"] for row in peak_bins]
+    peak_highs = [row["high"] for row in peak_bins]
+    profile_state = (
+        "insufficient_data" if close is None or not peak_bins else
+        "within_peak_volume_bins" if any(row["low"] <= close <= row["high"] for row in peak_bins) else
+        "below_peak_volume_bins" if close < min(peak_lows) else
+        "above_peak_volume_bins" if close > max(peak_highs) else
+        "between_peak_volume_bins"
+    )
+    return {
+        "directional_alignment_state": alignment,
+        "rsi_state": rsi_state,
+        "macd_state": macd_state,
+        "moving_average_state": moving_average_state,
+        "sma_state": moving_average_states["sma"],
+        "ema_state": moving_average_states["ema"],
+        "wma_state": moving_average_states["wma"],
+        "bollinger_state": bollinger_state,
+        "donchian_state": donchian_state,
+        "obv_state": obv_state,
+        "volume_confirmation_state": volume_state,
+        "volume_ratio20": volume_ratio,
+        "atr14_value": atr,
+        "atr14_percent_of_close": atr_percent,
+        "volume_profile_state": profile_state,
+        "peak_volume_bins": peak_bins,
+    }
 
 
 def build_indicator_chart_data(

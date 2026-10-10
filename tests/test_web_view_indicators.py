@@ -2,7 +2,14 @@ from datetime import date, timedelta
 
 import pytest
 
-from stock_monitor.web_view_indicators import build_indicator_chart_data, build_indicator_snapshot
+from stock_monitor.web_view_indicators import (
+    build_indicator_chart_data,
+    build_indicator_confirmation,
+    build_indicator_snapshot,
+    build_priority_condition_explanation,
+    build_priority_condition_status,
+    build_reference_conditions,
+)
 
 
 def _bars(count: int, start: date = date(2026, 1, 1)) -> list[dict[str, object]]:
@@ -35,6 +42,226 @@ def _snapshot(bars: list[dict[str, object]], **overrides: object) -> dict[str, o
     }
     options.update(overrides)
     return build_indicator_snapshot(**options)  # type: ignore[arg-type]
+
+
+def _confirmation_snapshot() -> dict[str, object]:
+    return {
+        "price": {"close": 100.0},
+        "indicators": {
+            "rsi14": {"value": 60.0},
+            "macd129": {"macd": 2.0, "signal": 1.0},
+            "movingAverages": {
+                **{f"{kind}{period}": value for kind, base in (("sma", 95.0), ("ema", 94.0), ("wma", 96.0))
+                   for period, value in zip((20, 60, 120, 200), (base, base - 5, base - 10, base - 15))},
+            },
+            "bollinger20": {"middle": 95.0, "upper": 110.0, "lower": 80.0},
+            "donchian20": {"middle": 90.0, "upper": 120.0, "lower": 60.0},
+            "obv": {"delta5": 10.0},
+            "volume": {"ratio20": 1.2},
+            "atr14": {"value": 2.0},
+            "volumeProfile12": {"bins": [
+                {"low": 90.0, "high": 95.0, "peak": True},
+                {"low": 95.0, "high": 100.0, "peak": True},
+            ]},
+        },
+    }
+
+
+def test_indicator_confirmation_aligns_all_up_components() -> None:
+    result = build_indicator_confirmation(_confirmation_snapshot())
+
+    assert result == {
+        "directional_alignment_state": "up_aligned",
+        "rsi_state": "up",
+        "macd_state": "up",
+        "moving_average_state": "up",
+        "sma_state": "up",
+        "ema_state": "up",
+        "wma_state": "up",
+        "bollinger_state": "up",
+        "donchian_state": "up",
+        "obv_state": "up",
+        "volume_confirmation_state": "confirmed",
+        "volume_ratio20": 1.2,
+        "atr14_value": 2.0,
+        "atr14_percent_of_close": 2.0,
+        "volume_profile_state": "within_peak_volume_bins",
+        "peak_volume_bins": [{"low": 90.0, "high": 95.0}, {"low": 95.0, "high": 100.0}],
+    }
+
+
+def test_indicator_confirmation_aligns_all_down_components() -> None:
+    snapshot = _confirmation_snapshot()
+    indicators = snapshot["indicators"]
+    indicators["rsi14"]["value"] = 40.0
+    indicators["macd129"].update(macd=-2.0, signal=-1.0)
+    for kind in ("sma", "ema", "wma"):
+        indicators["movingAverages"].update({
+            f"{kind}20": 105.0, f"{kind}60": 110.0, f"{kind}120": 115.0, f"{kind}200": 120.0,
+        })
+    indicators["bollinger20"]["middle"] = 105.0
+    indicators["donchian20"]["middle"] = 110.0
+    indicators["obv"]["delta5"] = -10.0
+
+    result = build_indicator_confirmation(snapshot)
+
+    assert result["directional_alignment_state"] == "down_aligned"
+    assert all(result[key] == "down" for key in (
+        "rsi_state", "macd_state", "moving_average_state", "sma_state", "ema_state", "wma_state",
+        "bollinger_state", "donchian_state", "obv_state",
+    ))
+
+
+def test_indicator_confirmation_marks_disagreement_and_missing_inputs() -> None:
+    mixed = _confirmation_snapshot()
+    mixed["indicators"]["macd129"].update(macd=0.0, signal=1.0)
+    assert build_indicator_confirmation(mixed)["directional_alignment_state"] == "mixed"
+
+    missing = _confirmation_snapshot()
+    missing["indicators"]["movingAverages"]["sma200"] = None
+    result = build_indicator_confirmation(missing)
+    assert result["directional_alignment_state"] == "insufficient_data"
+    assert result["sma_state"] == result["moving_average_state"] == "insufficient_data"
+
+
+@pytest.mark.parametrize(
+    ("price_state", "direction", "volume", "expected"),
+    [
+        ("insufficient_data", "up_aligned", "confirmed", "판정 불가"),
+        ("above_prior_20_bar_high", "insufficient_data", "confirmed", "판정 불가"),
+        ("above_prior_20_bar_high", "up_aligned", "missing", "판정 불가"),
+        ("unknown", "up_aligned", "confirmed", "판정 불가"),
+        ("above_prior_20_bar_high", "up_aligned", "confirmed", "진입 조건 충족"),
+        ("below_prior_10_bar_low", "down_aligned", "confirmed", "청산 조건 충족"),
+        ("above_prior_20_bar_high", "mixed", "confirmed", "가격 기준 도달 · 보조지표 확인 필요"),
+        ("above_prior_20_bar_high", "down_aligned", "confirmed", "가격 기준 도달 · 보조지표 확인 필요"),
+        ("above_prior_20_bar_high", "up_aligned", "below_threshold", "가격 기준 도달 · 보조지표 확인 필요"),
+        ("within_reference_band", "mixed", "below_threshold", "두 가격 조건 미충족"),
+    ],
+)
+def test_priority_condition_status_missing_inputs_prevent_confirmation(
+    price_state: str,
+    direction: str,
+    volume: str,
+    expected: str,
+) -> None:
+    status = build_priority_condition_status(
+        {"price_condition_state": price_state},
+        {
+            "directional_alignment_state": direction,
+            "volume_confirmation_state": volume,
+        },
+    )
+
+    assert status == expected
+
+
+def test_priority_condition_explanation_names_the_actual_confirmation_blockers() -> None:
+    entry = build_priority_condition_explanation(
+        {"price_condition_state": "above_prior_20_bar_high"},
+        {
+            "directional_alignment_state": "mixed",
+            "moving_average_state": "mixed",
+            "rsi_state": "up",
+            "macd_state": "up",
+            "bollinger_state": "up",
+            "donchian_state": "up",
+            "obv_state": "up",
+            "volume_confirmation_state": "confirmed",
+            "volume_ratio20": 3.22,
+        },
+    )
+    exit_ = build_priority_condition_explanation(
+        {"price_condition_state": "below_prior_10_bar_low"},
+        {
+            "directional_alignment_state": "mixed",
+            "moving_average_state": "mixed",
+            "rsi_state": "down",
+            "macd_state": "down",
+            "bollinger_state": "down",
+            "donchian_state": "down",
+            "obv_state": "down",
+            "volume_confirmation_state": "below_threshold",
+            "volume_ratio20": 1.09,
+        },
+    )
+
+    assert "진입 가격 조건은 도달했지만" in entry
+    assert "SMA·EMA·WMA 이동평균 배열이 혼합" in entry
+    assert "탈출 가격 조건은 도달했지만" in exit_
+    assert "1.09배" in exit_ and "1.2배 기준 미달" in exit_
+
+
+@pytest.mark.parametrize("close", [100.0, 90.0])
+def test_price_explanation_does_not_call_threshold_equality_between(close: float) -> None:
+    explanation = build_priority_condition_explanation(
+        {
+            "price_condition_state": "within_reference_band",
+            "reference_close": close,
+            "prior_20_bar_high": 100.0,
+            "prior_10_bar_low": 90.0,
+        },
+        {
+            "directional_alignment_state": "up_aligned",
+            "volume_confirmation_state": "confirmed",
+        },
+    )
+
+    assert explanation == "현재 종가는 진입 기준을 넘지 않았고 탈출 기준을 하회하지 않았습니다."
+
+
+def test_bollinger_and_donchian_direction_disagreement_blocks_alignment() -> None:
+    snapshot = _confirmation_snapshot()
+    snapshot["indicators"]["donchian20"]["middle"] = 110.0
+
+    result = build_indicator_confirmation(snapshot)
+
+    assert result["donchian_state"] == "down"
+    assert result["directional_alignment_state"] == "mixed"
+
+
+def test_disjoint_peak_volume_bins_keep_the_gap_unlabeled_as_peak() -> None:
+    snapshot = _confirmation_snapshot()
+    snapshot["price"]["close"] = 95.0
+    snapshot["indicators"]["volumeProfile12"]["bins"] = [
+        {"low": 90.0, "high": 92.0, "peak": True},
+        {"low": 98.0, "high": 100.0, "peak": True},
+    ]
+
+    result = build_indicator_confirmation(snapshot)
+
+    assert result["volume_profile_state"] == "between_peak_volume_bins"
+    assert result["peak_volume_bins"] == [
+        {"low": 90.0, "high": 92.0},
+        {"low": 98.0, "high": 100.0},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("ratio", "expected_state"),
+    [(1.199, "below_threshold"), (1.2, "confirmed"), (None, "missing")],
+)
+def test_volume_confirmation_threshold_does_not_change_directional_alignment(
+    ratio: float | None, expected_state: str,
+) -> None:
+    snapshot = _confirmation_snapshot()
+    snapshot["indicators"]["volume"]["ratio20"] = ratio
+
+    result = build_indicator_confirmation(snapshot)
+
+    assert result["volume_confirmation_state"] == expected_state
+    assert result["directional_alignment_state"] == "up_aligned"
+
+
+def test_atr_is_absolute_and_percent_context_only() -> None:
+    snapshot = _confirmation_snapshot()
+    snapshot["indicators"]["atr14"]["value"] = 4.0
+
+    result = build_indicator_confirmation(snapshot)
+
+    assert result["atr14_value"] == 4.0
+    assert result["atr14_percent_of_close"] == 4.0
+    assert result["directional_alignment_state"] == "up_aligned"
 
 
 def test_chart_data_cuts_off_future_bars_sorts_and_aligns_series() -> None:
@@ -76,6 +303,99 @@ def test_chart_indicator_values_match_snapshot_calculations() -> None:
     assert last["macdHistogram"] == snapshot["macd129"]["histogram"]
     assert last["obv"] == snapshot["obv"]["value"] == pytest.approx(45990)
     assert last["atr14"] == snapshot["atr14"]["value"] == pytest.approx(4)
+
+
+def test_flat_closes_report_neutral_rsi() -> None:
+    bars = _bars(20)
+    for bar in bars:
+        bar.update(open=100, high=100, low=100, close=100)
+
+    snapshot = _snapshot(bars)
+
+    assert snapshot["indicators"]["rsi14"]["value"] == pytest.approx(50.0)
+    assert snapshot["indicators"]["rsi14"]["status"] == "ready"
+    assert snapshot["calculationVersion"] == "stock-monitor-indicator-v2"
+    assert build_indicator_chart_data(bars, bars[-1]["time"])["bars"][-1]["rsi14"] == pytest.approx(50.0)
+
+
+def test_reference_conditions_compare_close_with_prior_twenty_high_and_ten_low() -> None:
+    bars = _bars(21)
+    for bar in bars[:-1]:
+        bar.update(open=100, high=120, low=80, close=100)
+    bars[-1].update(open=120, high=130, low=119, close=121)
+
+    result = build_reference_conditions(bars, bars[-1]["time"])
+
+    assert result == {
+        "price_condition_state": "above_prior_20_bar_high",
+        "reference_bar_date": bars[-1]["time"],
+        "reference_close": 121.0,
+        "prior_20_bar_high": 120.0,
+        "prior_10_bar_low": 80.0,
+    }
+
+
+def test_reference_conditions_mark_close_below_prior_ten_bar_low() -> None:
+    bars = _bars(21)
+    for bar in bars[:-1]:
+        bar.update(open=100, high=120, low=80, close=100)
+    bars[-1].update(open=79, high=81, low=70, close=79)
+
+    result = build_reference_conditions(bars, bars[-1]["time"])
+
+    assert result["price_condition_state"] == "below_prior_10_bar_low"
+    assert result["prior_20_bar_high"] == 120.0
+    assert result["prior_10_bar_low"] == 80.0
+
+
+@pytest.mark.parametrize(
+    ("latest_close", "expected_state"),
+    [
+        (120, "within_reference_band"),
+        (80, "within_reference_band"),
+    ],
+)
+def test_reference_condition_threshold_equality_does_not_cross(
+    latest_close: int, expected_state: str,
+) -> None:
+    bars = _bars(21)
+    for bar in bars[:-1]:
+        bar.update(open=100, high=120, low=80, close=100)
+    bars[-1].update(open=latest_close, high=latest_close + 1, low=latest_close - 1, close=latest_close)
+
+    result = build_reference_conditions(bars, bars[-1]["time"])
+
+    assert result["price_condition_state"] == expected_state
+
+
+def test_reference_conditions_need_twenty_prior_bars_and_mark_invalid_prices() -> None:
+    short = _bars(20)
+    insufficient = build_reference_conditions(short, short[-1]["time"])
+    assert insufficient["price_condition_state"] == "insufficient_data"
+    assert insufficient["reference_bar_date"] == short[-1]["time"]
+    assert insufficient["prior_20_bar_high"] is None
+    assert insufficient["prior_10_bar_low"] is not None
+
+    invalid = _bars(21)
+    invalid[10]["high"] = float("nan")
+    rejected = build_reference_conditions(invalid, invalid[-1]["time"])
+    assert rejected["price_condition_state"] == "insufficient_data"
+    assert rejected["reference_bar_date"] is None
+    assert rejected["reference_close"] is None
+    assert rejected["prior_20_bar_high"] is None
+    assert rejected["prior_10_bar_low"] is None
+
+
+def test_reference_conditions_sort_and_cut_off_after_selected_actual_bar() -> None:
+    bars = _bars(22)
+    selected = bars[20]
+    future = {**bars[21], "time": "2027-01-01", "high": 9999, "low": 1, "close": 9998}
+    result = build_reference_conditions([future, *reversed(bars[:21])], selected["time"])
+
+    assert result["reference_bar_date"] == selected["time"]
+    assert result["reference_close"] == selected["close"]
+    assert result["prior_20_bar_high"] == max(float(bar["high"]) for bar in bars[:20])
+    assert result["prior_10_bar_low"] == min(float(bar["low"]) for bar in bars[10:20])
 
 
 def test_all_factual_daily_metrics_use_adjusted_prefix_and_keep_provenance() -> None:

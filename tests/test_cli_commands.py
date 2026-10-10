@@ -12269,6 +12269,25 @@ def test_web_view_value_qa_flags_public_observation_internal_or_decision_terms()
     ]
 
 
+def test_web_view_value_qa_allows_reproducible_top_two_price_conditions() -> None:
+    issues: list[dict] = []
+    warnings: list[dict] = []
+
+    _collect_web_view_value_qa_issues(
+        {
+            "price_condition_state": "above_prior_20_bar_high",
+            "display": "진입 조건 충족 · 2026-10-08 수정종가 403,500원 > 직전 20봉 고가 395,000원",
+            "price_condition_exit": "청산 조건 충족 · 2026-10-08 수정종가 68,000원 < 직전 10봉 저가 71,600원",
+        },
+        path="priority_indicator.price_conditions",
+        issues=issues,
+        warnings=warnings,
+    )
+
+    assert issues == []
+    assert warnings == []
+
+
 def test_web_view_value_qa_flags_public_dto_admin_keys() -> None:
     issues: list[dict] = []
     warnings: list[dict] = []

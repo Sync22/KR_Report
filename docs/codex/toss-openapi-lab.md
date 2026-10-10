@@ -20,19 +20,19 @@ Read-only Toss OpenAPI boundary, official inventory, and post-key probe procedur
 
 ## Daily Top2 Candle Chart — Original UI Decision (2026-09-29)
 
-The original raw-candle chart route remains available. The Main UI now uses the combined Top2 technical-indicator panel documented below; that panel retains the selected 30/90/180 trading-day display windows and adjusted prices.
+The original raw-candle chart route remains available. The Main UI now uses the combined Top2 technical-indicator panel documented below; that panel offers 50/100/200 trading-day display windows, defaults to 200, initially selects RSI 14, and uses adjusted prices. The 30/90/180 choice recorded below is historical and was superseded by the current 50/100/200 selector on 2026-10-10.
 
 - The official [Toss Market Data guide](https://developers.tossinvest.com/docs/market-data) documents `interval=1m|1d`, up to 200 bars per request, newest-first ordering, inclusive `before` pagination, and `adjusted=true` by default. There is no native `15m` interval. Candles use the separate `MARKET_DATA_CHART` rate group.
 - `GET /api/toss-priority-daily-candles?date=...&days=...` remains bounded to 30, 90, or 180 daily bars per server-derived Top2 stock. The Main chart does not call this raw projection; it uses `/api/priority-indicators` below.
-- The current chart defaults to 90 trading days, shows actual dates without filling missing sessions, and remains on-demand and non-persistent. It does not affect Top2 ordering, news, or scoring.
-- The display remains historical price/volume context. 30/90/180 daily bars can make quarter- to half-year movement easier to compare, but they do not establish a predictive trend or justify a trading signal.
+- The initial chart default was 90 trading days; the user changed it to 180 on 2026-10-09. On 2026-10-10, the current selector changed to 50/100/200 trading days with 200 default and RSI 14 initially selected. The chart shows actual dates without filling missing sessions and remains on-demand and non-persistent. It does not affect Top2 ordering, news, or scoring.
+- The raw chart remains historical price/volume context. The separate user-defined Main Top2 condition projection is documented below; it is not an empirically validated prediction or generic trading recommendation.
 
 ### Selected User Choices
 
 | Choice | Direction | Benefit | Cost / limitation | State |
 |---|---|---|---|---|
 | **A** | Fixed 60 trading-day window, ending on the Top2 candidate's business date. | Roughly one-quarter of daily bars; one bounded request, no future-date leakage, simple display. | Does not show longer context unless the window changes later. | Not selected. |
-| **B — selected** | Let the user choose 30/90/180 trading-day windows, ending on the Top2 business date. | Matches the user's one-month/quarter/half-year views; 180 rows fit within one API response. | Adds a small range control; the exact calendar span varies with market holidays. | Implemented; default is 90. |
+| **B — selected (historical)** | Let the user choose 30/90/180 trading-day windows, ending on the Top2 business date. | Matches the user's one-month/quarter/half-year views; 180 rows fit within one API response. | Adds a small range control; the exact calendar span varies with market holidays. | Superseded on 2026-10-10 by the current 50/100/200 selector with 200 default. |
 
 | Choice | Price basis | Benefit | Cost / limitation | State |
 |---|---|---|---|---|
@@ -72,11 +72,12 @@ Current decision:
   investor flow, the latest-date Top20 market-attention projection, and the
   once-daily full Korean stock-universe cache. The on-demand selected-date Main
   Top2 chart/indicator panel is also public-safe and read-only; it displays
-  30/90/180 bars.
+  50/100/200 trading days (default 200) with RSI 14 initially selected.
 - The promoted paths may read local `.env.toss-openapi` after live opt-in and
   credentials are present. They call only allowlisted `prices`, the bounded
   Top2 daily `candles` projection (`interval=1d`, `adjusted=true`, up to 200 per
-  page and four pages maximum; display range 30/90/180),
+  page and four pages maximum; display range 50/100/200 trading days, default
+  200),
   the fixed `MARKET_TRADING_AMOUNT` Top20 ranking, fixed KOSPI/KOSDAQ aggregate
   investor-trading references, the fixed current-day top-2 stock
   investor-trading-volume reference, and `stocks/all` for the three fixed KR
@@ -137,7 +138,7 @@ operations, `101` schemas):
 | Account/balance read-only | Operator-only lab candidate | Never public. No production DB write. No scheduler or Telegram integration. |
 | Order history/order info | Operator-only lab candidate at most | Treat as execution-adjacent; keep away from public surfaces. |
 | Execution lab | Deferred | Requires separate order-safety, audit, permissions, failure, and rollback contract. |
-| Public `web-view` projection | Approved for top-2 current price, same-day investor volume, latest-date market context, and selected-date Top2 chart/indicators | Current market context is Toss-first; stored KRX daily rows are collapsed confirmed-history/fallback reference. Candles are adjusted, date-bounded, up to 800 fetched bars and displayed in 30/90/180-bar windows; never account/order data. |
+| Public `web-view` projection | Approved for top-2 current price, same-day investor volume, latest-date market context, and selected-date Top2 chart/indicators | Current market context is Toss-first; stored KRX daily rows are collapsed confirmed-history/fallback reference. Candles are adjusted, date-bounded, up to 800 fetched bars and displayed in 50/100/200-trading-day windows (default 200, RSI 14 initially selected); never account/order data. |
 
 Toss is not a replacement for the current source ownership model:
 
@@ -196,7 +197,8 @@ Forbidden outside the explicitly promoted read-only projections:
   current-price, same-day investor-volume, latest-date Top20 market-context,
   and selected-date Top2 chart/indicator projections defined above. Daily
   candles allow only `interval=1d`, `adjusted=true`, 200 bars per page, and at
-  most four inclusive `nextBefore` pages; the UI display windows are 30/90/180.
+  most four inclusive `nextBefore` pages; the UI display windows are
+  50/100/200 trading days (default 200, RSI 14 initially selected).
   GET-only stock search may read the stored listing cache described in the
   current approved additions above; it must not call Toss per query.
 - Implementing order or conditional-order creation, modification,
@@ -225,7 +227,7 @@ Forbidden outside the explicitly promoted read-only projections:
 
 | Surface | Allowed now | Later condition |
 | --- | --- | --- |
-| Default/public `web-view` | Top-2 `우선 확인` current-price, same-day provisional investor-volume, current KOSPI/KOSDAQ prices, provisional aggregate investor flow, latest-date Top20 market-context projections, the selected-date server-derived Top2 chart/indicator projection (up to 800 adjusted bars, 30/90/180 displayed), and GET-only search over eligible stored listing cache. | Show source, requested business date, actual candle count/date, and listing-cache reference date. No arbitrary symbols, account/order data, public score, or trading call. |
+| Default/public `web-view` | Top-2 `우선 확인` current-price, same-day provisional investor-volume, current KOSPI/KOSDAQ prices, provisional aggregate investor flow, latest-date Top20 market-context projections, the selected-date server-derived Top2 chart/indicator projection (up to 800 adjusted bars, 50/100/200 trading days displayed, default 200, RSI 14 initially selected), and GET-only search over eligible stored listing cache. | Show source, requested business date, actual candle count/date, and listing-cache reference date. No arbitrary symbols, account/order data, public score, or trading call. |
 | Loopback lab `web-view` preview | Superseded by the promoted top-2 projection. | New visual experiments still require separate review before broadening the main path. |
 | `admin-gui` | Nothing Toss-connected. | Coarse readiness status only after lab contract and secret redaction are implemented; no token/account display. |
 | `operator-review` | Not implemented. | Preferred future surface for raw read-only Toss probe review and response comparison. |
@@ -456,7 +458,7 @@ Default retry policy for any future lab client:
 | Market Data | `GET` | `/api/v1/orderbook` | `getOrderbook` | No | `symbol` | `MARKET_DATA` | Future read-only lab allowlist, top-2 only. |
 | Market Data | `GET` | `/api/v1/trades` | `getTrades` | No | `symbol`, optional `count` max 50 | `MARKET_DATA` | Future read-only lab allowlist, top-2 only. |
 | Market Data | `GET` | `/api/v1/price-limits` | `getPriceLimit` | No | `symbol` | `MARKET_DATA` | Future read-only lab allowlist. |
-| Market Data | `GET` | `/api/v1/candles` | `getCandles` | No | server-derived Top2 `symbol`, `interval=1d`, `count=200` per page, selected-date `before`/`nextBefore`, `adjusted=true`, maximum four pages | `MARKET_DATA_CHART` | Promoted only for the on-demand public Top2 chart/indicator panel. The UI selects a 30/90/180-bar display window from the bounded history. `1m`, arbitrary symbols, DB persistence, and scheduler use remain out of scope. |
+| Market Data | `GET` | `/api/v1/candles` | `getCandles` | No | server-derived Top2 `symbol`, `interval=1d`, `count=200` per page, selected-date `before`/`nextBefore`, `adjusted=true`, maximum four pages | `MARKET_DATA_CHART` | Promoted only for the on-demand public Top2 chart/indicator panel. The UI selects a 50/100/200-trading-day display window (default 200, RSI 14 initially selected) from the bounded history. `1m`, arbitrary symbols, DB persistence, and scheduler use remain out of scope. |
 | Stock Info | `GET` | `/api/v1/stocks` | `getStocks` | No | `symbols`, max 200 comma-separated | `STOCK` | Future reference allowlist. |
 | Stock Info | `GET` | `/api/v1/stocks/all` | `listStocks` | No | required `market`; optional `status`, `securityType`, `commonShare` | `STOCK_ALL` | Fixed KOSPI/KOSDAQ/KR_ETC once-daily capture; stored lookup and Top20 classification only. |
 | Stock Info | `GET` | `/api/v1/stocks/{symbol}/warnings` | `getStockWarnings` | No | path `symbol` | `STOCK` | Future caution/reference allowlist. |
@@ -619,7 +621,7 @@ narrow. Future patches should choose one profile explicitly.
 | `market_reference_lab` | `prices`, `stocks`, `stock warnings`, `market-calendar/KR`, maybe `trades` for freshness | Account, holdings, order info/history, order POST | Candidate after keys and approval. |
 | `operator_account_lab` | `accounts`, maybe `holdings` with redaction | Public surfaces, DB write, Telegram, scheduler, order POST | Not approved now. |
 | `execution_review_lab` | Order docs, order fixture schemas, safety tests | Real order create/modify/cancel | Separate contract required. |
-| `public_projection` | Source/freshness labels, current prices and same-day provisional investor volume for server-derived Top2 candidates, selected-date Top2 candles (`adjusted=true`, up to 800 fetched / 30/90/180 displayed), bounded latest-date Top20 context, and GET-only stored-listing search | Account, holdings, orders, buying power, sellable quantity, commissions, score/trading call, arbitrary public symbols or candle intervals | Approved only for the listed projections; stock search makes no live Toss request and shows its stored reference date. |
+| `public_projection` | Source/freshness labels, current prices and same-day provisional investor volume for server-derived Top2 candidates, selected-date Top2 candles (`adjusted=true`, up to 800 fetched / 50/100/200 trading days displayed, default 200, RSI 14 initially selected), bounded latest-date Top20 context, and GET-only stored-listing search | Account, holdings, orders, buying power, sellable quantity, commissions, score/trading call, arbitrary public symbols or candle intervals | Approved only for the listed projections; stock search makes no live Toss request and shows its stored reference date. |
 
 ## Cut-Down Rules
 
@@ -952,9 +954,15 @@ python -m stock_monitor web-view --host 127.0.0.1 --port 8792 --no-open
 3. Start or restart the local server with `python -m stock_monitor web-view --host 127.0.0.1 --port 8780 --no-open`, sign in through the existing local access gate, select a date with loaded Main candidates, then press `차트 · 지표 확인`.
 4. There is no Stock-Newbby server, fork URL, extra cache, or API key to configure. Stock Monitor fetches Toss candles and calculates the factual indicator series locally.
 
-`GET /api/priority-indicators?date={business_date}` derives the Main Top2 on the server and requests only their Toss adjusted daily candles. It uses the existing Toss read-only credentials/configuration, `interval=1d`, `adjusted=true`, up to 200 bars per request and at most four inclusive `nextBefore` pages (800 bars total). Boundary duplicates and candles after the requested date are removed before the local Stock Monitor calculator runs. Since Toss declares `nextBefore` optional, a missing cursor keeps the returned bars visible but labels history as cursor-unavailable; malformed or non-monotonic cursor values fail explicitly. The item-level chart projection carries up to 380 aligned bars; the UI displays 30/90/180 bars with candlesticks, SMA 20/60/120/200, volume, and a selected RSI/MACD/OBV/ATR pane.
+`GET /api/priority-indicators?date={business_date}` derives the Main Top2 on the server and requests only their Toss adjusted daily candles. It uses the existing Toss read-only credentials/configuration, `interval=1d`, `adjusted=true`, up to 200 bars per request and at most four inclusive `nextBefore` pages (800 bars total). Boundary duplicates and candles after the requested date are removed before the local Stock Monitor calculator runs. Since Toss declares `nextBefore` optional, a missing cursor keeps the returned bars visible but labels history as cursor-unavailable; malformed or non-monotonic cursor values fail explicitly. The item-level chart projection carries up to 380 aligned bars; the UI displays a selectable 50/100/200-trading-day window (default 200) with RSI 14 initially selected, candlesticks, SMA 20/60/120/200, volume, and a selected RSI/MACD/OBV/ATR pane.
 
-The browser calls this GET only after the user presses `차트 · 지표 확인`; direct route callers still cannot provide symbols. The projection follows Stock-Newbby's factual indicator settings, is not stored, and does not change candidates, scheduler, Telegram, or `admin-gui`. It does not call a Stock-Newbby server or update a Newbby cache. Toss source time, last returned bar date, requested date, and unknown candle-finality status remain separate. Missing market classification does not block the candle query: keep market `unknown`, use the six-digit Toss symbol without a guessed suffix, and disclose that label gap. Missing candles and provider errors stay explicit. The separate `/api/toss-priority-daily-candles` projection remains available as a bounded raw-candle route, but the Main chart UI uses the combined indicator route.
+The browser calls this GET only after the user presses `차트 · 지표 확인`; direct route callers still cannot provide symbols. The projection follows Stock-Newbby's factual indicator settings, is not stored, and does not change candidates, scheduler, Telegram, or `admin-gui`. It does not call a Stock-Newbby server or update a Newbby cache. Toss source time, last returned bar date, requested date, and unknown candle-finality status remain separate. Missing market classification does not block the candle query: keep market `unknown`, use the six-digit Toss symbol without a guessed suffix, and disclose that label gap. Missing candles and provider errors stay explicit. The separate `/api/toss-priority-daily-candles` projection remains available as a bounded raw-candle route, but the Main chart UI uses the combined indicator route. The chart shows each SMA/EMA/WMA family's individual 20/60/120/200 values with its own stack state.
+
+### User-defined Main Top2 condition projection (clarified 2026-10-10)
+
+Price triggers alone do not confirm a condition. The UI shows `진입 확인 기준` and `탈출 확인 기준` rows with threshold, selected-date close, and reached/missed state. Both compare the adjusted close against completed bars preceding the actual bar: prior 20-bar high for entry, prior 10-bar low for exit. A plain-language `condition_explanation` explains that indicators and volume must confirm a reached price trigger and names blockers such as mixed MA stacks or volume below 1.2. A confirmed entry additionally requires all direction components to be up: RSI14 > 50, MACD > signal, each strict adjusted-price stack close>SMA20>SMA60>SMA120>SMA200 / close>EMA20>EMA60>EMA120>EMA200 / close>WMA20>WMA60>WMA120>WMA200, close above Bollinger20 middle, close above Donchian20 middle, and OBV delta5 > 0. A confirmed exit requires the strict reverse of each component. Volume ratio20 >= 1.2 is a separate gate for both. Neutral/mixed checks do not confirm. Missing required price, direction, or volume data shows `판정 불가`; with all required inputs present, a reached price trigger with mixed/failed confirmation shows `가격 기준 도달 · 보조지표 확인 필요` and component states; neither trigger shows `두 가격 조건 미충족` with context.
+
+ATR14 and each separate `peak=true` bin from the HLC3 volume profile are displayed as context only; the closing price is labeled within a bin, between bins, above all bins, or below all bins without combining distinct bins into a single area. Structure labels distinguish `수평 가격 기준 · 기준선 계산됨` from unavailable recognized shapes `조건에 맞는 채널 구조 없음` and `조건에 맞는 삼각형 구조 없음`; no recognized shape is not evidence in the opposite direction. Structure measurements are separate. No score or vote totals are generated. The flat-RSI neutral correction is recorded in root `calculationVersion=stock-monitor-indicator-v2`; existing indicator groups retain `TECHNICAL_VERSION=technical-v4`. The schemaVersion 1 snapshot shape/allowlist is unchanged. This is the user's transparent filter, not an empirically validated rule or an error-reduction claim. It remains separate from candidate order, persistence, scheduler, Telegram, broker/order access, and automatic execution.
 
 ## Verification Commands
 

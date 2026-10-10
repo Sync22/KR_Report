@@ -100,7 +100,7 @@ What does not exist yet:
 - US market source study or implementation
 - broad/all-stock KRX Data Marketplace scheduled investor-flow ingest enablement
 - KIS investor-flow ingest implementation
-- public trading recommendation, numeric score, investment grade, or buy/sell signal
+- generic public trading recommendation, numeric score, investment grade, or buy/sell signal; the separately approved Main Top2 price-condition projection is the sole exact-label exception
 - a separately reviewed operator-only decision-support or execution-lab lane for trading decisions after stable real-time data and safety gates
 
 ## Recommended Near-Term Layout
@@ -309,7 +309,7 @@ Working-tree note:
 
 4. Continue treating Cloudflare/Tailscale checks as read-only verification. Do not let provider-smoke success mutate anything except the approved non-secret operation-event success row.
 
-5. Keep blocked public copy out of Telegram and web-view:
+5. Keep blocked public copy out of Telegram and web-view, except the separate Main Top2 all-confirmation statuses approved 2026-10-09 and clarified 2026-10-10 (`진입 조건 충족`, `청산 조건 충족`, `가격 기준 도달 · 보조지표 확인 필요`, `두 가격 조건 미충족`, `판정 불가`):
 
    - `매수 추천`
    - `매도 추천`
@@ -320,7 +320,7 @@ Working-tree note:
    - `익절가`
    - `목표 수익률`
    - `확신도`
-   - buy/sell signal wording
+   - generic buy/sell signal or action wording
 
 ## Source Boundary Candidates
 
@@ -330,9 +330,9 @@ Working-tree note:
 | KRX Open API | Existing rows are historical references; current stored market baseline is Toss 20:00. | Keep KRX reads out of current web-view fallback and normal refresh scheduling. |
 | KRX Data Marketplace | Existing samples are historical/recovery references; current market flow uses stored Toss 20:00 snapshots. | Do not restore KRX scheduled ingestion as part of the current source baseline. |
 | Naver `priceTop` | Manual same-day display-only web-view reference. | Ensure no DB writes, Telegram sends, scheduler changes, KRX replacement, or scoring are tied to this route. |
-| Bounded live web-view references | Toss provides Top2 current quotes/provisional investor volume, Top2 candles, and latest-date market context through read-only GETs; Naver current quotes are a bounded Top2 fallback and Naver market-top is a separate user-triggered comparison. | Preserve server-derived Top2 scope, source/freshness labels, no persistence, and no candidate creation/reordering, Telegram/scheduler automation, account/order access, scores, or trading calls. |
+| Bounded live web-view references | Toss provides Top2 current quotes/provisional investor volume, Top2 candles, and latest-date market context through read-only GETs; Naver current quotes are a bounded Top2 fallback and Naver market-top is a separate user-triggered comparison. | Preserve server-derived Top2 scope, source/freshness labels, no persistence, and no candidate creation/reordering, Telegram/scheduler automation, account/order access, scores, or generic trading calls. The user's 2026-10-09/10 resolution permits only the separately documented Main Top2 price trigger with unanimous indicator/volume confirmation and component status. See [data-governance.md](data-governance.md) for the conditions, numeric MA-family values/states, individual peak bins, and root `stock-monitor-indicator-v2` versus group `technical-v4` / unchanged schema-v1 boundary. |
 | Future additional market sources | Any source beyond these bounded Toss/Naver references remains a separate lab/staging proposal before public use. | Do not connect new probes to DB writes, Telegram/scheduler automation, broker execution, public scores, or trading-call wording. |
-| Future operator decision/execution lane | Separate from public `web-view` and Telegram. | It may evaluate trading-decision support only after stable real-time data, permission, audit, failure handling, and order-safety gates are defined. |
+| Future broader operator decision/execution lane | Separate from public `web-view` and Telegram. | Any decision support beyond the narrow user-defined Main Top2 threshold projection requires stable real-time data, permission, audit, failure handling, and order-safety gates. |
 | Category taxonomy | 업종/테마 is a separate taxonomy layer, not official KRX taxonomy. | Ensure historical dates do not silently receive future/current category snapshots. |
 
 ## Performance Candidates

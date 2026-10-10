@@ -56,7 +56,7 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
 ## Non-Negotiable Product Constraints
 
 - `admin-gui`는 operator-only, `web-view`는 friend-facing GET-only surface다.
-- public trading recommendation, buy/sell signal, numeric score는 계속 금지다.
+- public numeric score/grade, generic buy/sell recommendation, guaranteed price, broker execution은 금지다. 단, 아래 Main Top2 차트 계약에 정의한 재현 가능한 가격 조건 표시는 별도 예외다.
 - `web-view` 기본 로드는 stored-data 기반이어야 한다.
 - KRX 저장 행은 과거 분석/복기 전용으로 유지하며, 신규 웹뷰·스케줄러 시장 기준값은 Toss 20:00 저장 스냅샷을 사용한다.
 - `.env` raw login 확인이 가능하면 browser login automation보다 우선한다.
@@ -109,11 +109,14 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
   - Stock-Newbby 차트 링크는 operator가 직접 클릭할 때만 사용한다. Newbby 서버를 자동 시작하지 않는다. public `web-view`의 별도 Main 지표 버튼 계약은 operator-review 기능으로 취급하지 않는다
 - public `web-view` Main
   - 저장 후보, 관찰 요약, 출처/기준일, 근거와 누락 정보를 직관적으로 읽을 수 있는 공개 화면으로 유지한다
-  - 차트 도구의 로컬 데이터나 숫자 점수·등급·매매 신호를 노출하지 않는다
+  - 차트 도구의 로컬 데이터나 숫자 점수·등급·일반 매매 신호를 노출하지 않는다. 아래 Main Top2 가격 조건 projection만 별도 허용 예외다
   - Main 우선순위 카드의 사용자가 `차트 · 지표 확인`을 눌렀을 때만 Toss 조정 일봉을 조회해 Newbby 기준의 사실 지표와 차트를 계산한다. public GET `/api/priority-indicators?date=...`는 직접 호출할 수 있으나 서버가 고른 Main Top2만 사용한다. 선택일 Toss 시장 분류가 없으면 선택일 이전 최신 Toss 종목 유니버스 분류와 기준일을 사용하고, 둘 다 없으면 시장을 `unknown`으로 표시하며 6자리 Toss 종목 코드로 계속 조회한다. `.KS`/`.KQ` suffix나 KRX 분류를 추측하지 않는다
-  - 일봉은 `adjusted=true`, 페이지당 최대 200봉, 최대 4페이지(800봉)까지 요청한다. inclusive cursor 경계 중복과 선택일 이후 봉을 제외한다. `nextBefore`가 없으면 반환된 봉 범위와 cursor 미제공 상태를 표시하고, 잘못된 cursor는 응답 오류로 처리한다. 각 성공 항목의 별도 `chart.bars` 투영은 최신 380봉의 OHLCV와 정렬된 SMA 20/60/120/200, RSI 14, MACD/시그널/히스토그램, OBV, ATR 14를 제공한다. 화면은 30/90/180봉 범위를 선택해 캔들·이동평균·거래량 및 보조지표를 그린다. Stock Monitor DB, 후보 순서, scheduler, Telegram, Stock-Newbby 서버/cache에는 반영하지 않으며 KRX fallback도 사용하지 않는다. source/fetch time/bar date와 확인 상태 및 missing/error 상태를 표시한다
+  - 일봉은 `adjusted=true`, 페이지당 최대 200봉, 최대 4페이지(800봉)까지 요청한다. inclusive cursor 경계 중복과 선택일 이후 봉을 제외한다. `nextBefore`가 없으면 반환된 봉 범위와 cursor 미제공 상태를 표시하고, 잘못된 cursor는 응답 오류로 처리한다. 각 성공 항목의 별도 `chart.bars` 투영은 최신 380봉의 OHLCV와 정렬된 SMA 20/60/120/200, RSI 14, MACD/시그널/히스토그램, OBV, ATR 14를 제공한다. 화면은 50/100/200봉 범위를 선택해 캔들·이동평균·거래량 및 보조지표를 그린다. Stock Monitor DB, 후보 순서, scheduler, Telegram, Stock-Newbby 서버/cache에는 반영하지 않으며 KRX fallback도 사용하지 않는다. source/fetch time/bar date와 확인 상태 및 missing/error 상태를 표시한다
   - schemaVersion 1의 전체 허용 필드를 검증한다: 모든 지표 group/계산 기준·provenance, 전체 profile bins, 세 `structureStatus` family, family별 geometry measurement 이름/label/unit. `servedAt`과 insufficient-data profile의 `binCount`만 optional이다. MACD `signal` 선은 객관 지표로 표시한다. unknown/missing v1 field는 unsupported 상태로 표시한다
   - 빈 geometry는 음성 근거나 확인 완료로 해석하지 않는다. 삼각형 교점 price 및 봉 거리에는 직선 외삽/목표가 아님 label을 표시한다. 매매 action/signal, score, grade 필드는 노출하지 않는다
+  - 별도 파생 projection은 선택일 Main Top2에만 허용한다. actual bar를 제외한 직전 20봉 고가 초과 또는 직전 10봉 저가 미만은 가격 trigger일 뿐이며, 각각 RSI14>50 / <50, MACD>signal / <signal, SMA·EMA·WMA 각각의 strict `close>SMA20>SMA60>SMA120>SMA200` / strict reverse, close>Bollinger20 middle / <middle, close>Donchian20 middle / <middle, OBV delta5>0 / <0가 모두 같은 방향이어야 한다. volume ratio20>=1.2는 별도 gate다. 필요한 방향·가격·거래량 입력 누락은 `판정 불가`; 모든 입력이 존재하나 가격 trigger 후 비교 방향이 섞이거나 volume gate 미통과면 `가격 기준 도달 · 보조지표 확인 필요`; 둘 다 미도달은 `두 가격 조건 미충족` 및 문맥으로 표시한다. UI는 SMA/EMA/WMA 각각의 20/60/120/200 수치와 stack 상태를 같이 표시한다. 이 unanimity는 사용자 정의의 투명한 필터이지 numeric score나 경험적 오류 감소 보장이 아니다. ATR14와 HLC3 volume-profile의 각 `peak=true` bin 구간은 방향 문맥만 제공하고, 종가 위치(각 bin 안/두 bin 사이/모든 peak bin 위/아래)를 따로 표시한다. 분리된 peak bin들을 하나의 연속 area로 합치지 않으며 structure measurement도 별도 표시한다. RSI flat-window 중립 50 수정은 root `calculationVersion=stock-monitor-indicator-v2`에 기록하고 기존 indicator-group `TECHNICAL_VERSION=technical-v4` provenance를 유지한다. schemaVersion 1 shape/allowlist는 바뀌지 않는다. 점수나 표결 합계는 만들지 않고 각 구성요소의 값·상태·출처·날짜와 봉 확정성을 표시한다. Toss source/fetch/sourceDate 및 선택 요청일/실제 기준 봉일을 보존한다. 이 projection은 후보 순서·DB·scheduler·Telegram·broker/order·자동 실행에 연결하지 않으며 일반 매수/매도 추천이나 보장 가격이 아니다
+
+  - API item-level `price_conditions`, `indicator_confirmation`, and `condition_status` remain outside schemaVersion 1 snapshots.
 
 ## CodeGraph
 
@@ -196,7 +199,7 @@ Global mapping:
 Stock Monitor-specific rule:
 
 - Preserve the `admin-gui` vs GET-only `web-view` boundary.
-- Do not add public numeric scores, investment grades, trading calls, broker execution, or order-routing behavior.
+- Do not add public numeric scores, investment grades, generic trading calls, broker execution, or order-routing behavior. The exact separate Main Top2 threshold-condition projection defined above is the sole chart-derived public exception.
 - Do not connect lab/source probes to production DB writes, Telegram, scheduler, admin-gui, or web-view.
 - SchemaSpy remains lab-only / repeatable-lab candidate after jars are staged.
 - QuantDinger remains hold.
@@ -219,7 +222,7 @@ It must not override:
 - `docs/codex` project rules
 - CodeGraph-first tracing when ownership is unclear
 - admin-gui vs GET-only web-view boundary
-- no public numeric score / trading-call / broker-execution boundary
+- no public numeric score / generic trading-call / broker-execution boundary, subject to the narrow Main Top2 threshold-condition exception defined above
 - lab / global / project-local / production boundaries
 - the no-bulk-restore project-local agent policy
 
