@@ -254,6 +254,27 @@ def test_process_intraday_alerts_returns_processed_batch_count(tmp_path, monkeyp
     assert len(sent_messages) == 1
 
 
+def test_process_intraday_alerts_missing_report_batch_exits_nonzero_and_records_failure(tmp_path, monkeypatch) -> None:
+    config, repository = _config_and_repository(tmp_path, monkeypatch)
+    repository.insert_reports([_report()], queue_intraday_alerts=True)
+    monkeypatch.setattr(cli_module.RuntimeConfig, "from_env", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(StockMonitorRepository, "list_reports_for_intraday_batch", lambda *_args, **_kwargs: [])
+
+    result = cli_module.main(["process-intraday-alerts"])
+
+    assert result == 1
+    summaries = repository.list_intraday_alert_batch_summaries(date(2026, 4, 24))
+    assert len(summaries) == 1
+    assert summaries[0].status == "failed"
+    assert repository.list_operation_events(
+        component="intraday",
+        event_type="send",
+        business_date=date(2026, 4, 24),
+        status="failed",
+        limit=1,
+    )
+
+
 def test_scheduled_intraday_briefing_merges_current_day_pending_batches_once(tmp_path, monkeypatch) -> None:
     config, repository = _config_and_repository(tmp_path, monkeypatch)
     first = _report()
@@ -292,6 +313,31 @@ def test_scheduled_intraday_briefing_merges_current_day_pending_batches_once(tmp
     assert "Meritz(1), NH(1)" in sent_messages[0]
     assert "92,000원 ~ 100,000원" in sent_messages[0]
     assert repository.count_pending_intraday_alert_batches() == 0
+
+
+def test_scheduled_intraday_briefing_missing_report_batch_records_failure_and_raises(tmp_path, monkeypatch) -> None:
+    config, repository = _config_and_repository(tmp_path, monkeypatch)
+    repository.insert_reports([_report()], queue_intraday_alerts=True)
+    monkeypatch.setattr(StockMonitorRepository, "list_reports_for_intraday_batch", lambda *_args, **_kwargs: [])
+
+    with pytest.raises(RuntimeError, match="No reports found for queued intraday batch"):
+        cli_module._run_scheduled_intraday_briefing(
+            config,
+            repository,
+            scheduled_run_at=datetime(2026, 4, 24, 8, 30, tzinfo=cli_module.ZoneInfo(config.timezone)),
+            dry_run=False,
+        )
+
+    summaries = repository.list_intraday_alert_batch_summaries(date(2026, 4, 24))
+    assert len(summaries) == 1
+    assert summaries[0].status == "failed"
+    assert repository.list_operation_events(
+        component="intraday",
+        event_type="hourly-send",
+        business_date=date(2026, 4, 24),
+        status="failed",
+        limit=1,
+    )
 
 
 def test_scheduled_intraday_briefing_adds_available_toss_context_after_0930(tmp_path, monkeypatch) -> None:

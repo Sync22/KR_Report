@@ -44627,11 +44627,23 @@ def _run_process_intraday_alerts(
     for batch in batches:
         reports = repository.list_reports_for_intraday_batch(batch.batch_id)
         if not reports:
+            error_detail = "No reports found for queued intraday batch."
             repository.mark_intraday_alert_batch_failed(
                 batch.batch_id,
                 attempted_at=datetime.now(ZoneInfo(config.timezone)),
-                error_detail="No reports found for queued intraday batch.",
+                error_detail=error_detail,
             )
+            repository.record_operation_event(
+                _operation_event(
+                    config,
+                    component="intraday",
+                    event_type="send",
+                    status="failed",
+                    business_date=batch.business_date,
+                    detail=error_detail,
+                )
+            )
+            send_error = RuntimeError(error_detail)
             continue
 
         quotes_by_stock_code = _fetch_intraday_quotes_by_stock_code(config, reports, repository=repository)
@@ -44753,13 +44765,24 @@ def _run_scheduled_intraday_briefing(
     reports = list(reports_by_identity.values())
     if not reports:
         attempted_at = datetime.now(ZoneInfo(config.timezone))
+        error_detail = "No reports found for queued intraday batch."
         for batch in batches:
             repository.mark_intraday_alert_batch_failed(
                 batch.batch_id,
                 attempted_at=attempted_at,
-                error_detail="No reports found for queued intraday batch.",
+                error_detail=error_detail,
             )
-        return 0
+        repository.record_operation_event(
+            _operation_event(
+                config,
+                component="intraday",
+                event_type="hourly-send",
+                status="failed",
+                business_date=scheduled_run_at.date(),
+                detail=error_detail,
+            )
+        )
+        raise RuntimeError(f"Hourly intraday briefing delivery failed: {error_detail}")
 
     quotes_by_stock_code = _fetch_intraday_quotes_by_stock_code(config, reports, repository=repository)
     default_limit = _effective_int_setting(config, repository, "notification_default_limit")
