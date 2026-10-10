@@ -31211,6 +31211,9 @@ def _render_web_view_html() -> str:
       candidateEvidenceLoadedLimit = 0;
       watchDataLoading = false;
       setMainDailyLoadState(date, "loading");
+      document.getElementById("stock-filter-status").textContent = "종목 목록을 불러오는 중입니다.";
+      document.getElementById("stock-rows").innerHTML = '<tr><td colspan="6" class="muted">종목 목록을 불러오는 중입니다.</td></tr>';
+      document.getElementById("stock-show-more").hidden = true;
       document.getElementById("daily-date").textContent = `(${date})`;
       document.getElementById("candidate-evidence-date").textContent = `(${date})`;
       document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">선택 날짜 자료를 불러오는 중입니다.</span>';
@@ -31277,6 +31280,9 @@ def _render_web_view_html() -> str:
         candidateEvidenceLoadedLimit = 0;
         setMainDailyLoadState(date, "failed");
         document.getElementById("candidate-evidence-rows").innerHTML = '<span class="muted">선택 날짜 자료를 불러오지 못했습니다.</span>';
+        document.getElementById("stock-filter-status").textContent = "종목 조회 실패";
+        document.getElementById("stock-rows").innerHTML = '<tr><td colspan="6" class="muted">선택 날짜 종목 자료를 불러오지 못했습니다.</td></tr>';
+        document.getElementById("stock-show-more").hidden = true;
         return;
       }
       if (loadSequence !== dailyLoadSequence) return;

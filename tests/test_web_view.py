@@ -4536,7 +4536,7 @@ def test_web_view_toss_market_context_browser_states() -> None:
             browser.close()
 
 
-def test_web_view_main_daily_load_failure_replaces_previous_main_content() -> None:
+def test_web_view_stock_tab_date_load_failure_replaces_previous_rows_and_main_content() -> None:
     from playwright.sync_api import sync_playwright
 
     html = cli_module._render_web_view_html()
@@ -4549,6 +4549,10 @@ def test_web_view_main_daily_load_failure_replaces_previous_main_content() -> No
       <div id="main-priority-rows">이전 날짜 Top2</div>
       <p id="daily-briefing-headline">이전 날짜 요약</p>
       <ul id="briefing-check-points"><li>이전 날짜 근거</li></ul>
+      <span id="daily-date">(2026-10-07)</span>
+      <p id="stock-filter-status">이전 날짜 종목 상태</p>
+      <table><tbody id="stock-rows"><tr><td colspan="6">이전 날짜 종목 행</td></tr></tbody></table>
+      <button id="stock-show-more">이전 날짜 더 보기</button>
       <div id="source-freshness-summary"></div><div id="news-observation-summary"></div>
       <script>
         let selectedDate = "2026-10-07";
@@ -4558,7 +4562,7 @@ def test_web_view_main_daily_load_failure_replaces_previous_main_content() -> No
         let candidateEvidenceLoadedLimit = 8;
         let dailyLoadSequence = 0;
         let candidateEvidenceRequestId = 0;
-        let activeViewTab = "main";
+        let activeViewTab = "stock";
         let tossMarketContextRequestId = 0, tossMarketContextLoading = false, tossMarketContextVisible = false;
         let newbbyIndicatorRequestId = 0, newbbyIndicatorLoading = false, newbbyIndicatorData = null;
         let tossPriorityRows = [], tossPriorityDate = null, selectedStockCode = null, selectedStockLabel = null;
@@ -4595,13 +4599,23 @@ def test_web_view_main_daily_load_failure_replaces_previous_main_content() -> No
             page.evaluate("() => window.beginDailyLoad()")
             page.wait_for_function("typeof window.rejectDaily === 'function'")
             assert "불러오는 중" in page.locator("#main-daily-status").inner_text()
+            assert "2026-10-08" in page.locator("#daily-date").inner_text()
+            assert "이전 날짜 종목 행" not in page.locator("#stock-rows").inner_text()
+            assert "종목 목록을 불러오는 중입니다." in page.locator("#stock-rows").inner_text()
+            assert "이전 날짜 종목 상태" not in page.locator("#stock-filter-status").inner_text()
+            assert page.locator("#stock-show-more").is_hidden()
             assert "이전 날짜 Top2" not in page.locator("#main-priority-rows").inner_text()
             assert "이전 날짜 요약" not in page.locator("#daily-briefing-headline").inner_text()
             page.evaluate("() => window.rejectDaily(new Error('offline'))")
             page.wait_for_function("document.getElementById('main-daily-status').textContent.includes('실패')")
             assert "2026-10-08" in page.locator("#main-daily-status").inner_text()
+            assert "2026-10-08" in page.locator("#daily-date").inner_text()
             assert "이전 날짜 요약" not in page.locator("#daily-briefing-headline").inner_text()
             assert "이전 날짜 Top2" not in page.locator("#main-priority-rows").inner_text()
+            assert "이전 날짜 종목 행" not in page.locator("#stock-rows").inner_text()
+            assert "선택 날짜 종목 자료를 불러오지 못했습니다." in page.locator("#stock-rows").inner_text()
+            assert "종목 조회 실패" in page.locator("#stock-filter-status").inner_text()
+            assert page.locator("#stock-show-more").is_hidden()
             assert page.evaluate("() => currentDailyData") is None
         finally:
             browser.close()
