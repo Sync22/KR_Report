@@ -104,6 +104,7 @@ class StockMonitorRepository:
             return
 
         with self.connect() as connection:
+            connection.execute("PRAGMA query_only = ON")
             token = self._active_read_connection.set(connection)
             try:
                 yield
@@ -2628,13 +2629,20 @@ class StockMonitorRepository:
                 )
         return len(snapshots)
 
-    def get_latest_krx_stock_metadata(self, stock_code: str) -> KrxStockMetadataSnapshot | None:
+    def get_latest_krx_stock_metadata(
+        self,
+        stock_code: str,
+        *,
+        on_or_before: date | None = None,
+    ) -> KrxStockMetadataSnapshot | None:
         normalized_code = stock_code.strip()
         if not normalized_code:
             return None
+        date_clause = "AND business_date <= ?" if on_or_before is not None else ""
+        params = (normalized_code, on_or_before.isoformat()) if on_or_before is not None else (normalized_code,)
         with self.connect() as connection:
             row = connection.execute(
-                """
+                f"""
                 SELECT
                     business_date, standard_code, stock_code, stock_name,
                     stock_short_name, stock_english_name, listed_date, market,
@@ -2642,10 +2650,11 @@ class StockMonitorRepository:
                     par_value, listed_shares, fetched_at, source
                 FROM krx_stock_metadata
                 WHERE stock_code = ?
+                  {date_clause}
                 ORDER BY business_date DESC, fetched_at DESC
                 LIMIT 1
                 """,
-                (normalized_code,),
+                params,
             ).fetchone()
         if row is None:
             return None

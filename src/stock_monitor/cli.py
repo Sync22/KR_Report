@@ -11745,8 +11745,6 @@ def _build_market_commentary_practice_snapshot(
     reports_by_date = dict(repository.count_reports_by_business_date(limit=300))
     report_count = int(reports_by_date.get(resolved_date, 0))
     summaries = summaries if summaries is not None else repository.list_daily_summaries(resolved_date)
-    if not summaries and report_count:
-        summaries = repository.rebuild_daily_summaries(resolved_date)
     summary_count = len(summaries)
     intraday_checked_at = checked_at or datetime.now(ZoneInfo(config.timezone))
     summary_stock_code_count = len({summary.stock_code for summary in summaries if summary.stock_code})
@@ -11766,8 +11764,6 @@ def _build_market_commentary_practice_snapshot(
     opening_summaries: list[DailyStockSummary] = []
     if opening_reference_date is not None:
         opening_summaries = repository.list_daily_summaries(opening_reference_date)
-        if not opening_summaries and int(reports_by_date.get(opening_reference_date, 0)):
-            opening_summaries = repository.rebuild_daily_summaries(opening_reference_date)
     opening_label = _format_commentary_stock_names(opening_summaries, limit=2)
     opening_market_reference = (
         _build_market_reference_label(repository, opening_reference_date)
@@ -28089,7 +28085,7 @@ def _build_rotation_candidate_etfs(
 ) -> list[dict[str, object]]:
     if not etf_codes:
         return []
-    rows = repository.list_etf_daily_for_codes(business_date, etf_codes)
+    rows = repository.list_etf_daily_for_codes(business_date, etf_codes, source="toss_openapi")
     candidates: list[dict[str, object]] = []
     for item in rows[:limit]:
         evidence_parts = []
@@ -28163,7 +28159,7 @@ def _build_web_view_stock_related_context(
     return {
         "available": bool(categories),
         "source": "stored_category_rollup",
-        "etf_source": "manual_mapping_stored_krx_etf_snapshot",
+        "etf_source": "manual_mapping_stored_toss_etf_snapshot",
         "live_fetch": False,
         "scoring": False,
         "recommendation": False,
@@ -32409,9 +32405,6 @@ def _render_web_view_html() -> str:
       updateTossPriorityRefreshButton();
       updateNewbbyIndicatorRefreshButton();
       updateTossMarketRefreshButton();
-      if (tossCohortChanged) {
-        loadTossPriorityQuotes(tossPriorityDate);
-      }
       document.getElementById("candidate-evidence-rows").innerHTML = rows.slice(0, 8).map(renderWatchCandidateRow).join("");
       refreshViewPanels();
     }
@@ -32482,7 +32475,7 @@ def _render_web_view_html() -> str:
           ? `<details class="top-two-evidence-details"><summary><span class="top-two-evidence-caret" aria-hidden="true"></span><span class="top-two-evidence-summary-label">${esc(detailSummary)}</span>${flowReferenceMarkup}</summary><div class="top-two-evidence-details-body">${details.join("")}</div></details>`
           : "";
         return `<div class="top-two-entry"><button class="top-two-card" type="button" data-stock-code="${esc(item.stock_code || "")}">
-          <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote-context="main" data-toss-quote="${esc(item.stock_code || "")}">${esc(tossQuote || "Toss 현재가 확인 중")}</span></b>
+          <b>${number(index + 1)}. ${esc(item.stock_name || "-")} <span class="muted">${esc(item.stock_code || "")}</span> <span class="status-pill">${esc(item.observation_priority || "우선 확인")}</span> <span class="priority-toss-quote muted" data-toss-quote-context="main" data-toss-quote="${esc(item.stock_code || "")}">${esc(tossQuote || "Toss 현재가 조회 전")}</span></b>
           <span class="top-two-why">${esc(why)}</span>
         </button>${detailDisclosure}</div>`;
       }).join("")}</section>`;
@@ -34428,6 +34421,7 @@ def build_web_view_stock_search_snapshot(
             "read_only": True,
             "business_date": business_date.isoformat(),
             "source": "stored_stock_universe",
+            "stock_universe_reference_date": None,
             "live_fetch": False,
             "available": False,
             "query": normalized_query,
@@ -34437,59 +34431,135 @@ def build_web_view_stock_search_snapshot(
 
     like_query = f"%{normalized_query}%"
     exact_query = normalized_query
-    latest_universe_date = repository.latest_toss_stock_universe_snapshot_date()
-    universe_reference_date = (
-        latest_universe_date
-        if latest_universe_date is not None and latest_universe_date <= business_date
-        else None
-    )
     with repository.connect() as connection:
+        universe_row = connection.execute(
+            "SELECT MAX(business_date) AS business_date FROM toss_stock_universe_cache WHERE business_date <= ?",
+            (business_date.isoformat(),),
+        ).fetchone()
+        universe_reference_date = (
+            date.fromisoformat(universe_row["business_date"]) if universe_row and universe_row["business_date"] else None
+        )
         rows = connection.execute(
             """
             WITH latest_krx AS (
                 SELECT
                     k.stock_code,
                     k.stock_name,
-                    k.market
+                    k.market,
+                    k.business_date
                 FROM krx_stock_metadata k
                 JOIN (
                     SELECT stock_code, MAX(business_date) AS business_date
                     FROM krx_stock_metadata
+                    WHERE business_date <= ?
                     GROUP BY stock_code
                 ) latest
                   ON latest.stock_code = k.stock_code
                  AND latest.business_date = k.business_date
             ),
-            candidates AS (
-                SELECT stock_code, stock_name, NULL AS market, 0 AS source_rank
-                FROM daily_stock_summaries
-                WHERE business_date = ?
-                  AND stock_code IS NOT NULL
-                UNION ALL
-                SELECT stock_code, stock_name, market, 1 AS source_rank
+            latest_toss_universe AS (
+                SELECT stock_code, stock_name, market, business_date
                 FROM toss_stock_universe_cache
-                WHERE business_date = (
-                    SELECT MAX(business_date) FROM toss_stock_universe_cache
-                )
-                  AND business_date <= ?
+                WHERE business_date = ?
+            ),
+            market_candidates AS (
+                SELECT
+                    stock_code,
+                    market,
+                    'stored_toss_stock_universe' AS market_source,
+                    business_date AS market_reference_date,
+                    0 AS source_rank
+                FROM latest_toss_universe
                 UNION ALL
-                SELECT stock_code, stock_name, market, 2 AS source_rank
+                SELECT
+                    stock_code,
+                    market,
+                    'stored_krx_stock_metadata' AS market_source,
+                    business_date AS market_reference_date,
+                    1 AS source_rank
                 FROM latest_krx
-                WHERE stock_code IS NOT NULL
+            ),
+            market_reference AS (
+                SELECT stock_code, market, market_source, market_reference_date
+                FROM (
+                    SELECT
+                        stock_code,
+                        market,
+                        market_source,
+                        market_reference_date,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY stock_code
+                            ORDER BY source_rank ASC
+                        ) AS row_number
+                    FROM market_candidates
+                    WHERE NULLIF(TRIM(COALESCE(market, '')), '') IS NOT NULL
+                )
+                WHERE row_number = 1
+            ),
+            candidates AS (
+                SELECT
+                    daily.stock_code,
+                    daily.stock_name,
+                    market.market,
+                    market.market_source,
+                    market.market_reference_date,
+                    0 AS source_rank
+                FROM daily_stock_summaries daily
+                LEFT JOIN market_reference market ON market.stock_code = daily.stock_code
+                WHERE daily.business_date = ?
+                  AND daily.stock_code IS NOT NULL
                 UNION ALL
-                SELECT stock_code, stock_name, NULL AS market, 3 AS source_rank
-                FROM stock_metadata
-                WHERE stock_code IS NOT NULL
+                SELECT
+                    toss.stock_code,
+                    toss.stock_name,
+                    market.market,
+                    market.market_source,
+                    market.market_reference_date,
+                    1 AS source_rank
+                FROM latest_toss_universe toss
+                LEFT JOIN market_reference market ON market.stock_code = toss.stock_code
+                WHERE toss.stock_code IS NOT NULL
                 UNION ALL
-                SELECT stock_code, stock_name, NULL AS market, 4 AS source_rank
-                FROM reports
-                WHERE stock_code IS NOT NULL
+                SELECT
+                    krx.stock_code,
+                    krx.stock_name,
+                    market.market,
+                    market.market_source,
+                    market.market_reference_date,
+                    2 AS source_rank
+                FROM latest_krx krx
+                LEFT JOIN market_reference market ON market.stock_code = krx.stock_code
+                WHERE krx.stock_code IS NOT NULL
+                UNION ALL
+                SELECT
+                    metadata.stock_code,
+                    metadata.stock_name,
+                    market.market,
+                    market.market_source,
+                    market.market_reference_date,
+                    3 AS source_rank
+                FROM stock_metadata metadata
+                LEFT JOIN market_reference market ON market.stock_code = metadata.stock_code
+                WHERE metadata.stock_code IS NOT NULL
+                UNION ALL
+                SELECT
+                    report.stock_code,
+                    report.stock_name,
+                    market.market,
+                    market.market_source,
+                    market.market_reference_date,
+                    4 AS source_rank
+                FROM reports report
+                LEFT JOIN market_reference market ON market.stock_code = report.stock_code
+                WHERE report.stock_code IS NOT NULL
             ),
             matched AS (
                 SELECT
                     TRIM(stock_code) AS stock_code,
                     TRIM(COALESCE(stock_name, '')) AS stock_name,
                     NULLIF(TRIM(COALESCE(market, '')), '') AS market,
+                    NULLIF(TRIM(COALESCE(market_source, '')), '') AS market_source,
+                    market_reference_date,
                     source_rank
                 FROM candidates
                 WHERE TRIM(COALESCE(stock_code, '')) <> ''
@@ -34503,6 +34573,8 @@ def build_web_view_stock_search_snapshot(
                     stock_code,
                     stock_name,
                     market,
+                    market_source,
+                    market_reference_date,
                     source_rank,
                     ROW_NUMBER() OVER (
                         PARTITION BY stock_code
@@ -34510,7 +34582,7 @@ def build_web_view_stock_search_snapshot(
                     ) AS row_number
                 FROM matched
             )
-            SELECT stock_code, stock_name, market
+            SELECT stock_code, stock_name, market, market_source, market_reference_date
             FROM ranked
             WHERE row_number = 1
             ORDER BY
@@ -34521,6 +34593,7 @@ def build_web_view_stock_search_snapshot(
             """,
             (
                 business_date.isoformat(),
+                universe_reference_date.isoformat() if universe_reference_date else None,
                 business_date.isoformat(),
                 like_query,
                 like_query,
@@ -34579,6 +34652,8 @@ def build_web_view_stock_search_snapshot(
                 "stock_code": stock_code,
                 "stock_name": str(row["stock_name"] or stock_code),
                 "market": row["market"],
+                "market_source": row["market_source"],
+                "market_reference_date": row["market_reference_date"],
                 "has_selected_date_report": has_report,
                 "has_selected_date_toss": has_toss,
                 "has_news_observation": has_news,
@@ -41314,7 +41389,7 @@ def build_web_view_stock_detail_snapshot(
     reports = repository.list_reports_for_stock_on_business_date(business_date, stock_code)
     market_refs = repository.list_stock_market_daily_for_codes(business_date, [stock_code], source="toss_openapi")
     market_reference = market_refs[0] if market_refs else None
-    krx_metadata = repository.get_latest_krx_stock_metadata(stock_code)
+    krx_metadata = repository.get_latest_krx_stock_metadata(stock_code, on_or_before=business_date)
     stock_metadata = repository.get_stock_metadata(stock_code)
     stock_name = (
         reports[0].stock_name

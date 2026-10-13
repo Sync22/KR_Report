@@ -162,6 +162,20 @@ def test_repository_read_session_reuses_connection_for_nested_reads(tmp_path) ->
                 assert second_connection is first_connection
 
 
+def test_repository_read_session_rejects_sqlite_writes(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+
+    with repository.read_session():
+        with repository.connect() as connection:
+            try:
+                connection.execute("CREATE TABLE forbidden_read_session_write (id INTEGER)")
+            except sqlite3.OperationalError as error:
+                assert "readonly" in str(error).lower()
+            else:
+                raise AssertionError("read_session must reject SQLite writes")
+
+
 def test_repository_saves_toss_priority_quote_baselines(tmp_path) -> None:
     repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
     repository.initialize()
@@ -2295,14 +2309,25 @@ def test_repository_returns_latest_krx_stock_metadata_by_stock_code(tmp_path) ->
                 market="KOSPI",
                 fetched_at=datetime(2026, 5, 8, 18, 0, 0),
             ),
+            KrxStockMetadataSnapshot(
+                business_date=date(2026, 5, 9),
+                standard_code="FUTURE",
+                stock_code="005930",
+                stock_name="미래 종목명",
+                market="KOSPI",
+                fetched_at=datetime(2026, 5, 9, 18, 0, 0),
+            ),
         ]
     )
 
     metadata = repository.get_latest_krx_stock_metadata("005930")
+    historical_metadata = repository.get_latest_krx_stock_metadata("005930", on_or_before=date(2026, 5, 8))
 
     assert metadata is not None
-    assert metadata.standard_code == "KR7005930003"
+    assert metadata.standard_code == "FUTURE"
     assert metadata.stock_code == "005930"
+    assert historical_metadata is not None
+    assert historical_metadata.standard_code == "KR7005930003"
 
 
 def _news_intelligence_run(run_id: str = "news-run-1") -> NewsIntelligenceRun:

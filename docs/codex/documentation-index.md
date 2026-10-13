@@ -16,6 +16,7 @@ This is the documentation skeleton. Read this file first, then open only the bra
 | [Decision journal](decision-journal.md) | Read-only Decision Journal v0 contract. |
 | [Toss OpenAPI lab](toss-openapi-lab.md) | Read-only lab boundary, inventory, and post-key probe sequence. |
 | [Mini PC runbook](mini-pc-runbook.md) | Migration, restore, scheduler handoff, and weekly sync. |
+| [Operations performance observation](operations-performance-observation.md) | Post-move N100 route timings, resource use, SQLite/WAL concurrency, stability, and recovery results; never fill from development-PC data. |
 | [Research notes](research-notes.md) | Backtest, scoring hold, and Telegram briefing research. |
 | [History](history.md) | Traceability only; never treat it as current operating guidance. |
 

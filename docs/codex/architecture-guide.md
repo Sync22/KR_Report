@@ -56,6 +56,7 @@ Current files:
 Current directories:
 
 - `.codex/` (local Codex metadata; project-local `.codex/agents/` is intentionally absent)
+- `web/` (Next.js local preview on loopback port `3010`; archive, daily, watch candidates, market/flow/ETF, category/rotation, observation/review, stock search, and stock detail slices)
 - `src/`
 - `src/stock_monitor/`
 - `tests/`
@@ -81,6 +82,10 @@ What exists now:
 - regression tests for parser, scheduler, Telegram, and summary behavior
 - regression tests for delivery fragments, operator health, scheduler classification, admin boundary, and DB hardening
 - separate GET-only user `web-view`
+- a local Next.js App Router preview at `web/` on fixed loopback port `3010` with 19 public GET route handlers. Fourteen stored/default projections and five bounded Naver/Toss reference routes run directly in Next; the optional same-day Naver market-top query is also handled there. Stored projections use read-only SQLite services, and fixed external reads stay in server-only modules. No Next route depends on a Python HTTP bridge. Main/Watch/Stock share one read-only database transaction for the daily, candidate, flow, and selected-stock snapshots. This is not a production cutover; Python collectors, SQLite writes, scheduler, Telegram, admin-gui, operator-review, and the existing Python `web-view` remain in place.
+- `web/scripts/benchmark-public-get.mjs` measures the same 14 stored/default loopback GETs against the existing Python and Next services. It does not start a Python server, disable its access-code gate, or call live provider routes; controlled N100 results are recorded separately in [operations performance observation](operations-performance-observation.md).
+- Next has no access-code or login routes. Its handlers validate dates, bounded list limits, category type/name, six-digit stock codes, and the exact optional Naver query. Main Top2 live-reference GETs run only after user actions. The schemaVersion 1 indicator projection is strictly allowlisted, carries the existing condition/source/date/finality states, and does not change candidate order. Rotation overlay uses a single read-only SQLite snapshot, limits ETF evidence to exact-date Toss rows, and omits the local image path; `/assets/cycle.jpg` serves only the fixed project image. Observation backtest remains collapsed under review and uses stored historical evidence without scoring/recommendation behavior.
+- Main, Watch, and Stock share a same-date server-rendered panel host. `DailyTabsProvider` changes URL history and panel visibility in place, preserves one validated stock code and bounded Stock-panel filters, and leaves stock-detail links as normal navigation. SQLite/provider reads stay in server panels; tab changes make no extra API request.
 - Toss 20:00 stored snapshot for current web-view market, ETF, and flow references
 - bounded read-only Toss Top2 quote, Top2 daily-candle, and latest-date market-context GETs; Top2 quotes may fall back to Naver, and none persist data or reorder candidates
 - Existing KRX records and schemas remain for historical analysis/recovery; no normal KRX market-data refresh or investor-flow ingest is scheduled.
@@ -102,11 +107,15 @@ What does not exist yet:
 - KIS investor-flow ingest implementation
 - generic public trading recommendation, numeric score, investment grade, or buy/sell signal; the separately approved Main Top2 price-condition projection is the sole exact-label exception
 - a separately reviewed operator-only decision-support or execution-lab lane for trading decisions after stable real-time data and safety gates
+- production/cutover of the complete local Next.js implementation or any Cloudflare/Task Scheduler switch to Next.js
 
 ## Recommended Near-Term Layout
 
 Current implementation layout:
 
+- `web/src/app/` (staged Next.js Server Components and Route Handlers)
+- `web/src/server/` (server-only SQLite readers and fixed Naver/Toss read providers)
+- `web/src/domain/` (public DTO validators for archive/daily, candidates, market, category/rotation, observation, stock, intraday, and Main Top2)
 - `src/stock_monitor/`
 - `src/stock_monitor/fetch/`
 - `src/stock_monitor/db/`
@@ -247,8 +256,81 @@ Working-tree note:
 | Notify | Telegram formatting/control state are under [notify/](../../src/stock_monitor/notify); scheduled/manual orchestration is in [cli.py](../../src/stock_monitor/cli.py). |
 | Scheduler | PowerShell wrappers in [scripts/](../../scripts/) call guarded CLI commands. Current task registration is documented in [mini-pc-runbook.md](mini-pc-runbook.md). |
 | Admin surface | `admin-gui` is a local/operator control surface with guarded routes in [cli.py](../../src/stock_monitor/cli.py). |
-| User surface | `web-view` is a separate GET-only/read-only surface; `/auth/login` is its access-code POST exception. |
+| User surface | Existing Python `web-view` remains the production GET-only/read-only surface with its current access gate. The local Next.js preview has no access-code/login routes; `/` renders latest Main and `/v2` renders the separate stored-data preview through Server Components. All 19 current public GET handlers use direct Next server-side readers/providers: stored projections use read-only Node SQLite connections, and bounded Naver/Toss requests use fixed hosts and server-derived symbols. Main Top2 source GETs require explicit button actions in Next. |
 | Current market data | Toss 20:00 snapshots supply stored web-view market/ETF/flow context. Separate bounded GETs supply live Top2/Top20 references without persistence or candidate reordering. Existing KRX rows are historical review/recovery data only. |
+
+Fourteen stored/default projections read directly through `node:sqlite`: `/api/archive`, `/api/candidate-evidence`, `/api/market`, `/api/flow-trend`, `/api/etf-trend`, `/api/stocks/search`, `/api/daily/{date}`, `/api/daily/{date}/stocks/{stock_code}`, `/api/intraday`, `/api/category-trend`, `/api/category`, `/api/observation-summary`, `/api/rotation-overlay`, and `/api/observation/backtest`. Five bounded live-reference routes also run directly in Next: `/api/priority-current-quotes`, `/api/priority-indicators`, `/api/toss-priority-quotes`, `/api/toss-priority-daily-candles`, and `/api/toss-market-context`. The daily composer and its Server Components use one caller-owned read-only SQLite transaction, set `query_only`, and match the compact Python default DTO while omitting only dynamic clock fields in parity checks. Backtest uses one read-only transaction and matches Python's stored historical DTO, including nullable notices and nonstandard non-empty stock codes. The Main Top2 indicator API uses the selected-date stored cohort, a fixed 200-row/4-page adjusted-history request, and the existing schemaVersion 1 projection. The optional daily Naver market-top query checks stored same-day eligibility before calling its fixed provider. Candidate assembly, stock detail, and rotation overlay also use one read transaction. Category routes preserve the legacy `name` category-key lookup, `display_name` snapshot lookup, `public_category_id` override, and type-mismatch rejection. Main and Watch use the direct candidate reader; the daily DTO composes its nested candidate evidence directly with the same selection contract. No current Next API route calls the Python web-view listener.
+
+A warm local comparison used the same developer database and selected date `2026-10-08`, with five warm-ups followed by 30 sequential requests per endpoint. **The daily API numbers in this historical sample were collected while Next still used the Python bridge; they are not a direct-read benchmark.** Python `/api/daily` was p50/p95 2.28/3.07ms; the Next bridge was 4.24/5.09ms with identical DTOs. Python `/api/flow-trend` was 1.50/1.65ms; direct Next was 3.66/4.18ms. For `/api/etf-trend`, Python was 1.63/2.22ms; direct Next was 21.72/24.66ms. For `/api/market`, Python was 1.37/1.77ms; direct Next was 21.72/24.94ms. For `/api/stocks/search?q=삼성`, Python was 1.30/1.62ms; direct Next was 36.29/39.28ms. DTOs matched while omitting only dynamic `now`. These route checks share the date, DB, and sample count, but not application cache behavior: Python serves its warmed in-memory DTO cache while Next opens a read-only SQLite connection per request. Next ETF, market, and search page responses were 24.78/28.63ms, 28.92/32.22ms, and 37.97/42.62ms; Main HTML was 17.71/22.46ms. Those HTML figures are server rendering plus transfer, not browser paint. The direct routes were slower in this warm sample; there is no Next speedup claim and no Operations PC benchmark or production SLO. In the 2026-10-12 `api-perf-summary` sample, `/api/daily/2026-10-08` had 935 records (790 hits, 145 misses): mixed p50/p95 was 0.48/582.68ms; misses alone were 363.13/1891.59ms. `/api/priority-indicators?date=2026-10-08` had 85 records (70 hits, 15 misses): mixed p50/p95 was 3.13/1520.94ms; misses were 1469.67/2210.51ms with average `db_ms` 0.08ms, `build_ms` 1559.43ms, and `json_ms` 4.39ms. Python's `build_ms` is inclusive of the payload builder, its database calls, provider wait, and indicator calculation; `db_ms` is nested instrumentation, so the two are not additive. The current logs do not split provider wait from calculation. The HTML figures include server rendering plus transfer, not browser paint.
+
+The direct-read choice is a dependency and migration choice, not a performance claim: it removes the Python hop for stored-only projections while requiring DTO parity checks. Naver and Toss reads stay server-side, fixed-origin, and read-only. The Next preview does not require a second Python listener. Validate the Windows Operations PC's Node SQLite support and WAL/concurrent-writer behavior before any cutover; this migration does not authorize changing the operations DB.
+
+The daily Main/Watch/Stock server-rendered panels now use [daily-tab-workspace.ts](../../web/src/server/daily-tab-workspace.ts) to share the candidate, daily, flow, and selected-stock projections from one read-only SQLite transaction. Client tab changes only switch the already-rendered panels; external Naver/Toss reads remain behind user actions or disclosure actions. Python's existing response cache and Next's direct-read timing can produce normal freshness differences; compare source dates and snapshot times before classifying them as a parity defect. The fixed launcher and Windows start/status/stop/restart procedure are owned by [operating-guide.md](operating-guide.md#nextjs-migration-status-2026-10-14).
+
+Development-PC p50/p95 records are historical observations and are not an operating target. N100 CPU/memory, route/browser latency, SQLite/WAL concurrency, phase timing, and long-run recovery must be collected only after the Operations PC move; see [operations-performance-observation.md](operations-performance-observation.md).
+
+The public Python daily GET previously rebuilt `daily_stock_summaries` when reports existed but summary rows were missing. That fallback is removed; public GET leaves the stored summary state missing, and `StockMonitorRepository.read_session` now enables SQLite `query_only` so an accidental write fails. Summary generation stays with the existing Python collection/scheduler path.
+
+### Existing Python surface and current Next.js preview
+
+```mermaid
+flowchart LR
+  subgraph PY["기존 Python web-view"]
+    Browser["친구 브라우저"] --> PyHTML["Python HTML / JavaScript"]
+    PyHTML --> PyGET["공개 GET DTO"]
+  end
+  subgraph NX["Next.js 로컬 전환 경로"]
+    Browser2["친구 브라우저"] --> Layout["DailyLayout"]
+    Layout --> Header["PublicHeader · client tabs"]
+    Layout --> Page["DailyTabPage · Server Component"]
+    Page --> Panels["Main · Watch · Stock server panels"]
+    Header --> TabState["DailyTabsProvider<br/>URL history · selected stock/filter state"]
+    TabState --> Panels
+    Page --> Route["공개 GET Route Handler"]
+    Panels --> Client["Client UI · explicit same-origin GET"]
+    Client --> Route
+    Route --> Direct["SQLite read-only<br/>stored archive · daily · candidates · market · flow · ETF<br/>stock detail · intraday · category · observation · backtest · rotation"]
+    Panels --> Direct
+    Route --> Live["Fixed Naver / Toss providers<br/>Top2 quotes · indicators · candles · market context<br/>eligible daily market-top reference"]
+  end
+  Live --> TossAPI["Toss OpenAPI<br/>server credentials only"]
+  Live --> Naver["Fixed Naver endpoints<br/>server-side only"]
+  PyGET --> DB[("SQLite")]
+  Direct --> DB
+  PythonJobs["Python collector / scheduler<br/>sole application writer"] --> DB
+```
+
+### Execution locations by folder
+
+```mermaid
+flowchart TD
+  Root["프로젝트 루트"] --> Web["web/"]
+  Root --> Python["src/stock_monitor/**<br/>[Python 작업] collection, scheduling, SQLite writes, existing Python GET surface"]
+  Web --> App["src/app/"]
+  App --> Pages["daily/[date]/**, archive/**, market/**<br/>[서버] Server Components"]
+  App --> Routes["api/**<br/>[서버] GET Route Handlers"]
+  Web --> View["src/components/server/**<br/>[서버] Main / Watch / Stock panels"]
+  Web --> Client["src/components/client/**<br/>[브라우저] interactive UI"]
+  Web --> Server["src/server/**<br/>[서버] read-only SQLite / fixed Naver and Toss providers"]
+  Web --> Domain["src/domain/**<br/>[서버/브라우저 공통] pure DTO validation and calculations"]
+```
+
+### Public, operator, and loopback boundaries
+
+```mermaid
+flowchart LR
+  Friend["친구 브라우저"] -->|"GET · no access-code"| Next["Next public surface"]
+  Next -->|"stored/default read-only GET"| DB[("SQLite")]
+  Next -->|"explicit, fixed provider GET"| External["Naver / Toss<br/>server-side only"]
+  Collector["Python collector / scheduler"] -->|"single writer for application data"| DB
+  Operator["Operator only"] --> Admin["existing admin-gui<br/>separate controls unchanged"]
+  Admin -.->|"existing operator state path"| DB
+  Operator --> Review["operator-review<br/>127.0.0.1 only · GET"]
+  Review -->|"read-only"| DB
+```
+
+Next client components never import SQLite or server-only modules; their requests stay on the public GET routes. The existing admin-gui and operator-review paths remain separate and are not migrated in this phase.
+
 ## Key Paths
 
 | Concern | Path |
@@ -263,7 +345,11 @@ Working-tree note:
 | Historical KRX mentioned-stock flow | [scripts/run_scheduled_krx_mentioned_flow_backfill.ps1](../../scripts/run_scheduled_krx_mentioned_flow_backfill.ps1), [cli.py](../../src/stock_monitor/cli.py); retained for historical/recovery use |
 | Admin GUI handler | [cli.py](../../src/stock_monitor/cli.py) |
 | Web-view handler / DTOs | [cli.py](../../src/stock_monitor/cli.py) |
-| Bounded live web-view Toss provider | [toss_openapi_web_view.py](../../src/stock_monitor/toss_openapi_web_view.py); GET handlers and rendering in [cli.py](../../src/stock_monitor/cli.py) |
+| Next.js archive, daily, watch-candidate, stock search/detail screens / GET APIs | [web/src/app/page.tsx](../../web/src/app/page.tsx), [web/src/app/daily/[date]/page.tsx](../../web/src/app/daily/%5Bdate%5D/page.tsx), [web/src/app/daily/[date]/candidates/page.tsx](../../web/src/app/daily/%5Bdate%5D/candidates/page.tsx), [web/src/app/daily/[date]/stocks/page.tsx](../../web/src/app/daily/%5Bdate%5D/stocks/page.tsx), [web/src/app/daily/[date]/stocks/[stock_code]/page.tsx](../../web/src/app/daily/%5Bdate%5D/stocks/%5Bstock_code%5D/page.tsx), corresponding routes under `web/src/app/api/` |
+| Next.js direct SQLite readers / public DTO validation | [web/src/server/daily-snapshot.ts](../../web/src/server/daily-snapshot.ts), [web/src/server/priority-indicators.ts](../../web/src/server/priority-indicators.ts), [web/src/server/intraday.ts](../../web/src/server/intraday.ts), [web/src/domain/archive.ts](../../web/src/domain/archive.ts), [web/src/domain/daily.ts](../../web/src/domain/daily.ts), [web/src/domain/candidate-evidence.ts](../../web/src/domain/candidate-evidence.ts), [web/src/domain/stocks.ts](../../web/src/domain/stocks.ts) |
+| Shared Main/Watch/Stock read snapshot | [web/src/server/daily-tab-workspace.ts](../../web/src/server/daily-tab-workspace.ts), [web/src/components/server/daily-tab-page.tsx](../../web/src/components/server/daily-tab-page.tsx) |
+| Selected-stock full saved context | [web/src/components/server/selected-stock-panel.tsx](../../web/src/components/server/selected-stock-panel.tsx), [web/src/server/stock-detail.ts](../../web/src/server/stock-detail.ts) |
+| Bounded live web-view Naver/Toss providers | Existing Python Toss provider in [toss_openapi_web_view.py](../../src/stock_monitor/toss_openapi_web_view.py); Next server-only providers in [web/src/server/toss-openapi.ts](../../web/src/server/toss-openapi.ts), [web/src/server/toss-priority-quotes.ts](../../web/src/server/toss-priority-quotes.ts), [web/src/server/toss-market-context.ts](../../web/src/server/toss-market-context.ts), and [web/src/server/naver-market-top.ts](../../web/src/server/naver-market-top.ts); Python compatibility handlers and rendering in [cli.py](../../src/stock_monitor/cli.py) |
 | Public-safe smoke / QA | [tests/test_web_view.py](../../tests/test_web_view.py), [tests/test_cli_commands.py](../../tests/test_cli_commands.py) |
 
 ## Confirmed Findings
@@ -292,6 +378,7 @@ Working-tree note:
 
    - `/api/archive`
    - `/api/daily/{date}`
+    - `/api/stocks/search`
    - `/api/daily/{date}/stocks/{stock_code}`
    - `/api/candidate-evidence`
    - `/api/observation/backtest`
@@ -305,7 +392,7 @@ Working-tree note:
 
 2. Keep `/api/status`, scheduler/operator/settings routes, admin audit logs, safe settings, `.env`, DB paths, Telegram tokens, and scheduler internals out of `web-view`.
 
-3. Keep `/assets/cycle.jpg` behind the same access-code gate as the `web-view` page when the gate is enabled.
+3. Keep the existing Python production `/assets/cycle.jpg` behind the current `web-view` gate. The local Next.js preview intentionally has no access-code gate, serves only the fixed project image, and exposes GET-only public routes; a future gate decision is separate from this migration.
 
 4. Continue treating Cloudflare/Tailscale checks as read-only verification. Do not let provider-smoke success mutate anything except the approved non-secret operation-event success row.
 
@@ -343,7 +430,10 @@ Working-tree note:
 
 3. The CodeGraph snapshot from 2026-09-27 indexed `cli.py`, `web_perf.py`, and `news/evidence_review.py`. Changes to `cli.py` and `repository.py` on 2026-09-28 and 2026-09-30, plus the current 2026-10-01 working-tree changes, make those call edges stale until an updater is available.
 
-4. `candidate-evidence`, archive, and daily payload generation already have documented performance improvements. Future regressions should be checked with the existing web performance tests and browser smoke commands before adding more caching.
+4. `candidate-evidence`, archive, daily, stock search, and stock detail payload performance has been measured in controlled warm local comparisons. Future regressions should be checked with the existing web performance tests and browser smoke commands before adding more caching.
+5. Historical Next.js proxy comparisons recorded 1.43ms p50/1.71ms p95 overhead for stored candidate evidence and 1.25–1.37ms p50/1.81–1.84ms p95 for stock search/detail. Earlier archive/daily measurements are in [operating-guide.md](operating-guide.md#todo2-wv-first-load-web-view-first-entry-performance). All current public routes now run directly in Next, but that migration choice is not a performance claim; use same-date p50/p95 comparisons with the cache/source waits separated before setting an SLO or claiming a speedup.
+
+For the directly read `/api/intraday?date=2026-10-08`, a local 5-warm-up/30-sample comparison measured Python at p50/p95 1.91/2.34ms and Next at 4.24/4.66ms. The bodies were 1,123 and 1,115 bytes; after omitting dynamic `now`, the DTOs matched. Python's warmed response cache and Next's per-request read-only SQLite connection differ, so this is not a speedup claim or an Operations PC benchmark.
 
 ## Current Ownership and Plan Pointer
 

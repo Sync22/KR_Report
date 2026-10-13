@@ -73,6 +73,80 @@ External `web-view` runtime note:
 - `scripts/create_web_view_startup_shortcut.ps1` remains a logon fallback. The Startup shortcut starts only the `web-view` runner at logon; it must not point to `admin-gui`.
 - On this mini PC, the Startup shortcut was created at `2026-05-17 18:00 KST`, and a follow-up external smoke for `https://web-view.example.invalid` returned issue count `0`.
 
+### Next.js Local Preview (Not a Production Service)
+
+The local Next.js web-view preview is under `web/`; it is not registered in Task Scheduler, is not the Cloudflare target, and does not replace the gated Python web-view on port `8780`. All 19 public GET route handlers run directly in Next. Fourteen stored/default projections use Node `node:sqlite` with `readOnly` and `query_only`; five bounded Naver/Toss reference routes use fixed endpoints and server-derived symbols. The daily API's optional Naver market-top query also runs directly and only when the stored same-date eligibility permits it. The preview does not require a second Python listener. The rotation API uses exact-date Toss ETF rows; `/assets/cycle.jpg` serves only the fixed project image. The startup script passes the resolved DB, calendar, rotation-coordinate path, and Toss credentials to the Next server process only when live access is enabled and the configured origin is the official Toss host; it does not place them in browser code, command-line arguments, API responses, or logs. Next has no access-code or login routes. Main Top2 live reference requests are explicit user actions. Next is not a production service. Follow [TODO2-NEXT-WEBVIEW-MIGRATION](operating-guide.md) and recheck parity/DB stability against the Operations PC before any cutover review.
+
+The developer-PC notes from the 2026-10-12 preview used Node `v24.15.0` and npm `11.13.0`; this is not verification of the N100 runtime. Recheck the installed runtime after the move. From the project root `C:\Users\MING\Codex\02.Stock_Moniter` in PowerShell:
+
+```powershell
+Push-Location .\web
+npm run build
+Pop-Location
+.\scripts\start_next_web_view.ps1 -Status
+.\scripts\start_next_web_view.ps1
+```
+
+`scripts/start_next_web_view.ps1` fixes the preview to loopback port `3010` and rejects a conflicting listener without killing it or selecting another port. `-Status` reports stopped or confirms the project process and `/health` plus Main response. If Windows exposes the listener as a system PID or omits its PID, the launcher also requires the project Next command and `x-stock-monitor-service: next-web-view` health marker. Running the script starts one foreground server; leave that terminal open. It passes the resolved `STOCK_MONITOR_DB_PATH`, `STOCK_MONITOR_TIMEZONE`, `STOCK_MONITOR_HOLIDAYS`, and rotation-coordinate path to Next. When Toss live reads are enabled with the fixed official host, it passes the client ID and secret through the Next server process environment; it does not print `.env` contents or pass credentials as command-line arguments. Added process variables are removed when the server exits.
+
+Both Next package scripts bind Next.js to `127.0.0.1`. The foreground terminal and ignored `logs/next-web-view.log` contain output. Stop normally with `Ctrl+C` in that terminal; verify with `-Status` before restarting on `3010`. If the owner is not confirmed as this project's Next process, leave it alone and resolve the conflict without another port. The Next preview does not start or depend on an unauthenticated Python listener. Keep the existing gated Python listener on `8780`, its Cloudflare target, and its hourly task unchanged until a separate cutover review. The Next-only portion of `npm run test:routes` can run against the one existing Next preview. Its Python HTTP comparison cases require an authenticated reference listener; do not disable the gate or start a second Next listener for tests. Do not use `scripts/restart_web_view.ps1` to manage the Next.js port.
+
+### Next V1 Operations-PC Acceptance Guide
+
+**Status: Waiting for the later move; no Operations-PC command or test has been run from this development-PC session.** This guide applies only after the reviewed `codex/next-v1` source is copied to the Intel N100 Windows PC. It does not authorize a production cutover.
+
+#### Before first start
+
+1. Transfer source, tests, scripts, and canonical docs. Transfer the operating DB and `.env` only through the existing backup/restore and secret-handling procedures; never put either in Git or in a source archive. Do not initialize or migrate the DB from Next.
+2. Record Windows, Python, Node, and npm versions on the target. The successful development build used Node `v24.15.0`; confirm the installed Node supports the app's `node:sqlite` reader before continuing. Do not change the system Node install as part of this check.
+3. From the project root, install the locked web dependencies and run the development checks:
+
+   ```powershell
+   Push-Location .\web
+   npm ci
+   npm test
+   npm run typecheck
+   npm run build
+   Pop-Location
+   ```
+
+4. Confirm the launcher resolves the intended Operations-PC DB and existing calendar/configuration without printing `.env` contents. Record only the DB file's size and last-write time and the `-wal`/`-shm` presence/size; do not inspect or copy DB rows for the log.
+5. Run `python -m stock_monitor db-verify` and the existing mini-PC readiness checks from [First Verification Commands](#first-verification-commands). Resolve DB or runtime failures before starting Next.
+
+#### Start, check, stop, and restart
+
+```powershell
+.\scripts\start_next_web_view.ps1 -Status
+.\scripts\start_next_web_view.ps1
+```
+
+Keep the foreground PowerShell terminal open. Confirm `GET http://127.0.0.1:3010/health` and the selected Main page return `200`, then inspect only the expected public display. In another terminal, stop with normal `Ctrl+C`, run `-Status` until it reports stopped, then start on the same `3010` port. The launcher must refuse conflicts and leave unidentified processes running. Check `logs/next-web-view.log` for start/failure/restart evidence without copying secrets into notes.
+
+Run the API benchmark only after the existing gated Python listener and Next both use the same operating DB snapshot and the Python request is already authorized:
+
+```powershell
+Push-Location .\web
+npm run bench:public-get
+Pop-Location
+```
+
+The runner is loopback-only, covers 14 stored/default GETs, and excludes live provider routes. A `401`, missing listener, different DB snapshot, or changed DB metadata means no comparable timing was obtained. Keep the Python access-code gate enabled. Follow the full route and cache rules in [the Developer-PC API timing benchmark](operating-guide.md#developer-pc-api-timing-benchmark) and record Operations-PC values only in [Operations performance observation](operations-performance-observation.md).
+
+#### Operations-PC acceptance checklist
+
+| Check | Required evidence | Current state |
+| --- | --- | --- |
+| Runtime and build | Recorded Node/Python versions; install, tests, typecheck, and production build pass | Waiting for Operations-PC move |
+| Public route contract | GET succeeds; unsupported methods return `405`; login/admin/operator paths are absent in Next | Waiting for Operations-PC move |
+| DB ownership | Next opens the intended operating DB read-only; Python remains the only application-data writer | Waiting for Operations-PC move |
+| Snapshot parity | Same date/code/source state compared against the existing gated Python surface; keep source, freshness, provisional/final, and missing states | Waiting for Operations-PC move |
+| SQLite/WAL | Read-only queries succeed during normal Python writes; record lock/busy errors and WAL/SHM metadata | Waiting for Operations-PC move |
+| Resource and latency | CPU, memory, per-route p50/p95, response bytes, cache state, and browser page timing recorded separately | Waiting for Operations-PC move |
+| Windows recovery | Normal stop/restart, log inspection, and one controlled Next failure recovery work on port `3010` | Waiting for Operations-PC move |
+| Cutover and rollback | Separate review; keep Python web, scheduler, tunnel, and writer unchanged until approval; stopping Next returns use to Python web | Waiting for Operations-PC move |
+
+If Next fails on the Operations PC, stop Next normally and continue through the existing Python public web-view. Do not restore or modify the DB for a frontend failure. Do not change Task Scheduler, the hourly Python web-view task, external sharing, or production listener as part of acceptance testing.
+
 Current important behavior:
 
 - daily summary notification filters default to `2+` reports and target-price required

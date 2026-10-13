@@ -472,12 +472,116 @@ def test_web_view_stock_search_includes_stored_universe_without_same_day_report(
             "stock_code": "000660",
             "stock_name": "Beta Memory",
             "market": "KOSPI",
+            "market_source": "stored_krx_stock_metadata",
+            "market_reference_date": business_date.isoformat(),
             "has_selected_date_report": False,
             "has_selected_date_toss": True,
             "has_news_observation": True,
             "display_status": "당일 리포트 없음 · 저장 Toss 있음 · 뉴스 근거 있음",
         }
     ]
+    _assert_public_safe_payload(snapshot)
+
+
+def test_web_view_stock_search_does_not_use_future_krx_metadata(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    repository.upsert_krx_stock_metadata(
+        [
+            KrxStockMetadataSnapshot(
+                business_date=date(2026, 6, 3),
+                standard_code="KR7000660001",
+                stock_code="000660",
+                stock_name="Beta Memory",
+                market="KOSPI",
+                fetched_at=datetime(2026, 6, 3, 18, 0, 0),
+            )
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_stock_search_snapshot(
+        config,
+        repository,
+        business_date=date(2026, 6, 2),
+        query="Beta",
+        now=datetime(2026, 6, 2, 10, 0, 0),
+    )
+
+    assert snapshot["available"] is False
+    assert snapshot["items"] == []
+
+
+def test_web_view_stock_search_empty_query_has_null_universe_reference(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+
+    snapshot = cli_module.build_web_view_stock_search_snapshot(
+        config,
+        repository,
+        business_date=date(2026, 6, 2),
+        query="  ",
+        now=datetime(2026, 6, 2, 10, 0, 0),
+    )
+
+    assert snapshot["query"] == ""
+    assert snapshot["stock_universe_reference_date"] is None
+
+
+def test_web_view_stock_search_keeps_market_provenance_when_report_name_wins(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 2)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="Alpha Electronics",
+                stock_code="123456",
+                title="Alpha Electronics report",
+                broker_name="NH",
+                published_at=datetime(2026, 6, 2, 9, 0, 0),
+                business_date=business_date,
+                collected_at=datetime(2026, 6, 2, 9, 0, 30),
+                target_price_value=100_000,
+                opinion_normalized="buy",
+                source_id="stock-search-provenance-report",
+                identity_key="stock-search-provenance-report",
+            )
+        ]
+    )
+    repository.rebuild_daily_summaries(business_date)
+    repository.upsert_toss_stock_universe_cache(
+        [
+            TossStockUniverseEntry(
+                business_date=business_date,
+                market="KOSDAQ",
+                stock_code="123456",
+                stock_name="Alpha Electronics",
+                security_type="STOCK",
+                is_common_share=True,
+                isin_code="KR7123456000",
+                fetched_at=datetime(2026, 6, 2, 20, 5),
+            )
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_stock_search_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        query="Alpha",
+        now=datetime(2026, 6, 2, 20, 10),
+    )
+
+    assert snapshot["items"][0]["market"] == "KOSDAQ"
+    assert snapshot["items"][0]["market_source"] == "stored_toss_stock_universe"
+    assert snapshot["items"][0]["market_reference_date"] == business_date.isoformat()
     _assert_public_safe_payload(snapshot)
 
 
@@ -529,6 +633,47 @@ def test_web_view_stock_detail_uses_stored_name_when_selected_date_has_no_report
     assert snapshot["report_empty_state"] == "선택 날짜에 등록된 리포트가 없습니다."
     assert snapshot["reports"] == []
     assert snapshot["market_reference"]["close_price"] == 200_000
+
+
+def test_web_view_stock_detail_krx_name_fallback_is_bounded_by_selected_date(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 6, 2)
+    repository.upsert_krx_stock_metadata(
+        [
+            KrxStockMetadataSnapshot(
+                business_date=date(2026, 6, 1),
+                standard_code="BEFORE",
+                stock_code="000660",
+                stock_name="기준일 이전 이름",
+                market="KOSPI",
+                fetched_at=datetime(2026, 6, 1, 18, 0, 0),
+            ),
+            KrxStockMetadataSnapshot(
+                business_date=date(2026, 6, 3),
+                standard_code="AFTER",
+                stock_code="000660",
+                stock_name="선택일 이후 이름",
+                market="KOSPI",
+                fetched_at=datetime(2026, 6, 3, 18, 0, 0),
+            ),
+        ]
+    )
+
+    snapshot = cli_module.build_web_view_stock_detail_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        stock_code="000660",
+        now=datetime(2026, 6, 2, 10, 0, 0),
+    )
+
+    assert snapshot["stock_name"] == "기준일 이전 이름"
+    assert snapshot["market_reference"] is None
+    assert snapshot["has_selected_date_report"] is False
     _assert_public_safe_payload(snapshot)
 
 
@@ -1889,6 +2034,47 @@ def test_web_view_daily_snapshot_reports_no_same_day_summary_for_intraday_overla
     assert status["summary_stock_count"] == 0
     assert status["can_overlap_intraday_market_top"] is False
     assert status["reason"] == "당일 리포트 요약이 없어 거래대금 교집합을 만들 수 없습니다."
+
+
+def test_web_view_daily_get_does_not_rebuild_missing_summaries(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 5, 20)
+    now = datetime(2026, 5, 20, 9, 30, 0)
+    repository.insert_reports(
+        [
+            Report(
+                stock_name="테스트 종목",
+                stock_code="000001",
+                title="저장 요약이 없는 리포트",
+                broker_name="테스트증권",
+                published_at=now,
+                collected_at=now,
+                business_date=business_date,
+            )
+        ]
+    )
+    assert repository.list_daily_summaries(business_date) == []
+
+    def fail_rebuild(*_args, **_kwargs):
+        raise AssertionError("public GET must not write daily summary rows")
+
+    monkeypatch.setattr(repository, "rebuild_daily_summaries", fail_rebuild)
+    snapshot = cli_module.build_web_view_daily_snapshot(
+        config,
+        repository,
+        business_date=business_date,
+        now=now,
+    )
+
+    status = snapshot["market_commentary"]["same_day_report_status"]
+    assert status["report_count"] == 1
+    assert status["summary_stock_count"] == 0
+    assert status["can_overlap_intraday_market_top"] is False
+    assert repository.list_daily_summaries(business_date) == []
 
 
 def test_web_view_daily_snapshot_skips_intraday_market_top_when_summaries_lack_stock_codes(
@@ -3866,6 +4052,24 @@ def test_web_view_toss_priority_quotes_route_uses_server_derived_top_two_only(tm
     thread.start()
     try:
         base_url = f"http://127.0.0.1:{server.server_port}"
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                page = browser.new_page()
+                requested_urls: list[str] = []
+                page.on("request", lambda request: requested_urls.append(request.url))
+                page.goto(base_url + "/", wait_until="networkidle")
+                assert not any("/api/toss-priority-quotes?" in url for url in requested_urls)
+                assert provider.calls == []
+                with page.expect_response(lambda response: "/api/toss-priority-quotes?date=2026-05-08" in response.url) as quote_response:
+                    page.get_by_role("button", name="Toss 현재가 · 수급").click()
+                assert quote_response.value.status == 200
+                assert len(provider.calls) == 1
+            finally:
+                browser.close()
+
         with urllib.request.urlopen(base_url + "/api/daily/2026-05-08", timeout=5) as response:
             assert response.status == 200
             json.loads(response.read().decode("utf-8"))
@@ -4879,7 +5083,8 @@ def test_web_view_html_labels_top_two_toss_flow_as_unstored_query_reference() ->
     assert "Toss 당일 수급" not in top_two_body
     assert '<strong>당일 수급</strong>' in top_two_body
     assert 'class="top-two-evidence-details"' in top_two_body
-    assert "loadTossPriorityQuotes(tossPriorityDate)" in html
+    assert "loadTossPriorityQuotes(tossPriorityDate)" not in html
+    assert "loadTossPriorityQuotes(tossPriorityDate || selectedDate, { force: true });" in html
     assert "details = [flowBlock, researchBlock, missingEvidenceBlock, targetRevisionBlock]" in top_two_body
     assert "market 참고" not in top_two_body
     assert "시장 참고" not in top_two_body
@@ -5177,6 +5382,8 @@ def test_web_view_stock_search_uses_cached_toss_stock_universe(tmp_path, monkeyp
     assert snapshot["items"][0]["stock_code"] == "123456"
     assert snapshot["items"][0]["stock_name"] == "테스트바이오"
     assert snapshot["items"][0]["market"] == "KOSDAQ"
+    assert snapshot["items"][0]["market_source"] == "stored_toss_stock_universe"
+    assert snapshot["items"][0]["market_reference_date"] == business_date.isoformat()
     assert snapshot["items"][0]["has_selected_date_report"] is False
     assert snapshot["stock_universe_reference_date"] == business_date.isoformat()
     _assert_public_safe_payload(snapshot)
@@ -5202,8 +5409,10 @@ def test_web_view_stock_search_uses_cached_toss_stock_universe(tmp_path, monkeyp
         query="테스트바이오",
         now=datetime(2026, 6, 3, 20, 10),
     )
-    assert historical_snapshot["available"] is False
-    assert historical_snapshot["stock_universe_reference_date"] is None
+    assert historical_snapshot["available"] is True
+    assert historical_snapshot["stock_universe_reference_date"] == business_date.isoformat()
+    assert historical_snapshot["items"][0]["stock_code"] == "123456"
+    assert historical_snapshot["items"][0]["market_reference_date"] == business_date.isoformat()
 
 
 def test_web_view_news_observation_keeps_unique_direct_evidence_after_later_empty_collection(
@@ -7431,7 +7640,8 @@ def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
     priority_load_body = html.split("tossPriorityRows = priorityRows.filter((row) => row?.selected !== false).slice(0, 2);", 1)[1].split(
         'document.getElementById("candidate-evidence-rows")', 1
     )[0]
-    assert "loadTossPriorityQuotes(tossPriorityDate);" in priority_load_body
+    assert "loadTossPriorityQuotes(tossPriorityDate);" not in priority_load_body
+    assert "loadTossPriorityQuotes(tossPriorityDate || selectedDate, { force: true });" in html
     assert "tossPriorityCohortKey" in priority_load_body
     assert "force: true" in html
     assert "loadPriorityCurrentQuotes(tossPriorityDate);" not in priority_load_body
@@ -8806,6 +9016,22 @@ def test_web_view_access_code_gate_protects_content_until_login(tmp_path, monkey
     assert redirect_exc_info.value.code == 303
     assert payload["surface"] == "web-view"
     assert post_exc_info.value.code == 405
+
+
+def test_internal_web_view_access_code_path_can_be_disabled_for_one_process(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    configured_gate = tmp_path / "data" / "access_code.json"
+    configured_gate.parent.mkdir()
+    configured_gate.write_text("{}", encoding="utf-8")
+    gated_config = RuntimeConfig.from_env(root_dir=tmp_path)
+    assert cli_module._access_code_enabled(gated_config) is True
+
+    internal_gate_path = tmp_path / "next-internal-no-gate.json"
+    monkeypatch.setenv("STOCK_MONITOR_ACCESS_CODE_PATH", str(internal_gate_path))
+    internal_config = RuntimeConfig.from_env(root_dir=tmp_path)
+
+    assert internal_config.access_code_path == internal_gate_path
+    assert cli_module._access_code_enabled(internal_config) is False
 
 
 def test_web_view_access_code_gate_marks_cookie_secure_behind_https_proxy(tmp_path, monkeypatch) -> None:

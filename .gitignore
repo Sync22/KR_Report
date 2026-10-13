@@ -13,6 +13,9 @@
 .ruff_cache/
 .mypy_cache/
 .venv/
+web/.next/
+web/node_modules/
+web/tsconfig.tsbuildinfo
 __pycache__/
 *.py[cod]
 *$py.class
