@@ -4,6 +4,7 @@ Migration, restore, scheduler handoff, and weekly main-PC sync.
 
 ## Included sections
 - Mini PC Migration Handoff
+- Next V1 Operations-PC Initial Check and Acceptance Guide
 - Weekly Mini PC Sync Guide
 - Weekly Mini PC Sync Prompt
 
@@ -93,7 +94,36 @@ Both Next package scripts bind Next.js to `127.0.0.1`. The foreground terminal a
 
 ### Next V1 Operations-PC Acceptance Guide
 
-**Status: Waiting for the later move; no Operations-PC command or test has been run from this development-PC session.** This guide applies only after the reviewed `codex/next-v1` source is copied to the Intel N100 Windows PC. It does not authorize a production cutover.
+**Status (2026-10-14): Waiting for the later move; no Operations-PC command or test has been run from this development-PC session.** This guide applies only after the reviewed `codex/next-v1` source is copied to the Intel N100 Windows PC. It does not authorize a production cutover.
+
+Use this as the first-check reference for every new Next V1 session on the Operations PC. The prompt below directs the session to read this section before inspecting the DB or starting a service.
+
+#### Operations-PC Initial Check Prompt
+
+```text
+Work only in C:\Users\MING\Codex\02.Stock_Moniter on the Intel N100 Windows Operations PC.
+
+Before testing, read AGENTS.md, docs/codex/documentation-index.md,
+docs/codex/operating-guide.md, docs/codex/surface-guide.md,
+docs/codex/data-governance.md, and this file's “Next V1 Operations-PC Acceptance Guide”.
+Follow that guide as the required initial-check and test order.
+
+First inspect the checked-out codex/next-v1 source and commit, Windows/CPU/RAM,
+Python/Node/npm versions, node:sqlite support, current listeners on 3010 and the
+gated Python web-view port, intended DB selection, backup/verification state, and
+DB/WAL/SHM metadata. Report sanitized status only: do not print .env values,
+access codes, cookies, credentials, or DB rows.
+
+If the preflight is sound, continue through the guide's build, functional/API
+parity, read-only SQLite/WAL concurrency, restart/recovery, and performance steps
+in order. Keep the Python service and access-code gate, DB writer, Task Scheduler,
+Telegram, and external sharing unchanged. Use only port 3010 for Next; do not kill
+an unverified process or choose another port. Use an already-authorized Python
+session for HTTP comparisons; if unavailable, mark those comparisons not run and
+do not disable the gate. Do not call live Naver/Toss routes in the default API
+benchmark. Mark each check pass, fail, or not run, and claim no Operations-PC
+result unless it actually ran on that host.
+```
 
 #### Before first start
 
@@ -111,7 +141,8 @@ Both Next package scripts bind Next.js to `127.0.0.1`. The foreground terminal a
    ```
 
 4. Confirm the launcher resolves the intended Operations-PC DB and existing calendar/configuration without printing `.env` contents. Record only the DB file's size and last-write time and the `-wal`/`-shm` presence/size; do not inspect or copy DB rows for the log.
-5. Run `python -m stock_monitor db-verify` and the existing mini-PC readiness checks from [First Verification Commands](#first-verification-commands). Resolve DB or runtime failures before starting Next.
+5. Verify a recent database backup exists before direct DB/WAL checks. If it does not, use the standard backup and restore-smoke steps in [First Verification Commands](#first-verification-commands); keep the original operating DB in place.
+6. Run `python -m stock_monitor db-verify` and the existing mini-PC readiness checks from [First Verification Commands](#first-verification-commands). Resolve DB or runtime failures before starting Next.
 
 #### Start, check, stop, and restart
 
@@ -601,7 +632,10 @@ Paste this into the new mini PC Codex session:
 ```text
 {PROJECT_ROOT} only.
 This is the Stock Monitor project moved from the desktop to the mini PC.
-Read AGENTS.md, docs/codex/operating-guide.md, docs/codex/operating-guide.md, docs/codex/surface-guide.md, docs/codex/mini-pc-runbook.md, docs/codex/data-governance.md, docs/codex/data-governance.md, and CHANGELOG.md first.
+Read AGENTS.md, docs/codex/documentation-index.md, docs/codex/operating-guide.md,
+docs/codex/surface-guide.md, docs/codex/data-governance.md, and
+docs/codex/mini-pc-runbook.md first. Start with the “Next V1 Operations-PC
+Acceptance Guide” and its “Operations-PC Initial Check Prompt” before testing.
 
 Current operating contract:
 - Notify: 08:20 KST after KRX daily backfill, production send allowed only 08:00~08:30 unless --allow-late.
@@ -617,6 +651,7 @@ The separate GET-only web-view exists. Keep it read-only and expose only that su
 Reports are preserved as original Naver history. KRX market reference data may have been rebaselined in reviewed 10-business-date batches before migration.
 
 First actions:
+0. Follow the Next V1 Operations-PC Initial Check before running Next or DB checks.
 1. Check .env exists and does not need secrets pasted into chat.
 2. If this was copied as a zip, run .\scripts\verify_migration_archive.ps1 -ArchivePath <zip path> -FailOnSensitiveEntries before extracting or before trusting the copied artifact.
 3. Run powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_mini_pc_environment.ps1 if the target venv is not already prepared.
