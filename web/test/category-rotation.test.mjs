@@ -34,5 +34,3 @@ test("rotation DTO validates public coordinates and descriptive stored evidence"
   assert.equal(domain.isRotationOverlaySnapshot({ ...snapshot, highlights: [{ ...snapshot.highlights[0], x: 2000 }] }, "2026-10-08"), false);
   assert.equal(domain.isRotationOverlaySnapshot({ ...snapshot, business_date: "2026-10-07" }, "2026-10-08"), false);
 });
-
-\n

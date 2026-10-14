@@ -34,5 +34,3 @@ test("backtest DTO retains dated historical reactions and explicit non-scoring f
   assert.equal(domain.isBacktestObservationSnapshot({ ...backtest, scoring: true }, "2026-10-08"), false);
   assert.equal(domain.isBacktestObservationSnapshot({ ...backtest, rows: [{ ...backtest.rows[0], reaction_windows: [] }] }, "2026-10-08"), false);
 });
-
-\n

@@ -1833,7 +1833,3 @@ function valueProfile(
     sort_value_signal: valueSignal,
   };
 }
-
-
-
-\n
