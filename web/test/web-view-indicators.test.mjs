@@ -115,6 +115,22 @@ test("warm-up lengths and all trend shapes match the Python calculator", () => {
   }
 });
 
+test("20-bar SMA keeps Python 3.12 compensated-sum precision", () => {
+  const closes = Array.from({ length: 20 }, (_, index) => index % 2 === 0 ? 70000.01 : 70000.02);
+  const candles = bars(20, "flat").map((bar, index) => {
+    const close = closes[index];
+    return { ...bar, open: close, high: close + 1, low: close - 1, close };
+  });
+  const naiveSma = closes.reduce((sum, value) => sum + value / closes.length, 0);
+  const expected = oracle(candles);
+  const actual = buildPriorityIndicatorProjection({ ...METADATA, candles });
+
+  assert.equal(naiveSma, 70000.01499999998);
+  assert.equal(expected.snapshot.indicators.movingAverages.sma20, 70000.015);
+  assert.equal(actual.snapshot.indicators.movingAverages.sma20, expected.snapshot.indicators.movingAverages.sma20);
+  assert.deepEqual(withoutRevision(actual), withoutRevision(expected));
+});
+
 test("as-of cutoff ignores future bars and keeps sorted chart and provenance dates", () => {
   const candles = bars(25);
   candles.push({ time: "2026-10-09", open: 999, high: 1000, low: 998, close: 999, volume: 50 });

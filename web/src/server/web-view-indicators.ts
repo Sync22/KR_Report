@@ -91,11 +91,25 @@ function validateBars(candles: ReadonlyArray<ValueRecord>, requestedAsOf: string
   return selected.sort((left, right) => left.time.localeCompare(right.time));
 }
 
+// Match CPython 3.12's float sum so Python/Next indicator snapshots remain identical.
+function pythonFloatSum(values: ReadonlyArray<number>): number {
+  let total = 0;
+  let compensation = 0;
+  for (const value of values) {
+    const next = total + value;
+    compensation += Math.abs(total) >= Math.abs(value)
+      ? (total - next) + value
+      : (value - next) + total;
+    total = next;
+  }
+  return compensation && Number.isFinite(compensation) ? total + compensation : total;
+}
+
 function sma(values: ReadonlyArray<number>, period: number): NullableSeries {
   const result: NullableSeries = Array(values.length).fill(null);
   for (let index = period - 1; index < values.length; index += 1) {
     const window = values.slice(index - period + 1, index + 1);
-    if (window.every(Number.isFinite)) result[index] = window.reduce((sum, value) => sum + value / period, 0);
+    if (window.every(Number.isFinite)) result[index] = pythonFloatSum(window.map(value => value / period));
   }
   return result;
 }
@@ -115,7 +129,7 @@ function ema(values: ReadonlyArray<number>, period: number): NullableSeries {
     if (previous === null) {
       seed.push(value);
       if (seed.length < period) continue;
-      previous = seed.reduce((sum, item) => sum + item / period, 0);
+      previous = pythonFloatSum(seed.map(item => item / period));
       seed = [];
     } else {
       previous += alpha * (value - previous);
@@ -134,7 +148,7 @@ function wma(values: ReadonlyArray<number>, period: number): NullableSeries {
   const denominator = period * (period + 1) / 2;
   for (let index = period - 1; index < values.length; index += 1) {
     const window = values.slice(index - period + 1, index + 1);
-    if (window.every(Number.isFinite)) result[index] = window.reduce((sum, value, offset) => sum + value * (offset + 1) / denominator, 0);
+    if (window.every(Number.isFinite)) result[index] = pythonFloatSum(window.map((value, offset) => value * (offset + 1) / denominator));
   }
   return result;
 }
@@ -143,8 +157,8 @@ function bollinger(values: ReadonlyArray<number>, period = 20): { middle: number
   if (values.length < period) return null;
   const window = values.slice(-period);
   if (!window.every(Number.isFinite)) return null;
-  const middle = window.reduce((sum, value) => sum + value / period, 0);
-  const deviation = Math.sqrt(window.reduce((sum, value) => sum + (value - middle) ** 2 / period, 0));
+  const middle = pythonFloatSum(window.map(value => value / period));
+  const deviation = Math.sqrt(pythonFloatSum(window.map(value => (value - middle) ** 2 / period)));
   return { middle, upper: middle + 2 * deviation, lower: middle - 2 * deviation };
 }
 
@@ -162,8 +176,8 @@ function rsiSeries(values: ReadonlyArray<number>, period = 14): NullableSeries {
   const changes = values.slice(1).map((value, index) => value - values[index]);
   const gains = changes.map((change) => Math.max(change, 0));
   const losses = changes.map((change) => Math.max(-change, 0));
-  let averageGain = gains.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
-  let averageLoss = losses.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+  let averageGain = pythonFloatSum(gains.slice(0, period)) / period;
+  let averageLoss = pythonFloatSum(losses.slice(0, period)) / period;
   const calculate = () => averageGain === 0 && averageLoss === 0 ? 50 : averageLoss === 0 ? 100 : 100 - 100 / (1 + averageGain / averageLoss);
   result[period] = calculate();
   for (let index = period; index < gains.length; index += 1) {
@@ -185,7 +199,7 @@ function atrSeries(bars: ReadonlyArray<Bar>, period = 14): NullableSeries {
   const ranges = trueRanges(bars);
   const result: NullableSeries = Array(ranges.length).fill(null);
   if (ranges.length < period) return result;
-  result[period - 1] = ranges.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+  result[period - 1] = pythonFloatSum(ranges.slice(0, period)) / period;
   for (let index = period; index < ranges.length; index += 1) {
     result[index] = ((result[index - 1] as number) * (period - 1) + ranges[index]) / period;
   }
@@ -204,7 +218,7 @@ function volumeProfile(bars: ReadonlyArray<Bar>): ValueRecord {
     const index = step ? Math.min(count - 1, Math.max(0, Math.trunc((typical - low) / step))) : 0;
     bins[index].volume += row.volume;
   }
-  const total = bins.reduce((sum, item) => sum + item.volume, 0);
+  const total = pythonFloatSum(bins.map(item => item.volume));
   const peak = Math.max(...bins.map((item) => item.volume));
   return {
     version: PROFILE_VERSION,
@@ -226,10 +240,10 @@ function line(model: Line, index: number): number {
 function fit(points: ReadonlyArray<[number, number]>): Line | null {
   if (points.length < 2) return null;
   const meanX = points.reduce((sum, [index]) => sum + index, 0) / points.length;
-  const meanY = points.reduce((sum, [, value]) => sum + value, 0) / points.length;
-  const denominator = points.reduce((sum, [index]) => sum + (index - meanX) ** 2, 0);
+  const meanY = pythonFloatSum(points.map(([, value]) => value)) / points.length;
+  const denominator = pythonFloatSum(points.map(([index]) => (index - meanX) ** 2));
   if (!denominator) return null;
-  const slope = points.reduce((sum, [index, value]) => sum + (index - meanX) * (value - meanY), 0) / denominator;
+  const slope = pythonFloatSum(points.map(([index, value]) => (index - meanX) * (value - meanY))) / denominator;
   return { slope, intercept: meanY - slope * meanX };
 }
 
@@ -340,8 +354,8 @@ function flagCandidates(bars: ReadonlyArray<Bar>, atr: NullableSeries, highs: Ar
     const extreme = sign === 1 ? Math.min(...bars.slice(start, end + 1).map((row) => row.low)) : Math.max(...bars.slice(start, end + 1).map((row) => row.high));
     const retracement = Math.max(0, (sign === 1 ? bars[start - 1].close - extreme : extreme - bars[start - 1].close) / move);
     if (retracement > 0.618) continue;
-    const poleVolume = bars.slice(pole, start).reduce((sum, row) => sum + row.volume, 0) / length;
-    const adjustmentVolume = bars.slice(start, end + 1).reduce((sum, row) => sum + row.volume, 0) / (end - start + 1);
+    const poleVolume = pythonFloatSum(bars.slice(pole, start).map(row => row.volume)) / length;
+    const adjustmentVolume = pythonFloatSum(bars.slice(start, end + 1).map(row => row.volume)) / (end - start + 1);
     found.push({
       type: sign === 1 ? "bull-flag" : "bear-flag", status: "forming", timeframe: "D", barTime: bars[end].time,
       adjustmentStartTime: bars[start].time, poleStartTime: bars[pole].time, poleEndTime: bars[start - 1].time,
@@ -424,7 +438,7 @@ function structures(bars: ReadonlyArray<Bar>, atr: NullableSeries): { items: Val
     const previousHigh = Math.max(...bars.slice(-21, -1).map((row) => row.high));
     const previousLow = Math.min(...bars.slice(-11, -1).map((row) => row.low));
     const previousAtr = atr[end - 1] as number;
-    const previousVolumes = bars.slice(end - 20, end).reduce((sum, row) => sum + row.volume, 0);
+    const previousVolumes = pythonFloatSum(bars.slice(end - 20, end).map(row => row.volume));
     const relativeVolume = previousVolumes > 0 ? bars[end].volume / (previousVolumes / 20) : null;
     for (const [kind, boundary] of [["prior-20-high", previousHigh], ["prior-10-low", previousLow]] as const) {
       const item: ValueRecord = {
@@ -496,7 +510,7 @@ function buildSnapshot(input: PriorityIndicatorInput, bars: ReadonlyArray<Bar>):
   const dc = donchian(bars);
   const rsi = rsiSeries(closes).at(-1) ?? null;
   const atr = atrSeries(bars).at(-1) ?? null;
-  const volumeTotal = volumes.slice(-20).reduce((sum, value) => sum + value, 0);
+  const volumeTotal = pythonFloatSum(volumes.slice(-20));
   const ratio = volumes.length >= 20 && volumeTotal > 0 ? volumes.at(-1)! / (volumeTotal / 20) : null;
   const fast = ema(closes, 12);
   const slow = ema(closes, 26);
