@@ -27,6 +27,14 @@ PUBLIC_DOC_PATTERNS = (
     re.compile(r"\d{5,}:[A-Za-z0-9_-]{20,}"),
 )
 
+# The operator-only mini-PC runbook must name its host folder and loopback preview port.
+PRIVATE_OPERATION_DETAILS = {
+    Path("docs/codex/mini-pc-runbook.md"): (
+        "C:\\Users\\MING\\Codex\\02.Stock_Moniter",
+        "http://127.0.0.1:3010",
+    ),
+}
+
 
 def _public_docs() -> list[Path]:
     result = subprocess.run(
@@ -56,6 +64,8 @@ def test_public_docs_do_not_expose_local_operation_details() -> None:
     findings: list[str] = []
     for path in _public_docs():
         text = path.read_text(encoding="utf-8")
+        for detail in PRIVATE_OPERATION_DETAILS.get(path.relative_to(ROOT), ()):
+            text = text.replace(detail, "")
         for pattern in PUBLIC_DOC_PATTERNS:
             for match in pattern.finditer(text):
                 line_no = text.count("\n", 0, match.start()) + 1

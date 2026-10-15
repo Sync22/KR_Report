@@ -12847,6 +12847,15 @@ def test_rotation_mapping_audit_reports_alias_etf_and_stored_evidence(tmp_path, 
                 etf_code="396500",
                 etf_name="TIGER 반도체TOP10",
                 fetched_at=datetime(2026, 5, 8, 18, 0, 0),
+                source="krx",
+                close_price=20_000,
+            ),
+            EtfDailySnapshot(
+                business_date=date(2026, 5, 8),
+                etf_code="396500",
+                etf_name="TIGER 반도체TOP10",
+                fetched_at=datetime(2026, 5, 8, 18, 0, 0),
+                source="toss_openapi",
                 close_price=20_000,
             )
         ]
