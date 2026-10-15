@@ -2,13 +2,15 @@
 
 ## Purpose
 
-Record actual Next.js web-view performance and stability on the Intel N100 Windows Operations PC after the project and operating database have been moved. This is a measurement record, not a development-PC benchmark or a production cutover approval.
+Record actual Next.js web-view performance and stability on the Intel N100 Windows Operations PC. This is a measurement record, not a production cutover approval.
 
 ## Status
 
-**N100 host preflight passed; operating acceptance remains pending.**
+**N100 preflight and scoped 14-route comparison passed; operating acceptance remains pending.**
 
-On 2026-10-15, the current host was verified as Intel N100 / Windows 11 Pro with Node `v22.21.1` and Python `3.12.14`. Read-only `db-verify --json` passed. The active Next listener on 3010 returned `/health` 200 and `/api/archive?limit=19` returned 200 with a cache miss followed by a cache hit; its build ID `nA1XzbaTDmGe1P5hU8jIc` predates pushed commit `c01bdc9`, so exact source provenance is unverified and the smoke check is not acceptance evidence. The 2026-10-15 15:40 14-route timing is documented in [Operating guide](operating-guide.md#2026-10-15-cache-matched-exploratory-timing-intel-n100-not-acceptance), but used a temporary Python listener with a nonexistent in-memory access-code path; it is exploratory, not an authenticated Python comparison. `StockMonitor-Poll` is Ready for 2026-10-16 08:30 KST; its 2026-10-15 16:30 result was `1`. Scheduler operational history is disabled and no poll log was found. An earlier report mentioned a Next GET at 15:00:07 while Poll was Running, but did not record cache state or paired DB/WAL/SHM metadata; it does not prove a SQLite read. No verified cache-miss SQLite read during an active normal writer, authenticated Python comparison, accepted N100 route matrix, CPU/memory sample, long-run stability, or recovery result has been recorded. Leave the formal matrix as `Not run` until verified; do not copy development-PC results into it.
+On 2026-10-15, the current host was verified as Intel N100 / Windows 11 Pro with Node `v22.21.1` and Python `3.12.14`. Read-only `db-verify --json` passed. Next was rebuilt after `c01bdc9`, started on 3010 as PID 19032 with build ID `eycpeDtIvb5OLXSWuyJyF`, and returned `/health` 200 with `x-stock-monitor-service: next-web-view`. `/api/archive?limit=19` returned 200 miss then hit. At 17:08 KST, all 14 stored GETs returned 200, and a separate in-memory comparison matched all DTOs after normalizing only `now` and Python's private rotation image path; results are recorded below. Per the user's instruction, Python ran on a temporary loopback reference using a SQLite backup from a read-only source and a process-local nonexistent access-code path. This bypassed the gate only for the temporary reference; live Python 8780, `.env`, and `data/access_code.json` remained unchanged and the live gate still reports enabled. This measures route parity and response timing, not the access-gate round trip.
+
+The main DB remained 576,159,744 bytes with mtime `2026-10-15 16:30:42 KST`; after the run its WAL was 0 bytes and SHM was 32 KiB. No Poll overlapped the benchmark. `StockMonitor-Poll` is Ready for 2026-10-16 08:30 KST; its 2026-10-15 16:30 result was `1`. Scheduler operational history is disabled and no poll log was found. An earlier report mentioned a Next GET at 15:00:07 while Poll was Running, but did not record cache state or paired DB/WAL/SHM metadata; it does not prove a SQLite read. The verified active-writer cache-miss/WAL observation, CPU/memory sample, long-run stability, and recovery check remain outstanding.
 
 ## Entry Gate
 
@@ -37,24 +39,24 @@ If an entry gate fails, stop the performance run and record the failure; do not 
 
 ## N100 API Results Matrix
 
-**Status: Formal acceptance matrix not run.** This matrix records the full authenticated 14-route comparison on the Intel N100 host after the entry gates above pass. The separate exploratory timing in the operating guide does not fill these fields. Development-PC values do not belong in the N100 columns. Keep the five external provider rows out of automatic sampling; use the existing controlled/mock checks unless a separately authorized provider observation is needed.
+**Status: Scoped 14-route comparison passed for `2026-10-14`; live access-gate and operating acceptance checks remain pending.** The user-authorized temporary reference fallback produced these N100 route timings from a copied snapshot. The live Python 8780 access-gate round trip was not measured. Each route's full DTO matched after the documented normalization. Python had 1 miss and 34 hits per route; Next had 1 first-request miss and 30 measured hits per route. Development-PC values do not belong in the N100 columns. Keep the five external provider rows out of automatic sampling; use the existing controlled/mock checks unless a separately authorized provider observation is needed.
 
 | API route | Class | Python status / p50 / p95 | Next status / p50 / p95 | Response bytes | DTO / cache notes |
 | --- | --- | --- | --- | --- | --- |
-| `/api/archive?limit=20` | Stored | Not run | Not run | Not run | Both 30s process-local caches; formal acceptance matrix not run |
-| `/api/daily/{date}` | Stored default | Not run | Not run | Not run | Keep the optional Naver query out of this row |
-| `/api/daily/{date}/stocks/{code}` | Stored | Not run | Not run | Not run | Same selected stock on both |
-| `/api/stocks/search?date={date}&q=삼성&limit=8` | Stored | Not run | Not run | Not run | Same query and bound |
-| `/api/candidate-evidence?date={date}&limit=8` | Stored | Not run | Not run | Not run | Preserve stored order and missing states |
-| `/api/observation-summary?date={date}` | Stored | Not run | Not run | Not run | Builder/SQLite fixture parity passes; same-host HTTP comparison not recorded |
-| `/api/observation/backtest?date={date}&limit=20&mention_threshold=2` | Stored | Not run | Not run | Not run | Builder/SQLite fixture parity passes; same-host HTTP comparison not recorded |
-| `/api/market` | Stored | Not run | Not run | Not run | Stored Toss snapshot |
-| `/api/intraday?date={date}` | Stored | Not run | Not run | Not run | Same historical date |
-| `/api/flow-trend?date={date}&limit=5` | Stored | Not run | Not run | Not run | Stored Toss flow |
-| `/api/etf-trend?date={date}&limit=5` | Stored | Not run | Not run | Not run | Preserve empty/missing state |
-| `/api/rotation-overlay?date={date}&limit=5&symbols={code}` | Stored | Not run | Not run | Not run | Same date, code, and local mapping |
-| `/api/category?date={date}&type=sector&display_name=반도체&public_category_id=...` | Stored | Not run | Not run | Not run | Use the exact same encoded category query |
-| `/api/category-trend?type=sector&display_name=__e2e_category_trend__&limit=999` | Stored | Not run | Not run | Not run | Descriptive trend only |
+| `/api/archive?limit=20` | Stored | 200 / 4.43 / 6.45 ms | 200 / 5.05 / 8.13 ms | 5602 / 5594 | DTO match |
+| `/api/daily/2026-10-14` | Stored default | 200 / 4.70 / 10.38 ms | 200 / 5.33 / 8.71 ms | 61618 / 61596 | DTO match; optional Naver query excluded |
+| `/api/daily/2026-10-14/stocks/005930` | Stored | 200 / 6.04 / 9.00 ms | 200 / 6.42 / 16.01 ms | 19275 / 19273 | DTO match; same selected stock |
+| `/api/stocks/search?date=2026-10-14&q=삼성&limit=8` | Stored | 200 / 5.76 / 8.68 ms | 200 / 6.04 / 13.08 ms | 2947 / 2939 | DTO match; same query and bound |
+| `/api/candidate-evidence?date=2026-10-14&limit=8` | Stored | 200 / 5.56 / 13.82 ms | 200 / 5.57 / 9.89 ms | 49619 / 49591 | DTO match; stored order preserved |
+| `/api/observation-summary?date=2026-10-14` | Stored | 200 / 5.57 / 13.68 ms | 200 / 5.60 / 9.48 ms | 17301 / 17281 | DTO match |
+| `/api/observation/backtest?date=2026-10-14&limit=20&mention_threshold=2` | Stored | 200 / 5.46 / 9.43 ms | 200 / 4.79 / 9.57 ms | 10137 / 10137 | DTO match |
+| `/api/market` | Stored | 200 / 5.39 / 10.57 ms | 200 / 4.47 / 8.77 ms | 2587 / 2579 | DTO match; stored Toss snapshot |
+| `/api/intraday?date=2026-10-14` | Stored | 200 / 5.02 / 8.12 ms | 200 / 4.93 / 8.33 ms | 841 / 833 | DTO match |
+| `/api/flow-trend?date=2026-10-14&limit=5` | Stored | 200 / 5.84 / 9.10 ms | 200 / 5.67 / 10.53 ms | 10689 / 10681 | DTO match; stored Toss flow |
+| `/api/etf-trend?date=2026-10-14&limit=5` | Stored | 200 / 5.41 / 8.50 ms | 200 / 5.06 / 8.34 ms | 581 / 573 | DTO match; missing state preserved |
+| `/api/rotation-overlay?date=2026-10-14&limit=5&symbols=005930` | Stored | 200 / 4.76 / 7.98 ms | 200 / 4.83 / 10.23 ms | 2901 / 2850 | DTO match after omitting private Python image path |
+| `/api/category?date=2026-10-14&type=sector&display_name=반도체&public_category_id=sector%7C반도체%7Cfallback` | Stored | 200 / 5.67 / 8.64 ms | 200 / 4.78 / 9.67 ms | 543 / 535 | DTO match; exact encoded key |
+| `/api/category-trend?type=sector&display_name=__e2e_category_trend__&limit=999` | Stored | 200 / 5.41 / 7.99 ms | 200 / 5.64 / 8.32 ms | 429 / 421 | DTO match; descriptive trend |
 | `/api/toss-market-context?date={date}` | Live provider | Not run | Not run | Not run | Excluded from automated benchmark |
 | `/api/priority-indicators?date={date}` | Live provider | Not run | Not run | Not run | Excluded from automated benchmark |
 | `/api/toss-priority-quotes?date={date}` | Live provider | Not run | Not run | Not run | Excluded from automated benchmark |
@@ -67,7 +69,8 @@ If an entry gate fails, stop the performance run and record the failure; do not 
 
 | Run | Status | Host / build | Input snapshot | Routes / viewport | CPU / memory | p50 / p95 | SQLite / assembly / indicators / providers | WAL / concurrent writes | Stability / recovery | Decision |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| N100 preflight 2026-10-15 | Preflight only | Intel N100 / Windows 11 Pro; Node 22.21.1; active Next build `nA1XzbaTDmGe1P5hU8jIc` predates `c01bdc9` | DB 576,159,744 bytes; mtime 16:30:42 KST; read-only DB verify passed | `/health` 200; `/api/archive?limit=19` 200 miss then hit; smoke only | Not run | Not a benchmark | Read-only; schema 11/11; integrity ok; no pending migrations or reported consistency issues | WAL 0 bytes, SHM 32 KiB at preflight; no verified cache-miss read during Poll (15:00:07 GET was reported, cache state absent) | Poll last result 1 at 16:30; Task Scheduler history disabled; no recovery test | Acceptance pending |
+| N100 preflight 2026-10-15 | Preflight only | Intel N100 / Windows 11 Pro; Node 22.21.1; build ID before rebuild `nA1XzbaTDmGe1P5hU8jIc` | DB 576,159,744 bytes; mtime 16:30:42 KST; read-only DB verify passed | `/health` 200; `/api/archive?limit=19` 200 miss then hit; smoke only | Not run | Not a benchmark | Read-only; schema 11/11; integrity ok; no pending migrations or reported consistency issues | WAL 0 bytes, SHM 32 KiB; no verified cache-miss read during Poll (15:00:07 GET cache state absent) | Poll last result 1 at 16:30; Task Scheduler history disabled; no recovery test | Acceptance pending |
+| N100 route comparison 2026-10-15 17:08 KST | Scoped PASS; gate round trip excluded | Intel N100; Node 22.21.1; Python 3.12.14; Next build `eycpeDtIvb5OLXSWuyJyF` / HEAD `0675220` | DB 576,159,744 bytes; mtime 16:30:42 KST; Python used a temporary SQLite backup | 14 stored GETs; date 2026-10-14; 5 warm-ups + 30 samples; 005930 | Not sampled | See route matrix above | 14/14 DTO matched after `now` and private image-path normalization; no provider calls | No Poll overlap; source DB unchanged; WAL 0 bytes, SHM 32 KiB after run | Long-run and recovery not run | Route parity/timing baseline only; overall acceptance pending |
 
 For each route, keep separate entries for API p50/p95 and rendered-page/browser-paint observations. Include sample count, warm-ups, cache state, body size or page dimensions, and errors in the run notes. Keep raw DB rows, credentials, tokens, cookies, and environment values out of this document.
 
