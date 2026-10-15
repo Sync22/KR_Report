@@ -1,5 +1,6 @@
 import { isBusinessDate } from "@/domain/daily";
 import { getStockDetailSnapshot } from "@/server/stock-detail";
+import { cachedStoredJsonResponse } from "../../../../../../server/stored-response-cache.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,12 +28,12 @@ function invalidStockCode(): Response {
   });
 }
 
-export async function GET(_request: Request, { params }: RouteContext): Promise<Response> {
+export async function GET(request: Request, { params }: RouteContext): Promise<Response> {
   const { date, stock_code: stockCode } = await params;
   if (!isBusinessDate(date)) return invalidDate();
   if (!/^\d{6}$/.test(stockCode)) return invalidStockCode();
   try {
-    return Response.json(getStockDetailSnapshot(date, stockCode), { headers: { "cache-control": "no-store" } });
+    return cachedStoredJsonResponse(request, [], () => getStockDetailSnapshot(date, stockCode));
   } catch {
     return new Response("stock detail unavailable", {
       status: 503,

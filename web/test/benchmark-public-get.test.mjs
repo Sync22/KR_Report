@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildBenchmarkCases, loopbackOrigin, nearestRank } from "../scripts/benchmark-public-get.mjs";
+import { buildBenchmarkCases, countCacheStates, loopbackOrigin, nearestRank } from "../scripts/benchmark-public-get.mjs";
 
 test("benchmark matrix covers the 14 stored GET routes with shared date and stock inputs", () => {
   const cases = buildBenchmarkCases("2026-10-08", "005930");
@@ -18,6 +18,10 @@ test("nearestRank uses a stable nearest-rank percentile for the benchmark sample
   assert.equal(nearestRank([9, 1, 5, 3, 7], 0.5), 5);
   assert.equal(nearestRank([9, 1, 5, 3, 7], 0.95), 9);
   assert.throws(() => nearestRank([], 0.95), RangeError);
+});
+
+test("benchmark cache-state accounting distinguishes unreported services", () => {
+  assert.deepEqual(countCacheStates(["hit", "hit", "miss", null]), { hit: 2, miss: 1, unreported: 1 });
 });
 
 test("benchmark input accepts only valid dates, stock codes, and loopback origins", () => {

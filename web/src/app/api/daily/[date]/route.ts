@@ -2,6 +2,7 @@ import { isBusinessDate } from "@/domain/daily";
 import { getDailySnapshot } from "@/server/daily-snapshot";
 import { overlayDailyIntradayMarketTop } from "@/server/daily-market-commentary";
 import { fetchNaverQuoteSnapshot } from "@/server/priority-current-quotes";
+import { cachedStoredJsonResponse } from "../../../../server/stored-response-cache.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,9 +38,7 @@ export async function GET(request: Request, { params }: RouteContext): Promise<R
   const query = new URL(request.url).searchParams;
   if (query.size === 0) {
     try {
-      return Response.json(getDailySnapshot(date), {
-        headers: { "cache-control": "no-store" },
-      });
+      return cachedStoredJsonResponse(request, [], () => getDailySnapshot(date));
     } catch {
       return new Response("stored daily snapshot unavailable", {
         status: 500,

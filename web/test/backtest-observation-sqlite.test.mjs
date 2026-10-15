@@ -195,7 +195,7 @@ test("backtest route returns a generic failure and releases its read transaction
   try {
     process.env.STOCK_MONITOR_DB_PATH = databasePath;
     const route = await import("../src/app/api/observation/backtest/route.ts");
-    const response = route.GET(new Request(`http://next.local/api/observation/backtest?date=${BUSINESS_DATE}`));
+    const response = route.GET(new Request("http://next.local/api/observation/backtest?date=2026-05-06"));
     assert.equal(response.status, 503);
     assert.equal(await response.text(), "backtest observation unavailable");
     const writable = new DatabaseSync(databasePath);

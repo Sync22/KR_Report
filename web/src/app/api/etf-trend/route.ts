@@ -1,5 +1,6 @@
 import { isBusinessDate } from "@/domain/daily";
 import { getEtfTrendSnapshot, parseEtfTrendLimit } from "@/server/etf-trend";
+import { cachedStoredJsonResponse } from "../../../server/stored-response-cache.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,9 +22,8 @@ export function GET(request: Request): Response {
     });
   }
   try {
-    return Response.json(getEtfTrendSnapshot(businessDate, parseEtfTrendLimit(params.get("limit"))), {
-      headers: { "cache-control": "no-store" },
-    });
+    const limit = parseEtfTrendLimit(params.get("limit"));
+    return cachedStoredJsonResponse(request, [businessDate, limit], () => getEtfTrendSnapshot(businessDate, limit));
   } catch {
     return new Response("Stored ETF trend unavailable", {
       status: 503,

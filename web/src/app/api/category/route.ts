@@ -1,5 +1,6 @@
 import { isBusinessDate } from "../../../domain/daily.ts";
 import { getCategoryDetailSnapshot } from "../../../server/category-detail.ts";
+import { cachedStoredJsonResponse } from "../../../server/stored-response-cache.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,9 +55,9 @@ export function GET(request: Request): Response {
   }
 
   try {
-    return Response.json(getCategoryDetailSnapshot(
+    return cachedStoredJsonResponse(request, [businessDate, categoryType, categoryName, categoryDisplayName || null], () => getCategoryDetailSnapshot(
       businessDate, categoryType, categoryName, categoryDisplayName || null,
-    ), { headers: { "cache-control": "no-store" } });
+    ));
   } catch {
     return new Response("category detail unavailable", {
       status: 503,

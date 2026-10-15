@@ -1,4 +1,5 @@
 import { getMarketSnapshot } from "@/server/market-snapshot";
+import { cachedStoredJsonResponse } from "../../../server/stored-response-cache.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,9 +11,9 @@ function methodNotAllowed(): Response {
   });
 }
 
-export function GET(): Response {
+export function GET(request: Request): Response {
   try {
-    return Response.json(getMarketSnapshot(), { headers: { "cache-control": "no-store" } });
+    return cachedStoredJsonResponse(request, [], () => getMarketSnapshot());
   } catch {
     return new Response("Stored market snapshot unavailable", {
       status: 503,

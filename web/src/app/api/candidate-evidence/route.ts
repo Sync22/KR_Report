@@ -1,5 +1,6 @@
 import { isBusinessDate } from "../../../domain/daily.ts";
 import { getCandidateEvidenceSnapshot, parseCandidateEvidenceLimit } from "../../../server/candidate-evidence.ts";
+import { cachedStoredJsonResponse } from "../../../server/stored-response-cache.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,9 +24,8 @@ export function GET(request: Request): Response {
   const businessDate = query.get("date") ?? "";
   if (!isBusinessDate(businessDate)) return invalidDate();
   try {
-    return Response.json(getCandidateEvidenceSnapshot(businessDate, parseCandidateEvidenceLimit(query.get("limit"))), {
-      headers: { "cache-control": "no-store" },
-    });
+    const limit = parseCandidateEvidenceLimit(query.get("limit"));
+    return cachedStoredJsonResponse(request, [businessDate, limit], () => getCandidateEvidenceSnapshot(businessDate, limit));
   } catch {
     return new Response("candidate evidence unavailable", {
       status: 503,

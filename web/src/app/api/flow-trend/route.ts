@@ -1,5 +1,6 @@
 import { isBusinessDate } from "@/domain/daily";
 import { getFlowTrendSnapshot, parseFlowTrendLimit } from "@/server/flow-trend";
+import { cachedStoredJsonResponse } from "../../../server/stored-response-cache.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,9 +22,8 @@ export function GET(request: Request): Response {
     });
   }
   try {
-    return Response.json(getFlowTrendSnapshot(businessDate, parseFlowTrendLimit(params.get("limit"))), {
-      headers: { "cache-control": "no-store" },
-    });
+    const limit = parseFlowTrendLimit(params.get("limit"));
+    return cachedStoredJsonResponse(request, [businessDate, limit], () => getFlowTrendSnapshot(businessDate, limit));
   } catch {
     return new Response("Stored market flow unavailable", {
       status: 503,

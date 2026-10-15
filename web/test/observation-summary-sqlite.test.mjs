@@ -276,7 +276,7 @@ test("observation summary route returns a generic failure and releases its read 
     database.exec("CREATE TABLE unrelated (value TEXT)");
     database.close();
     process.env.STOCK_MONITOR_DB_PATH = databasePath;
-    const response = route.GET(new Request(`http://next.local/api/observation-summary?date=${OBSERVATION_DATE}`));
+    const response = route.GET(new Request("http://next.local/api/observation-summary?date=2026-10-13"));
     assert.equal(response.status, 503);
     assert.equal(await response.text(), "observation summary unavailable");
     const writable = new DatabaseSync(databasePath);

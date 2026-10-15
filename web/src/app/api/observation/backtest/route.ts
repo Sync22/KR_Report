@@ -1,5 +1,6 @@
 import { isBusinessDate } from "../../../../domain/daily.ts";
 import { getBacktestObservationSnapshot } from "../../../../server/backtest-observation.ts";
+import { cachedStoredJsonResponse } from "../../../../server/stored-response-cache.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,9 +40,7 @@ export function GET(request: Request): Response {
   const limit = queryInt(search, "limit", 20, 1, 100);
   const mentionThreshold = queryInt(search, "mention_threshold", 2, 1, 20);
   try {
-    return Response.json(getBacktestObservationSnapshot(businessDate, limit, mentionThreshold), {
-      headers: { "cache-control": "no-store" },
-    });
+    return cachedStoredJsonResponse(request, [businessDate, limit, mentionThreshold], () => getBacktestObservationSnapshot(businessDate, limit, mentionThreshold));
   } catch {
     return new Response("backtest observation unavailable", {
       status: 503,

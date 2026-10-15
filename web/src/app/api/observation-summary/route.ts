@@ -1,5 +1,6 @@
 import { isBusinessDate } from "../../../domain/daily.ts";
 import { getObservationSummarySnapshot } from "../../../server/observation-summary.ts";
+import { cachedStoredJsonResponse } from "../../../server/stored-response-cache.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,9 +23,7 @@ export function GET(request: Request): Response {
   const businessDate = new URL(request.url).searchParams.get("date") ?? "";
   if (!isBusinessDate(businessDate)) return invalidDate();
   try {
-    return Response.json(getObservationSummarySnapshot(businessDate), {
-      headers: { "cache-control": "no-store" },
-    });
+    return cachedStoredJsonResponse(request, [businessDate], () => getObservationSummarySnapshot(businessDate));
   } catch {
     return new Response("observation summary unavailable", {
       status: 503,

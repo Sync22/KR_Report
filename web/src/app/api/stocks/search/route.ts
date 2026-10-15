@@ -1,5 +1,6 @@
 import { isBusinessDate } from "@/domain/daily";
 import { getStockSearchSnapshot, parseStockSearchLimit } from "@/server/stock-search";
+import { cachedStoredJsonResponse } from "../../../../server/stored-response-cache.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,9 +22,9 @@ export function GET(request: Request): Response {
     });
   }
   try {
-    return Response.json(getStockSearchSnapshot(businessDate, params.get("q") ?? "", parseStockSearchLimit(params.get("limit"))), {
-      headers: { "cache-control": "no-store" },
-    });
+    const limit = parseStockSearchLimit(params.get("limit"));
+    const query = params.get("q") ?? "";
+    return cachedStoredJsonResponse(request, [businessDate, query.trim(), limit], () => getStockSearchSnapshot(businessDate, query, limit));
   } catch {
     return new Response("Stored stock search unavailable", {
       status: 503,

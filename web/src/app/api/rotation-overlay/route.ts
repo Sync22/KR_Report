@@ -1,5 +1,6 @@
 import { isBusinessDate } from "@/domain/daily";
 import { getRotationOverlaySnapshot, parseRotationOverlayLimit } from "@/server/rotation-overlay";
+import { cachedStoredJsonResponse } from "../../../server/stored-response-cache.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,9 +25,12 @@ export function GET(request: Request): Response {
   if (!isBusinessDate(businessDate)) return invalidDate();
 
   try {
-    const snapshot = getRotationOverlaySnapshot(businessDate, parseRotationOverlayLimit(query.get("limit")));
-    const { path: _localPath, ...image } = snapshot.image;
-    return Response.json({ ...snapshot, image }, { headers: { "cache-control": "no-store" } });
+    const limit = parseRotationOverlayLimit(query.get("limit"));
+    return cachedStoredJsonResponse(request, [businessDate, limit], () => {
+      const snapshot = getRotationOverlaySnapshot(businessDate, limit);
+      const { path: _localPath, ...image } = snapshot.image;
+      return { ...snapshot, image };
+    });
   } catch {
     return new Response("rotation data unavailable", {
       status: 503,

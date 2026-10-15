@@ -1,4 +1,5 @@
 import { getArchiveSnapshot, parseArchiveLimit } from "../../../server/archive.ts";
+import { cachedStoredJsonResponse } from "../../../server/stored-response-cache.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,7 +14,7 @@ function methodNotAllowed(): Response {
 export function GET(request: Request): Response {
   try {
     const limit = parseArchiveLimit(new URL(request.url).searchParams.get("limit"));
-    return Response.json(getArchiveSnapshot(limit), { headers: { "cache-control": "no-store" } });
+    return cachedStoredJsonResponse(request, [limit], () => getArchiveSnapshot(limit));
   } catch {
     return new Response("Stored archive unavailable", {
       status: 503,

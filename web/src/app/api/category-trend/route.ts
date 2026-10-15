@@ -3,6 +3,7 @@ import {
   getCategoryTrendSnapshot,
   parseCategoryTrendLimit,
 } from "../../../server/category-trend.ts";
+import { cachedStoredJsonResponse } from "../../../server/stored-response-cache.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,12 +49,12 @@ export function GET(request: Request): Response {
 
   try {
     const limit = parseCategoryTrendLimit(query.get("limit"));
-    const snapshot = publicCategory || requestedDisplayName
+    const displayLookup = Boolean(publicCategory || requestedDisplayName);
+    return cachedStoredJsonResponse(request, displayLookup
+      ? ["display", categoryType, displayName, limit, categoryName]
+      : ["key", categoryType, categoryName, limit], () => displayLookup
       ? getCategoryTrendSnapshot(categoryType, displayName, limit, categoryName)
-      : getCategoryKeyTrendSnapshot(categoryType, categoryName, limit);
-    return Response.json(snapshot, {
-      headers: { "cache-control": "no-store" },
-    });
+      : getCategoryKeyTrendSnapshot(categoryType, categoryName, limit));
   } catch {
     return new Response("category trend unavailable", {
       status: 503,

@@ -1,5 +1,6 @@
 import { isBusinessDate } from "@/domain/daily";
 import { getIntradaySnapshot } from "@/server/intraday";
+import { cachedStoredJsonResponse } from "../../../server/stored-response-cache.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +21,7 @@ export function GET(request: Request): Response {
     });
   }
   try {
-    return Response.json(getIntradaySnapshot(businessDate), { headers: { "cache-control": "no-store" } });
+    return cachedStoredJsonResponse(request, [businessDate], () => getIntradaySnapshot(businessDate));
   } catch {
     return new Response("Stored intraday summary unavailable", {
       status: 503,
