@@ -37,6 +37,7 @@
 3. 작고 단순한 수정이 아니면 조사/구현/리뷰를 분리한다.
 4. 수정 전에는 성공 기준과 검증 명령을 짧게 정한다.
 5. 수정 후에는 확인된 사실과 아직 추정인 내용을 섞지 않는다.
+6. UI 변경 전에는 프로젝트 루트 `DESIGN.md`를 읽는다. 디자인 기준은 시각 표현만 정하며 데이터·API·권한·표면 경계 계약을 바꾸지 않는다.
 
 ## Project Purpose
 
@@ -56,11 +57,11 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
 ## Non-Negotiable Product Constraints
 
 - `admin-gui`는 operator-only, `web-view`는 friend-facing GET-only surface다.
-- public numeric score/grade, generic buy/sell recommendation, guaranteed price, broker execution은 금지다. Main Top2의 좁은 사용자 정의 가격·지표 조건 표시는 예외이며, 전체 계약은 [data-governance.md](docs/codex/data-governance.md#main-top2-technical-indicator-projection)가 소유한다.
+- public `web-view`의 numeric score/grade, generic buy/sell recommendation, guaranteed price, broker execution은 금지다. Main Top2의 좁은 사용자 정의 가격·지표 조건은 [Main Top2 contract](docs/codex/data-governance.md#main-top2-technical-indicator-projection)를 따른다. 사용자가 승인한 별도 Chart Lab은 local loopback 전용 기능 테스트면이며, 전략·패턴·감시 계약은 [Chart Lab contract](docs/codex/data-governance.md#chart-lab-local-test-surface)이 소유한다. Chart Lab 결과는 public Main DTO나 후보 순서에 들어가지 않는다.
 - `web-view` 기본 로드는 stored-data 기반이어야 한다.
 - KRX 저장 행은 과거 분석/복기 전용으로 유지하며, 신규 웹뷰·스케줄러 시장 기준값은 Toss 20:00 저장 스냅샷을 사용한다.
 - `.env` raw login 확인이 가능하면 browser login automation보다 우선한다.
-- 외부 실험 도구/라이브러리는 production runtime, scheduler task, public `web-view` 기능으로 바로 연결하지 않는다. Stock-Newbby 지표 기준을 참고하는 public 예외는 data-governance.md의 Main Top2 계약만 허용한다.
+- 외부 실험 도구/라이브러리는 production runtime, scheduler task, public `web-view` 기능으로 바로 연결하지 않는다. 사용자가 승인한 Chart Lab은 Stock-Newbby의 기능을 별도 local-only 경로로 이식하되 [독립 데이터 계약](docs/codex/data-governance.md#chart-lab-local-test-surface)을 따른다. 기존 운영 SQLite·scheduler·Telegram·브로커 계정·주문 경로는 연결하지 않는다.
 
 ## Current Operating State
 
@@ -101,7 +102,7 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
 - `chart-assistant` (Stock-Newbby)
   - global Codex skill로 설치됨. 사용자가 요청한 경우 on-demand 차트/기술 근거 검토에 사용한다
   - 출력에 source, 기준 시각, provisional/confirmation 상태를 보존하고 수익성·매매 지시로 해석하지 않는다
-  - Stock-Newbby의 별도 cache/provider는 main 후보 순서, Stock Monitor DB, scheduler, Telegram에 연결하지 않는다. public `web-view`에서는 아래 명시적 Main Top2 버튼만 예외로 허용한다
+  - Stock-Newbby의 별도 cache/provider는 Main 후보 순서, 운영 Stock Monitor SQLite, scheduler, Telegram에 연결하지 않는다. Chart Lab 감시 상태는 별도 local state 파일만 사용한다.
   - 로컬 서버 시작, 실시간 source 요청, monitor start/pause는 사용자 요청이 있을 때만 수행한다
 - `operator-review`
   - `admin-gui`와 public `web-view`에 넣지 않는 operator 전용 근거 검토면이며, 별도 GET-only 서버로 `127.0.0.1`에만 바인딩한다
@@ -109,7 +110,7 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
   - Stock-Newbby 차트 링크는 operator가 직접 클릭할 때만 사용한다. Newbby 서버를 자동 시작하지 않는다. public `web-view`의 별도 Main 지표 버튼 계약은 operator-review 기능으로 취급하지 않는다
 - public `web-view` Main
   - 저장 데이터 기반 후보·근거·누락 정보를 기본으로 유지한다. Toss 현재가/수급과 일봉 차트는 사용자가 요청한 참고 조회로 분리하고, 조회가 후보 순서나 저장값을 바꾸지 않게 한다.
-  - 숫자 점수·등급·일반 매매 신호·추천·주문 기능을 노출하지 않는다. Main Top2의 별도 사용자 정의 가격·지표 조건 표시는 유일한 차트 파생 public 예외다.
+  - 숫자 점수·등급·일반 매매 신호·추천·주문 기능을 노출하지 않는다. Main Top2의 가격·지표 조건 표시는 별도 사용자 정의 계약을 유지한다. Chart Lab의 실험적 전략 검토는 public Main과 데이터 계약을 공유하지 않는다.
   - Main Top2의 전체 source/API, 계산, schemaVersion 1 allowlist, 조건식·상태, provenance, 결측/오류 및 부작용 계약은 [data governance](docs/codex/data-governance.md#main-top2-technical-indicator-projection)가 소유한다. 사용자 조작과 표시 계약은 [surface guide](docs/codex/surface-guide.md#main-top2-technical-indicator-block)를 따른다. 두 계약을 다른 문서에 복제하지 말고 링크한다.
 
 ## CodeGraph

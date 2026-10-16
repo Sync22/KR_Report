@@ -15,6 +15,7 @@ export type TossOpenApiConfig = {
 type TossPayload = Record<string, unknown>;
 type TossToken = { accessToken: string; expiresAt: number };
 export type TossReadonlyResponse = { result: unknown; rateLimit: Record<string, string> };
+export type TossKrxMarketDay = { date: string; regularMarket: { startTime: string; endTime: string } | null };
 type Market = "KOSPI" | "KOSDAQ";
 
 const MARKET_INVESTOR_BREAKDOWN_FIELDS = [
@@ -367,6 +368,56 @@ export class TossOpenApiClient {
         !hasScalarValues(detail)) throw new TossOpenApiError("Toss Korean market metadata had an unexpected shape.");
     }
     return response;
+  }
+
+  async getKrxMarketCalendar(date: string): Promise<{ result: TossKrxMarketDay[]; rateLimit: Record<string, string> }> {
+    if (!isIsoDate(date)) throw new TossOpenApiError("Toss KRX calendar request is outside the fixed read-only profile.");
+    const response = await this.getMarketContextResult("KRX market calendar", "/api/v1/market-calendar/KR", { date });
+    if (!isRecord(response.result)) {
+      throw new TossOpenApiError("Toss KRX calendar response had an unexpected shape.", undefined, undefined, undefined, "invalid_provider_response");
+    }
+    const days: TossKrxMarketDay[] = [];
+    for (const role of ["today", "previousBusinessDay", "nextBusinessDay"] as const) {
+      const day = response.result[role];
+      if (!isRecord(day) || typeof day.date !== "string" || !isIsoDate(day.date) || !Object.hasOwn(day, "integrated")) {
+        throw new TossOpenApiError("Toss KRX calendar day had an unexpected shape.", undefined, undefined, undefined, "invalid_provider_response");
+      }
+      const integrated = day.integrated;
+      let regularMarket: TossKrxMarketDay["regularMarket"] = null;
+      if (integrated !== null) {
+        if (!isRecord(integrated) || !hasOnlyKeys(integrated, ["preMarket", "regularMarket", "afterMarket"]) || !Object.hasOwn(integrated, "regularMarket")) {
+          throw new TossOpenApiError("Toss KRX session response had an unexpected shape.", undefined, undefined, undefined, "invalid_provider_response");
+        }
+        const regular = integrated.regularMarket;
+        if (regular !== null) {
+          if (!isRecord(regular) || !hasOnlyKeys(regular, ["startTime", "endTime", "singlePriceAuctionStartTime"]) ||
+            typeof regular.startTime !== "string" || typeof regular.endTime !== "string") {
+            throw new TossOpenApiError("Toss KRX session interval shape was invalid.", undefined, undefined, undefined, "invalid_provider_response");
+          }
+          if (!isOffsetDateTime(regular.startTime)) {
+            throw new TossOpenApiError("Toss KRX session start time format was invalid.", undefined, undefined, undefined, "invalid_provider_response");
+          }
+          if (!isOffsetDateTime(regular.endTime)) {
+            throw new TossOpenApiError("Toss KRX session end time format was invalid.", undefined, undefined, undefined, "invalid_provider_response");
+          }
+          if (Date.parse(regular.startTime) >= Date.parse(regular.endTime)) {
+            throw new TossOpenApiError("Toss KRX session interval order was invalid.", undefined, undefined, undefined, "invalid_provider_response");
+          }
+          regularMarket = { startTime: regular.startTime, endTime: regular.endTime };
+        }
+      }
+      if (days.some((item) => item.date === day.date)) {
+        throw new TossOpenApiError("Toss KRX calendar included duplicate dates.", undefined, undefined, undefined, "invalid_provider_response");
+      }
+      days.push({ date: day.date, regularMarket });
+    }
+    const today = days.find((day) => day.date === date);
+    const previous = days.find((day) => day.date < date);
+    const next = days.find((day) => day.date > date);
+    if (!today || !previous || !next) {
+      throw new TossOpenApiError("Toss KRX calendar order was invalid.", undefined, undefined, undefined, "invalid_provider_response");
+    }
+    return { result: days.sort((a, b) => a.date.localeCompare(b.date)), rateLimit: response.rateLimit };
   }
 
   private async getMarketContextResult(action: string, path: string, params: Record<string, string>): Promise<TossReadonlyResponse> {

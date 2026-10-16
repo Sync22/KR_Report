@@ -6,7 +6,9 @@ import { DailyTabPanels } from "@/components/client/daily-tabs";
 import MainPanel from "@/components/server/daily-main-panel";
 import CandidatePanel from "@/components/server/daily-candidates-panel";
 import StockPanel from "@/components/server/daily-stocks-panel";
+import ChartExplorerPanel from "@/components/server/chart-explorer-panel";
 import { isBusinessDate } from "@/domain/daily";
+import { isChartExplorerTimeframe } from "@/domain/chart-explorer";
 import { getDailyTabWorkspace, type DailyTabWorkspace } from "@/server/daily-tab-workspace";
 
 export type DailyTabPageProps = Readonly<{
@@ -16,6 +18,8 @@ export type DailyTabPageProps = Readonly<{
     q?: string | string[];
     include_single?: string | string[];
     limit?: string | string[];
+    symbol?: string | string[];
+    timeframe?: string | string[];
   }>;
 }>;
 
@@ -27,14 +31,18 @@ export default async function DailyTabPage({ params, searchParams }: DailyTabPag
   try {
     workspace = getDailyTabWorkspace(date, selectedStockCode);
   } catch {
-    workspace = { daily: null, candidates: null, stocks: null, flow: null, selectedStockDetail: null };
+    workspace = { daily: null, candidates: null, stocks: null, selectedStockDetail: null };
   }
   const panelParams = Promise.resolve({ date });
   const panelQuery = Promise.resolve(query);
+  const chartSymbol = typeof query.symbol === "string" ? query.symbol : Array.isArray(query.symbol) ? query.symbol[0] ?? "" : "";
+  const initialSymbol = chartSymbol || selectedStockCode || workspace.candidates?.rows[0]?.stock_code || "";
+  const chartTimeframe = isChartExplorerTimeframe(query.timeframe) ? query.timeframe : "1d";
 
   return <DailyTabPanels
     main={<MainPanel params={panelParams} workspace={workspace} />}
     watch={<CandidatePanel params={panelParams} searchParams={panelQuery} workspace={workspace} />}
     stock={<StockPanel params={panelParams} searchParams={panelQuery} workspace={workspace} />}
+    chart={<ChartExplorerPanel businessDate={date} initialSymbol={initialSymbol} initialTimeframe={chartTimeframe} />}
   />;
 }

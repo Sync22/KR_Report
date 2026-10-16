@@ -1,5 +1,10 @@
 import "server-only";
 import { createHash } from "node:crypto";
+import type {
+  ChartExplorerChartBar,
+  ChartExplorerSnapshot,
+  ChartExplorerTimeframe,
+} from "../domain/chart-explorer.ts";
 
 const CALCULATION_VERSION = "stock-monitor-indicator-v2";
 const TECHNICAL_VERSION = "technical-v4";
@@ -321,7 +326,7 @@ function collectMeasurements(item: ValueRecord, family: string): ValueRecord[] {
   return output;
 }
 
-function flagCandidates(bars: ReadonlyArray<Bar>, atr: NullableSeries, highs: Array<[number, number]>, lows: Array<[number, number]>): ValueRecord[] {
+function flagCandidates(bars: ReadonlyArray<Bar>, atr: NullableSeries, highs: Array<[number, number]>, lows: Array<[number, number]>, timeframe = "D"): ValueRecord[] {
   const end = bars.length - 1;
   if (end < 20) return [];
   const found: ValueRecord[] = [];
@@ -357,7 +362,7 @@ function flagCandidates(bars: ReadonlyArray<Bar>, atr: NullableSeries, highs: Ar
     const poleVolume = pythonFloatSum(bars.slice(pole, start).map(row => row.volume)) / length;
     const adjustmentVolume = pythonFloatSum(bars.slice(start, end + 1).map(row => row.volume)) / (end - start + 1);
     found.push({
-      type: sign === 1 ? "bull-flag" : "bear-flag", status: "forming", timeframe: "D", barTime: bars[end].time,
+      type: sign === 1 ? "bull-flag" : "bear-flag", status: "forming", timeframe, barTime: bars[end].time,
       adjustmentStartTime: bars[start].time, poleStartTime: bars[pole].time, poleEndTime: bars[start - 1].time,
       poleStartPrice: bars[pole].close, poleEndPrice: bars[start - 1].close, poleMove: move,
       poleAtr: atr[pole - 1], upper, lower, pivotHighTimes: hp.map(([index]) => bars[index].time),
@@ -379,7 +384,7 @@ function flagCandidates(bars: ReadonlyArray<Bar>, atr: NullableSeries, highs: Ar
   });
 }
 
-function triangleCandidate(bars: ReadonlyArray<Bar>, atr: NullableSeries, highs: Array<[number, number]>, lows: Array<[number, number]>): ValueRecord | null {
+function triangleCandidate(bars: ReadonlyArray<Bar>, atr: NullableSeries, highs: Array<[number, number]>, lows: Array<[number, number]>, timeframe = "D"): ValueRecord | null {
   const end = bars.length - 1;
   if (end < 20 || atr[end - 1] === null || (atr[end - 1] as number) <= 0) return null;
   const a = atr[end - 1] as number;
@@ -411,7 +416,7 @@ function triangleCandidate(bars: ReadonlyArray<Bar>, atr: NullableSeries, highs:
     if (contained < 0.7 || outsideRun > 2) continue;
     const apexPrice = line(upper, apex);
     return {
-      type: kind, status: "forming", timeframe: "D", barTime: bars[end].time, structureStartTime: bars[start].time,
+      type: kind, status: "forming", timeframe, barTime: bars[end].time, structureStartTime: bars[start].time,
       upper, lower, contactCount: hp.length + lp.length, containment: contained, convergenceRatio: lastWidth / width,
       apexRemainingBars: apex - end, pivotHighTimes: hp.map(([index]) => bars[index].time),
       pivotLowTimes: lp.map(([index]) => bars[index].time),
@@ -429,7 +434,7 @@ function triangleCandidate(bars: ReadonlyArray<Bar>, atr: NullableSeries, highs:
   return null;
 }
 
-function structures(bars: ReadonlyArray<Bar>, atr: NullableSeries): { items: ValueRecord[]; status: ValueRecord } {
+function structures(bars: ReadonlyArray<Bar>, atr: NullableSeries, timeframe = "D"): { items: ValueRecord[]; status: ValueRecord } {
   const structureStatus: ValueRecord = { horizontal: "insufficient-data", flag: "insufficient-data", triangle: "insufficient-data" };
   if (!bars.length) return { items: [], status: structureStatus };
   const items: ValueRecord[] = [];
@@ -442,21 +447,21 @@ function structures(bars: ReadonlyArray<Bar>, atr: NullableSeries): { items: Val
     const relativeVolume = previousVolumes > 0 ? bars[end].volume / (previousVolumes / 20) : null;
     for (const [kind, boundary] of [["prior-20-high", previousHigh], ["prior-10-low", previousLow]] as const) {
       const item: ValueRecord = {
-        type: kind, status: "forming", timeframe: "D", barTime: bars[end].time, boundary, close: bars[end].close,
+        type: kind, status: "forming", timeframe, barTime: bars[end].time, boundary, close: bars[end].close,
         atr14Previous: previousAtr, rvol20Previous: relativeVolume,
         volumeEvidence: relativeVolume !== null && relativeVolume >= 1.2 ? "volume-confirmed" : "volume-insufficient",
       };
-      items.push({ family: "horizontal", status: "forming", timeframe: "D", barTime: bars[end].time, measurements: collectMeasurements(item, "horizontal") });
+      items.push({ family: "horizontal", status: "forming", timeframe, barTime: bars[end].time, measurements: collectMeasurements(item, "horizontal") });
     }
     structureStatus.horizontal = "ready";
   } else if (bars.length >= 21) structureStatus.horizontal = "partial-data";
 
   const [highs, lows] = pivots(bars, end);
-  const flags = bars.length >= 21 ? flagCandidates(bars, atr, highs, lows) : [];
-  for (const item of flags) items.push({ family: "flag", status: "forming", timeframe: "D", barTime: item.barTime, measurements: collectMeasurements(item, "flag") });
+  const flags = bars.length >= 21 ? flagCandidates(bars, atr, highs, lows, timeframe) : [];
+  for (const item of flags) items.push({ family: "flag", status: "forming", timeframe, barTime: item.barTime, measurements: collectMeasurements(item, "flag") });
   structureStatus.flag = flags.length ? "ready" : bars.length >= 31 ? "no-geometry" : "insufficient-data";
-  const triangle = bars.length >= 21 ? triangleCandidate(bars, atr, highs, lows) : null;
-  if (triangle) items.push({ family: "triangle", status: "forming", timeframe: "D", barTime: triangle.barTime, measurements: collectMeasurements(triangle, "triangle") });
+  const triangle = bars.length >= 21 ? triangleCandidate(bars, atr, highs, lows, timeframe) : null;
+  if (triangle) items.push({ family: "triangle", status: "forming", timeframe, barTime: triangle.barTime, measurements: collectMeasurements(triangle, "triangle") });
   structureStatus.triangle = triangle ? "ready" : bars.length >= 31 ? "no-geometry" : "insufficient-data";
   return { items, status: structureStatus };
 }
@@ -495,7 +500,7 @@ function revisionHash(bars: ReadonlyArray<Bar>): string {
   return `sha256:${createHash("sha256").update(serialized, "utf8").digest("hex")}`;
 }
 
-function buildSnapshot(input: PriorityIndicatorInput, bars: ReadonlyArray<Bar>): ValueRecord {
+function buildSnapshot(input: PriorityIndicatorInput, bars: ReadonlyArray<Bar>, structureTimeframe = "D"): ValueRecord {
   const closes = bars.map((row) => row.close);
   const volumes = bars.map((row) => row.volume);
   const moving: ValueRecord = {};
@@ -529,7 +534,7 @@ function buildSnapshot(input: PriorityIndicatorInput, bars: ReadonlyArray<Bar>):
   const obv = obvValues.at(-1) ?? null;
   const delta5 = obvValues.length >= 6 ? obvValues.at(-1)! - obvValues.at(-6)! : null;
   const profile = volumeProfile(bars);
-  const structure = structures(bars, atrSeries(bars));
+  const structure = structures(bars, atrSeries(bars), structureTimeframe);
   const last = bars.at(-1);
   const price: ValueRecord = Object.fromEntries(["open", "high", "low", "close", "volume"].map((key) => [key, last?.[key as keyof Bar] ?? null]));
   const macdObject = { macd: macdLine, signal: signalLine, histogram };
@@ -580,6 +585,98 @@ function buildSnapshot(input: PriorityIndicatorInput, bars: ReadonlyArray<Bar>):
     },
     structures: structure.items,
     structureStatus: structure.status,
+  };
+}
+
+function validateChartExplorerBars(candles: ReadonlyArray<ValueRecord>, requestedAsOf: string, sourceTimezone: string): Bar[] {
+  if (candles.length > 10_000) throw new TypeError("chart-history-exceeds-limit");
+  const dateFormatter = new Intl.DateTimeFormat("en-CA", { timeZone: sourceTimezone, year: "numeric", month: "2-digit", day: "2-digit" });
+  const seen = new Set<string>();
+  const selected: Bar[] = [];
+  for (const raw of candles) {
+    const stamp = raw.time;
+    if (typeof stamp !== "string" || (Object.keys(raw).some((key) => !["time", "open", "high", "low", "close", "volume"].includes(key))) ||
+      ["time", "open", "high", "low", "close", "volume"].some((key) => !Object.hasOwn(raw, key))) {
+      throw new TypeError("invalid-chart-bar-shape");
+    }
+    const daily = isDailyDate(stamp);
+    const parsedTime = daily ? Date.parse(`${stamp}T00:00:00Z`) :
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(stamp) && dateIsValid(stamp.slice(0, 10)) ? Date.parse(stamp) : NaN;
+    if (!daily && Number.isFinite(parsedTime) && new Date(parsedTime).toISOString() !== stamp) throw new TypeError("invalid-chart-bar-time");
+    if (!Number.isFinite(parsedTime) || (daily && parsedTime > Date.parse(`${requestedAsOf}T00:00:00Z`))) {
+      if (daily && stamp > requestedAsOf) continue;
+      throw new TypeError("invalid-chart-bar-time");
+    }
+    if (!daily) {
+      const parts = dateFormatter.formatToParts(new Date(parsedTime));
+      const localDate = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+      if (`${localDate.year}-${localDate.month}-${localDate.day}` > requestedAsOf) continue;
+    }
+    if (seen.has(stamp)) throw new TypeError("duplicate-chart-bar-time");
+    const row = { time: stamp } as Bar;
+    for (const key of ["open", "high", "low", "close", "volume"] as const) {
+      const parsed = number(raw[key]);
+      if (parsed === null || (parsed <= 0 && key !== "volume") || (key === "volume" && parsed < 0)) {
+        throw new TypeError("invalid-chart-ohlcv");
+      }
+      row[key] = parsed;
+    }
+    if (row.high < Math.max(row.open, row.low, row.close) || row.low > Math.min(row.open, row.high, row.close)) {
+      throw new TypeError("invalid-chart-ohlcv");
+    }
+    seen.add(stamp);
+    selected.push(row);
+  }
+  return selected.sort((left, right) => left.time.localeCompare(right.time));
+}
+
+function isDailyDate(value: string): boolean { return dateIsValid(value); }
+
+export function buildChartExplorerProjection(input: {
+  requestedAsOf: string;
+  symbol: string;
+  timeframe: ChartExplorerTimeframe;
+  candles: ReadonlyArray<ValueRecord>;
+  source: string;
+  sourceFetchedAt: string;
+  sourceTimezone: string;
+}): {
+  snapshot: ChartExplorerSnapshot;
+  chart: { bars: ChartExplorerChartBar[] };
+} {
+  if (!dateIsValid(input.requestedAsOf)) throw new TypeError("requested-as-of-must-be-YYYY-MM-DD");
+  if (typeof input.symbol !== "string" || !input.symbol || typeof input.source !== "string" || !input.source ||
+    typeof input.sourceFetchedAt !== "string" || !Number.isFinite(Date.parse(input.sourceFetchedAt)) || typeof input.sourceTimezone !== "string" || !input.sourceTimezone) {
+    throw new TypeError("invalid-chart-provenance");
+  }
+  const bars = validateChartExplorerBars(input.candles, input.requestedAsOf, input.sourceTimezone);
+  if (!bars.length) throw new TypeError("no-chart-bars");
+
+  const internal: PriorityIndicatorInput = {
+    code: input.symbol,
+    symbol: input.symbol,
+    market: "unknown",
+    requestedAsOf: input.requestedAsOf,
+    candles: bars,
+    source: input.source,
+    sourceFetchedAt: input.sourceFetchedAt,
+    barStatus: "unknown",
+    confirmedPolicy: "Provider does not identify candle finality; status is not inferred.",
+  };
+  const calculated = buildSnapshot(internal, bars, input.timeframe);
+  const fullChart = chartData(bars).bars as ChartExplorerChartBar[];
+  const chartBars = fullChart.slice(-380);
+  const snapshot = {
+    barAsOf: bars.at(-1)?.time ?? null,
+    timeframe: input.timeframe,
+    price: calculated.price,
+    indicators: calculated.indicators,
+    structures: Array.isArray(calculated.structures) ? calculated.structures : [],
+    structureStatus: calculated.structureStatus,
+  } as ChartExplorerSnapshot;
+  return {
+    snapshot,
+    chart: { bars: chartBars },
   };
 }
 

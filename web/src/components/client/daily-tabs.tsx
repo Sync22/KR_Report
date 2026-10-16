@@ -37,11 +37,12 @@ export function useDailyTabs(): DailyTabsContextValue {
   return context;
 }
 
-export function DailyTabPanels({ main, watch, stock }: Readonly<{ main: ReactNode; watch: ReactNode; stock: ReactNode }>) {
+export function DailyTabPanels({ main, watch, stock, chart }: Readonly<{ main: ReactNode; watch: ReactNode; stock: ReactNode; chart: ReactNode }>) {
   const { activeTab } = useDailyTabs();
   return <div className="daily-tab-panels">
     <div id="daily-main-panel" role="tabpanel" aria-labelledby="daily-main-tab" hidden={activeTab !== "main"}>{main}</div>
     <div id="daily-watch-panel" role="tabpanel" aria-labelledby="daily-watch-tab" hidden={activeTab !== "watch"}>{watch}</div>
     <div id="daily-stock-panel" role="tabpanel" aria-labelledby="daily-stock-tab" hidden={activeTab !== "stock"}>{stock}</div>
+    <div id="daily-chart-panel" role="tabpanel" aria-labelledby="daily-chart-tab" hidden={activeTab !== "chart"}>{chart}</div>
   </div>;
 }

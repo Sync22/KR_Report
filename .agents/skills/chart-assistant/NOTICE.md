@@ -1,0 +1,1 @@
+Workflow reference: `gmparkingplace/Stock-Newbby`, `skills/chart-assistant/SKILL.md` and `skills/chart-assistant/references/chat-data.md`, Apache-2.0. This Stock Monitor adaptation uses a new helper for the local read-only Chart Explorer endpoint; no upstream source code was copied.

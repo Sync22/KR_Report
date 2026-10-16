@@ -179,8 +179,11 @@ function StockSearch({ businessDate }: Readonly<{ businessDate: string }>) {
 
   return (
     <form className="public-search" action={`/daily/${businessDate}/stocks`} method="get" role="search">
+      <div className="public-search-meta">
+        <label className="public-search-label" htmlFor="public-stock-search">저장 종목 검색</label>
+        <p className="public-search-status" aria-live="polite">{status}</p>
+      </div>
       <div className="public-search-box">
-        <label className="sr-only" htmlFor="public-stock-search">저장 종목 검색</label>
         <input
           id="public-stock-search"
           name="q"
@@ -217,7 +220,6 @@ function StockSearch({ businessDate }: Readonly<{ businessDate: string }>) {
           )) : <p className="public-search-empty" role="status">{status}</p>}
         </div> : null}
       </div>
-      <p className="public-search-status" aria-live="polite">{status}</p>
     </form>
   );
 }
@@ -237,21 +239,30 @@ export default function PublicHeader({ businessDate }: Readonly<{ businessDate: 
 
   return (
     <header className="public-header">
-      <div className="public-brand-column">
-        <div className="public-brand-row">
+      <div className="public-header-top">
+        <div className="public-brand-column">
           <Link className="public-brand" href={`${datePath}/main`} prefetch={false}>KR-Stock</Link>
+          <p className="public-header-subtitle">저장된 리서치 · <time dateTime={businessDate}>{businessDate}</time></p>
+        </div>
+        <nav className="public-section-nav" aria-label="참고 화면">
+          <Link href="/archive" prefetch={false}>아카이브</Link>
+          <Link href="/market" prefetch={false}>저장 시장</Link>
+        </nav>
+      </div>
+      <div className="public-header-tools">
+        <div className="public-date-card">
+          <span className="public-control-label">기준일</span>
           <div className="public-date-picker">
+            <time dateTime={businessDate}>{businessDate}</time>
             <DateCalendar businessDate={businessDate} />
           </div>
         </div>
-      <p className="public-header-subtitle">일일 리포트 (<time>{businessDate}</time>) · <Link href="/archive" prefetch={false}>아카이브</Link></p>
-      </div>
-      <div className="public-header-tools">
         <StockSearch businessDate={businessDate} />
-        <nav className="top-tabs" aria-label="상단 탭">
+        <nav className="top-tabs" aria-label="일일 화면">
           <Link id="daily-main-tab" className={`top-tab${activeTab === "main" ? " active" : ""}`} href={dailyTabHref(businessDate, "main", search, pathname)} prefetch={false} aria-current={activeTab === "main" ? "page" : undefined} onClick={(event) => handleTabClick(event, "main")}>메인</Link>
           <Link id="daily-watch-tab" className={`top-tab${activeTab === "watch" ? " active" : ""}`} href={dailyTabHref(businessDate, "watch", search, pathname)} prefetch={false} aria-current={activeTab === "watch" ? "page" : undefined} onClick={(event) => handleTabClick(event, "watch")}>관찰</Link>
           <Link id="daily-stock-tab" className={`top-tab${activeTab === "stock" ? " active" : ""}`} href={dailyTabHref(businessDate, "stock", search, pathname)} prefetch={false} aria-current={activeTab === "stock" ? "page" : undefined} onClick={(event) => handleTabClick(event, "stock")}>종목</Link>
+          <Link id="daily-chart-tab" className={`top-tab${activeTab === "chart" ? " active" : ""}`} href={dailyTabHref(businessDate, "chart", search, pathname)} prefetch={false} aria-current={activeTab === "chart" ? "page" : undefined} onClick={(event) => handleTabClick(event, "chart")}>차트</Link>
         </nav>
       </div>
     </header>

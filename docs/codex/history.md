@@ -9,6 +9,7 @@ Historical restore, web-view hardening, and documentation reorganization records
 - Docs Role Reorganization Review - 2026-05-17
 - Docs Role Reorganization Review Prompt
 - Main Web-View Layout and Top2 Contract Reconciliation - 2026-10-10
+- Chart Lab Stock-Newbby Feature Port - 2026-10-16
 
 <!-- Merged from: docs/codex/history.md -->
 ## Mini PC Restore Change Log - 2026-05-16
@@ -823,3 +824,12 @@ operating-guide.md, operating-guide.md, operating-guide.md, documentation-index.
 - Main Top2's full Toss, indicator, condition, schemaVersion 1, provenance, and side-effect contract is consolidated in [Data governance](data-governance.md#main-top2-technical-indicator-projection). [Surface guide](surface-guide.md#main-top2-technical-indicator-block) now owns only controls and presentation; the Toss lab keeps setup and provider notes.
 - The Main date/evidence/flow race and stale-cache status fix was committed and pushed as `6557f398`; the full regression suite passed 1,256 tests. This confirms local code/UI behavior, not current mini-PC or production host state.
 - During the earlier 2026-09-29 read-only review, SQLite was opened with its default read/write mode and the DB modification time changed for an unknown reason. Future reviews must use a read-only SQLite URI and must not infer that the contents were unchanged from method names alone.
+
+## Chart Lab Stock-Newbby Feature Port (2026-10-16)
+
+- The user authorized Stock-Newbby chart-review features in a separate local-only Chart Lab. This changed the earlier documentation rule that limited Chart Explorer to neutral indicators and geometry; the friend-facing `web-view` and Main Top2 contracts remain separate.
+- The development port adds A/B/C/F rule review, daily R/H low-structure review, SMA/EMA/WMA/Bollinger/Donchian overlays, flag/triangle/support-resistance history, a loopback-only local monitor with per-user JSON state, and Codex conversation helpers. It includes the upstream Apache-2.0 license notice.
+- The local analysis route reuses the fixed chart provider cache and supplies up to 800 calculation bars; the chart shows at most 380. Provider finality remains unknown, historical review uses only the prefix through its selected bar, and the monitor remains stopped unless the user starts it.
+- Stock 4-hour R/H remains explicitly unsupported until the input carries the upstream exchange-calendar `missingBarsBefore` continuity metadata. The 4-hour chart and pattern geometry are available when source bars are returned.
+- Development verification at the time of this note: web tests 141/141, typecheck, build, and Codex helper tests passed. Playwright checked Samsung Electronics and SK Hynix daily data, pattern navigation, overlay toggles, and the 390 px layout. This is not N100 operating-PC verification and not a production cutover.
+- The monitor was not started against live providers, no operating-DB before/after metadata check was run, and no changes were committed or pushed. Recheck the current workspace and 3010 status before treating this as a deployment record.

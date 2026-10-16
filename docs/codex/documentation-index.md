@@ -23,11 +23,11 @@ This is the documentation skeleton. Read this file first, then open only the bra
 ## Rules
 
 - `admin-gui` is operator-only; `web-view` is public-safe and GET-only.
-- No public numeric score/grade, generic buy/sell recommendation, or broker execution. The complete Main Top2 source, indicator, condition, schema, and provenance contract is owned by [Data governance](data-governance.md#main-top2-technical-indicator-projection); [Surface guide](surface-guide.md#main-top2-technical-indicator-block) owns the user-visible controls and presentation.
+- No public numeric score/grade, generic buy/sell recommendation, or broker execution. Main Top2's separate price-condition contract is owned by [Data governance](data-governance.md#main-top2-technical-indicator-projection). The user-authorized Chart Lab is a local-only experimental surface, documented separately in [Data governance](data-governance.md#chart-lab-local-test-surface) and [Surface guide](surface-guide.md#chart-lab-local-only-test-surface); its strategy/monitor fields do not become public web-view data.
 - Keep raw/source, parsed/storage, aggregate, and display values separate.
 - Web-view market, ETF, and flow projections use the stored Toss 20:00 close snapshot. Existing KRX rows are historical references only and no longer receive scheduled refreshes.
 - Current scheduler task names and timings live in [Mini PC runbook](mini-pc-runbook.md); current market-source ownership lives in [Market-data runbook](market-data-runbook.md). Older KRX task text elsewhere is historical unless those runbooks explicitly reintroduce it.
-- Lab/source probes must not connect directly to SQLite writes, Telegram, scheduler, admin GUI, or public web-view behavior.
+- Lab/source probes must not connect to operating SQLite writes, Telegram, scheduler, admin GUI, or public web-view behavior. The explicitly approved local Chart Lab monitor may use only its separate per-user state file.
 
 ## Historical Material
 

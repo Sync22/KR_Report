@@ -7,11 +7,13 @@ test("daily tab state follows the legacy route aliases", () => {
   assert.equal(dailyTabFromPathname("/daily/2026-10-08/main"), "main");
   assert.equal(dailyTabFromPathname("/daily/2026-10-08/candidates"), "watch");
   assert.equal(dailyTabFromPathname("/daily/2026-10-08/stocks"), "stock");
+  assert.equal(dailyTabFromPathname("/daily/2026-10-08/chart"), "chart");
   assert.equal(dailyTabFromPathname("/daily/2026-10-08/stocks/005930"), "stock");
   assert.equal(dailyTabFromPathname("/daily/2026-10-08/intraday"), null);
   assert.equal(isDailyTabPage("/daily/2026-10-08/main"), true);
   assert.equal(isDailyTabPage("/daily/2026-10-08/candidates"), true);
   assert.equal(isDailyTabPage("/daily/2026-10-08/stocks"), true);
+  assert.equal(isDailyTabPage("/daily/2026-10-08/chart"), true);
   assert.equal(isDailyTabPage("/daily/2026-10-08/stocks/005930"), false);
 });
 
@@ -55,5 +57,9 @@ test("tab changes keep one selected six-digit stock and drop unrelated search st
   assert.equal(
     dailyTabHref("2026-10-08", "stock", "?q=005930", "/daily/2026-10-08/stocks"),
     "/daily/2026-10-08/stocks?q=005930",
+  );
+  assert.equal(
+    dailyTabHref("2026-10-08", "chart", "?stock=005930", "/daily/2026-10-08/main"),
+    "/daily/2026-10-08/chart?stock=005930",
   );
 });

@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
 
-import { buildPriorityIndicatorProjection } from "../src/server/web-view-indicators.ts";
+import { buildChartExplorerProjection, buildPriorityIndicatorProjection } from "../src/server/web-view-indicators.ts";
 
 const AS_OF = "2026-10-08";
 const METADATA = {
@@ -21,6 +21,22 @@ const METADATA = {
   lastSuccessAt: "2026-10-08T16:00:00+09:00",
   sourceCalculationVersion: "toss-adjusted-daily-v1",
 };
+
+test("Chart Explorer keeps US-local intraday bars after the Korea date cutoff", () => {
+  const time = "2026-10-16T19:30:00.000Z";
+  const projection = buildChartExplorerProjection({
+    requestedAsOf: "2026-10-16",
+    symbol: "SATL",
+    timeframe: "4h",
+    source: "Yahoo Finance chart · SATL · 1h bars",
+    sourceFetchedAt: "2026-10-16T20:00:00.000Z",
+    sourceTimezone: "America/New_York",
+    candles: [{ time, open: 10, high: 11, low: 9, close: 10.5, volume: 100 }],
+  });
+
+  assert.equal(projection.snapshot.barAsOf, time);
+  assert.equal(projection.chart.bars[0].time, time);
+});
 
 function bars(count, trend = "rise") {
   const start = Date.UTC(2025, 0, 1);
