@@ -94,7 +94,7 @@ Both Next package scripts bind Next.js to `127.0.0.1`. The foreground terminal a
 
 ### Next V1 Operations-PC Acceptance Guide
 
-**Status (2026-10-14): Waiting for the later move; no Operations-PC command or test has been run from this development-PC session.** This guide applies only after the reviewed `codex/next-v1` source is copied to the Intel N100 Windows PC. It does not authorize a production cutover.
+**Status (2026-10-16): Operations-PC preflight and scoped acceptance checks have run; N100 operating acceptance is still pending.** Use the evidence and remaining actions in [Operations performance observation](operations-performance-observation.md). This guide remains the acceptance checklist and does not authorize a production cutover.
 
 Use this as the first-check reference for every new Next V1 session on the Operations PC. The prompt below directs the session to read this section before inspecting the DB or starting a service.
 
@@ -167,14 +167,14 @@ The runner is loopback-only, covers 14 stored/default GETs, and excludes live pr
 
 | Check | Required evidence | Current state |
 | --- | --- | --- |
-| Runtime and build | Recorded Node/Python versions; install, tests, typecheck, and production build pass | Waiting for Operations-PC move |
-| Public route contract | GET succeeds; unsupported methods return `405`; login/admin/operator paths are absent in Next | Waiting for Operations-PC move |
-| DB ownership | Next opens the intended operating DB read-only; Python remains the only application-data writer | Waiting for Operations-PC move |
-| Snapshot parity | Same date/code/source state compared against the existing gated Python surface; keep source, freshness, provisional/final, and missing states | Waiting for Operations-PC move |
-| SQLite/WAL | Read-only queries succeed during normal Python writes; record lock/busy errors and WAL/SHM metadata | Waiting for Operations-PC move |
-| Resource and latency | CPU, memory, per-route p50/p95, response bytes, cache state, and browser page timing recorded separately | Waiting for Operations-PC move |
-| Windows recovery | Normal stop/restart, log inspection, and one controlled Next failure recovery work on port `3010` | Waiting for Operations-PC move |
-| Cutover and rollback | Separate review; keep Python web, scheduler, tunnel, and writer unchanged until approval; stopping Next returns use to Python web | Waiting for Operations-PC move |
+| Runtime and build | Recorded Node/Python versions; install, tests, typecheck, and production build pass | **Partial PASS** — N100 Node `22.21.1` / Python `3.12.14`, host, DB verification, and active build ID are recorded. Oct 15 test/typecheck/route-test results are recorded, but their target-host provenance and a separate `npm ci` result are not. Do not reinstall or rebuild while the active Next process uses `web/node_modules` and `.next`. |
+| Public route contract | GET succeeds; unsupported methods return `405`; login/admin/operator paths are absent in Next | **PASS for the sampled contract (2026-10-16)** — `/health` was `200` with the Next identity header; `/api/archive` POST/HEAD/OPTIONS were `405`; `/login`, `/auth/login`, `/admin`, `/admin-gui`, and `/operator-review` were `404`. This is a scoped smoke check, not an exhaustive route-by-route method test. |
+| DB ownership | Next opens the intended operating DB read-only; Python remains the only application-data writer | **Partial PASS** — the configured DB file and metadata were identified without reading rows; Next's SQLite connection paths use `readOnly: true` and `PRAGMA query_only = ON`; `db-verify` passed. Runtime SQL-write rejection was not separately probed. |
+| Snapshot parity | Same date/code/source state compared against the existing gated Python surface; keep source, freshness, provisional/final, and missing states | **Scoped PASS; gate check not run** — the exact-snapshot 14-route comparison matched DTOs 14/14 using the authorized temporary copied-DB reference. The live Python access-gate round trip remains untested; the Oct 16 supplemental run had source-DB mtime drift. |
+| SQLite/WAL | Read-only queries succeed during normal Python writes; record lock/busy errors and WAL/SHM metadata | **Partial PASS** — cache-miss GETs overlapped scheduled Polls at 09:00, 09:30, and 10:30 with no lock/busy error; the 10:30 GET was 200/miss in 131 ms (14,162 bytes), and that Poll ended with result `0`. WAL/SHM were absent in the 10:30 snapshots and TelegramCommands was also Running, so active WAL contention/writer attribution was not established. |
+| Resource and latency | CPU, memory, per-route p50/p95, response bytes, cache state, all-page functional/data review, mobile access, and browser page timing recorded separately | **Partial PASS** — route timings/cache/body bytes and a short CPU/memory sample are recorded. Route-by-route screen/data review across Main/Watch/Stock and remaining pages, mobile checks, browser paint/page-error checks, and long-run stability are not run. |
+| Windows recovery | Normal stop/restart, log inspection, and one controlled Next failure recovery work on port `3010` | **Partial PASS** — normal stop/restart and health recovery passed on `3010`; a recorded log inspection and controlled failure recovery are not run. |
+| Cutover and rollback | Separate review; keep Python web, scheduler, tunnel, and writer unchanged until approval; stopping Next returns use to Python web | **Not run** — this acceptance work does not authorize cutover. Keep Python web, scheduler, tunnel, and writer unchanged pending a separate review. |
 
 If Next fails on the Operations PC, stop Next normally and continue through the existing Python public web-view. Do not restore or modify the DB for a frontend failure. Do not change Task Scheduler, the hourly Python web-view task, external sharing, or production listener as part of acceptance testing.
 
