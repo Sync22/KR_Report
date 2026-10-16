@@ -53,7 +53,7 @@ function FlowTrendDetails({ flowTrend }: Readonly<{ flowTrend?: FlowTrendSnapsho
 
 export default function StoredMarketContext({ snapshot, flowTrend, openByDefault = false }: Readonly<{ snapshot: DailySnapshot | null; flowTrend?: FlowTrendSnapshot | null; openByDefault?: boolean }>) {
   if (!snapshot) return <details className="daily-briefing daily-market-context">
-    <summary className="section-header disclosure-summary"><h2>시장 문맥 · Toss 당일 · Toss 저장</h2><span>조회값과 저장값을 구분해 표시</span></summary>
+    <summary className="section-header disclosure-summary"><h2>선택일 저장 시장 자료</h2><span>Toss 저장값 · 기준일과 누락 상태</span></summary>
     <Message>선택일 저장 시장 문맥을 확인할 수 없습니다.</Message>
     <FlowTrendDetails flowTrend={flowTrend} />
   </details>;
@@ -69,8 +69,8 @@ export default function StoredMarketContext({ snapshot, flowTrend, openByDefault
   return (
     <details className="daily-briefing daily-market-context" open={openByDefault}>
       <summary className="section-header disclosure-summary">
-        <h2>시장 문맥 · Toss 당일 · Toss 저장</h2>
-        <span>조회값과 저장값을 구분해 표시</span>
+        <h2>선택일 저장 시장 자료</h2>
+        <span>Toss 저장값 · 기준일과 누락 상태</span>
       </summary>
       <p className="data-note">
         선택일 저장 시장값: {context.snapshot_date ?? "자료 없음"} · {context.notice}
@@ -132,7 +132,6 @@ export default function StoredMarketContext({ snapshot, flowTrend, openByDefault
         </table></div> : <Message>선택일 시장 수급 자료가 없습니다.</Message>}
       </section>
       <FlowTrendDetails flowTrend={flowTrend} />
-      <p className="footer-link"><a href={`/daily/${snapshot.business_date}/etf`}>ETF 저장 흐름</a> · <a href={`/daily/${snapshot.business_date}/rotation`}>업종·테마 위치 참고</a></p>
     </details>
   );
 }

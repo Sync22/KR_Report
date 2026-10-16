@@ -4,11 +4,9 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { isBusinessDate, type DailyStock, type DailyStockSummarySnapshot } from "../domain/daily.ts";
 import { isCandidateEvidenceSnapshot, type CandidateEvidenceSnapshot } from "../domain/candidate-evidence.ts";
-import { isFlowTrendSnapshot, type FlowTrendSnapshot } from "../domain/market.ts";
 import { isStockDetailSnapshot, type StockDetailSnapshot } from "../domain/stocks.ts";
 import { buildCandidateEvidenceSnapshotFromDatabase } from "./candidate-evidence.ts";
 import { buildDailySnapshotFromDatabase } from "./daily-snapshot.ts";
-import { buildFlowTrendSnapshot } from "./flow-trend.ts";
 import { withReadOnlyDatabase } from "./sqlite.ts";
 import { buildStockDetailSnapshotFromDatabase } from "./stock-detail.ts";
 import { buildDailyStockSummarySnapshotFromDatabase } from "./stock-summary.ts";
@@ -17,7 +15,6 @@ export type DailyTabWorkspace = Readonly<{
   daily: Record<string, unknown> | null;
   candidates: CandidateEvidenceSnapshot | null;
   stocks: DailyStockSummarySnapshot | null;
-  flow: FlowTrendSnapshot | null;
   selectedStockDetail: StockDetailSnapshot | null;
 }>;
 
@@ -66,10 +63,6 @@ export function buildDailyTabWorkspaceFromDatabase(
     : null;
   if (!stocks) stocks = read(() => buildDailyStockSummarySnapshotFromDatabase(database, businessDate));
 
-  const timezone = process.env.STOCK_MONITOR_TIMEZONE?.trim() || "Asia/Seoul";
-  const rawFlow = read(() => buildFlowTrendSnapshot(database, businessDate, 5, now, timezone));
-  const flow = isFlowTrendSnapshot(rawFlow, businessDate) ? rawFlow : null;
-
   const selectedIsStored = typeof selectedStockCode === "string" && /^\d{6}$/.test(selectedStockCode) && (
     candidates?.rows.some((row) => row.stock_code === selectedStockCode) === true ||
     stocks?.stocks.some((row) => row.stock_code === selectedStockCode) === true
@@ -81,7 +74,7 @@ export function buildDailyTabWorkspaceFromDatabase(
     ? rawSelectedStockDetail
     : null;
 
-  return { daily, candidates, stocks, flow, selectedStockDetail };
+  return { daily, candidates, stocks, selectedStockDetail };
 }
 
 export function getDailyTabWorkspace(businessDate: string, selectedStockCode: string | null): DailyTabWorkspace {

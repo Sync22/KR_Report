@@ -110,6 +110,7 @@ export default function MainRotationOverlay({ businessDate }: Readonly<{ busines
           </ul>
         </> : rotation ? <p className="data-note">{rotation.notice} · 수동 좌표가 있는 업종·테마 저장 분류가 없습니다.</p> : null}
       </section>
+      <p className="footer-link"><a href={`/daily/${businessDate}/etf`}>ETF 저장 흐름 전체 보기</a> · <a href={`/daily/${businessDate}/rotation`}>업종·테마 전체 보기</a></p>
     </details>
   );
 }

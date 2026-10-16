@@ -85,7 +85,10 @@ export default async function CandidateEvidencePage({
                     <span className="candidate-priority">{item.observation_priority}</span>
                   </div>
                   <p className="watch-candidate-reason">{item.why_notable.slice(0, 3).join(" · ") || "저장 근거 확인"}</p>
-                  <p className="watch-candidate-news">뉴스: {newsLabel}{missing} · 종목 상세 보기</p>
+                  <div className="watch-candidate-footer">
+                    <p className="watch-candidate-news">뉴스: {newsLabel}{missing}</p>
+                    <span className="watch-candidate-open">종목 상세 보기 <span aria-hidden="true">→</span></span>
+                  </div>
                 </a>
               );
             })}

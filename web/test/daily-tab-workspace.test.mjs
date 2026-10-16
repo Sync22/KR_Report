@@ -154,7 +154,7 @@ test("daily tab workspace builds its panels from one candidate read and one SQLi
     assert.equal(workspace.stocks.stocks[0].stock_code, "005930");
     assert.equal(isDailyStockSummarySnapshot(workspace.stocks, businessDate), true);
     assert.deepEqual(withoutDynamicClockFields(workspace.daily), withoutDynamicClockFields(expectedDaily));
-    assert.equal(workspace.flow.business_date, businessDate);
+    assert.equal("flow" in workspace, false);
     assert.equal(workspace.selectedStockDetail, null);
     const after = await stat(databasePath);
     assert.equal(after.size, before.size);

@@ -21,8 +21,8 @@ export default async function DailyPage({ params }: Readonly<{ params: Promise<{
     payload = getDailySnapshot(date);
   } catch {
     return (
-      <main>
-        <p className="eyebrow">Stock Monitor · 공개 web-view</p>
+      <main className="overview-page">
+        <p className="eyebrow">선택일 요약</p>
         <h1>{date} 일일 리서치</h1>
         <Message>저장된 데이터를 불러오지 못했습니다. 잠시 후 다시 확인해 주세요.</Message>
       </main>
@@ -30,8 +30,8 @@ export default async function DailyPage({ params }: Readonly<{ params: Promise<{
   }
   if (!isDailySnapshot(payload, date)) {
     return (
-      <main>
-        <p className="eyebrow">Stock Monitor · 공개 web-view</p>
+      <main className="overview-page">
+        <p className="eyebrow">선택일 요약</p>
         <h1>{date} 일일 리서치</h1>
         <Message>일일 응답 형식을 확인할 수 없습니다.</Message>
       </main>
@@ -45,28 +45,52 @@ export default async function DailyPage({ params }: Readonly<{ params: Promise<{
   }).format(new Date(payload.now));
 
   return (
-    <main>
-      <p className="eyebrow">Stock Monitor · 공개 web-view</p>
-      <h1>{date} 일일 리서치</h1>
-      <p className="updated">
-        기준일 {payload.business_date} · 조회 시각: <time dateTime={payload.now}>{updatedAt} KST</time>
-      </p>
-      <p className="summary">
-        저장 리포트 {payload.report_count}건 · 요약 종목 {payload.summary_stock_count}종목
-      </p>
-      <p className="data-note">일일 요약은 선택일에 저장된 보고서 집계입니다. 표시된 목표가는 리포트 원문 기준 참고값입니다.</p>
-      <form action={`/daily/${date}/stocks`} method="get" className="search-form">
-        <label htmlFor="stock-query">저장 종목 검색</label>
-        <input id="stock-query" name="q" type="search" autoComplete="off" />
-        <button type="submit">검색</button>
-      </form>
-      <p className="footer-link"><a href={`/daily/${date}/candidates`}>오늘의 관찰 후보</a></p>
-      <p className="footer-link"><a href={`/daily/${date}/main`}>Main Top2 · 우선 확인</a></p>
-      <p className="footer-link"><a href="/market">최근 저장 시장 참고</a></p>
-      <p className="footer-link"><a href={`/daily/${date}/etf`}>선택일 ETF 저장 흐름</a></p>
-      <p className="footer-link"><a href={`/daily/${date}/rotation`}>업종·테마 위치 참고</a></p>
-      <p className="footer-link"><a href={`/daily/${date}/observations`}>저장 관찰 요약과 과거 복기</a></p>
-      <p className="footer-link"><a href={`/daily/${date}/intraday`}>장중 리포트 기록</a></p>
+    <main className="overview-page">
+      <header className="page-intro overview-intro">
+        <div>
+          <p className="eyebrow">선택일 요약</p>
+          <h1>{date} 리서치</h1>
+          <p className="updated">기준일 {payload.business_date} · 조회 시각 <time dateTime={payload.now}>{updatedAt} KST</time></p>
+        </div>
+        <div className="overview-count" aria-label={`저장 리포트 ${payload.report_count}건, 요약 종목 ${payload.summary_stock_count}종목`}>
+          <span>저장 리포트</span><strong>{payload.report_count}<small>건</small></strong><span>{payload.summary_stock_count}종목</span>
+        </div>
+      </header>
+      <p className="overview-note">일일 요약은 선택일에 저장된 보고서 집계입니다. 표시된 목표가는 리포트 원문 기준 참고값입니다.</p>
+      <div className="overview-actions">
+        <section className="overview-action-card overview-action-primary" aria-labelledby="overview-first-heading">
+          <p className="eyebrow">먼저 확인</p>
+          <h2 id="overview-first-heading">오늘의 관찰 후보</h2>
+          <p>Main Top2와 저장된 관찰 후보의 근거를 확인합니다.</p>
+          <div className="page-action-row">
+            <a className="action-primary" href={`/daily/${date}/main`}>Main Top2 보기 <span aria-hidden="true">→</span></a>
+            <a className="action-secondary" href={`/daily/${date}/candidates`}>후보 전체 보기</a>
+          </div>
+        </section>
+        <section className="overview-action-card" aria-labelledby="overview-stock-search-heading">
+          <p className="eyebrow">종목 찾기</p>
+          <h2 id="overview-stock-search-heading">저장 리포트 검색</h2>
+          <p>선택일에 저장된 종목명 또는 코드를 검색합니다.</p>
+          <form action={`/daily/${date}/stocks`} method="get" className="search-form">
+            <label htmlFor="stock-query">종목명 또는 코드</label>
+            <input id="stock-query" name="q" type="search" autoComplete="off" />
+            <button type="submit">검색</button>
+          </form>
+        </section>
+      </div>
+      <nav className="overview-reference-links" aria-label="선택일 참고 화면">
+        <span>참고 · 복기</span>
+        <a href="/market">시장</a>
+        <a href={`/daily/${date}/etf`}>ETF 흐름</a>
+        <a href={`/daily/${date}/rotation`}>업종·테마 순환</a>
+        <a href={`/daily/${date}/observations`}>관찰 복기</a>
+        <a href={`/daily/${date}/intraday`}>장중 기록</a>
+      </nav>
+      <section className="overview-stocks data-section" aria-labelledby="overview-stocks-heading">
+        <div className="section-header overview-section-heading">
+          <div><p className="eyebrow">저장 데이터</p><h2 id="overview-stocks-heading">종목 요약</h2></div>
+          <span>{payload.stocks.length}종목</span>
+        </div>
       {payload.stocks.length === 0 ? (
         <Message>선택한 날짜에 저장된 종목 요약이 없습니다.</Message>
       ) : (
@@ -110,9 +134,11 @@ export default async function DailyPage({ params }: Readonly<{ params: Promise<{
           </table>
         </div>
       )}
+      </section>
 
+      <div className="overview-detail-grid">
       <section className="data-section" aria-labelledby="source-heading">
-        <h2 id="source-heading">출처와 기준일</h2>
+        <div className="section-header overview-section-heading"><div><p className="eyebrow">기준 확인</p><h2 id="source-heading">출처와 신선도</h2></div></div>
         <ul className="status-list">
           {payload.source_freshness_summary.items.map((item) => {
             const status = dailyFreshnessLabel(item, payload.business_date);
@@ -135,7 +161,7 @@ export default async function DailyPage({ params }: Readonly<{ params: Promise<{
         ) : null}
       </section>
       <section className="data-section" aria-labelledby="news-heading">
-        <h2 id="news-heading">저장 뉴스 관찰</h2>
+        <div className="section-header overview-section-heading"><div><p className="eyebrow">저장 관찰</p><h2 id="news-heading">뉴스 상태</h2></div></div>
         <p className="summary">
           <strong>{payload.news_observation_summary.display_label}</strong> · {payload.news_observation_summary.reason}
         </p>
@@ -148,8 +174,9 @@ export default async function DailyPage({ params }: Readonly<{ params: Promise<{
           <p className="data-note">누락 상태: {payload.news_observation_summary.missing_context.join(", ")}</p>
         ) : null}
       </section>
+      </div>
       <StoredMarketContext snapshot={payload} />
-      <p className="footer-link"><a href="/">아카이브로 돌아가기</a></p>
+      <p className="footer-link"><a href="/archive">아카이브로 돌아가기</a></p>
     </main>
   );
 }
