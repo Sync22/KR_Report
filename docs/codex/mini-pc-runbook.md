@@ -94,7 +94,7 @@ Both Next package scripts bind Next.js to `127.0.0.1`. The foreground terminal a
 
 ### Next V1 Operations-PC Acceptance Guide
 
-**Status (2026-10-16): Operations-PC preflight and scoped acceptance checks have run; N100 operating acceptance is still pending.** Use the evidence and remaining actions in [Operations performance observation](operations-performance-observation.md). This guide remains the acceptance checklist and does not authorize a production cutover.
+**Status (2026-10-16): N100 Next preview acceptance PASS (scoped).** The preview is healthy, read-only, data-parity checked, overlapped successfully with normal Poll runs, and passed normal restart. This is not production cutover approval.
 
 Use this as the first-check reference for every new Next V1 session on the Operations PC. The prompt below directs the session to read this section before inspecting the DB or starting a service.
 
@@ -114,15 +114,15 @@ gated Python web-view port, intended DB selection, backup/verification state, an
 DB/WAL/SHM metadata. Report sanitized status only: do not print .env values,
 access codes, cookies, credentials, or DB rows.
 
-If the preflight is sound, continue through the guide's build, functional/API
-parity, read-only SQLite/WAL concurrency, restart/recovery, and performance steps
-in order. Keep the Python service and access-code gate, DB writer, Task Scheduler,
+For a new source build, run only the setup and checks needed for that build; reuse
+evidence for unchanged code and build IDs. Use the bounded acceptance checklist
+below. Keep the Python service and access-code gate, DB writer, Task Scheduler,
 Telegram, and external sharing unchanged. Use only port 3010 for Next; do not kill
-an unverified process or choose another port. Use an already-authorized Python
-session for HTTP comparisons; if unavailable, mark those comparisons not run and
-do not disable the gate. Do not call live Naver/Toss routes in the default API
-benchmark. Mark each check pass, fail, or not run, and claim no Operations-PC
-result unless it actually ran on that host.
+an unverified process or choose another port. The copied-DB reference already used
+for DTO parity is sufficient for this preview; do not wait for or bypass a live
+Python login. Do not create test writes or expand the bounded preview checks into
+additional reliability investigations. Keep optional observations separate from
+acceptance.
 ```
 
 #### Before first start
@@ -153,7 +153,7 @@ result unless it actually ran on that host.
 
 Keep the foreground PowerShell terminal open. Confirm `GET http://127.0.0.1:3010/health` and the selected Main page return `200`, then inspect only the expected public display. In another terminal, stop with normal `Ctrl+C`, run `-Status` until it reports stopped, then start on the same `3010` port. The launcher must refuse conflicts and leave unidentified processes running. Check `logs/next-web-view.log` for start/failure/restart evidence without copying secrets into notes.
 
-Run the API benchmark only after the existing gated Python listener and Next both use the same operating DB snapshot and the Python request is already authorized:
+For a future live-origin comparison, run the API benchmark only after the existing gated Python listener and Next use the same operating DB snapshot and the Python request is already authorized. This is not required for the accepted preview; the saved copied-DB reference comparison already established DTO parity:
 
 ```powershell
 Push-Location .\web
@@ -167,16 +167,15 @@ The runner is loopback-only, covers 14 stored/default GETs, and excludes live pr
 
 | Check | Required evidence | Current state |
 | --- | --- | --- |
-| Runtime and build | Recorded Node/Python versions; install, tests, typecheck, and production build pass | **Partial PASS** — N100 Node `22.21.1` / Python `3.12.14`, host, DB verification, and active build ID are recorded. Oct 15 test/typecheck/route-test results are recorded, but their target-host provenance and a separate `npm ci` result are not. Do not reinstall or rebuild while the active Next process uses `web/node_modules` and `.next`. |
-| Public route contract | GET succeeds; unsupported methods return `405`; login/admin/operator paths are absent in Next | **PASS for the sampled contract (2026-10-16)** — `/health` was `200` with the Next identity header; `/api/archive` POST/HEAD/OPTIONS were `405`; `/login`, `/auth/login`, `/admin`, `/admin-gui`, and `/operator-review` were `404`. This is a scoped smoke check, not an exhaustive route-by-route method test. |
-| DB ownership | Next opens the intended operating DB read-only; Python remains the only application-data writer | **Partial PASS** — the configured DB file and metadata were identified without reading rows; Next's SQLite connection paths use `readOnly: true` and `PRAGMA query_only = ON`; `db-verify` passed. Runtime SQL-write rejection was not separately probed. |
-| Snapshot parity | Same date/code/source state compared against the existing gated Python surface; keep source, freshness, provisional/final, and missing states | **Scoped PASS; gate check not run** — the exact-snapshot 14-route comparison matched DTOs 14/14 using the authorized temporary copied-DB reference. The live Python access-gate round trip remains untested; the Oct 16 supplemental run had source-DB mtime drift. |
-| SQLite/WAL | Read-only queries succeed during normal Python writes; record lock/busy errors and WAL/SHM metadata | **Partial PASS** — cache-miss GETs overlapped scheduled Polls at 09:00, 09:30, and 10:30 with no lock/busy error; the 10:30 GET was 200/miss in 131 ms (14,162 bytes), and that Poll ended with result `0`. WAL/SHM were absent in the 10:30 snapshots and TelegramCommands was also Running, so active WAL contention/writer attribution was not established. |
-| Resource and latency | CPU, memory, per-route p50/p95, response bytes, cache state, all-page functional/data review, mobile access, and browser page timing recorded separately | **Partial PASS** — route timings/cache/body bytes and a short CPU/memory sample are recorded. Route-by-route screen/data review across Main/Watch/Stock and remaining pages, mobile checks, browser paint/page-error checks, and long-run stability are not run. |
-| Windows recovery | Normal stop/restart, log inspection, and one controlled Next failure recovery work on port `3010` | **Partial PASS** — normal stop/restart and health recovery passed on `3010`; a recorded log inspection and controlled failure recovery are not run. |
-| Cutover and rollback | Separate review; keep Python web, scheduler, tunnel, and writer unchanged until approval; stopping Next returns use to Python web | **Not run** — this acceptance work does not authorize cutover. Keep Python web, scheduler, tunnel, and writer unchanged pending a separate review. |
+| Runtime and build | N100 build and runtime are healthy; source test/build results are recorded | **PASS** — Node `22.21.1` / Python `3.12.14`; build `eycpeDtIvb5OLXSWuyJyF` is serving on `3010`; health is 200. The recorded test/typecheck/route-test and production-build results passed. No reinstall or rebuild is needed for this unchanged code. |
+| Public route contract | Stored GET works; unsupported methods are rejected; login/admin/operator paths are absent | **PASS** — `/health` and the selected Main page returned 200; archive POST/HEAD/OPTIONS returned 405; login/admin/operator paths returned 404. |
+| DB ownership | Next reads the configured operating DB read-only | **PASS** — DB verification and metadata checks passed; the Next SQLite paths use `readOnly: true` and `PRAGMA query_only = ON`. No test write was made. |
+| Snapshot parity | Same date/code/snapshot preserves public DTO and provenance | **PASS** — exact-snapshot 14-route comparison matched 14/14, including source/as-of/freshness after only documented dynamic-field normalization. The copied reference left the live Python access gate unchanged. |
+| Scheduled Poll read smoke | A normal Poll and an uncached Next SQLite read overlap without a lock/busy error | **PASS** — cache-miss GETs overlapped three scheduled Poll windows; all returned 200 and Poll results were 0. WAL was absent/0 bytes in the sampled windows; no contention was forced. |
+| Performance snapshot | Comparable route p50/p95, response bytes/cache state, and a short resource sample are recorded | **PASS** — the 14-route comparison and CPU/memory sample are recorded. These are descriptive measurements, not an SLO or speedup claim. |
+| Windows lifecycle | Normal start, stop, and restart recover on port `3010` | **PASS** — the same build recovered in 10.9 seconds; health and archive miss/hit returned 200. |
 
-If Next fails on the Operations PC, stop Next normally and continue through the existing Python public web-view. Do not restore or modify the DB for a frontend failure. Do not change Task Scheduler, the hourly Python web-view task, external sharing, or production listener as part of acceptance testing.
+This checklist accepts the local N100 preview only. It does not authorize a public cutover or changes to the Python gate, scheduler, DB writer, or external sharing. If the preview stops working, return to the existing Python web-view; do not restore or modify the DB.
 
 Current important behavior:
 
