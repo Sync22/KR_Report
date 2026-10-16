@@ -17,7 +17,7 @@ $projectNextProcesses = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'
     $commandLine -match '(?i)\b(start|dev)\b' -and
     $portMatch.Success -and [int]$portMatch.Groups[1].Value -eq $port
 }
-$listener = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1
+$listener = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue | Where-Object { [string]$_.State -eq 'Listen' } | Select-Object -First 1
 if ($null -ne $listener -and [int]$listener.OwningProcess -in @(0, 4)) { $listener = $null }
 if ($null -eq $listener -and $null -ne $projectNextProcesses) {
   foreach ($candidate in $projectNextProcesses) {

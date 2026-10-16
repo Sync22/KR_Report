@@ -6,6 +6,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 
 $resolvedArchive = Resolve-Path -LiteralPath $ArchivePath
 if (-not $ChecksumPath) {
