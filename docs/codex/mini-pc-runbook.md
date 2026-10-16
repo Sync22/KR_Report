@@ -94,7 +94,7 @@ Both Next package scripts bind Next.js to `127.0.0.1`. The foreground terminal a
 
 ### Next V1 Operations-PC Acceptance Guide
 
-**Status (2026-10-17): Previous N100 build passed scoped preview acceptance; latest source needs retest.** The 2026-10-16 PASS applies to build `eycpeDtIvb5OLXSWuyJyF`. On 2026-10-17, Operations-PC tests/build passed on source `36f31ad` (build `qNe5v5pW2mlUdprmNzgbE`), but read-only review found three Chart Explorer contract issues before starting the server. Development fixes are now in the branch; sync and rerun the bounded acceptance checks before accepting the newer source. This is not production cutover approval.
+**Status (2026-10-17): N100 bounded revalidation PASS for `241052a`.** With venv Python `3.12.14` and Node `22.21.1`, `npm test` passed `152/152`, typecheck and build passed (build `ysj-FoQjFyb1uCf6T_Pa6`). Health, Main and Chart page returned 200; public Yahoo ticker `SATL` returned 400; one H4 Chart Lab read returned 200 with session continuity verified and 243 calculation bars. This is not production cutover approval.
 
 Use this as the first-check reference for every new Next V1 session on the Operations PC. The prompt below directs the session to read this section before inspecting the DB or starting a service.
 
@@ -167,15 +167,16 @@ The runner is loopback-only, covers 14 stored/default GETs, and excludes live pr
 
 | Check | Required evidence | Current state |
 | --- | --- | --- |
-| Runtime and build | N100 build and runtime are healthy; source test/build results are recorded | **PASS** — Node `22.21.1` / Python `3.12.14`; build `eycpeDtIvb5OLXSWuyJyF` is serving on `3010`; health is 200. The recorded test/typecheck/route-test and production-build results passed. No reinstall or rebuild is needed for this unchanged code. |
-| Public route contract | Stored GET works; unsupported methods are rejected; login/admin/operator paths are absent | **PASS** — `/health` and the selected Main page returned 200; archive POST/HEAD/OPTIONS returned 405; login/admin/operator paths returned 404. |
-| DB ownership | Next reads the configured operating DB read-only | **PASS** — DB verification and metadata checks passed; the Next SQLite paths use `readOnly: true` and `PRAGMA query_only = ON`. No test write was made. |
+| Runtime and build | N100 build and runtime are healthy; source test/build results are recorded | **PASS for `241052a`** — venv Python `3.12.14`, Node `22.21.1`; `npm test` 152/152, typecheck and build passed. Build `ysj-FoQjFyb1uCf6T_Pa6` is serving on `3010`. |
+| Chart Explorer public input | Non-six-digit ticker is rejected before provider query | **PASS** — `/api/chart-explorer?...symbol=SATL...` returned 400; regression test confirms no provider fetch. `/health`, `/`, and `/daily/2026-10-14/chart?symbol=BAD%2FTICKER` returned 200; the chart page request was server-rendered only. |
+| Chart Lab H4 | Real bounded H4 read keeps source/provenance and calculation cap | **PASS** — loopback analysis GET returned 200; Yahoo 1h source, source date `2026-10-14`, finality `unknown`, session continuity `verified`, Toss stock-master mapping, and 243 calculation bars (≤800). Payload was not saved; no monitor start/pause action occurred. |
+| DB ownership | Next reads the configured operating DB read-only | **PASS** — DB verification and metadata checks were previously recorded; Next SQLite paths use `readOnly: true` and `PRAGMA query_only = ON`. Tests use temporary fixtures; no operating DB write was made. |
 | Snapshot parity | Same date/code/snapshot preserves public DTO and provenance | **PASS** — exact-snapshot 14-route comparison matched 14/14, including source/as-of/freshness after only documented dynamic-field normalization. The copied reference left the live Python access gate unchanged. |
 | Scheduled Poll read smoke | A normal Poll and an uncached Next SQLite read overlap without a lock/busy error | **PASS** — cache-miss GETs overlapped three scheduled Poll windows; all returned 200 and Poll results were 0. WAL was absent/0 bytes in the sampled windows; no contention was forced. |
-| Performance snapshot | Comparable route p50/p95, response bytes/cache state, and a short resource sample are recorded | **PASS** — the 14-route comparison and CPU/memory sample are recorded. These are descriptive measurements, not an SLO or speedup claim. |
-| Windows lifecycle | Normal start, stop, and restart recover on port `3010` | **PASS** — the same build recovered in 10.9 seconds; health and archive miss/hit returned 200. |
+| Performance snapshot | Existing route p50/p95, response bytes/cache state, and a short resource sample are recorded | **Baseline retained** — the stored-route timing matrix and resource sample are from the prior preview build; they were not repeated for this Chart Lab fix. |
+| Windows lifecycle | Current preview starts and serves the expected pages on port `3010` | **PASS** — existing launcher started PID `15212`; `/health`, Main, and Chart page returned 200. The Python listener, scheduler, and operating DB remain unchanged. |
 
-The recorded PASS applies only to the previous build named above. Acceptance of the newer source remains pending until the Operations PC reruns the checklist after syncing the fixes. This checklist does not authorize a public cutover or changes to the Python gate, scheduler, DB writer, or external sharing. If the preview stops working, return to the existing Python web-view; do not restore or modify the DB.
+This checklist records the bounded `241052a` preview revalidation as of 2026-10-17. It does not authorize a public cutover or changes to the Python gate, scheduler, DB writer, or external sharing. If the preview stops working, return to the existing Python web-view; do not restore or modify the DB.
 
 Current important behavior:
 
