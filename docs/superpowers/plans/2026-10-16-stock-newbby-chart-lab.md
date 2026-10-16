@@ -112,16 +112,17 @@
 - Update canonical docs and `docs/codex/history.md` with confirmed status only.
 
 - [x] Run the focused H4 continuity tests, `npm run typecheck`, `npm run build`, and `git diff --check`.
-- [ ] Resolve the five current full-suite Python/Next indicator-parity failures before treating the web suite as green.
+- [x] Run the full web suite with the project Python 3.12 venv so its 3.12 float oracle matches the implementation.
 - [x] Verify Chart Lab in the 3010 browser, including zoom/pan, historical cutoff, strategy and pattern states, monitor controls, and mobile layout.
 - [x] Verify the local H4 API against Samsung Electronics and SK Hynix on the development PC.
 - [ ] Compare operating DB metadata before/after monitor use and report any unverified upstream capability explicitly.
 
-## Current Status (2026-10-16)
+## Current Status (updated 2026-10-17)
 
 - Tasks 1–6: implemented on the development PC. The local monitor remains stopped; no monitor start request was sent to the live preview.
-- Fresh verification on 2026-10-16: H4-focused tests 21/21 passed, `npm run typecheck`, `npm run build`, and `git diff --check` passed. `npm test` passed 150/150 with the project `.venv` Python 3.12.10 on `PATH`. The machine's unqualified `python` is Python 3.10.11, so invoking the suite without the project venv makes its Python 3.12 exact-float oracle tests fail; use the venv interpreter for repeatable local results.
-- The rebuilt Next preview was restarted on the fixed `127.0.0.1:3010` port and returned health 200. Live local H4 GETs for `000660` and `005930`, date `2026-10-08`, both returned 200 with Yahoo 1-hour source, `session_continuity_status=verified`, Toss stock-master mapping, 140/140 recent bars carrying integer `missingBarsBefore`, and six skipped buckets across one positive-gap bar. Both preserve `bar_status=unknown`; R/H remains `unconfirmed` (`자료 확인 필요`). The public `/api/chart-explorer` route still returns `symbol_mapping_unavailable` for the same six-digit/date case, as its selected-date mapping rule requires.
+- Fresh verification on 2026-10-17: the three Chart Explorer review regressions pass; `npm test` 152/152, `npm run typecheck`, `npm run build`, and `git diff --check` pass. Use the project `.venv` Python 3.12.10 for `npm test`; the user-level Python is 3.15.0 and is not the test oracle runtime.
+- The 2026-10-16 live H4 smoke, before the Operations-PC review fixes, returned 200 for `000660` and `005930` with Yahoo 1-hour source, `session_continuity_status=verified`, Toss stock-master mapping, and unknown finality. On 2026-10-17, fixture tests now verify that only complete four-hour groups are emitted and that the latest 800 calculation bars are returned. No new live-provider H4 request was made after this correction; verify the corrected H4 view on the Operations PC after syncing.
 - H4 uses a 120-bar R/H analysis window and recent 140-bar session context. Normal complete KRX hourly days use the fixed regular-session window; Toss KRX calendar reads identify irregular or missing sessions. The calculated gap metadata is local Chart Lab calculation data and is not added to the public chart DTO.
 - Remaining upstream mismatch: when Toss is configured, Stock-Newbby uses paginated Toss 1-minute data for H4. This Next Chart Lab still uses Yahoo 1-hour candles; the minute-history cache and collection path are not implemented.
-- Not performed: no monitor start or operating-DB metadata comparison. No operating-PC tests, Python DB writes, scheduler, Telegram, or orders were invoked. No commit or push was made.
+- Operations-PC report on 2026-10-17: source `36f31ad` passed `npm test` 150/150, typecheck, and build with Python 3.12.14 / Node 22.21.1, but read-only review found public symbol scope, partial H4 aggregation, and 800-bar cap gaps. The fixes are implemented and verified on the development PC; the Operations PC has not retested the follow-up source.
+- Not performed: no monitor start or operating-DB metadata comparison. This follow-up did not touch the Operations-PC DB, scheduler, Telegram, or Python listener. No tests against the operating DB were run.

@@ -531,6 +531,7 @@ export class ChartExplorerService {
         sessionContinuityStatus = continuityFailure(error);
       }
     } else if (sessionContinuity && timeframe === "4h") sessionContinuityStatus = "unsupported";
+    aggregated = aggregated.slice(-800);
     if (!aggregated.length || !fetchedAt) {
       return { status: 200, payload: unavailable({ date, symbol, displayName, instrumentType: type, timeframe, reason: "no_chart_data", source, fetchedAt, sourceDate: latestSourceDate, adjusted, currency, liveFetch: !!fetchedAt }) };
     }

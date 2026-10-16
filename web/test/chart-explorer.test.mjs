@@ -33,6 +33,20 @@ test("Chart Explorer API rejects extra query fields and non-GET methods", async 
   assert.equal(POST().status, 405);
 });
 
+test("public Chart Explorer rejects arbitrary Yahoo tickers before a provider call", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return new Response(null, { status: 503 }); };
+  try {
+    for (const symbol of ["SATL", "000660.KS"]) {
+      const response = await GET(new Request(`http://localhost/api/chart-explorer?date=2026-10-08&symbol=${symbol}&timeframe=1d`));
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).reason, "invalid_query");
+    }
+    assert.equal(calls, 0);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("Chart Explorer bounds cache-miss provider queries per process", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(null, { status: 503 });
@@ -63,15 +77,12 @@ test("daily history aggregates weekly and monthly OHLCV without changing source 
   ]);
 });
 
-test("hourly history groups four-hour bars by provider-local session date", () => {
+test("hourly history omits incomplete four-hour tails within provider-local session dates", () => {
   const source = Array.from({ length: 7 }, (_, index) => bar(`2026-10-15T${String(index).padStart(2, "0")}:00:00.000Z`, index));
   const grouped = aggregateHourlyBarsToFourHours(source, "Asia/Seoul");
-  assert.equal(grouped.length, 2);
+  assert.equal(grouped.length, 1);
   assert.deepEqual(grouped[0], {
     time: source[0].time, open: 10, high: 15, low: 9, close: 14, volume: 406,
-  });
-  assert.deepEqual(grouped[1], {
-    time: source[4].time, open: 14, high: 18, low: 13, close: 17, volume: 315,
   });
 });
 
@@ -87,9 +98,7 @@ test("session-aware 4h aggregation preserves holes instead of shifting later bar
   const grouped = aggregateHourlyBarsToFourHours(source, "Asia/Seoul", [session("2026-10-15"), session("2026-10-16")]);
 
   assert.deepEqual(grouped.map(({ time, missingBarsBefore }) => [time, missingBarsBefore]), [
-    [at("2026-10-15", 13), 1],
-    [at("2026-10-16", 9), 0],
-    [at("2026-10-16", 13), 0],
+    [at("2026-10-16", 9), 1],
   ]);
 });
 
@@ -108,6 +117,33 @@ test("session-aware 4h aggregation counts only sessions confirmed by the calenda
     session("2026-10-15"), session("2026-10-17"),
   ]);
 
-  assert.equal(withMissingSession.find((item) => item.time === at("2026-10-17", 9)).missingBarsBefore, 2);
-  assert.equal(withHoliday.find((item) => item.time === at("2026-10-17", 9)).missingBarsBefore, 0);
+  assert.deepEqual(withMissingSession.map(({ time, missingBarsBefore }) => [time, missingBarsBefore]), [
+    [at("2026-10-15", 9), 0],
+    [at("2026-10-17", 9), 1],
+  ]);
+  assert.deepEqual(withHoliday.map(({ time, missingBarsBefore }) => [time, missingBarsBefore]), [
+    [at("2026-10-15", 9), 0],
+    [at("2026-10-17", 9), 0],
+  ]);
+});
+
+test("Yahoo H4 calculation history is capped at the latest 800 aggregated bars", async () => {
+  const originalFetch = globalThis.fetch;
+  const start = Date.parse("2026-05-01T00:00:00+09:00") / 1000;
+  const timestamp = Array.from({ length: 3204 }, (_, index) => start + index * 60 * 60);
+  const open = timestamp.map((_, index) => 100 + index % 100);
+  globalThis.fetch = async () => new Response(JSON.stringify({ chart: { result: [{
+    meta: { symbol: "SATL", exchangeTimezoneName: "Asia/Seoul", currency: "KRW" },
+    timestamp,
+    indicators: { quote: [{
+      open, high: open.map((value) => value + 1), low: open.map((value) => value - 1),
+      close: open.map((value) => value + 0.5), volume: open.map(() => 1000),
+    }] },
+  }], error: null } }), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    const result = await new ChartExplorerService().getChart("2026-10-08", "SATL", "4h");
+    assert.equal(result.payload.available, true);
+    assert.equal(result.calculationBars?.length, 800);
+    assert.equal(result.calculationBars?.at(-1)?.time, new Date(timestamp.at(-4) * 1000).toISOString());
+  } finally { globalThis.fetch = originalFetch; }
 });

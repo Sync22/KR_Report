@@ -6,7 +6,7 @@ Record Next.js web-view performance and normal-operation smoke evidence on the I
 
 ## Status
 
-**N100 Next preview acceptance PASS (scoped): host/build, route parity, normal Poll read smoke, performance snapshot, and normal restart verified. Production cutover is separate.**
+**The scoped N100 PASS below applies to the 2026-10-16 build `eycpeDtIvb5OLXSWuyJyF`, not the latest source.** On 2026-10-17, Operations PC ran tests/typecheck/build successfully for source `36f31ad` (build `qNe5v5pW2mlUdprmNzgbE`), then a read-only review found three Chart Explorer contract issues before starting the server. Development fixes are now in the branch. N100 acceptance of the fixed source is pending a fresh sync and bounded check; production cutover remains separate.
 
 On 2026-10-15, the current host was verified as Intel N100 / Windows 11 Pro with Node `v22.21.1` and Python `3.12.14`. Read-only `db-verify --json` passed. Next was built after `c01bdc9` with build ID `eycpeDtIvb5OLXSWuyJyF`. On 2026-10-16, scheduled Polls at 08:30, 09:00, 09:30, and 10:30 ended with `LastTaskResult=0`. Cache-miss Next GETs overlapped the 09:00, 09:30, and 10:30 Poll Running windows and returned 200 without lock/busy errors. During the 09:30 and 10:30 windows, DB mtime changed while the separate `StockMonitor-TelegramCommands` task was also Running, so writer attribution is not isolated. WAL was absent or 0 bytes at the GET snapshots; SHM appeared at 32 KiB during some Next reads and was later removed. No DB rows were inspected.
 
@@ -100,7 +100,7 @@ For any requested follow-up measurement, keep API p50/p95 separate from rendered
 
 ## Acceptance And Rollback
 
-**N100 preview acceptance: PASS (as of 2026-10-16).** The current build is healthy on `3010`; stored DTOs matched 14/14 on an exact snapshot; GET-only and read-only boundaries were checked; a cache-miss Next read succeeded during normal scheduled Poll runs with no lock/busy error; route timing/resource samples are recorded; and normal stop/restart recovered the same build.
+**Previous-build N100 preview acceptance: PASS (as of 2026-10-16).** Build `eycpeDtIvb5OLXSWuyJyF` was healthy on `3010`; stored DTOs matched 14/14 on an exact snapshot; GET-only and read-only boundaries were checked; a cache-miss Next read succeeded during normal scheduled Poll runs with no lock/busy error; route timing/resource samples were recorded; and normal stop/restart recovered that build. The later `36f31ad` source review found three contract issues and did not start Next. Acceptance of the subsequent development fixes is pending on the Operations PC.
 
 The live Python access gate was left unchanged. WAL was absent or 0 bytes in sampled reads; SHM was absent or 32 KiB depending on the sample. All scheduled Poll-time reads succeeded without a lock/busy error. Production cutover remains separate and is not approved by this result.
 

@@ -1,5 +1,5 @@
 import { isBusinessDate } from "../../../domain/daily.ts";
-import { isChartExplorerSymbol, isChartExplorerTimeframe } from "../../../domain/chart-explorer.ts";
+import { isChartExplorerTimeframe } from "../../../domain/chart-explorer.ts";
 import { chartExplorerService, invalidChartExplorerRequest } from "../../../server/chart-explorer.ts";
 
 export const runtime = "nodejs";
@@ -21,7 +21,7 @@ export async function GET(request: Request): Promise<Response> {
   const symbol = query.get("symbol");
   const timeframe = query.get("timeframe");
   const validShape = query.size === 3 && ["date", "symbol", "timeframe"].every((key) => query.getAll(key).length === 1);
-  if (!validShape || !date || !isBusinessDate(date) || !symbol || !isChartExplorerSymbol(symbol) || !timeframe || !isChartExplorerTimeframe(timeframe)) {
+  if (!validShape || !date || !isBusinessDate(date) || !symbol || !/^\d{6}$/.test(symbol) || !timeframe || !isChartExplorerTimeframe(timeframe)) {
     return Response.json(invalidChartExplorerRequest(date, symbol, isChartExplorerTimeframe(timeframe) ? timeframe : null), {
       status: 400,
       headers: NO_STORE,

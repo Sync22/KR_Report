@@ -94,7 +94,7 @@ Both Next package scripts bind Next.js to `127.0.0.1`. The foreground terminal a
 
 ### Next V1 Operations-PC Acceptance Guide
 
-**Status (2026-10-16): N100 Next preview acceptance PASS (scoped).** The preview is healthy, read-only, data-parity checked, overlapped successfully with normal Poll runs, and passed normal restart. This is not production cutover approval.
+**Status (2026-10-17): Previous N100 build passed scoped preview acceptance; latest source needs retest.** The 2026-10-16 PASS applies to build `eycpeDtIvb5OLXSWuyJyF`. On 2026-10-17, Operations-PC tests/build passed on source `36f31ad` (build `qNe5v5pW2mlUdprmNzgbE`), but read-only review found three Chart Explorer contract issues before starting the server. Development fixes are now in the branch; sync and rerun the bounded acceptance checks before accepting the newer source. This is not production cutover approval.
 
 Use this as the first-check reference for every new Next V1 session on the Operations PC. The prompt below directs the session to read this section before inspecting the DB or starting a service.
 
@@ -175,7 +175,7 @@ The runner is loopback-only, covers 14 stored/default GETs, and excludes live pr
 | Performance snapshot | Comparable route p50/p95, response bytes/cache state, and a short resource sample are recorded | **PASS** — the 14-route comparison and CPU/memory sample are recorded. These are descriptive measurements, not an SLO or speedup claim. |
 | Windows lifecycle | Normal start, stop, and restart recover on port `3010` | **PASS** — the same build recovered in 10.9 seconds; health and archive miss/hit returned 200. |
 
-This checklist accepts the local N100 preview only. It does not authorize a public cutover or changes to the Python gate, scheduler, DB writer, or external sharing. If the preview stops working, return to the existing Python web-view; do not restore or modify the DB.
+The recorded PASS applies only to the previous build named above. Acceptance of the newer source remains pending until the Operations PC reruns the checklist after syncing the fixes. This checklist does not authorize a public cutover or changes to the Python gate, scheduler, DB writer, or external sharing. If the preview stops working, return to the existing Python web-view; do not restore or modify the DB.
 
 Current important behavior:
 

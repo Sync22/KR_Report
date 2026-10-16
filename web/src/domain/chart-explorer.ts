@@ -239,7 +239,7 @@ export function aggregateHourlyBarsToFourHours(
       // Yahoo's KRX 1h series ends at the 14:00 start slot for a 15:30 close.
       const slotCount = Math.floor((end - start) / (60 * 60 * 1000));
       for (let index = 0; index < slotCount; index += 1) slots.push(start + index * 60 * 60 * 1000);
-      for (let offset = 0; offset < slots.length; offset += 4) {
+      for (let offset = 0; offset + 4 <= slots.length; offset += 4) {
         const group = slots.slice(offset, offset + 4).map((time) => observed.get(new Date(time).toISOString()));
         if (group.some((bar) => !bar)) { missing += 1; continue; }
         const row = combine(group as ChartExplorerBar[], new Date(slots[offset]).toISOString());
@@ -258,7 +258,7 @@ export function aggregateHourlyBarsToFourHours(
     const day = `${fields.year}-${fields.month}-${fields.day}`;
     days.set(day, [...(days.get(day) ?? []), bar]);
   }
-  return [...days].flatMap(([, dayBars]) => Array.from({ length: Math.ceil(dayBars.length / 4) }, (_, index) => {
+  return [...days].flatMap(([, dayBars]) => Array.from({ length: Math.floor(dayBars.length / 4) }, (_, index) => {
     const group = dayBars.slice(index * 4, index * 4 + 4);
     return combine(group, group[0].time);
   }));
