@@ -27,10 +27,7 @@ function Invoke-ExternalReadinessStep {
     if ($LASTEXITCODE -ne 0) {
         Write-Output ""
         Write-Output "External readiness step failed: $Label (exit code $LASTEXITCODE)"
-        Write-Output "If access-code is disabled, run:"
-        Write-Output "  python -m stock_monitor access-code set"
-        Write-Output "  python -m stock_monitor access-code status"
-        Write-Output "Then rerun this script before sharing the web-view."
+        Write-Output "Resolve the reported local prerequisite, then rerun this script."
         exit $LASTEXITCODE
     }
 }
@@ -41,7 +38,6 @@ Invoke-ExternalReadinessStep `
         "-m",
         "stock_monitor",
         "mini-pc-preflight",
-        "--require-access-code",
         "--require-backup",
         "--require-env",
         "--require-mini-pc-profile"
@@ -76,5 +72,6 @@ Write-Output "External web-view readiness checks completed."
 Write-Output "- tunnel_target: configured loopback web-view target"
 Write-Output "- share only web-view; do not expose admin-gui."
 Write-Output "- enable Cloudflare Access or an equivalent allow-list before sharing."
+Write-Output "- Next intentionally has no app access-code; verify provider access control separately."
 Write-Output "- after provider setup, run: python -m stock_monitor external-web-view-smoke --url https://YOUR-WEB-VIEW-URL --date YYYY-MM-DD --record-success --json"
 Write-Output "- avoid router port forwarding as the default exposure path."

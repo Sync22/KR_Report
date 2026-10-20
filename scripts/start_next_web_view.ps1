@@ -1,8 +1,10 @@
-param([switch]$Status)
+param(
+  [int]$Port = 3010,
+  [switch]$Status
+)
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $webRoot = Join-Path $projectRoot 'web'
-$port = 3010
 $dotenvPath = Join-Path $projectRoot '.env'
 $tossDotenvPath = Join-Path $projectRoot '.env.toss-openapi'
 $pythonExe = Join-Path $projectRoot '.venv\Scripts\python.exe'
@@ -15,9 +17,14 @@ $projectNextProcesses = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'
   $commandLine.IndexOf($webRoot, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
     $commandLine -match '(?i)\bnext(?:\.js)?\b' -and
     $commandLine -match '(?i)\b(start|dev)\b' -and
+    $commandLine -match '(?i)--hostname\s+"?127\.0\.0\.1\b' -and
     $portMatch.Success -and [int]$portMatch.Groups[1].Value -eq $port
 }
-$listener = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue | Where-Object { [string]$_.State -eq 'Listen' } | Select-Object -First 1
+$portListeners = @(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue)
+if (@($portListeners | Where-Object { $_.LocalAddress -ne '127.0.0.1' }).Count -gt 0) {
+  throw "Port $Port has a non-loopback listener; it was not stopped."
+}
+$listener = $portListeners | Select-Object -First 1
 if ($null -ne $listener -and [int]$listener.OwningProcess -in @(0, 4)) { $listener = $null }
 if ($null -eq $listener -and $null -ne $projectNextProcesses) {
   foreach ($candidate in $projectNextProcesses) {
@@ -31,11 +38,13 @@ if ($null -eq $listener -and $null -ne $projectNextProcesses) {
   }
 }
 if ($null -eq $listener) {
-  $listenPattern = "^\s*TCP\s+\S+:$port\s+\S+\s+LISTENING\s+(\d+)\s*$"
+  $listenPattern = "^\s*TCP\s+(\S+):$port\s+\S+\s+LISTENING\s+(\d+)\s*$"
   $listenerLine = & netstat.exe -ano -p tcp 2>$null | Where-Object { $_ -match $listenPattern } | Select-Object -First 1
   if ($listenerLine) {
-    $listenerPid = [regex]::Match($listenerLine, $listenPattern).Groups[1].Value
-    if ([int]$listenerPid -notin @(0, 4)) { $listener = [pscustomobject]@{ OwningProcess = [int]$listenerPid } }
+    $matches = [regex]::Match($listenerLine, $listenPattern)
+    if ($matches.Groups[1].Value -ne '127.0.0.1') { throw "Port $Port has a non-loopback listener; it was not stopped." }
+    $listenerPid = $matches.Groups[2].Value
+    if ([int]$listenerPid -notin @(0, 4)) { $listener = [pscustomobject]@{ OwningProcess = [int]$listenerPid; LocalAddress = '127.0.0.1' } }
   }
 }
 $portResponds = Test-NetConnection -ComputerName '127.0.0.1' -Port $port -InformationLevel Quiet -WarningAction SilentlyContinue
@@ -45,18 +54,21 @@ if ($null -ne $listener) {
   $projectNext = $projectNextProcesses | Where-Object { [int]$_.ProcessId -eq $ownerPid } | Select-Object -First 1
   if ($null -eq $projectNext) {
     $owner = Get-CimInstance Win32_Process -Filter "ProcessId = $ownerPid" -ErrorAction SilentlyContinue
-    throw "Port 3010 is occupied by an unverified process (PID $ownerPid; $($owner.Name)); it was not stopped and no alternate port will be used."
+    throw "Port $Port is occupied by an unverified process (PID $ownerPid; $($owner.Name)); it was not stopped and no alternate port will be used."
   }
   if (-not $portResponds) {
-    throw "This project's Next process exists for port 3010 (PID $ownerPid) but does not accept connections. Stop it normally in its server terminal before restarting."
+    throw "This project's Next process exists for port $Port (PID $ownerPid) but does not accept connections. Stop it normally in its server terminal before restarting."
   }
   try {
-    $health = Invoke-WebRequest -Uri 'http://127.0.0.1:3010/health' -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
-    $main = Invoke-WebRequest -Uri 'http://127.0.0.1:3010/' -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-    Write-Output "Next.js preview is already running and healthy at http://127.0.0.1:3010 (PID $ownerPid; health $($health.StatusCode); Main $($main.StatusCode))."
+    $health = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
+    $main = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+    if ($health.Headers['x-stock-monitor-service'] -ne 'next-web-view') {
+      throw 'The health response does not identify this Stock Monitor Next service.'
+    }
+    Write-Output "Next.js is already running and healthy at http://127.0.0.1:$Port (PID $ownerPid; health $($health.StatusCode); Main $($main.StatusCode))."
   }
   catch {
-    throw "This project's Next.js process owns port 3010 (PID $ownerPid), but its health check failed. Stop it normally in its server terminal, then restart this script on port 3010."
+    throw "This project's Next.js process owns port $Port (PID $ownerPid), but its health check failed. Stop it normally in its server terminal, then restart this script on port $Port."
   }
   return
 }
@@ -64,28 +76,28 @@ if ($null -ne $listener) {
 if ($null -ne $projectNextProcesses) {
   $projectNext = $projectNextProcesses | Select-Object -First 1
   if (-not $portResponds) {
-    throw "This project's Next process exists for port 3010 (PID $($projectNext.ProcessId)) but does not accept connections. Stop it normally in its server terminal before restarting."
+    throw "This project's Next process exists for port $Port (PID $($projectNext.ProcessId)) but does not accept connections. Stop it normally in its server terminal before restarting."
   }
   try {
-    $health = Invoke-WebRequest -Uri 'http://127.0.0.1:3010/health' -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
-    $main = Invoke-WebRequest -Uri 'http://127.0.0.1:3010/' -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+    $health = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
+    $main = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
     if ($health.Headers['x-stock-monitor-service'] -ne 'next-web-view') {
       throw 'The health response does not identify this Stock Monitor Next service.'
     }
-    Write-Output "Next.js preview is healthy at http://127.0.0.1:3010 (project process PID $($projectNext.ProcessId); health $($health.StatusCode); Main $($main.StatusCode); listener PID unavailable)."
+    Write-Output "Next.js is healthy at http://127.0.0.1:$Port (project process PID $($projectNext.ProcessId); health $($health.StatusCode); Main $($main.StatusCode); listener PID unavailable)."
   }
   catch {
-    throw 'Port 3010 responds, but the project Next process could not be confirmed by its health identity and Main page. No process was stopped and no alternate port will be used.'
+    throw "Port $Port responds, but the project Next process could not be confirmed by its health identity and Main page. No process was stopped and no alternate port will be used."
   }
   return
 }
 
 if ($portResponds) {
-  throw 'Port 3010 accepts connections but the listener could not be confirmed as this project Next server. It was not stopped and no alternate port will be used.'
+  throw "Port $Port accepts connections but the listener could not be confirmed as this project Next server. It was not stopped and no alternate port will be used."
 }
 
 if ($Status) {
-  Write-Output 'Next.js preview is stopped; port 3010 is free.'
+  Write-Output "Next.js is stopped; port $Port is free."
   return
 }
 
@@ -190,5 +202,5 @@ finally {
 }
 
 if ($serverExitCode -ne 0) {
-  throw "Next.js exited with code $serverExitCode. Check logs/next-web-view.log and port 3010 ownership before retrying."
+  throw "Next.js exited with code $serverExitCode. Check logs/next-web-view.log and port $Port ownership before retrying."
 }

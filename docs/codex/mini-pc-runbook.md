@@ -62,21 +62,20 @@ This table is the current scheduler contract. Later KRX-specific procedures in t
 | `StockMonitor-MarketBriefingMood` / `Lunch` / `Preclose` | Independent report-count market-briefing slots at `09:15` / `12:00` / `15:15` KST. Scheduled live sends require `market_briefing_phone_review_accepted=true` and manual Telegram review sends on at least three distinct business dates; this counts matching review records across the full delivery history, not the most recent 200 unrelated deliveries. A scheduler result of `0` can mean the slot was skipped by a guard; confirm a sent delivery record. |
 | `StockMonitor-TossCloseSnapshot` | `20:05` KST on Korean business days; captures the `20:00` integrated-market close baseline, Top20 market context, and fixed-market Toss listing cache used by stored lookups. Requires the current DB schema. |
 | `StockMonitor-TelegramCommands` | Hidden worker starts at `08:00`, checks Telegram commands every 1 minute, exits at `16:30`, and skips market holidays/no-run dates. During `09:00~15:30`, it also checks the official KIND `서킷브레이커/사이드카` market-action category and sends one operator alert per official acceptance number. |
-| `StockMonitor-WebViewHourlyRestart` | Hourly restart, default first run `00:05`, for the read-only loopback `web-view` target on `{LOCAL_WEB_VIEW_TARGET}`. |
+| `StockMonitor-WebViewHourlyRestart` | Hourly ensure, default first run `00:05`, for the Next read-only loopback web-view on `127.0.0.1:8780`; starts it only when the port is free and leaves a healthy instance running. |
 | `StockMonitor-Shutdown` | Desktop-validation only. It is not registered by the mini-PC scheduler wrapper and should remain absent during always-on operation. |
 
 External `web-view` runtime note:
 
-- The Cloudflare target is the read-only `web-view` on `{LOCAL_WEB_VIEW_TARGET}`.
-- `scripts/run_web_view.ps1 -HostAddress <loopback-host> -Port <web-view-port>` is the canonical local runner.
-- `scripts/restart_web_view.ps1 -HostAddress <loopback-host> -Port <web-view-port>` is the canonical scheduler restart helper; it stops the current port listener and starts only the read-only `web-view`.
-- `StockMonitor-WebViewHourlyRestart` is registered by default by the mini-PC scheduler wrapper so Cloudflare keeps a fresh local target.
-- `scripts/create_web_view_startup_shortcut.ps1` remains a logon fallback. The Startup shortcut starts only the `web-view` runner at logon; it must not point to `admin-gui`.
+- The existing Cloudflare target remains `http://127.0.0.1:8780`; this port now serves the Next read-only web-view.
+- `scripts/start_next_web_view.ps1 -Port 8780` is the foreground Next runner. `scripts/ensure_next_web_view.ps1 -Port 8780` safely starts it only when 8780 is free and otherwise verifies the project's Next identity and health marker without stopping the listener.
+- `StockMonitor-WebViewHourlyRestart` runs the Next ensure helper hourly. Its trigger, principal, and other scheduled tasks remain unchanged.
+- `scripts/create_web_view_startup_shortcut.ps1` sets a logon fallback to the same Next ensure helper; it must not point to `admin-gui` or Python web-view.
 - On this mini PC, the Startup shortcut was created at `2026-05-17 18:00 KST`, and a follow-up external smoke for `https://web-view.example.invalid` returned issue count `0`.
 
-### Next.js Local Preview (Not a Production Service)
+### Next.js Operations Web View
 
-The local Next.js web-view preview is under `web/`; it is not registered in Task Scheduler, is not the Cloudflare target, and does not replace the gated Python web-view on port `8780`. All 19 public GET route handlers run directly in Next. Fourteen stored/default projections use Node `node:sqlite` with `readOnly` and `query_only`; five bounded Naver/Toss reference routes use fixed endpoints and server-derived symbols. The daily API's optional Naver market-top query also runs directly and only when the stored same-date eligibility permits it. The preview does not require a second Python listener. The rotation API uses exact-date Toss ETF rows; `/assets/cycle.jpg` serves only the fixed project image. The startup script passes the resolved DB, calendar, rotation-coordinate path, and Toss credentials to the Next server process only when live access is enabled and the configured origin is the official Toss host; it does not place them in browser code, command-line arguments, API responses, or logs. Next has no access-code or login routes. Main Top2 live reference requests are explicit user actions. Next is not a production service. Follow [TODO2-NEXT-WEBVIEW-MIGRATION](operating-guide.md) and recheck parity/DB stability against the Operations PC before any cutover review.
+The Next.js web-view under `web/` replaced the Python web-view listener on `127.0.0.1:8780` on 2026-10-20. The existing tunnel target is unchanged. Python collection, SQLite writes, scheduler jobs, Telegram, `admin-gui`, and `operator-review` remain on their existing paths. All public GET route handlers run directly in Next. Stored projections use Node `node:sqlite` with `readOnly` and `query_only`; bounded Naver/Toss references use fixed endpoints and server-derived symbols. The daily API's optional Naver market-top query runs only when the stored same-date eligibility permits it. The rotation API uses exact-date Toss ETF rows; `/assets/cycle.jpg` serves only the fixed project image. The startup script passes the resolved DB, calendar, rotation-coordinate path, and eligible Toss settings to the Next server process only; secrets are not placed in browser code, command-line arguments, API responses, or logs. Next has no access-code or login routes by design. The 2026-10-20 cutover used build `MRZVh9lSv3ga1TRq2_7js`; external provider smoke was not run because the public hostname was unavailable in this workspace.
 
 The developer-PC notes from the 2026-10-12 preview used Node `v24.15.0` and npm `11.13.0`; this is not verification of the N100 runtime. Recheck the installed runtime after the move. From the project root `C:\Users\MING\Codex\02.Stock_Moniter` in PowerShell:
 
@@ -85,16 +84,17 @@ Push-Location .\web
 npm run build
 Pop-Location
 .\scripts\start_next_web_view.ps1 -Status
-.\scripts\start_next_web_view.ps1
+.\scripts\start_next_web_view.ps1 -Port 8780
+.\scripts\ensure_next_web_view.ps1 -Port 8780
 ```
 
-`scripts/start_next_web_view.ps1` fixes the preview to loopback port `3010` and rejects a conflicting listener without killing it or selecting another port. `-Status` reports stopped or confirms the project process and `/health` plus Main response. If Windows exposes the listener as a system PID or omits its PID, the launcher also requires the project Next command and `x-stock-monitor-service: next-web-view` health marker. Running the script starts one foreground server; leave that terminal open. It passes the resolved `STOCK_MONITOR_DB_PATH`, `STOCK_MONITOR_TIMEZONE`, `STOCK_MONITOR_HOLIDAYS`, and rotation-coordinate path to Next. When Toss live reads are enabled with the fixed official host, it passes the client ID and secret through the Next server process environment; it does not print `.env` contents or pass credentials as command-line arguments. Added process variables are removed when the server exits.
+`scripts/start_next_web_view.ps1 -Port 8780` starts the loopback service in the foreground and rejects a conflicting listener without killing it or selecting another port. `-Status -Port 8780` reports stopped or confirms the project process, `/health`, and Main response. If Windows hides the listener PID, the launcher also requires the project Next command and `x-stock-monitor-service: next-web-view` marker. The hourly task and Startup shortcut use `scripts/ensure_next_web_view.ps1 -Port 8780`; it leaves a healthy Next process alone, starts only on a free port, and leaves an unverified listener untouched. The launcher passes the resolved `STOCK_MONITOR_DB_PATH`, timezone, holidays, and rotation-coordinate path to Next. When eligible Toss live reads are enabled, it passes credentials only to the server process environment and removes added variables when it exits; it does not print `.env` contents or place credentials in command-line arguments.
 
-Both Next package scripts bind Next.js to `127.0.0.1`. The foreground terminal and ignored `logs/next-web-view.log` contain output. Stop normally with `Ctrl+C` in that terminal; verify with `-Status` before restarting on `3010`. If the owner is not confirmed as this project's Next process, leave it alone and resolve the conflict without another port. The Next preview does not start or depend on an unauthenticated Python listener. Keep the existing gated Python listener on `8780`, its Cloudflare target, and its hourly task unchanged until a separate cutover review. The Next-only portion of `npm run test:routes` can run against the one existing Next preview. Its Python HTTP comparison cases require an authenticated reference listener; do not disable the gate or start a second Next listener for tests. Do not use `scripts/restart_web_view.ps1` to manage the Next.js port.
+Both Next package scripts bind Next.js to `127.0.0.1`. The Next server writes to ignored `logs/next-web-view.log`. Stop only a confirmed project Next process; never use the Python `scripts/restart_web_view.ps1` against port 8780 because it force-stops any listener and starts Python. The app-level access-code is intentionally absent from Next. External Cloudflare Access/allow-list status is a separate provider setting and was not verified in the 2026-10-20 cutover.
 
 ### Next V1 Operations-PC Acceptance Guide
 
-**Status (2026-10-20): N100 preview acceptance remains PASS for `241052a`; current-week recheck is recorded.** The 10/19 and 10/20 stored-route DTO/provenance comparisons matched 28/28. The p50/p95 run is supplemental because the live DB mtime advanced while `StockMonitor-TelegramCommands` was running. The 10/20 14:00 Poll returned result `0`; one cache-miss Next GET overlapped it without a lock/busy error. Task Scheduler history was unavailable, so no 10/19 Poll result is claimed. A current-date H4 read returned 200 with source date `2026-10-20`, finality `unknown`, and 243 calculation bars. Existing test/typecheck/build results remain valid for unchanged code commit `241052a` (build `ysj-FoQjFyb1uCf6T_Pa6`). This is preview acceptance, not production cutover approval.
+**Status (2026-10-20): Next cutover to `127.0.0.1:8780` completed.** Prior 10/19 and 10/20 stored-route DTO/provenance comparisons matched 28/28; their timing remains supplemental because the DB mtime advanced during the run. The 10/20 Poll returned result `0` after a cache-miss read overlapped it. The new cutover source passed `npm test` 155/155, typecheck, and build; build ID `MRZVh9lSv3ga1TRq2_7js` serves on 8780. Health, Main, archive, and local Chart Lab returned 200. A local request with simulated non-loopback `Host` and `x-forwarded-host` returned 404 for the Chart Lab page and 403 for its monitor API; the actual tunnel host was not tested. The application has no access-code routes by design. External provider smoke was not run because the public hostname was unavailable; no Cloudflare setting was changed.
 
 Use this as the first-check reference for every new Next V1 session on the Operations PC. The prompt below directs the session to read this section before inspecting the DB or starting a service.
 
@@ -109,20 +109,20 @@ docs/codex/data-governance.md, and this file's “Next V1 Operations-PC Acceptan
 Follow that guide as the required initial-check and test order.
 
 First inspect the checked-out codex/next-v1 source and commit, Windows/CPU/RAM,
-Python/Node/npm versions, node:sqlite support, current listeners on 3010 and the
-gated Python web-view port, intended DB selection, backup/verification state, and
+Python/Node/npm versions, node:sqlite support, current listeners on Next port 8780
+and optional preview port 3010, intended DB selection, backup/verification state, and
 DB/WAL/SHM metadata. Report sanitized status only: do not print .env values,
 access codes, cookies, credentials, or DB rows.
 
 For a new source build, run only the setup and checks needed for that build; reuse
 evidence for unchanged code and build IDs. Use the bounded acceptance checklist
-below. Keep the Python service and access-code gate, DB writer, Task Scheduler,
-Telegram, and external sharing unchanged. Use only port 3010 for Next; do not kill
-an unverified process or choose another port. The copied-DB reference already used
-for DTO parity is sufficient for this preview; do not wait for or bypass a live
-Python login. Do not create test writes or expand the bounded preview checks into
-additional reliability investigations. Keep optional observations separate from
-acceptance.
+below. Next is the web-view service on loopback port 8780; the app has no access-code
+route by design. Preserve the DB writer, non-web-view scheduled tasks, Telegram,
+and existing tunnel configuration. Verify only the named project's listener before
+stopping it; do not start Next on 3010 or select another port. The copied-DB
+reference already used for DTO parity is sufficient; do not create test writes or
+expand these checks into additional reliability investigations. Keep optional
+observations separate from acceptance.
 ```
 
 #### Before first start
@@ -147,11 +147,11 @@ acceptance.
 #### Start, check, stop, and restart
 
 ```powershell
-.\scripts\start_next_web_view.ps1 -Status
-.\scripts\start_next_web_view.ps1
+.\scripts\start_next_web_view.ps1 -Status -Port 8780
+.\scripts\ensure_next_web_view.ps1 -Port 8780
 ```
 
-Keep the foreground PowerShell terminal open. Confirm `GET http://127.0.0.1:3010/health` and the selected Main page return `200`, then inspect only the expected public display. In another terminal, stop with normal `Ctrl+C`, run `-Status` until it reports stopped, then start on the same `3010` port. The launcher must refuse conflicts and leave unidentified processes running. Check `logs/next-web-view.log` for start/failure/restart evidence without copying secrets into notes.
+The hourly Task Scheduler action and Startup shortcut call the ensure helper. Confirm `/health` returns `200` with `x-stock-monitor-service: next-web-view`, then check Main and a stored API route. The helper leaves healthy Next and unidentified listeners untouched. For a deliberate stop, verify the process command and port before stopping it; never run `scripts/restart_web_view.ps1` while Next owns 8780. Check `logs/next-web-view.log` without copying secrets into notes.
 
 For a future live-origin comparison, run the API benchmark only after the existing gated Python listener and Next use the same operating DB snapshot and the Python request is already authorized. This is not required for the accepted preview; the saved copied-DB reference comparison already established DTO parity:
 
@@ -161,22 +161,34 @@ npm run bench:public-get
 Pop-Location
 ```
 
-The runner is loopback-only, covers 14 stored/default GETs, and excludes live provider routes. A `401`, missing listener, different DB snapshot, or changed DB metadata means no comparable timing was obtained. Keep the Python access-code gate enabled. Follow the full route and cache rules in [the Developer-PC API timing benchmark](operating-guide.md#developer-pc-api-timing-benchmark) and record Operations-PC values only in [Operations performance observation](operations-performance-observation.md).
+The runner is loopback-only, covers 14 stored/default GETs
 
 #### Operations-PC acceptance checklist
 
 | Check | Required evidence | Current state |
 | --- | --- | --- |
-| Runtime and build | N100 build and runtime are healthy; source test/build results are recorded | **PASS for `241052a`** — venv Python `3.12.14`, Node `22.21.1`; `npm test` 152/152, typecheck and build passed. Build `ysj-FoQjFyb1uCf6T_Pa6` is serving on `3010`. |
+| Runtime and build | N100 build and runtime are healthy; source test/build results are recorded | **PASS, current cutover build** — project `.venv` Python, Node `22.21.1`; `npm test` 155/155, typecheck and build passed. Build `MRZVh9lSv3ga1TRq2_7js` is serving on `8780`. |
 | Chart Explorer public input | Non-six-digit ticker is rejected before provider query | **PASS** — `/api/chart-explorer?...symbol=SATL...` returned 400; regression test confirms no provider fetch. `/health`, `/`, and `/daily/2026-10-14/chart?symbol=BAD%2FTICKER` returned 200; the chart page request was server-rendered only. |
 | Chart Lab H4 | Real bounded H4 read keeps source/provenance and calculation cap | **PASS** — loopback GET on `2026-10-20` returned 200; Yahoo 1h source date `2026-10-20`, finality `unknown`, 243 calculation bars (≤800). One request took 13,079 ms / 326,017 B. Payload was not saved; no monitor start/pause action occurred. |
 | DB ownership | Next reads the configured operating DB read-only | **PASS** — DB verification and metadata checks were previously recorded; Next SQLite paths use `readOnly: true` and `PRAGMA query_only = ON`. Tests use temporary fixtures; no operating DB write was made. |
 | Snapshot parity | Same date/code/snapshot preserves public DTO and provenance | **DTO PASS; exact-snapshot caveat** — 10/19 and 10/20 matched 28/28 including source/as-of/freshness after only documented normalizations. The source DB mtime advanced during the interval, so this was not strict same-snapshot evidence. Python used a read-only copy and process-local nonexistent access-code path; live 8780 gate and `.env` stayed unchanged. |
 | Scheduled Poll read smoke | A normal Poll and an uncached Next SQLite read overlap without a lock/busy error | **PASS 10/20 14:00** — Poll was Running before/after two read-only GETs. `limit=99` returned 200 (193.9 ms / 26,075 B; cache header unreported after a local extraction error); `limit=98` returned 200 miss (118.6 ms / 25,816 B). Poll later finished with result `0`; DB main file stayed unchanged across both reads. Scheduler history does not expose 10/19 here. No manual Poll or test write. |
 | Performance snapshot | Comparable route p50/p95, response bytes/cache state, and a short resource sample are recorded | **PASS, current-week timing supplemental** — 10/19 and 10/20 p50/p95 and cache-matched response bytes are recorded. DB mtime advanced during the run, so do not treat it as a strict same-snapshot timing result. The short CPU/working-set sample remains from the prior preview build. |
-| Windows lifecycle | Current preview starts and serves the expected pages on port `3010` | **PASS** — existing launcher started PID `5220`; `/health` and current preview are healthy. The live Python listener, scheduler, and operating DB were not changed by this check. |
+| Windows lifecycle | Next serves the expected pages on loopback port `8780` and the hourly/logon launch paths do not replace it with Python | **PASS** — build `MRZVh9lSv3ga1TRq2_7js`, PID `21324`, health marker `next-web-view`; Main and archive 200. The hourly task and Startup shortcut now call the Next ensure helper. Poll, Telegram, DB writer, and other scheduler tasks were not changed. |
 
-This checklist records N100 preview acceptance for `241052a` and the supplemental current-week recheck as of 2026-10-20. It does not authorize a public cutover or changes to the Python gate, scheduler, DB writer, or external sharing. If the preview stops working, return to the existing Python web-view; do not restore or modify the DB.
+This checklist records the user-approved local Next cutover on 2026-10-20. Rollback changes only the web-view task and shortcut; it does not touch the other scheduler tasks or the DB:
+
+```powershell
+$pythonExe = (Resolve-Path .\.venv\Scripts\python.exe).Path
+$restartScript = Join-Path (Get-Location) 'scripts\restart_web_view.ps1'
+$arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -PythonExe "{1}" -HostAddress 127.0.0.1 -Port 8780' -f $restartScript, $pythonExe
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments
+Set-ScheduledTask -TaskName 'StockMonitor-WebViewHourlyRestart' -Action $action | Out-Null
+.\scripts\create_web_view_startup_shortcut.ps1 -UsePython -PythonExe $pythonExe -Port 8780
+.\scripts\run_web_view.ps1 -PythonExe $pythonExe -HostAddress 127.0.0.1 -Port 8780
+```
+
+Before running that rollback, stop only the verified Next process on 8780 and confirm the port is free. Then confirm Python `/health`. Do not restore or modify the DB. The external hostname's access policy remains unverified and no provider configuration changed.
 
 Current important behavior:
 
@@ -195,12 +207,12 @@ Keep the initial candidate set narrow:
 | Candidate | Use | Decision note |
 | --- | --- | --- |
 | Tailscale | Owner-only remote access to the mini PC and local services. | Good first option for personal remote checking/control after migration. Friend access may require too much onboarding. |
-| Cloudflare Tunnel | Shareable URL candidate for read-only `web-view`, mapped only to the local web-view port `{LOCAL_WEB_VIEW_TARGET}`. | Domain purchase, provider binding, and final smoke for `https://web-view.example.invalid` are done. Keep the local `access-code` gate enabled, keep any provider allow-list/Access policy in place, and do not map `admin-gui`. |
+| Cloudflare Tunnel | Existing shareable URL targets the read-only `web-view` loopback port `{LOCAL_WEB_VIEW_TARGET}`. | The 2026-05 smoke tested Python web-view with its app gate. Next replaced Python on 2026-10-20 and intentionally has no app access-code route. Keep `admin-gui` untunneled; verify provider Access/allow-list against the real public host before claiming the external boundary is protected. |
 | Docker | Not used for the current Windows N100 deployment. | Defer until Linux/VPS, repeated multi-host deployment, Postgres/service split, or similar operational pressure appears. |
 
 Do not expose `admin-gui` through a public URL.
 Avoid direct router port forwarding by default.
-Before any external URL is shared, confirm `python -m stock_monitor access-code status` reports enabled, review `python -m stock_monitor external-web-view-sharing-plan --json`, then run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify_cloudflare_web_view_tunnel.ps1 -Url https://YOUR-WEB-VIEW-URL -PythonExe .\.venv\Scripts\python.exe` against the final provider URL.
+Before external sharing, review `python -m stock_monitor external-web-view-sharing-plan --json`, verify Cloudflare Access or an equivalent allow-list in the provider, then run `verify_cloudflare_web_view_tunnel.ps1` against the real HTTPS host. Next has no app access-code; the legacy Python `access-code status` is not evidence of Next authentication.
 
 ## Before Copy Checklist
 
@@ -241,7 +253,7 @@ Interpretation:
 - After moving a new web-view build to the mini PC, restart through `scripts/restart_web_view.ps1`, then run `python -m stock_monitor web-view-value-qa --recent-business-days 4 --stock-limit 20 --json` and `python -m stock_monitor web-view-browser-smoke --stock-limit 20 --json`. The browser smoke now also checks the `장중 거래대금 확인` button and the `Naver 장중 참고` overlap panel in the observation tab; it remains read-only and does not send Telegram or register scheduler tasks.
 - Do not proceed if `db-verify` reports integrity, migration, duplicate, or category quality issues.
 - `mini-pc-preflight --require-backup --require-env --require-mini-pc-profile` checks DB readiness, latest backup presence, required scheduler script files, required project/canonical handoff files, required user web-view/rotation assets, Telegram/KRX environment presence without printing secret values, expected scheduler task names, `operation_profile=mini-pc`, and the KRX Data Marketplace scope boundary.
-- `mini-pc-preflight --require-access-code --require-backup --require-env` should be reserved for the external-sharing preflight because access-code is not required for local-only migration.
+- `mini-pc-preflight --require-access-code --require-backup --require-env` is for the legacy Python web-view fallback only. Do not use that flag as evidence of an access gate on Next.
 
 ## Files To Carry
 
@@ -471,8 +483,8 @@ Web-view restart policy:
 
 - `register_mini_pc_scheduler_tasks.ps1` registers `StockMonitor-WebViewHourlyRestart` by default.
 - The default trigger is hourly, starting at `00:05`.
-- The task must run `scripts/restart_web_view.ps1` and keep the server bound to `{LOCAL_WEB_VIEW_TARGET}`.
-- A healthy run should leave `/health` returning `200 ok` and `verify_task_scheduler_registration.ps1` showing `restart_web_view.ps1` for the task action.
+- The task runs `scripts/ensure_next_web_view.ps1 -Port 8780` and keeps the server bound to `127.0.0.1:8780`.
+- A healthy run leaves `/health` returning `200 ok` with `x-stock-monitor-service: next-web-view`; the verifier expects `ensure_next_web_view.ps1` for this task. Do not use the Python restart helper against the Next listener.
 
 Mini PC shutdown policy:
 
@@ -526,11 +538,10 @@ HTTP -> {LOCAL_WEB_VIEW_TARGET}
 External sharing preflight:
 
 ```powershell
-python -m stock_monitor access-code status
 python -m stock_monitor external-web-view-sharing-plan --json
-python -m stock_monitor mini-pc-preflight --require-access-code --require-backup --require-env
+python -m stock_monitor mini-pc-preflight --require-backup --require-env --require-mini-pc-profile
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify_external_web_view_readiness.ps1 -PythonExe .\.venv\Scripts\python.exe
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_web_view.ps1 -PythonExe .\.venv\Scripts\python.exe -HostAddress <loopback-host> -Port <web-view-port>
+.\scripts\ensure_next_web_view.ps1 -Port 8780
 python -m stock_monitor web-view-startup-fallback-check --json
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify_next_phase_closeout.ps1 -PythonExe .\.venv\Scripts\python.exe -Date YYYY-MM-DD
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify_cloudflare_web_view_tunnel.ps1 -Url https://YOUR-WEB-VIEW-URL -PythonExe .\.venv\Scripts\python.exe
@@ -539,10 +550,10 @@ python -m stock_monitor external-web-view-smoke --url https://YOUR-WEB-VIEW-URL 
 
 Cloudflare Tunnel connection sequence:
 
-1. Confirm `python -m stock_monitor access-code status` reports enabled.
+1. Verify the provider's Cloudflare Access or equivalent allow-list policy for the actual public hostname. Next has no app-level entry-code gate.
 2. Run `python -m stock_monitor external-web-view-sharing-plan --json` to print the read-only operator sequence without changing Cloudflare, scheduler state, DB state, or secrets.
 3. Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify_external_web_view_readiness.ps1 -PythonExe .\.venv\Scripts\python.exe` before touching the provider.
-4. Start only the user page locally through the safe wrapper: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_web_view.ps1 -PythonExe .\.venv\Scripts\python.exe -HostAddress <loopback-host> -Port <web-view-port>`.
+4. Ensure only Next is serving the user page locally: `.\scripts\ensure_next_web_view.ps1 -Port 8780`.
 5. In Cloudflare, point the public hostname only to `{LOCAL_WEB_VIEW_TARGET}`.
 6. Do not map the hostname, tunnel, or any fallback route to `admin-gui`, `/api/status`, scheduler, settings, DB, `.env`, Telegram, or shell/control endpoints.
 7. Keep Cloudflare Access or an equivalent allow-list enabled before sharing the URL.
@@ -552,18 +563,18 @@ Cloudflare Tunnel connection sequence:
 
 Required external sharing state:
 
-- Access-code gate is enabled before a URL is shared.
+- Next has no app-level access-code. Verify the provider Access/allow-list policy before claiming the external boundary is protected.
 - Tunnel target is only the `web-view` port, normally `{LOCAL_WEB_VIEW_TARGET}`.
 - The local `web-view` process stays bound to `127.0.0.1`. Non-loopback binding requires `--allow-non-loopback` and should not be the default sharing path.
 - `admin-gui` remains local/private and is not tunneled.
 - No raw router port forwarding is used as the default exposure path.
 - The public page remains read-only; `POST`, `PUT`, `PATCH`, and `DELETE` data routes stay blocked.
-- The app entry-code cookie is `HttpOnly`, `SameSite=Lax`, and gains `Secure` when Cloudflare or another HTTPS proxy sends the usual forwarded HTTPS headers.
-- `mini-pc-preflight --require-access-code --require-backup --require-env --require-mini-pc-profile` checks app-side prerequisites only.
+- The legacy Python fallback uses an `HttpOnly`, `SameSite=Lax` entry-code cookie that gains `Secure` behind an HTTPS proxy. Next does not issue this cookie.
+- `mini-pc-preflight --require-backup --require-env --require-mini-pc-profile` checks local operational prerequisites; it does not verify provider Access/allow-list policy.
 - `external-web-view-sharing-plan --json` is the focused read-only plan command for Cloudflare/Tailscale sharing. It repeats the allowed `web-view` target, forbidden `admin-gui` boundary, required provider controls, smoke routes, and next commands without configuring a provider.
 - `verify_external_web_view_readiness.ps1` also runs the public-safe web-view value QA, the local browser/mobile smoke gate, and prints the required tunnel target.
-- `verify_cloudflare_web_view_tunnel.ps1 -Url https://YOUR-WEB-VIEW-URL` is the post-provider wrapper. It rejects HTTP, localhost/loopback, and path/query/fragment URLs, always checks `.env` presence, latest backup presence, the mini-PC profile, and enabled access-code gate, reruns full local external readiness unless skipped, runs `external-web-view-smoke --record-success`, and then reruns `next-phase-readiness`.
-- `external-web-view-smoke --url https://YOUR-WEB-VIEW-URL --date YYYY-MM-DD --record-success --json` is the final provider URL check after Cloudflare/Tailscale is configured. Pass only the provider origin, such as `https://view.example.com`, with no path, query, or fragment. It does not accept or print the access-code; unauthenticated `401`/`403` or a recognizable Cloudflare Access HTML/login page for protected user routes is acceptable, but `/api/status` must be absent or blocked and write methods must not be public. `--record-success` writes a non-secret operation event only if the smoke has zero issues against a non-loopback HTTPS provider origin; this is the evidence used by `next-phase-readiness.external_web_view_provider_smoke`.
+- `verify_cloudflare_web_view_tunnel.ps1 -Url https://YOUR-WEB-VIEW-URL` rejects HTTP, localhost/loopback, and path/query/fragment URLs; checks `.env`, backup, and mini-PC profile; reruns local readiness; runs `external-web-view-smoke --record-success`; and reruns `next-phase-readiness`. It does not verify Cloudflare Access; inspect that provider policy separately.
+- `external-web-view-smoke --url https://YOUR-WEB-VIEW-URL --date YYYY-MM-DD --record-success --json` checks public route methods and safe response data. It accepts safe JSON or a recognized access-gate response and does not prove that Cloudflare Access/allow-list is enabled. Confirm provider policy separately before sharing; the success event records route/data smoke only.
 - `web-view-startup-fallback-check --json` verifies the current-user `{WEB_VIEW_STARTUP_SHORTCUT}` Startup fallback and local `/health` without changing Cloudflare or exposing secrets. After a real Windows logon/reboot check, run `python -m stock_monitor web-view-startup-fallback-check --record-success --json` to record the non-secret Startup fallback observation used by `next-phase-readiness.web_view_startup_fallback`.
 - `verify_next_phase_closeout.ps1 -Date YYYY-MM-DD` is the final repeatable closeout wrapper. It combines DB verification, Startup fallback health, optional `-RecordStartupFallbackSuccess`, operator health, scheduler registration verification, market-day observation, direct `observation-summary-audit` feature-availability review, direct `observation-reaction-distribution` reaction-window coverage review, direct `candidate-evidence-readiness` target-progress review, direct `market-briefing-readiness` phone-readability/scheduling-gate review, direct web-view value QA, direct web-view browser smoke, direct external web-view sharing plan review, direct category snapshot status/plan review, direct rotation mapping audit, direct KRX baseline analysis, and `next-phase-readiness` without sending Telegram, registering tasks, configuring Cloudflare, fetching live KRX data, or exposing `admin-gui`. The reaction-distribution command can derive the stored summary baseline when dates are omitted, so the wrapper does not hardcode the current report range; `-Date` is only for market-day observation, while rotation mapping uses its own latest stored-date default.
 - If a response body also looks like `admin-gui`, admin markers win over Cloudflare Access wording and the provider smoke must fail.
@@ -622,7 +633,7 @@ Before leaving the mini PC unattended, decide and record:
 | `StockMonitor-KrxFlowLoginReminder` | Keep disabled except deliberate manual validation days. |
 | `StockMonitor-KrxMentionedFlowBackfill` | Keep enabled only for the approved narrow `[12009]` anchor-day mentioned-stock recent 31-day path. For migration catch-up, anchor to the latest report-mentioned business date and repeat live runs only until dry-run reports `planned_call_count: 0`. |
 | `StockMonitor-WebViewHourlyRestart` | Keep enabled on the mini PC so the Cloudflare `web-view` target is refreshed hourly. |
-| External URL | Do not create until web-view access-code gate is enabled and `admin-gui` exposure is confirmed absent. |
+| External URL | Existing target remains `127.0.0.1:8780`; Next's app access-code is intentionally absent. Verify the provider's Cloudflare Access/allow-list policy separately before claiming the external boundary is protected. |
 | Broad KRX Data Marketplace ingest | Do not enable. |
 
 ## New Codex Session Briefing
@@ -666,7 +677,7 @@ First actions:
 12. If scheduler tasks are missing, prefer powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\register_mini_pc_scheduler_tasks.ps1 -PythonExe .\.venv\Scripts\python.exe.
 13. After registering, run powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify_task_scheduler_registration.ps1 -PythonExe .\.venv\Scripts\python.exe.
 14. Confirm StockMonitor-Shutdown is not registered or is disabled for always-on mini PC operation.
-15. If external sharing is needed, expose only web-view after access-code status is enabled.
+15. If external sharing is needed, expose only Next web-view after verifying the provider Access/allow-list policy.
 ```
 
 ## Open Migration Questions

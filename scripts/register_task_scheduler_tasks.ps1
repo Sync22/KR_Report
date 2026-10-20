@@ -34,7 +34,7 @@ $notifyScript = Join-Path $PSScriptRoot "run_scheduled_notify.ps1"
 $marketBriefingSlotScript = Join-Path $PSScriptRoot "run_scheduled_market_briefing_slot.ps1"
 $tossPriorityBaselineScript = Join-Path $PSScriptRoot "run_scheduled_toss_priority_baseline.ps1"
 $commandsScript = Join-Path $PSScriptRoot "run_process_telegram_commands.ps1"
-$webViewRestartScript = Join-Path $PSScriptRoot "restart_web_view.ps1"
+$webViewEnsureScript = Join-Path $PSScriptRoot "ensure_next_web_view.ps1"
 $shutdownScript = Join-Path $PSScriptRoot "run_scheduled_shutdown.ps1"
 
 function New-StockMonitorAction(
@@ -102,11 +102,10 @@ function Register-RepeatingWeekdayTask(
 function Register-HourlyTask(
     [string]$TaskName,
     [string]$ScriptPath,
-    [string]$PythonCommand,
     [string]$StartTime,
     [int]$RepeatIntervalHours
 ) {
-    $taskRunCommand = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ScriptPath`" -PythonExe `"$PythonCommand`""
+    $taskRunCommand = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ScriptPath`""
     schtasks.exe /Create `
         /TN $TaskName `
         /TR $taskRunCommand `
@@ -206,8 +205,7 @@ if (-not $SkipTelegramCommands) {
 if (-not $SkipWebViewRestart) {
     Register-HourlyTask `
         -TaskName $webViewRestartTaskName `
-        -ScriptPath $webViewRestartScript `
-        -PythonCommand $PythonExe `
+        -ScriptPath $webViewEnsureScript `
         -StartTime $WebViewRestartStart `
         -RepeatIntervalHours $WebViewRestartIntervalHours
 }

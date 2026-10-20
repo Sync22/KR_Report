@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildBenchmarkCases, countCacheStates, loopbackOrigin, nearestRank } from "../scripts/benchmark-public-get.mjs";
+import { DEFAULT_NEXT_ORIGIN, DEFAULT_PYTHON_ORIGIN, buildBenchmarkCases, countCacheStates, loopbackOrigin, nearestRank } from "../scripts/benchmark-public-get.mjs";
+
+test("post-cutover benchmark defaults use Next on 8780 and a separate Python reference on 8781", () => {
+  assert.equal(DEFAULT_NEXT_ORIGIN, "http://127.0.0.1:8780");
+  assert.equal(DEFAULT_PYTHON_ORIGIN, "http://127.0.0.1:8781");
+  assert.notEqual(DEFAULT_NEXT_ORIGIN, DEFAULT_PYTHON_ORIGIN);
+});
 
 test("benchmark matrix covers the 14 stored GET routes with shared date and stock inputs", () => {
   const cases = buildBenchmarkCases("2026-10-08", "005930");

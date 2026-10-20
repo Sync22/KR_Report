@@ -77,7 +77,7 @@ $expectedTasks = @(
     @{ Name = "$TaskPrefix-MarketBriefingPreclose"; Script = "run_scheduled_market_briefing_slot.ps1" },
     @{ Name = "$TaskPrefix-TossCloseSnapshot"; Script = "run_scheduled_toss_priority_baseline.ps1" },
     @{ Name = "$TaskPrefix-TelegramCommands"; Script = "run_process_telegram_commands.ps1" },
-    @{ Name = "$TaskPrefix-WebViewHourlyRestart"; Script = "restart_web_view.ps1" }
+    @{ Name = "$TaskPrefix-WebViewHourlyRestart"; Script = "ensure_next_web_view.ps1"; RequiresPython = $false }
 )
 
 if ($IncludeShutdown) {
@@ -132,7 +132,7 @@ foreach ($expected in $expectedTasks) {
     if ($actionText -notlike "*$expectedScriptPath*") {
         $invalid += "$taskName action does not reference project script path $expectedScriptPath"
     }
-    if ($PythonExe -and $actionText -notlike "*$PythonExe*") {
+    if ($PythonExe -and $expected.RequiresPython -ne $false -and $actionText -notlike "*$PythonExe*") {
         $invalid += "$taskName action does not reference PythonExe $PythonExe"
     }
 

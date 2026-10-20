@@ -225,7 +225,7 @@ function StockSearch({ businessDate }: Readonly<{ businessDate: string }>) {
 }
 
 export default function PublicHeader({ businessDate }: Readonly<{ businessDate: string }>) {
-  const { activeTab, canSwitchTabs, selectTab } = useDailyTabs();
+  const { activeTab, canSwitchTabs, chartLabEnabled, selectTab } = useDailyTabs();
   const pathname = usePathname();
   const searchParams = useSearchParams().toString();
   const search = searchParams ? `?${searchParams}` : "";
@@ -262,7 +262,7 @@ export default function PublicHeader({ businessDate }: Readonly<{ businessDate: 
           <Link id="daily-main-tab" className={`top-tab${activeTab === "main" ? " active" : ""}`} href={dailyTabHref(businessDate, "main", search, pathname)} prefetch={false} aria-current={activeTab === "main" ? "page" : undefined} onClick={(event) => handleTabClick(event, "main")}>메인</Link>
           <Link id="daily-watch-tab" className={`top-tab${activeTab === "watch" ? " active" : ""}`} href={dailyTabHref(businessDate, "watch", search, pathname)} prefetch={false} aria-current={activeTab === "watch" ? "page" : undefined} onClick={(event) => handleTabClick(event, "watch")}>관찰</Link>
           <Link id="daily-stock-tab" className={`top-tab${activeTab === "stock" ? " active" : ""}`} href={dailyTabHref(businessDate, "stock", search, pathname)} prefetch={false} aria-current={activeTab === "stock" ? "page" : undefined} onClick={(event) => handleTabClick(event, "stock")}>종목</Link>
-          <Link id="daily-chart-tab" className={`top-tab${activeTab === "chart" ? " active" : ""}`} href={dailyTabHref(businessDate, "chart", search, pathname)} prefetch={false} aria-current={activeTab === "chart" ? "page" : undefined} onClick={(event) => handleTabClick(event, "chart")}>차트</Link>
+          {chartLabEnabled ? <Link id="daily-chart-tab" className={`top-tab${activeTab === "chart" ? " active" : ""}`} href={dailyTabHref(businessDate, "chart", search, pathname)} prefetch={false} aria-current={activeTab === "chart" ? "page" : undefined} onClick={(event) => handleTabClick(event, "chart")}>차트</Link> : null}
         </nav>
       </div>
     </header>

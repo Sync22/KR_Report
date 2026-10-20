@@ -6674,8 +6674,11 @@ def _build_mini_pc_preflight_snapshot(
         require_mini_pc_profile=require_mini_pc_profile,
     )
     external_sharing_status = {
-        "app_prerequisites_ready": access_code_enabled,
+        "app_prerequisites_ready": not require_access_code or access_code_enabled,
         "cloudflare_access_or_allowlist_required": True,
+        "provider_access_policy_verified": False,
+        "next_app_access_code_required": False,
+        "legacy_python_access_code_enabled": access_code_enabled,
         "target_url": _web_view_default_base_url(),
         "admin_gui_public_exposure_allowed": False,
         "manual_checks": [
@@ -6685,13 +6688,9 @@ def _build_mini_pc_preflight_snapshot(
             "Router port forwarding is not used as the default exposure path.",
         ],
         "detail": (
-            "App prerequisites ready; verify tunnel target and Cloudflare Access/allow-list manually."
-            if access_code_enabled
-            else (
-                "Access-code is disabled; external sharing is not ready."
-                if require_access_code
-                else "External sharing was not required for this preflight; enable access-code before sharing."
-            )
+            "Legacy Python access-code is disabled; the requested Python gate check failed."
+            if require_access_code and not access_code_enabled
+            else "Next has no app access-code; verify the actual tunnel target and provider Access/allow-list separately."
         ),
     }
     checks: list[dict[str, str]] = [
@@ -6741,7 +6740,7 @@ def _build_mini_pc_preflight_snapshot(
         },
         {
             "name": "external_surface",
-            "status": "warn" if require_access_code else "ok",
+            "status": "warn",
             "detail": str(external_sharing_status["detail"]),
         },
         {
@@ -6791,7 +6790,7 @@ def _build_mini_pc_preflight_snapshot(
         "operation_profile": operation_profile_status,
         "runtime": runtime_status,
         "external_sharing": external_sharing_status,
-        "external_sharing_ready": access_code_enabled,
+        "external_sharing_ready": False,
         "expected_scheduler_tasks": [
             f"{config.scheduler_task_prefix}-{suffix}" for suffix in MINI_PC_EXPECTED_SCHEDULER_TASK_SUFFIXES
         ],
@@ -22090,7 +22089,7 @@ def _build_web_view_startup_fallback_status(
     config: RuntimeConfig,
     repository: StockMonitorRepository,
 ) -> dict[str, object]:
-    runner_script = config.root_dir / "scripts" / "run_web_view.ps1"
+    runner_script = config.root_dir / "scripts" / "ensure_next_web_view.ps1"
     setup_script = config.root_dir / "scripts" / "create_web_view_startup_shortcut.ps1"
     shortcut_path = _web_view_startup_shortcut_path()
     observation = _latest_web_view_startup_fallback_observation(repository)
@@ -22099,11 +22098,10 @@ def _build_web_view_startup_fallback_status(
     shortcut_exists = shortcut_path.exists()
     configured = runner_exists and setup_exists and shortcut_exists
     ready = configured and bool(observation["observed"])
-    python_exe = _operator_python_exe_display(config)
     setup_command = (
         "powershell.exe -NoProfile -ExecutionPolicy Bypass -File "
         ".\\scripts\\create_web_view_startup_shortcut.ps1 "
-        f"-PythonExe {python_exe} -HostAddress {WEB_VIEW_DEFAULT_HOST} -Port {WEB_VIEW_DEFAULT_PORT}"
+        f"-HostAddress {WEB_VIEW_DEFAULT_HOST} -Port {WEB_VIEW_DEFAULT_PORT}"
     )
     check_command = "python -m stock_monitor web-view-startup-fallback-check --record-success --json"
     return {
@@ -22125,7 +22123,7 @@ def _build_web_view_startup_fallback_status(
             else "web-view Startup fallback configuration"
         ),
         "observation": observation,
-        "note": "Current-user Startup fallback only; it starts read-only web-view after user logon and must not target admin-gui.",
+        "note": "Current-user Startup fallback only; it ensures the read-only Next web-view after user logon and must not target admin-gui.",
     }
 
 
@@ -22142,8 +22140,8 @@ def _run_web_view_startup_fallback_check(
         issues.append(
             {
                 "code": "runner_script_missing",
-                "path": "scripts/run_web_view.ps1",
-                "message": "Missing canonical loopback web-view runner script.",
+                "path": "scripts/ensure_next_web_view.ps1",
+                "message": "Missing canonical loopback Next web-view ensure script.",
             }
         )
     if not status["setup_script_exists"]:
@@ -22325,8 +22323,7 @@ def _build_external_web_view_sharing_plan(
     )
     start_web_view_command = (
         "powershell.exe -NoProfile -ExecutionPolicy Bypass -File "
-        f".\\scripts\\run_web_view.ps1 -PythonExe {python_exe} "
-        f"-HostAddress {WEB_VIEW_DEFAULT_HOST} -Port {WEB_VIEW_DEFAULT_PORT}"
+        f".\\scripts\\ensure_next_web_view.ps1 -Port {WEB_VIEW_DEFAULT_PORT}"
     )
     value_qa_command = "python -m stock_monitor web-view-value-qa --recent-business-days 4 --stock-limit 20 --json"
     browser_smoke_command = "python -m stock_monitor web-view-browser-smoke --stock-limit 20 --json"
@@ -22340,9 +22337,9 @@ def _build_external_web_view_sharing_plan(
         "provider_verification_command": provider_verification_command,
         "local_preflight_checks": [
             {
-                "name": "mini_pc_profile_and_access_gate",
+                "name": "mini_pc_profile_and_backup",
                 "command": preflight_command,
-                "expectation": "mini-pc profile, access-code enabled, latest backup, value QA, and browser smoke pass",
+                "expectation": "mini-PC profile, latest backup, value QA, and browser/mobile smoke pass",
             },
             {
                 "name": "public_value_qa",
@@ -22361,7 +22358,6 @@ def _build_external_web_view_sharing_plan(
         ),
         "required_local_checks": [
             "mini-pc profile",
-            "access-code enabled",
             "web-view value QA",
             "web-view browser/mobile smoke",
             "GET-only user data routes",
@@ -22376,14 +22372,9 @@ def _build_external_web_view_sharing_plan(
         ],
         "cloudflare_connection_sequence": [
             {
-                "step": "confirm_access_code",
-                "command": "python -m stock_monitor access-code status",
-                "expectation": "access-code gate reports enabled before any external URL is shared",
-            },
-            {
                 "step": "run_local_external_readiness",
                 "command": preflight_command,
-                "expectation": "mini-PC profile, access-code, latest backup, value QA, and browser/mobile smoke pass locally",
+                "expectation": "mini-PC profile, latest backup, value QA, and browser/mobile smoke pass locally",
             },
             {
                 "step": "start_local_web_view",
@@ -22501,7 +22492,7 @@ def _build_external_web_view_sharing_plan(
             "choose Cloudflare Tunnel for friend-facing web-view or Tailscale for owner-only access",
             "target only the configured web-view loopback target",
             "keep admin-gui private and untunneled",
-            "confirm the app entry-code gate works through the chosen HTTPS path",
+            "verify the provider access policy or allow-list separately; Next has no app entry-code gate",
             "run verify_cloudflare_web_view_tunnel.ps1 or external-web-view-smoke against the final shared URL",
             "rerun external readiness and browser smoke checks after provider setup",
         ],
@@ -22522,7 +22513,7 @@ def _build_external_web_view_sharing_plan_payload(
     )
     next_commands = [
         str(plan["preflight_command"]),
-        str(plan["cloudflare_connection_sequence"][2]["command"]),
+        str(plan["cloudflare_connection_sequence"][1]["command"]),
     ]
     if not provider_smoke.get("ready"):
         next_commands.append(str(plan["provider_verification_command"]))

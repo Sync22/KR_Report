@@ -58,6 +58,7 @@ Write-Output "- provider_origin: $providerOrigin"
 Write-Output "- local_tunnel_target_must_be: configured loopback web-view target"
 Write-Output "- share only web-view; do not expose admin-gui."
 Write-Output "- keep Cloudflare Access or an equivalent allow-list enabled before sharing."
+Write-Output "- Next intentionally has no app access-code; provider access control is separate."
 
 Invoke-CloudflareTunnelStep `
     -Label "provider prerequisite gate" `
@@ -65,7 +66,6 @@ Invoke-CloudflareTunnelStep `
         "-m",
         "stock_monitor",
         "mini-pc-preflight",
-        "--require-access-code",
         "--require-backup",
         "--require-env",
         "--require-mini-pc-profile"

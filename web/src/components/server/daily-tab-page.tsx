@@ -10,6 +10,8 @@ import ChartExplorerPanel from "@/components/server/chart-explorer-panel";
 import { isBusinessDate } from "@/domain/daily";
 import { isChartExplorerTimeframe } from "@/domain/chart-explorer";
 import { getDailyTabWorkspace, type DailyTabWorkspace } from "@/server/daily-tab-workspace";
+import { headers } from "next/headers";
+import { isChartLabLocalHost } from "@/server/chart-lab-local";
 
 export type DailyTabPageProps = Readonly<{
   params: Promise<{ date: string }>;
@@ -26,6 +28,8 @@ export type DailyTabPageProps = Readonly<{
 export default async function DailyTabPage({ params, searchParams }: DailyTabPageProps) {
   const [{ date }, query] = await Promise.all([params, searchParams]);
   if (!isBusinessDate(date)) notFound();
+  const requestHeaders = await headers();
+  const chartLabEnabled = isChartLabLocalHost(requestHeaders.get("host"), requestHeaders.get("x-forwarded-host"));
   const selectedStockCode = typeof query.stock === "string" ? query.stock : null;
   let workspace: DailyTabWorkspace;
   try {
@@ -43,6 +47,6 @@ export default async function DailyTabPage({ params, searchParams }: DailyTabPag
     main={<MainPanel params={panelParams} workspace={workspace} />}
     watch={<CandidatePanel params={panelParams} searchParams={panelQuery} workspace={workspace} />}
     stock={<StockPanel params={panelParams} searchParams={panelQuery} workspace={workspace} />}
-    chart={<ChartExplorerPanel businessDate={date} initialSymbol={initialSymbol} initialTimeframe={chartTimeframe} />}
+    chart={chartLabEnabled ? <ChartExplorerPanel businessDate={date} initialSymbol={initialSymbol} initialTimeframe={chartTimeframe} /> : null}
   />;
 }

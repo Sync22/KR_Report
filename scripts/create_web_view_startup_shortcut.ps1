@@ -1,15 +1,15 @@
 param(
-    [string]$PythonExe = "python",
     [string]$HostAddress = "127.0.0.1",
-    [int]$Port = (87 * 100 + 80),
+    [int]$Port = 8780,
     [string]$ShortcutName = "StockMonitor-WebView.lnk",
+    [switch]$UsePython,
+    [string]$PythonExe = "python",
     [switch]$Remove
 )
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
-. (Join-Path $PSScriptRoot "resolve_project_python.ps1")
-$webViewScript = Join-Path $PSScriptRoot "run_web_view.ps1"
+$webViewScript = if ($UsePython) { Join-Path $PSScriptRoot "run_web_view.ps1" } else { Join-Path $PSScriptRoot "ensure_next_web_view.ps1" }
 $startupDir = [Environment]::GetFolderPath("Startup")
 $shortcutPath = Join-Path $startupDir $ShortcutName
 
@@ -28,18 +28,25 @@ if ($Remove) {
     exit 0
 }
 
-$PythonExe = Resolve-StockMonitorPython -ProjectRoot $projectRoot -PythonExe $PythonExe
-
 if (-not (Test-Path -LiteralPath $webViewScript)) {
     throw "Missing web-view runner script: $webViewScript"
+}
+
+if ($UsePython) {
+    . (Join-Path $PSScriptRoot "resolve_project_python.ps1")
+    $PythonExe = Resolve-StockMonitorPython -ProjectRoot $projectRoot -PythonExe $PythonExe
 }
 
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = "powershell.exe"
-$shortcut.Arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$webViewScript`" -PythonExe `"$PythonExe`" -HostAddress $HostAddress -Port $Port"
+$shortcut.Arguments = if ($UsePython) {
+    "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$webViewScript`" -PythonExe `"$PythonExe`" -HostAddress $HostAddress -Port $Port"
+} else {
+    "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$webViewScript`" -Port $Port"
+}
 $shortcut.WorkingDirectory = $projectRoot
-$shortcut.Description = "Start Stock Monitor read-only web-view on $HostAddress`:$Port for Cloudflare Tunnel. Do not expose admin-gui."
+$shortcut.Description = if ($UsePython) { "Start Stock Monitor Python web-view on $HostAddress`:$Port for rollback. Do not expose admin-gui." } else { "Ensure Stock Monitor Next web-view on $HostAddress`:$Port for the existing tunnel target. Do not expose admin-gui." }
 $shortcut.Save()
 
 Write-Output "Created web-view Startup shortcut: $shortcutPath"

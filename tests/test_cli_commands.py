@@ -3241,7 +3241,6 @@ def test_external_web_view_sharing_plan_payload_is_read_only(tmp_path) -> None:
     assert payload["provider_setup_done"] is False
     assert payload["provider_smoke"]["ready"] is False
     assert [step["step"] for step in payload["cloudflare_connection_sequence"]] == [
-        "confirm_access_code",
         "run_local_external_readiness",
         "start_local_web_view",
         "configure_cloudflare_hostname",
@@ -3251,7 +3250,7 @@ def test_external_web_view_sharing_plan_payload_is_read_only(tmp_path) -> None:
         "share_after_success",
     ]
     assert any("Cloudflare Access" in control for control in payload["required_provider_controls"])
-    assert any("run_web_view.ps1" in command for command in payload["next_commands"])
+    assert any("ensure_next_web_view.ps1" in command for command in payload["next_commands"])
     assert any("verify_cloudflare_web_view_tunnel.ps1" in command for command in payload["next_commands"])
     assert "secrets" in payload["note"]
 
@@ -4286,9 +4285,11 @@ def test_mini_pc_preflight_snapshot_warns_external_manual_verification_when_acce
     )
 
     assert snapshot["access_code"]["enabled"] is True
-    assert snapshot["external_sharing_ready"] is True
+    assert snapshot["external_sharing_ready"] is False
     assert snapshot["external_sharing"]["app_prerequisites_ready"] is True
     assert snapshot["external_sharing"]["cloudflare_access_or_allowlist_required"] is True
+    assert snapshot["external_sharing"]["provider_access_policy_verified"] is False
+    assert "Next has no app access-code" in snapshot["external_sharing"]["detail"]
     assert "Tunnel target is exactly the configured web-view loopback target." in snapshot["external_sharing"]["manual_checks"]
     assert any(check["name"] == "external_surface" and check["status"] == "warn" for check in snapshot["checks"])
 
@@ -10998,6 +10999,7 @@ def test_next_phase_readiness_summarizes_read_only_blockers(tmp_path, capsys, mo
     assert payload["web_view_startup_fallback"]["startup_shortcut_name"] == "StockMonitor-WebView.lnk"
     assert "create_web_view_startup_shortcut.ps1" in payload["web_view_startup_fallback"]["setup_command"]
     assert "create_web_view_startup_shortcut.ps1" in payload["web_view_startup_fallback"]["next_command"]
+    assert "ensure_next_web_view.ps1" in payload["web_view_startup_fallback"]["setup_command"]
     assert payload["external_web_view_sharing"]["status"] == "manual_provider_setup_required"
     assert payload["external_web_view_sharing"]["candidate_surface"] == "web-view"
     assert payload["external_web_view_sharing"]["forbidden_surface"] == "admin-gui"
@@ -11009,7 +11011,7 @@ def test_next_phase_readiness_summarizes_read_only_blockers(tmp_path, capsys, mo
         check["name"]: check for check in payload["external_web_view_sharing"]["local_preflight_checks"]
     }
     assert "verify_external_web_view_readiness.ps1" in local_preflight_checks[
-        "mini_pc_profile_and_access_gate"
+        "mini_pc_profile_and_backup"
     ]["command"]
     assert "web-view-value-qa --recent-business-days 4" in local_preflight_checks["public_value_qa"]["command"]
     assert "issue_count is 0" in local_preflight_checks["public_value_qa"]["expectation"]
@@ -11018,11 +11020,10 @@ def test_next_phase_readiness_summarizes_read_only_blockers(tmp_path, capsys, mo
         "local_browser_mobile_smoke"
     ]["command"]
     assert "POST 405" in local_preflight_checks["local_browser_mobile_smoke"]["expectation"]
-    assert "access-code enabled" in payload["external_web_view_sharing"]["required_local_checks"]
+    assert "access-code enabled" not in payload["external_web_view_sharing"]["required_local_checks"]
     assert "admin control POST routes unavailable from web-view" in payload["external_web_view_sharing"]["required_local_checks"]
     cloudflare_sequence = payload["external_web_view_sharing"]["cloudflare_connection_sequence"]
     assert [step["step"] for step in cloudflare_sequence] == [
-        "confirm_access_code",
         "run_local_external_readiness",
         "start_local_web_view",
         "configure_cloudflare_hostname",
@@ -11031,16 +11032,15 @@ def test_next_phase_readiness_summarizes_read_only_blockers(tmp_path, capsys, mo
         "run_provider_wrapper",
         "share_after_success",
     ]
-    assert "access-code status" in cloudflare_sequence[0]["command"]
-    assert "verify_external_web_view_readiness.ps1" in cloudflare_sequence[1]["command"]
-    assert "scripts\\run_web_view.ps1" in cloudflare_sequence[2]["command"]
-    expected_web_view_args = f"-HostAddress {cli_module.WEB_VIEW_DEFAULT_HOST} -Port {cli_module.WEB_VIEW_DEFAULT_PORT}"
-    assert expected_web_view_args in cloudflare_sequence[2]["command"]
-    assert cloudflare_sequence[3]["provider_target"] == cli_module._web_view_default_base_url()
-    assert "admin-gui" in cloudflare_sequence[4]["forbidden_targets"]
-    assert "Cloudflare Access" in cloudflare_sequence[5]["expectation"]
-    assert "verify_cloudflare_web_view_tunnel.ps1" in cloudflare_sequence[6]["command"]
-    assert cloudflare_sequence[7]["requires_provider_smoke_success"] is True
+    assert "verify_external_web_view_readiness.ps1" in cloudflare_sequence[0]["command"]
+    assert "scripts\\ensure_next_web_view.ps1" in cloudflare_sequence[1]["command"]
+    expected_web_view_args = f"-Port {cli_module.WEB_VIEW_DEFAULT_PORT}"
+    assert expected_web_view_args in cloudflare_sequence[1]["command"]
+    assert cloudflare_sequence[2]["provider_target"] == cli_module._web_view_default_base_url()
+    assert "admin-gui" in cloudflare_sequence[3]["forbidden_targets"]
+    assert "Cloudflare Access" in cloudflare_sequence[4]["expectation"]
+    assert "verify_cloudflare_web_view_tunnel.ps1" in cloudflare_sequence[5]["command"]
+    assert cloudflare_sequence[6]["requires_provider_smoke_success"] is True
     provider_smoke_routes = {
         (check["method"], check["route"])
         for check in payload["external_web_view_sharing"]["provider_smoke_checks"]

@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 
 const WARMUPS = 5;
 const SAMPLES = 30;
+export const DEFAULT_PYTHON_ORIGIN = "http://127.0.0.1:8781";
+export const DEFAULT_NEXT_ORIGIN = "http://127.0.0.1:8780";
 
 function query(values) {
   return new URLSearchParams(values).toString();
@@ -83,16 +85,17 @@ async function request(origin, path, pythonCookie, service) {
 }
 
 async function main() {
-  const pythonOrigin = loopbackOrigin(process.env.STOCK_MONITOR_PYTHON_WEB_VIEW_URL ?? "http://127.0.0.1:8780", "Python origin");
-  const nextOrigin = loopbackOrigin(process.env.STOCK_MONITOR_NEXT_ORIGIN ?? "http://127.0.0.1:3010", "Next origin");
+  const pythonOrigin = loopbackOrigin(process.env.STOCK_MONITOR_PYTHON_WEB_VIEW_URL ?? DEFAULT_PYTHON_ORIGIN, "Python origin");
+  const nextOrigin = loopbackOrigin(process.env.STOCK_MONITOR_NEXT_ORIGIN ?? DEFAULT_NEXT_ORIGIN, "Next origin");
+  if (pythonOrigin === nextOrigin) throw new Error("Python and Next origins must be separate local services.");
   const date = process.env.STOCK_MONITOR_BENCH_DATE ?? "2026-10-08";
   const stockCode = process.env.STOCK_MONITOR_BENCH_STOCK_CODE ?? "005930";
   const cases = buildBenchmarkCases(date, stockCode);
   const pythonCookie = process.env.STOCK_MONITOR_PYTHON_COOKIE;
   const rows = [];
   const startedAt = new Date().toISOString();
-  console.log(`Developer-PC stored GET benchmark | started_at=${startedAt} | date=${date} | warmups=${WARMUPS} | samples=${SAMPLES} | accept-encoding=identity`);
-  console.log("Both services receive x-stock-monitor-benchmark: 1; Python ignores it. Next reports its process-local cache state. Latencies include the full loopback response body.");
+  console.log(`Stored GET benchmark | started_at=${startedAt} | date=${date} | warmups=${WARMUPS} | samples=${SAMPLES} | accept-encoding=identity`);
+  console.log("After the 2026-10-20 cutover, Next defaults to 8780 and Python reference to 8781. Both receive x-stock-monitor-benchmark: 1; Python ignores it. Next reports its process-local cache state. Latencies include the full loopback response body.");
 
   for (const benchmarkCase of cases) {
     const times = { Python: [], Next: [] };

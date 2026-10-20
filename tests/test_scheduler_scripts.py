@@ -498,12 +498,12 @@ def test_verify_next_phase_closeout_runs_final_readiness_checks() -> None:
     assert "elevated local PowerShell" in script
 
 
-def test_verify_external_web_view_readiness_requires_access_code_and_public_safe_checks() -> None:
+def test_verify_external_web_view_readiness_checks_next_without_requiring_python_access_code() -> None:
     script = (PROJECT_ROOT / "scripts" / "verify_external_web_view_readiness.ps1").read_text(encoding="utf-8")
 
     assert "[string]$PythonExe" in script
     assert "mini-pc-preflight" in script
-    assert "--require-access-code" in script
+    assert "--require-access-code" not in script
     assert "--require-backup" in script
     assert "--require-env" in script
     assert "--require-mini-pc-profile" in script
@@ -515,8 +515,7 @@ def test_verify_external_web_view_readiness_requires_access_code_and_public_safe
     assert "admin-gui" in script
     assert "Cloudflare Access" in script
     assert "External readiness step failed" in script
-    assert "If access-code is disabled" in script
-    assert "python -m stock_monitor access-code set" in script
+    assert "Next intentionally has no app access-code" in script
     assert "exit $LASTEXITCODE" in script
 
 
@@ -533,10 +532,10 @@ def test_verify_cloudflare_web_view_tunnel_requires_external_https_origin_and_re
     assert "configured loopback web-view target" in script
     assert "admin-gui" in script
     assert "Cloudflare Access" in script
-    assert "access-code" in script
+    assert "Next intentionally has no app access-code" in script
     assert "provider prerequisite gate" in script
     assert "mini-pc-preflight" in script
-    assert "--require-access-code" in script
+    assert "--require-access-code" not in script
     assert "--require-backup" in script
     assert "--require-env" in script
     assert "--require-mini-pc-profile" in script
@@ -551,9 +550,10 @@ def test_verify_cloudflare_web_view_tunnel_requires_external_https_origin_and_re
 def test_create_web_view_startup_shortcut_targets_loopback_web_view_only() -> None:
     script = (PROJECT_ROOT / "scripts" / "create_web_view_startup_shortcut.ps1").read_text(encoding="utf-8")
 
-    assert "[string]$PythonExe" in script
+    assert "[switch]$UsePython" in script
     assert "[string]$HostAddress = \"127.0.0.1\"" in script
-    assert "[int]$Port = (87 * 100 + 80)" in script
+    assert "[int]$Port = 8780" in script
+    assert "ensure_next_web_view.ps1" in script
     assert "run_web_view.ps1" in script
     assert "Startup" in script
     assert "StockMonitor-WebView.lnk" in script
@@ -562,6 +562,24 @@ def test_create_web_view_startup_shortcut_targets_loopback_web_view_only() -> No
     assert "configured loopback web-view target" in script
     assert "admin-gui" in script
     assert "Cloudflare" in script
+
+
+def test_next_web_view_ensure_is_loopback_only_and_never_stops_unknown_listeners() -> None:
+    script = (PROJECT_ROOT / "scripts" / "ensure_next_web_view.ps1").read_text(encoding="utf-8")
+    launcher = (PROJECT_ROOT / "scripts" / "start_next_web_view.ps1").read_text(encoding="utf-8")
+
+    assert "LocalAddress" in script
+    assert "127.0.0.1" in script
+    assert "--hostname\\s+" in script
+    assert "127\\.0\\.0\\.1" in script
+    assert "x-stock-monitor-service" in script
+    assert "next-web-view" in script
+    assert "unverified listener" in script
+    assert "Stop-Process" not in script
+    assert "Start-Process" in script
+    assert "LocalAddress" in launcher
+    assert "--hostname\\s+\"?127\\.0\\.0\\.1" in launcher
+    assert "non-loopback listener" in launcher
 
 
 def test_restart_web_view_script_restarts_loopback_web_view_only() -> None:
@@ -660,7 +678,7 @@ def test_verify_task_scheduler_registration_checks_expected_tasks_and_actions() 
     assert "run_scheduled_market_briefing_slot.ps1" in script
     assert "run_scheduled_toss_priority_baseline.ps1" in script
     assert "run_process_telegram_commands.ps1" in script
-    assert "restart_web_view.ps1" in script
+    assert "ensure_next_web_view.ps1" in script
     assert "run_scheduled_shutdown.ps1" in script
     assert "if ($IncludeShutdown)" in script
     assert "Legacy KRX or duplicate Toss task is registered" in script

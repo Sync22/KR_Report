@@ -12,7 +12,7 @@ $verifyScript = Join-Path $PSScriptRoot "verify_task_scheduler_registration.ps1"
 
 Write-Output "Registering mini PC scheduler tasks without scheduled shutdown."
 Write-Output "StockMonitor-Shutdown is intentionally not registered for the always-on mini PC profile."
-Write-Output "StockMonitor-WebViewHourlyRestart is registered by default to refresh the Cloudflare web-view target every hour."
+Write-Output "StockMonitor-WebViewHourlyRestart is registered by default to ensure the Next web-view on loopback port 8780 every hour."
 
 $registerArgs = @{
     TaskPrefix = $TaskPrefix
