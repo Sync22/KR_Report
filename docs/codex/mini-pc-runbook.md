@@ -153,7 +153,7 @@ observations separate from acceptance.
 
 The hourly Task Scheduler action and Startup shortcut call the ensure helper. Confirm `/health` returns `200` with `x-stock-monitor-service: next-web-view`, then check Main and a stored API route. The helper leaves healthy Next and unidentified listeners untouched. For a deliberate stop, verify the process command and port before stopping it; never run `scripts/restart_web_view.ps1` while Next owns 8780. Check `logs/next-web-view.log` without copying secrets into notes.
 
-For a future live-origin comparison, run the API benchmark only after the existing gated Python listener and Next use the same operating DB snapshot and the Python request is already authorized. This is not required for the accepted preview; the saved copied-DB reference comparison already established DTO parity:
+For a Python-versus-Next API comparison, keep Next on `127.0.0.1:8780` and use a separate Python reference on `127.0.0.1:8781` (or explicit loopback overrides). Use the same date, stock code, and DB snapshot; the read-only copied-DB reference procedure is recorded in [Operations performance observation](operations-performance-observation.md). When using live Python, preserve its existing access gate and use only an already-authorized session; a `401` means the Python comparison was not run. Do not disable the gate or run Poll manually:
 
 ```powershell
 Push-Location .\web
@@ -161,13 +161,13 @@ npm run bench:public-get
 Pop-Location
 ```
 
-The runner is loopback-only, covers 14 stored/default GETs
+The runner is loopback-only and covers the 14 stored/default GET routes; provider routes are excluded. It uses five warm-ups and 30 measured sequential requests per route, with the same date and stock code for both services. It reports status, first-request time, p50/p95, response bytes, and Next cache state; timings include receiving the full response body, but bodies are not saved. Both services receive `x-stock-monitor-benchmark: 1`; Python ignores it. Next cache state is process-local, so compare matching cache states and label timings from different DB snapshots accordingly.
 
 #### Operations-PC acceptance checklist
 
 | Check | Required evidence | Current state |
 | --- | --- | --- |
-| Runtime and build | N100 build and runtime are healthy; source test/build results are recorded | **PASS, current cutover build** — project `.venv` Python, Node `22.21.1`; `npm test` 155/155, typecheck and build passed. Build `MRZVh9lSv3ga1TRq2_7js` is serving on `8780`. |
+| Runtime and build | N100 build and runtime are healthy; source test/build results are recorded | **PASS, current cutover build** — project `.venv` Python, Node `22.21.1`; `npm test` 156/156, typecheck and build passed. Build `MRZVh9lSv3ga1TRq2_7js` is serving on `8780`. |
 | Chart Explorer public input | Non-six-digit ticker is rejected before provider query | **PASS** — `/api/chart-explorer?...symbol=SATL...` returned 400; regression test confirms no provider fetch. `/health`, `/`, and `/daily/2026-10-14/chart?symbol=BAD%2FTICKER` returned 200; the chart page request was server-rendered only. |
 | Chart Lab H4 | Real bounded H4 read keeps source/provenance and calculation cap | **PASS** — loopback GET on `2026-10-20` returned 200; Yahoo 1h source date `2026-10-20`, finality `unknown`, 243 calculation bars (≤800). One request took 13,079 ms / 326,017 B. Payload was not saved; no monitor start/pause action occurred. |
 | DB ownership | Next reads the configured operating DB read-only | **PASS** — DB verification and metadata checks were previously recorded; Next SQLite paths use `readOnly: true` and `PRAGMA query_only = ON`. Tests use temporary fixtures; no operating DB write was made. |
