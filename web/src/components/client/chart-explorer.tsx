@@ -18,8 +18,10 @@ import { calculateChartLabIndicators, type ChartLabIndicatorPoint } from "@/doma
 import { detectChartLabPatterns, type ChartLabPattern } from "@/domain/chart-lab/patterns";
 import { evaluateChartLabEntry, type ChartLabEntryResult, type ChartLabStrategy } from "@/domain/chart-lab/entry";
 import { isStockSearchSnapshot, type StockSearchItem } from "@/domain/stocks";
+import { buildChartReadout } from "@/domain/chart-readout";
 import ChartLabMonitorPanel from "@/components/client/chart-lab-monitor-panel";
-import { ChartLabAnalysisPanels, ChartLabPatternOverlay, ChartLabSignalOverlay } from "@/components/client/chart-lab-panels";
+import { ChartLabAnalysisPanels, ChartLabPatternOverlay, ChartLabSignalOverlay, CHART_LAB_STRATEGIES } from "@/components/client/chart-lab-panels";
+import { addNonPassiveChartWheelListener } from "@/components/client/chart-wheel";
 
 const WATCHLIST_KEY = "stock-monitor-chart-watchlist-v1";
 const PERIODS: { key: ChartExplorerTimeframe; label: string }[] = [
@@ -179,14 +181,11 @@ function MarketSummary({ snapshot }: Readonly<{ snapshot: ChartExplorerSuccess }
   const sma60 = selectedNumber(moving, "sma60");
   const rsi = selectedNumber(record(indicators.rsi14), "value");
   const volumeRatio = selectedNumber(volume, "ratio20");
-  const aboveShort = close !== null && sma20 !== null && close > sma20;
-  const aboveLong = close !== null && sma60 !== null && close > sma60;
-  const observed = [aboveShort, aboveLong].filter((value) => value).length;
-  const observedCount = Number(sma20 !== null) + Number(sma60 !== null);
-  const pricePosition = observedCount === 0 ? "이동평균 비교 자료 부족" : observed === observedCount ? "종가가 확인 가능한 이동평균 위" : observed === 0 ? "종가가 확인 가능한 이동평균 아래" : "이동평균 기준 혼합 구간";
+  const readout = buildChartReadout(close, sma20, sma60, volumeRatio);
   return <section className="chart-observation" aria-labelledby="chart-observation-title">
-    <div className="chart-observation-heading"><div><p className="eyebrow">CHART READOUT · 관찰 참고</p><h2 id="chart-observation-title">{pricePosition}</h2></div><span>{timeframeLabel(snapshot.timeframe)} · {chartTimeLabel(snapshot.snapshot.barAsOf, snapshot.timeframe)}</span></div>
-    <p>종가 {numberLabel(close, 4)} · SMA 20 {numberLabel(sma20, 4)} · SMA 60 {numberLabel(sma60, 4)}를 나란히 보여줍니다. 방향 요약은 확인 가능한 값의 위치만 설명합니다.</p>
+    <div className="chart-observation-heading"><div><p className="eyebrow">CHART READOUT · 관찰 참고</p><h2 id="chart-observation-title">{readout.headline}</h2></div><span>{timeframeLabel(snapshot.timeframe)} · {chartTimeLabel(snapshot.snapshot.barAsOf, snapshot.timeframe)} · {getStatusLabel(snapshot.bar_status)}</span></div>
+    <p className="chart-observation-summary">{readout.summary}</p>
+    <details className="chart-observation-next"><summary>다음에 확인할 것</summary><p>{readout.nextCheck}</p></details>
     <ul className="chart-readout-facts">
       <li><span>RSI 14</span><strong>{rsi === null ? "자료 없음" : `${numberLabel(rsi)} / 100`}</strong><small>수치 참고 · 단독 판단 기준 아님</small></li>
       <li><span>거래량 / 20봉 평균</span><strong>{volumeRatio === null ? "자료 없음" : `${numberLabel(volumeRatio)}배`}</strong><small>최근 봉 포함 여부는 지표 기준 참조</small></li>
@@ -196,8 +195,8 @@ function MarketSummary({ snapshot }: Readonly<{ snapshot: ChartExplorerSuccess }
   </section>;
 }
 
-function StructureOverlay({ structures, bars, x, y, priceTop, minimum, maximum }: Readonly<{
-  structures: unknown[]; bars: ChartBar[]; x: (index: number) => number; y: (value: number) => number; priceTop: number; minimum: number; maximum: number;
+function StructureOverlay({ structures, bars, x, y, priceTop, plotRight, minimum, maximum }: Readonly<{
+  structures: unknown[]; bars: ChartBar[]; x: (index: number) => number; y: (value: number) => number; priceTop: number; plotRight: number; minimum: number; maximum: number;
 }>) {
   const indexByTime = new Map(bars.map((bar, index) => [bar.time, index]));
   return <>{structures.map((raw, index) => {
@@ -208,7 +207,7 @@ function StructureOverlay({ structures, bars, x, y, priceTop, minimum, maximum }
     if (structure.family === "horizontal") {
       const boundary = Number(value("boundary"));
       if (!Number.isFinite(boundary) || boundary < minimum || boundary > maximum) return null;
-      return <g key={`structure-${index}`}><line x1="62" y1={y(boundary)} x2="1188" y2={y(boundary)} stroke="#76614f" strokeDasharray="6 5" strokeWidth="1.5" /><text x="68" y={Math.max(priceTop + 14, y(boundary) - 4)} fill="#56452f">{value("type") === "prior-20-high" ? "직전 20봉 고가 참고" : value("type") === "prior-10-low" ? "직전 10봉 저가 참고" : "수평 가격 기준"}</text></g>;
+      return <g key={`structure-${index}`}><line x1="62" y1={y(boundary)} x2={plotRight} y2={y(boundary)} stroke="#76614f" strokeDasharray="6 5" strokeWidth="1.5" /><text x="68" y={Math.max(priceTop + 14, y(boundary) - 4)} fill="#56452f">{value("type") === "prior-20-high" ? "직전 20봉 고가 참고" : value("type") === "prior-10-low" ? "직전 10봉 저가 참고" : "수평 가격 기준"}</text></g>;
     }
     const points = structure.family === "flag"
       ? [1, 2, 3, 4].map((point) => [indexByTime.get(String(value(`geometry.points.${point}.time`) ?? "")), Number(value(`geometry.points.${point}.price`))] as const)
@@ -227,8 +226,8 @@ function chartIndexAtPointer(event: React.PointerEvent<SVGSVGElement>, count: nu
   return Math.max(0, Math.min(count - 1, Math.floor((viewX - left) / slot)));
 }
 
-function chartZoomAnchor(event: React.WheelEvent<SVGSVGElement>, left = 62, right = 12): number {
-  const rect = event.currentTarget.getBoundingClientRect();
+function chartZoomAnchor(event: WheelEvent, svg: SVGSVGElement, left = 62, right = 12): number {
+  const rect = svg.getBoundingClientRect();
   const viewX = (event.clientX - rect.left) / rect.width * 1200;
   return Math.max(0, Math.min(1, (viewX - left) / (1200 - left - right)));
 }
@@ -242,9 +241,22 @@ type ChartInteractionProps = Readonly<{
   onZoom: (direction: "in" | "out", anchorRatio: number) => void;
 }>;
 
+function useChartWheelRef(onZoom: ChartInteractionProps["onZoom"], left = 62, right = 12) {
+  const onZoomRef = useRef(onZoom);
+  const cleanupRef = useRef<(() => void) | null>(null);
+  onZoomRef.current = onZoom;
+  return useCallback((svg: SVGSVGElement | null) => {
+    cleanupRef.current?.();
+    cleanupRef.current = svg ? addNonPassiveChartWheelListener(svg, (event) => {
+      onZoomRef.current(event.deltaY < 0 ? "in" : "out", chartZoomAnchor(event, svg, left, right));
+    }) : null;
+  }, [left, right]);
+}
+
 function PriceChart({ bars, snapshot, indicators, patterns, signals, signalStrategies, overlays, dataOffset, showStructures, selectedBarIndex, range, onSelectBar, onClearBar, onPan, onZoom }: Readonly<ChartInteractionProps & { bars: ChartBar[]; snapshot: ChartExplorerSuccess; indicators: ReadonlyArray<ChartLabIndicatorPoint>; patterns: ReadonlyArray<ChartLabPattern>; signals: ChartLabEntryResult["signalHistory"] | null; signalStrategies: ReadonlyArray<ChartLabStrategy>; overlays: ReadonlyArray<ChartOverlayKey>; dataOffset: number; showStructures: boolean }>) {
-  const width = 1200, height = 420, left = 62, right = 12, top = 22, priceBottom = 312, volumeTop = 344, bottom = 396;
+  const width = 1200, height = 420, left = 62, right = 150, top = 22, priceBottom = 312, volumeTop = 344, bottom = 396;
   const drag = useRef<{ pointerId: number; startX: number; base: ChartRange; moved: boolean } | null>(null);
+  const wheelRef = useChartWheelRef(onZoom, left, right);
   if (!bars.length) return <p className="message">표시할 봉 자료가 없습니다.</p>;
   const overlayLines: ChartOverlayLine[] = [];
   const familyColors = {
@@ -309,6 +321,22 @@ function PriceChart({ bars, snapshot, indicators, patterns, signals, signalStrat
     ["Donchian 20", detailIndicator?.donchian20 ? `${numberLabel(detailIndicator.donchian20.lower)} / ${numberLabel(detailIndicator.donchian20.middle)} / ${numberLabel(detailIndicator.donchian20.upper)}` : "자료 없음"],
     ["RSI 14", detail.rsi14], ["MACD", detail.macd], ["Signal", detail.macdSignal], ["MACD hist.", detail.macdHistogram], ["ATR 14", detail.atr14], ["OBV", detail.obv],
   ];
+  const movingAverageFamily = (["sma", "ema", "wma"] as const).find((family) => overlayLines.some((line) => line.key.startsWith(family)));
+  const edgeValues = [
+    { key: "close", label: `종가 ${numberLabel(latest.close, 2)}`, value: latest.close, color: "#d03238" },
+    ...overlayLines.filter((line) => movingAverageFamily ? line.key.startsWith(movingAverageFamily) : false).flatMap((line) => {
+      const value = line.values[dataOffset + range.start + bars.length - 1];
+      return finite(value) ? [{ key: line.key, label: `${line.label} ${numberLabel(value, 2)}`, value, color: line.color }] : [];
+    }),
+  ].map((item) => ({ ...item, targetY: y(item.value) })).sort((a, b) => a.targetY - b.targetY);
+  let previousLabelY = top - 20;
+  const stackedEdgeValues = edgeValues.map((item) => {
+    const labelY = Math.max(item.targetY, previousLabelY + 20);
+    previousLabelY = labelY;
+    return { ...item, labelY };
+  });
+  const labelOverflow = Math.max(0, (stackedEdgeValues.at(-1)?.labelY ?? priceBottom) - (priceBottom - 9));
+  const priceEdgeLabels = stackedEdgeValues.map((item) => ({ ...item, labelY: item.labelY - labelOverflow }));
   function moveToPointer(event: React.PointerEvent<SVGSVGElement>) {
     if (drag.current?.pointerId === event.pointerId) {
       const deltaX = event.clientX - drag.current.startX;
@@ -329,11 +357,6 @@ function PriceChart({ bars, snapshot, indicators, patterns, signals, signalStrat
     const current = selectedIndex ?? bars.length - 1;
     onSelectBar(Math.max(0, Math.min(bars.length - 1, current + (event.key === "ArrowLeft" ? -1 : 1))));
   }
-  function handleWheel(event: React.WheelEvent<SVGSVGElement>) {
-    if (!event.deltaY) return;
-    event.preventDefault();
-    onZoom(event.deltaY < 0 ? "in" : "out", chartZoomAnchor(event, left, right));
-  }
   function startDrag(event: React.PointerEvent<SVGSVGElement>) {
     if (event.button !== 0) return;
     drag.current = { pointerId: event.pointerId, startX: event.clientX, base: range, moved: false };
@@ -345,9 +368,9 @@ function PriceChart({ bars, snapshot, indicators, patterns, signals, signalStrat
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     drag.current = null;
   }
-  return <div className="chart-price-wrap"><svg className="chart-price-svg" viewBox={`0 0 ${width} ${height}`} role="group" tabIndex={0} aria-describedby="chart-gesture-help" aria-label={`${snapshot.display_name} ${timeframeLabel(snapshot.timeframe)} 캔들 및 거래량 차트. 봉에 포인터를 두거나 좌우 방향키로 탐색합니다.`} onPointerDown={startDrag} onPointerMove={moveToPointer} onPointerUp={finishDrag} onPointerCancel={() => { drag.current = null; }} onKeyDown={moveByKey} onWheel={handleWheel}>
+  return <div className="chart-price-wrap"><svg ref={wheelRef} className="chart-price-svg" viewBox={`0 0 ${width} ${height}`} role="group" tabIndex={0} aria-describedby="chart-gesture-help" aria-label={`${snapshot.display_name} ${timeframeLabel(snapshot.timeframe)} 캔들 및 거래량 차트. 봉에 포인터를 두거나 좌우 방향키로 탐색합니다.`} onPointerDown={startDrag} onPointerMove={moveToPointer} onPointerUp={finishDrag} onPointerCancel={() => { drag.current = null; }} onKeyDown={moveByKey}>
     {grid}
-    {showStructures ? <StructureOverlay structures={snapshot.snapshot.structures} bars={bars} x={x} y={y} priceTop={top} minimum={minimum} maximum={maximum} /> : null}
+    {showStructures ? <StructureOverlay structures={snapshot.snapshot.structures} bars={bars} x={x} y={y} priceTop={top} plotRight={width - right} minimum={minimum} maximum={maximum} /> : null}
     {bars.map((bar, index) => {
       const color = bar.close > bar.open ? "#d03238" : bar.close < bar.open ? "#3976b9" : "#74766f";
       const volumeHeight = bar.volume / maxVolume * (bottom - volumeTop);
@@ -357,23 +380,27 @@ function PriceChart({ bars, snapshot, indicators, patterns, signals, signalStrat
     })}
     {overlays.includes("patterns") ? <ChartLabPatternOverlay patterns={patterns} bars={bars} range={{ start: dataOffset + range.start, end: dataOffset + range.end }} x={x} y={y} /> : null}
     {overlays.includes("signals") && signals ? <ChartLabSignalOverlay signals={signals} selected={signalStrategies} bars={bars} range={{ start: dataOffset + range.start, end: dataOffset + range.end }} x={x} y={y} /> : null}
-    {lines}<line x1={left} y1={y(latest.close)} x2={width - right} y2={y(latest.close)} stroke="#76614f" strokeDasharray="3 4" />
+    {lines}<line className="chart-latest-close-line" x1={left} y1={y(latest.close)} x2={width - right} y2={y(latest.close)} stroke="#76614f" strokeDasharray="3 4" />
     {selectedIndex !== null ? <g className="chart-crosshair" aria-hidden="true" pointerEvents="none"><line className="chart-crosshair-vertical" x1={x(selectedIndex)} y1={top} x2={x(selectedIndex)} y2={bottom} /><line className="chart-crosshair-horizontal" x1={left} y1={y(bars[selectedIndex].close)} x2={width - right} y2={y(bars[selectedIndex].close)} /><circle className="chart-crosshair-point" cx={x(selectedIndex)} cy={y(bars[selectedIndex].close)} r="4" /></g> : null}
+    {priceEdgeLabels.map((item) => <g key={item.key} className="chart-price-edge-label" aria-hidden="true" pointerEvents="none"><line x1={width - right} y1={item.targetY} x2={width - right + 5} y2={item.labelY} stroke={item.color} strokeWidth="1.2" /><rect x={width - right + 6} y={item.labelY - 9} width={right - 12} height="18" rx="2" fill={item.color} /><text x={width - right + 11} y={item.labelY + 3}>{item.label}</text></g>)}
     <line x1={left} y1={bottom} x2={width - right} y2={bottom} stroke="#9a9587" />
     <text x={left} y={height - 7}>{chartTimeLabel(bars[0].time, snapshot.timeframe)}</text><text x={width - right - 110} y={height - 7}>{chartTimeLabel(latest.time, snapshot.timeframe)}</text>
     <text x="5" y={volumeTop + 12}>거래량</text>
-  </svg><div className="chart-bar-details" role="group" aria-label={`${selectedIndex === null ? "현재 범위 끝 봉" : "선택한 봉"} 상세`}><div className="chart-bar-details-heading"><strong>{chartTimeLabel(detail.time, snapshot.timeframe)}</strong><span>{selectedIndex === null ? "현재 범위 끝 봉" : "선택 봉"} · {snapshot.adjusted ? "수정주가" : "미조정 가격"} · 봉 확정 상태 미확인</span></div><dl>{detailRows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{numberLabel(value, 4)}</dd></div>)}</dl></div><div className="chart-legend">
+  </svg><div className="chart-bar-details" role="group" aria-label={`${selectedIndex === null ? "범위 끝 봉" : "선택한 봉"} 상세`}><div className="chart-bar-details-heading"><strong>{chartTimeLabel(detail.time, snapshot.timeframe)}</strong><span>{selectedIndex === null ? "표시 범위 끝 봉" : "선택한 봉"} · {snapshot.adjusted ? "수정주가" : "미조정 가격"} · 확정 상태 미확인</span></div><dl>{detailRows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{typeof value === "string" ? value : numberLabel(value, 4)}</dd></div>)}</dl></div><div className="chart-legend">
     <span><i className="chart-legend-candle" />{snapshot.adjusted ? "수정주가 캔들" : "미조정 가격 캔들"}</span>
     {overlayLines.map((line) => <span key={line.key}><i style={{ background: line.color }} />{line.label}</span>)}
-    {overlays.includes("patterns") ? <span><i className="chart-legend-pattern" />깃대·삼각·경계</span> : null}
-    {overlays.includes("signals") ? <span><i className="chart-legend-signal" />전략 원신호 · 확정 미확인</span> : null}
+    <span><i className="chart-legend-latest-close" />범위 끝 봉 종가</span>
+    {selectedIndex !== null ? <span><i className="chart-legend-crosshair" />선택 봉 시각·종가</span> : null}
+    {overlays.includes("patterns") ? <div className="chart-overlay-key" aria-label="패턴 선 색상 설명"><span><i className="chart-legend-triangle" />파랑 · 삼각 경계</span><span><i className="chart-legend-flag" />주황 · 깃대 구간</span><span><i className="chart-legend-boundary" />청록 · 수평 경계</span></div> : null}
+    {overlays.includes("signals") ? <div className="chart-overlay-key" aria-label="전략 원신호 설명">{signalStrategies.map((strategy) => { const item = CHART_LAB_STRATEGIES.find((candidate) => candidate.id === strategy); return <span key={strategy}><b className="chart-signal-key-label">{strategy}</b>{item ? <>{item.name} · {item.rule}</> : "전략 규칙 자료 없음"}</span>; })}<span><i className="chart-legend-entry-signal" />▲ 진입 원신호</span><span><i className="chart-legend-exit-signal" />▼ 이탈 원신호</span><span>표시 봉 확정 여부는 확인되지 않았습니다.</span></div> : null}
     <span><i className="chart-legend-volume" />거래량</span>
-    {showStructures && snapshot.snapshot.structures.length ? <span><i className="chart-legend-structure" />저장 계산 구조 참고</span> : null}
+    {showStructures && snapshot.snapshot.structures.length ? <span><i className="chart-legend-structure" />저장 구조 · 수평 기준선 / 깃대·삼각 영역</span> : null}
   </div></div>;
 }
 
 function SecondaryChart({ bars, series, timeframe, selectedBarIndex, range, onSelectBar, onClearBar, onPan, onZoom }: Readonly<ChartInteractionProps & { bars: ChartBar[]; series: SeriesKey; timeframe: ChartExplorerTimeframe }>) {
   const drag = useRef<{ pointerId: number; startX: number; base: ChartRange; moved: boolean } | null>(null);
+  const wheelRef = useChartWheelRef(onZoom);
   if (series === "hidden") return null;
   const width = 1200, height = 180, left = 62, right = 12, top = 16, bottom = 144;
   const key = series === "macd" ? "macd" : series;
@@ -408,11 +435,6 @@ function SecondaryChart({ bars, series, timeframe, selectedBarIndex, range, onSe
     const current = selectedIndex ?? bars.length - 1;
     onSelectBar(Math.max(0, Math.min(bars.length - 1, current + (event.key === "ArrowLeft" ? -1 : 1))));
   }
-  function handleWheel(event: React.WheelEvent<SVGSVGElement>) {
-    if (!event.deltaY) return;
-    event.preventDefault();
-    onZoom(event.deltaY < 0 ? "in" : "out", chartZoomAnchor(event, left, right));
-  }
   function startDrag(event: React.PointerEvent<SVGSVGElement>) {
     if (event.button !== 0) return;
     drag.current = { pointerId: event.pointerId, startX: event.clientX, base: range, moved: false };
@@ -426,13 +448,17 @@ function SecondaryChart({ bars, series, timeframe, selectedBarIndex, range, onSe
   }
   const selectedValue = selectedIndex === null ? null : bars[selectedIndex][key];
   const selectedY = finite(selectedValue) ? y(selectedValue) : null;
-  return <div className="chart-secondary-wrap"><h3>{title}</h3><svg className="chart-secondary-svg" viewBox={`0 0 ${width} ${height}`} role="group" tabIndex={0} aria-describedby="chart-gesture-help" aria-label={`${title} 보조 지표. 좌우 방향키로 봉을 탐색합니다.`} onPointerDown={startDrag} onPointerMove={moveToPointer} onPointerUp={finishDrag} onPointerCancel={() => { drag.current = null; }} onKeyDown={moveByKey} onWheel={handleWheel}>
+  const readoutWidth = 184, readoutHeight = 34;
+  const readoutX = selectedIndex === null ? left : Math.max(left + 4, Math.min(width - right - readoutWidth - 4, x(selectedIndex) + 12));
+  const readoutY = selectedY === null ? top : Math.max(top + 2, Math.min(bottom - readoutHeight - 2, selectedY > top + readoutHeight + 8 ? selectedY - readoutHeight - 8 : selectedY + 8));
+  return <div className="chart-secondary-wrap"><h3>{title}</h3><svg ref={wheelRef} className="chart-secondary-svg" viewBox={`0 0 ${width} ${height}`} role="group" tabIndex={0} aria-describedby="chart-gesture-help" aria-label={`${title} 보조 지표. 좌우 방향키로 봉을 탐색합니다.`} onPointerDown={startDrag} onPointerMove={moveToPointer} onPointerUp={finishDrag} onPointerCancel={() => { drag.current = null; }} onKeyDown={moveByKey}>
     {[0, .5, 1].map((fraction) => <line key={fraction} x1={left} x2={width - right} y1={top + fraction * (bottom - top)} y2={top + fraction * (bottom - top)} stroke="#d3d0c4" strokeDasharray={fraction ? "" : "4 4"} />)}
     {series === "macd" ? bars.map((bar, index) => finite(bar.macdHistogram) ? <rect key={bar.time} x={x(index) - Math.max(1, slot * .55) / 2} y={Math.min(y(bar.macdHistogram), zeroY)} width={Math.max(1, slot * .55)} height={Math.max(1, Math.abs(zeroY - y(bar.macdHistogram)))} fill={bar.macdHistogram >= 0 ? "#d03238" : "#3976b9"} fillOpacity=".6" /> : null) : null}
     <polyline points={linePoints.join(" ")} fill="none" stroke="#2d786b" strokeWidth="2.2" />
     {series === "macd" ? <polyline points={bars.map((bar, index) => finite(bar.macdSignal) ? `${x(index)},${y(bar.macdSignal)}` : null).filter((point): point is string => point !== null).join(" ")} fill="none" stroke="#d47733" strokeWidth="1.8" /> : null}
     {series === "rsi14" ? [30, 70].map((value) => <g key={value}><line x1={left} x2={width - right} y1={y(value)} y2={y(value)} stroke="#76614f" strokeDasharray="5 4" /><text x="5" y={y(value) + 4}>{value}</text></g>) : null}
     {selectedIndex !== null && selectedY !== null ? <g className="chart-crosshair" aria-hidden="true" pointerEvents="none"><line className="chart-crosshair-vertical" x1={x(selectedIndex)} y1={top} x2={x(selectedIndex)} y2={bottom} /><line className="chart-crosshair-horizontal" x1={left} y1={selectedY} x2={width - right} y2={selectedY} /><circle className="chart-crosshair-point" cx={x(selectedIndex)} cy={selectedY} r="4" /></g> : null}
+    {selectedIndex !== null && finite(selectedValue) ? <g className="chart-secondary-hover-readout" aria-hidden="true" pointerEvents="none"><rect x={readoutX} y={readoutY} width={readoutWidth} height={readoutHeight} rx="3" /><text className="chart-secondary-hover-value" x={readoutX + 8} y={readoutY + 14}>{title} · {numberLabel(selectedValue, 2)}</text><text className="chart-secondary-hover-time" x={readoutX + 8} y={readoutY + 27}>{chartTimeLabel(bars[selectedIndex].time, timeframe)}</text></g> : null}
     <text x={left} y={height - 5}>{bars[0] ? chartTimeLabel(bars[0].time, timeframe) : ""}</text><text x={width - right - 110} y={height - 5}>{bars.at(-1) ? chartTimeLabel(bars.at(-1)!.time, timeframe) : ""}</text>
   </svg></div>;
 }
@@ -465,13 +491,13 @@ type ChartWatchlistProps = Readonly<{
 
 function ChartWatchlistPanel({ groups, selectedGroup, groupName, groupsLoaded, watchStorageError, canAddCurrent, onSelectGroup, onGroupNameChange, onAddCurrent, onAddGroup, onDeleteGroup, onOpenItem, onRemoveItem }: ChartWatchlistProps) {
   const selectedItems = groups.find((group) => group.name === selectedGroup)?.items ?? [];
-  return <section className="chart-subpanel chart-watchlist"><div className="chart-subpanel-heading"><h3>관심 종목</h3><span>이 브라우저에만 저장</span></div>
-    <label className="sr-only" htmlFor="chart-watch-group">관심 그룹</label><select id="chart-watch-group" value={selectedGroup} onChange={(event) => onSelectGroup(event.target.value)} disabled={!groupsLoaded}>{groups.map((group) => <option key={group.name}>{group.name}</option>)}</select>
+  return <section className="chart-subpanel chart-watchlist" aria-label="차트 관심 종목"><div className="chart-watchlist-heading"><div className="chart-subpanel-heading"><h3>관심 종목</h3><span>{selectedItems.length}개 · 이 브라우저에 저장</span></div><div className="chart-watchlist-tools">
+    <label htmlFor="chart-watch-group">그룹</label><select id="chart-watch-group" value={selectedGroup} onChange={(event) => onSelectGroup(event.target.value)} disabled={!groupsLoaded}>{groups.map((group) => <option key={group.name}>{group.name}</option>)}</select>
     <button className="action-secondary" type="button" onClick={onAddCurrent} disabled={!canAddCurrent}>현재 종목 추가</button>
-    <form className="chart-group-add" onSubmit={onAddGroup}><label className="sr-only" htmlFor="chart-new-group">새 그룹 이름</label><input id="chart-new-group" value={groupName} onChange={(event) => onGroupNameChange(event.target.value)} maxLength={32} placeholder="그룹 이름" disabled={!groupsLoaded} /><button type="submit" className="action-secondary" disabled={!groupsLoaded}>그룹 추가</button></form>
-    {groups.length > 1 && selectedGroup !== "기본" ? <button className="chart-remove-group" type="button" onClick={onDeleteGroup}>현재 그룹 삭제</button> : null}
+    <details className="chart-group-manager"><summary>그룹 관리</summary><form className="chart-group-add" onSubmit={onAddGroup}><label className="sr-only" htmlFor="chart-new-group">새 그룹 이름</label><input id="chart-new-group" value={groupName} onChange={(event) => onGroupNameChange(event.target.value)} maxLength={32} placeholder="새 그룹 이름" disabled={!groupsLoaded} /><button type="submit" className="action-secondary" disabled={!groupsLoaded}>그룹 추가</button></form>{groups.length > 1 && selectedGroup !== "기본" ? <button className="chart-remove-group" type="button" onClick={onDeleteGroup}>현재 그룹 삭제</button> : null}</details>
+  </div></div>
     {watchStorageError ? <p className="data-note" role="status">브라우저 저장소를 사용할 수 없어 관심 목록이 유지되지 않을 수 있습니다.</p> : null}
-    {selectedItems.length ? <ul className="chart-watch-items">{selectedItems.map((item) => <li key={item.symbol}><button type="button" onClick={() => onOpenItem(item)}><strong>{item.name}</strong><span>{item.symbol}</span></button><button type="button" aria-label={`${item.name} 관심 종목 제거`} onClick={() => onRemoveItem(item.symbol)}>삭제</button></li>)}</ul> : <p className="data-note">관심 종목이 없습니다. 차트를 조회한 뒤 브라우저에 추가하세요.</p>}
+    {selectedItems.length ? <ul className="chart-watch-items">{selectedItems.map((item) => <li key={item.symbol}><button type="button" onClick={() => onOpenItem(item)}><strong>{item.name}</strong><span>{item.symbol}</span></button><button type="button" aria-label={`${item.name} 관심 종목 제거`} onClick={() => onRemoveItem(item.symbol)}>×</button></li>)}</ul> : <p className="chart-watchlist-empty">관심 목록이 비어 있습니다. 검색한 종목을 현재 그룹에 추가하세요.</p>}
   </section>;
 }
 
@@ -671,10 +697,13 @@ export default function ChartExplorerClient({ businessDate, initialSymbol, initi
 
   return <div className="chart-explorer-workspace">
     <section className="chart-command-panel" aria-label="차트 조회 조건">
-      <form className="chart-symbol-search" onSubmit={searchStocks} role="search">
-        <label htmlFor="chart-symbol-query">종목</label><input id="chart-symbol-query" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="종목명 · 코드 · Yahoo 티커" autoComplete="off" />
-        <button className="action-secondary" type="submit">검색</button>
-      </form>
+      <div className="chart-symbol-workspace">
+        <form className="chart-symbol-search" onSubmit={searchStocks} role="search">
+          <label htmlFor="chart-symbol-query">차트 종목 검색</label><input id="chart-symbol-query" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="종목명 · 코드 · Yahoo 티커" autoComplete="off" />
+          <button className="action-secondary" type="submit">검색</button>
+        </form>
+        {watchlistPanel}
+      </div>
       <div className="chart-command-right">
         <div className="chart-periods" role="group" aria-label="봉 주기">{PERIODS.map((period) => <button key={period.key} type="button" aria-pressed={timeframe === period.key} onClick={() => setTimeframe(period.key)}>{period.label}</button>)}</div>
         <button className="action-primary" type="button" disabled={loading || !isChartExplorerSymbol(symbol)} onClick={() => void fetchChart(symbol, timeframe)}>{loading ? "조회 중…" : "조회"}</button>
@@ -697,19 +726,21 @@ export default function ChartExplorerClient({ businessDate, initialSymbol, initi
               {([["sma", "SMA"], ["ema", "EMA"], ["wma", "WMA"], ["bollinger", "Bollinger"], ["donchian", "Donchian"], ["patterns", "패턴"], ["signals", "전략 원신호"]] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={visibleOverlays.includes(key)} onChange={() => toggleOverlay(key)} />{label}</label>)}
               <label><input type="checkbox" checked={showStructures} onChange={(event) => setShowStructures(event.target.checked)} />구조 측정</label>
             </div></div></div>
-            <p id="chart-gesture-help" className="chart-gesture-help">휠 또는 확대·축소 버튼으로 크기 조절 · 차트를 끌어 과거 봉 이동 · 좌우 방향키로 봉 탐색 · Esc 또는 선택 해제로 십자선 해제</p>
+            <p id="chart-gesture-help" className="chart-gesture-help">마우스 휠은 차트 확대·축소에만 사용됩니다 (위: 확대 · 아래: 축소). 봉 위에 포인터를 두면 세로선이 해당 봉으로 이동하고, 가로선과 점은 그 봉의 종가를 가리킵니다. 오른쪽 색 태그는 범위 끝 종가와 대표 이동평균 값입니다. 아래 봉 상세에서 시가·고가·저가·종가와 지표를 확인하세요. 차트를 끌어 과거 봉 이동 · 좌우 방향키로 봉 이동 · Esc 또는 선택 해제로 해제</p>
             <p className="chart-data-basis">{data.adjusted ? "수정주가" : "미조정 가격"} · 통화 {data.currency ?? "자료 없음"} · {data.timeframe === "4h" ? "공급처 1시간 봉을 현지 날짜별 4개씩 묶음" : "일봉 원천 또는 집계 봉"} · {getStatusLabel(data.bar_status)} · {bars.length}봉 표시</p>
             <PriceChart bars={bars} snapshot={data} indicators={chartIndicators} patterns={chartPatterns} signals={chartSignals} signalStrategies={selectedStrategies} overlays={visibleOverlays} dataOffset={displayOffset} showStructures={showStructures} selectedBarIndex={selectedBarIndex} range={visibleRange} onSelectBar={setSelectedBarIndex} onClearBar={() => setSelectedBarIndex(null)} onPan={panChart} onZoom={zoomChart} />
             <ChartIndicatorDetails snapshot={data} />
           </section>
-          <ChartLabAnalysisPanels bars={rawBars} timeframe={data.timeframe} asOfIndex={analysisIndex} currency={data.currency} patterns={chartPatterns} selectedStrategies={selectedStrategies} mode={strategyMode} maxAtr={maxAtr} onSelectedStrategiesChange={setSelectedStrategies} onModeChange={setStrategyMode} onMaxAtrChange={setMaxAtr} onFocusIndex={focusChartIndex} />
           <section className="chart-surface chart-secondary-surface"><div className="chart-surface-heading"><div><p className="eyebrow">INDICATOR</p><h2>보조 지표</h2></div><label className="chart-series-select">지표<select value={series} onChange={(event) => setSeries(event.target.value as SeriesKey)}>{SERIES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label></div><SecondaryChart bars={bars} series={series} timeframe={data.timeframe} selectedBarIndex={selectedBarIndex} range={visibleRange} onSelectBar={setSelectedBarIndex} onClearBar={() => setSelectedBarIndex(null)} onPan={panChart} onZoom={zoomChart} /></section>
-          <section className="chart-surface"><div className="chart-surface-heading"><div><p className="eyebrow">STRUCTURE NOTES</p><h2>가격 구조 관찰</h2></div><span>{structureRows.length}개 · 서버 계산 참고</span></div>
+          <ChartLabAnalysisPanels bars={rawBars} timeframe={data.timeframe} asOfIndex={analysisIndex} currency={data.currency} patterns={chartPatterns} selectedStrategies={selectedStrategies} mode={strategyMode} maxAtr={maxAtr} onSelectedStrategiesChange={setSelectedStrategies} onModeChange={setStrategyMode} onMaxAtrChange={setMaxAtr} onFocusIndex={focusChartIndex} />
+          <details className="chart-surface chart-disclosure chart-structure-disclosure" role="group" aria-label="가격 구조 관찰">
+            <summary className="chart-surface-heading chart-disclosure-summary"><div><p className="eyebrow">STRUCTURE NOTES</p><h2>가격 구조 관찰</h2></div><span>{structureRows.length}개 · 서버 계산 참고</span></summary>
+            <div className="chart-disclosure-content">
             {structureRows.length ? <ul className="chart-structure-list">{structureRows.map((raw, index) => { const item = record(raw); const measurements = Array.isArray(item.measurements) ? item.measurements.map(record) : []; return <li key={`${String(item.family)}-${index}`}><strong>{structureFamilyLabel(item.family)}</strong><span>{getStatusLabel(item.status)}</span><small>{timeframeLabel(item.timeframe ?? data.timeframe)} · 관측 봉 {chartTimeLabel(typeof item.barTime === "string" ? item.barTime : null, data.timeframe)}</small>{measurements.length ? <details className="chart-measurements"><summary>측정 근거 {measurements.length}개</summary><dl>{measurements.map((measurement, measurementIndex) => <div key={`${String(measurement.name)}-${measurementIndex}`}><dt>{String(measurement.label ?? measurement.name ?? "측정 항목")}</dt><dd>{structureMeasurementValue(measurement.value, measurement.unit, measurement.name, data.currency)}</dd></div>)}</dl></details> : null}</li>; })}</ul> : <p className="data-note">선택한 기준일·주기에서 표시할 구조 측정이 없습니다. 없음은 하락·상승 판단이 아니라 탐지 자료 상태입니다.</p>}
-          </section>
+            </div>
+          </details>
         </div>
         <aside className="chart-side-column" aria-label="차트 참고 자료">
-          {watchlistPanel}
           <ChartLabMonitorPanel watchItems={groups.find((group) => group.name === selectedGroup)?.items ?? []} active={activeTab === "chart"} />
           <VolumeProfile snapshot={data} />
           <section className="chart-subpanel"><div className="chart-subpanel-heading"><h3>출처 · 기준 시점</h3><span>{data.source ?? "출처 없음"}</span></div><dl className="chart-provenance-list"><div><dt>요청 기준일</dt><dd>{data.requested_as_of}</dd></div><div><dt>실제 기준 봉</dt><dd>{chartTimeLabel(data.snapshot.barAsOf, data.timeframe)}</dd></div><div><dt>자료 기준일</dt><dd>{data.source_date ?? "자료 없음"}</dd></div><div><dt>수집 시각</dt><dd>{timeLabel(data.source_fetched_at)}</dd></div><div><dt>자료 상태</dt><dd>{getStatusLabel(data.bar_status)}</dd></div></dl>
@@ -719,7 +750,7 @@ export default function ChartExplorerClient({ businessDate, initialSymbol, initi
     </> : <div className="chart-explorer-layout">
       <div className="chart-main-column">{data ? <section className="chart-unavailable"><p className="eyebrow">자료 상태</p><h2>{symbolName || data.display_name || data.symbol || "종목"}</h2><p>{unavailableReasonLabel(data.reason)}</p><p className="data-note">출처 {data.source ?? "없음"} · 자료 기준일 {data.source_date ?? "없음"} · 요청 기준일 {businessDate}</p></section>
         : <section className="chart-empty"><p className="eyebrow">START WITH ONE SYMBOL</p><h2>종목을 골라 차트 자료를 확인하세요.</h2><p>저장 종목 검색 결과나 Yahoo 티커를 조회하면 가격·거래량·지표·출처를 한 화면에 표시합니다. 기본 화면에서는 외부 차트 자료를 요청하지 않습니다.</p></section>}</div>
-      <aside className="chart-side-column chart-side-column-single" aria-label="관심 종목"><ChartLabMonitorPanel watchItems={groups.find((group) => group.name === selectedGroup)?.items ?? []} active={activeTab === "chart"} />{watchlistPanel}</aside>
+      <aside className="chart-side-column chart-side-column-single" aria-label="차트 참고 자료"><ChartLabMonitorPanel watchItems={groups.find((group) => group.name === selectedGroup)?.items ?? []} active={activeTab === "chart"} /></aside>
     </div>}
   </div>;
 }

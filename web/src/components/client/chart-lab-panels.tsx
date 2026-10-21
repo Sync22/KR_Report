@@ -7,7 +7,7 @@ import type { ChartLabPattern, ChartLabPoint } from "@/domain/chart-lab/patterns
 import { evaluateChartLabEntry, type ChartLabEntryResult, type ChartLabSignal, type ChartLabStrategy } from "@/domain/chart-lab/entry";
 import { evaluateChartLabLowEntry, type ChartLabLowEntryResult, type LowFamily } from "@/domain/chart-lab/low-structure";
 
-const STRATEGIES: Array<{ id: ChartLabStrategy; name: string; rule: string }> = [
+export const CHART_LAB_STRATEGIES: Array<{ id: ChartLabStrategy; name: string; rule: string }> = [
   { id: "A", name: "추세 전환", rule: "SMA 20/60 상향 교차" },
   { id: "B", name: "침체 반등", rule: "RSI 30 상향 회복" },
   { id: "C", name: "고점 돌파", rule: "직전 20봉 고가 상향 돌파" },
@@ -74,7 +74,7 @@ export function ChartLabAnalysisPanels({
     <section className="chart-surface chart-lab-analysis-panel" aria-label="진입 조건 검토">
       <div className="chart-surface-heading"><div><p className="eyebrow">ENTRY REVIEW · UPSTREAM RULES</p><h2>A/B/C/F 조건 검토</h2></div><span>{timeframe === "4h" ? "4시간" : timeframe === "1d" ? "일봉" : "집계 봉"} · 기준 {currentBasis ?? "자료 없음"}</span></div>
       <div className="chart-lab-settings">
-        <fieldset><legend>전략 선택</legend>{STRATEGIES.map((item) => <label key={item.id}><input type="checkbox" checked={selectedStrategies.includes(item.id)} onChange={(event) => toggleStrategy(item.id, event.target.checked)} /><b>{item.id}</b><span>{item.name}<small>{item.rule}</small></span></label>)}</fieldset>
+        <fieldset><legend>전략 선택</legend>{CHART_LAB_STRATEGIES.map((item) => <label key={item.id}><input type="checkbox" checked={selectedStrategies.includes(item.id)} onChange={(event) => toggleStrategy(item.id, event.target.checked)} /><b>{item.id}</b><span>{item.name}<small>{item.rule}</small></span></label>)}</fieldset>
         <label>조합 방식<select value={mode} onChange={(event) => onModeChange(event.target.value as "all" | "any")}><option value="all">선택 조건 모두</option><option value="any">하나 이상</option></select></label>
         <label>추격 상한<select value={maxAtr} onChange={(event) => onMaxAtrChange(Number(event.target.value))}><option value={0.5}>기준가 + 0.5 ATR</option><option value={1}>기준가 + 1.0 ATR</option><option value={1.5}>기준가 + 1.5 ATR</option></select></label>
       </div>
@@ -92,8 +92,9 @@ export function ChartLabAnalysisPanels({
       {low.status === "unsupported" ? <p className="chart-lab-footnote">이 주기에서 필요한 세션 연속성 자료가 없어 R/H를 계산하지 않습니다.</p> : null}
     </section>
 
-    <section className="chart-surface chart-lab-analysis-panel chart-lab-pattern-panel" aria-label="패턴과 과거 사건">
-      <div className="chart-surface-heading"><div><p className="eyebrow">PATTERN HISTORY</p><h2>패턴 · 경계 사건</h2></div><span>{visiblePatterns.length}건 · {currentBasis ?? "자료 없음"}</span></div>
+    <details className="chart-surface chart-lab-analysis-panel chart-lab-pattern-panel chart-disclosure" role="group" aria-label="패턴과 과거 사건">
+      <summary className="chart-surface-heading chart-disclosure-summary"><div><p className="eyebrow">PATTERN HISTORY</p><h2>패턴 · 경계 사건</h2></div><span>{visiblePatterns.length}건 · {currentBasis ?? "자료 없음"}</span></summary>
+      <div className="chart-disclosure-content">
       {visiblePatterns.length ? <ul className="chart-lab-pattern-list">{visiblePatterns.map((pattern, index) => {
         const basisIndex = pattern.basis.endIndex;
         const measurement = Object.entries(pattern.measurements).slice(0, 3).map(([name, value]) => `${name} ${typeof value === "number" ? formatted(value) : safeText(value)}`).join(" · ");
@@ -107,7 +108,8 @@ export function ChartLabAnalysisPanels({
       })}</ul> : <p className="data-note">선택 기준 봉까지 표시할 깃대·삼각형·수평 경계 사건이 없습니다. 없음은 반대 방향 신호가 아닙니다.</p>}
       {diagnostics.length ? <p className="chart-lab-footnote">탐지 진단: {[...new Set(diagnostics.map((item) => PATTERN_STATUS[item.status] ?? item.status))].join(" · ")}</p> : null}
       <p className="chart-lab-footnote">과거 봉 선택 시 그 시점 뒤의 데이터는 전략·패턴 계산에서 제외됩니다. 사건을 누르면 해당 기준 봉으로 이동합니다.</p>
-    </section>
+      </div>
+    </details>
   </div>;
 }
 
@@ -123,20 +125,39 @@ export function ChartLabPatternOverlay({ patterns, bars, range, x, y }: Readonly
   y: (value: number) => number;
 }>) {
   const colorFor = (pattern: ChartLabPattern) => pattern.family === "flag" ? "#b66d26" : pattern.family === "horizontal" ? "#117e79" : "#285fc2";
+  const latestByFamily = new Map<ChartLabPattern["family"], ChartLabPattern>();
+  for (const pattern of patterns) {
+    const endIndex = pattern.basis.endIndex;
+    if (pattern.kind === "diagnostic" || endIndex === null || endIndex < range.start || endIndex >= range.end) continue;
+    if ((latestByFamily.get(pattern.family)?.basis.endIndex ?? -1) <= endIndex) latestByFamily.set(pattern.family, pattern);
+  }
   return <g className="chart-lab-pattern-overlay" aria-label="차트 패턴 구조 오버레이">
     {patterns.filter((pattern) => pattern.kind !== "diagnostic").map((pattern, index) => {
       const color = colorFor(pattern);
       const lines = [pattern.geometry.upper, pattern.geometry.lower, pattern.geometry.boundary].filter((line) => line && pointVisible(line.start, range) && pointVisible(line.end, range));
       const points = pattern.geometry.points?.filter((point) => pointVisible(point, range)) ?? [];
       const pole = pattern.geometry.pole?.filter((point) => pointVisible(point, range)) ?? [];
-      if (!lines.length && points.length < 2 && pole.length < 2) return null;
+      const { upper, lower } = pattern.geometry;
+      const areaPoints = upper && lower && [upper.start, upper.end, lower.end, lower.start].every((point) => pointVisible(point, range))
+        ? [upper.start, upper.end, lower.end, lower.start] : [];
+      if (!lines.length && points.length < 2 && pole.length < 2 && areaPoints.length < 3) return null;
       const local = (point: ChartLabPoint) => `${x(point.index - range.start)},${y(point.price)}`;
+      const latestIndex = pattern.basis.endIndex;
+      const latestBar = latestIndex === null || latestIndex < range.start || latestIndex >= range.end ? null : bars[latestIndex - range.start];
+      const latestCallout = latestByFamily.get(pattern.family) === pattern && latestBar;
+      const latestX = latestCallout && latestIndex !== null ? x(latestIndex - range.start) : 0;
+      const calloutAtLeft = latestIndex !== null && latestIndex - range.start > (range.end - range.start) * .72;
+      const calloutText = `${PATTERN_LABELS[pattern.kind] ?? pattern.kind} · ${PATTERN_STATUS[pattern.status] ?? pattern.status}`;
+      const calloutWidth = Math.min(220, Math.max(128, calloutText.length * 8 + 16));
+      const calloutX = calloutAtLeft ? latestX - calloutWidth - 8 : latestX + 8;
+      const calloutY = latestBar ? Math.max(24, Math.min(292, y(latestBar.close) - 10)) : 0;
       return <g key={`${pattern.kind}-${pattern.basis.startTime}-${pattern.ruleVersion}-${index}`} opacity=".8" data-pattern-kind={pattern.kind}>
+        {areaPoints.length ? <polygon points={areaPoints.map(local).join(" ")} fill={color} fillOpacity={pattern.status === "forming" ? ".24" : ".16"} stroke="none" /> : null}
         {lines.map((line, lineIndex) => <line key={lineIndex} x1={x(line!.start.index - range.start)} y1={y(line!.start.price)} x2={x(line!.end.index - range.start)} y2={y(line!.end.price)} stroke={color} strokeWidth="2" strokeDasharray={pattern.status === "forming" ? "5 4" : undefined} />)}
         {points.length > 1 ? <polyline points={points.map(local).join(" ")} fill="none" stroke={color} strokeWidth="2" /> : null}
         {pole.length > 1 ? <polyline points={pole.map(local).join(" ")} fill="none" stroke={color} strokeWidth="3" /> : null}
-        {pattern.basis.endIndex !== null && pattern.basis.endIndex >= range.start && pattern.basis.endIndex < range.end && bars[pattern.basis.endIndex - range.start]
-          ? <circle cx={x(pattern.basis.endIndex - range.start)} cy={y(bars[pattern.basis.endIndex - range.start].close)} r="4" fill={color} stroke="white" strokeWidth="1" /> : null}
+        {latestIndex !== null && latestBar ? <circle cx={latestX} cy={y(latestBar.close)} r="4" fill={color} stroke="white" strokeWidth="1" /> : null}
+        {latestCallout ? <g className="chart-pattern-callout" pointerEvents="none"><rect x={calloutX} y={calloutY - 14} width={calloutWidth} height="22" rx="3" fill="var(--sm-panel)" stroke={color} strokeWidth="1" /><text x={calloutX + 6} y={calloutY + 1} style={{ fill: color }}>{calloutText}</text></g> : null}
       </g>;
     })}
   </g>;
@@ -162,11 +183,13 @@ export function ChartLabSignalOverlay({ signals, selected, bars, range, x, y }: 
       if (!bar) return null;
       const entry = marker.signal === "entry";
       const color = entry ? "#338764" : "#c66b4a";
+      const strategy = CHART_LAB_STRATEGIES.find((item) => item.id === marker.strategy);
       const cx = x(marker.index - range.start);
       const cy = entry ? y(bar.low) + 9 : y(bar.high) - 9;
-      return <g key={marker.key} data-strategy-signal={marker.strategy} data-signal={marker.signal}>
+      return <g key={marker.key} role="img" aria-label={`${marker.strategy} ${strategy?.name ?? "전략"} · ${entry ? "진입" : "이탈"} 원신호 · 봉 확정 미확인`} data-strategy-signal={marker.strategy} data-signal={marker.signal}>
+        <title>{`${marker.strategy} · ${strategy?.name ?? "전략 규칙 자료 없음"} · ${entry ? "진입" : "이탈"} 원신호 · 봉 확정 미확인`}</title>
         <path d={`M ${cx} ${cy - (entry ? 4 : -4)} L ${cx - 4} ${cy + (entry ? 3 : -3)} L ${cx + 4} ${cy + (entry ? 3 : -3)} Z`} fill={color} />
-        <text x={cx + 5} y={cy + 3} style={{ fill: color }} fontSize="8" fontWeight="800">{marker.strategy}</text>
+        <text className="chart-signal-marker-label" x={cx + 6} y={cy + 4} style={{ fill: color }}>{marker.strategy}</text>
       </g>;
     })}
   </g>;
