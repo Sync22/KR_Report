@@ -63,6 +63,41 @@ test("Chart Explorer bounds cache-miss provider queries per process", async () =
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("Chart Explorer counts each Toss daily-history page against its upstream request budget", async () => {
+  const service = new ChartExplorerService();
+  let calls = 0;
+  const cursors = [
+    "2026-10-07T23:59:59+09:00",
+    "2026-10-06T23:59:59+09:00",
+    "2026-10-05T23:59:59+09:00",
+    null,
+  ];
+  service.toss = {
+    getPriorityDailyHistoryPage: async () => ({
+      result: { candles: [], nextBefore: cursors[calls++ % cursors.length] },
+    }),
+  };
+
+  for (let request = 0; request < 3; request += 1) {
+    await service.fetchTossDailyHistory("005930", "2026-10-08");
+  }
+  await assert.rejects(service.fetchTossDailyHistory("005930", "2026-10-08"), /rate_limited/);
+  assert.equal(calls, 12);
+});
+
+test("Chart Explorer bounds uncached Toss calendar reads by the shared upstream request budget", async () => {
+  const service = new ChartExplorerService();
+  let calls = 0;
+  service.toss = {
+    configured: true,
+    getKrxMarketCalendar: async () => { calls += 1; return { result: [] }; },
+  };
+  for (let request = 0; request < 12; request += 1) service.takeUpstreamSlot();
+
+  await assert.rejects(service.getKrxCalendarDays("2026-10-08"), /krx-calendar-request-limit/);
+  assert.equal(calls, 0);
+});
+
 test("daily history aggregates weekly and monthly OHLCV without changing source order", () => {
   const source = [
     bar("2026-10-05", 0), bar("2026-10-06", 1), bar("2026-10-07", 2),

@@ -43,6 +43,8 @@ type ServiceResult = {
   sessionContinuityStatus?: SessionContinuityStatus;
   marketMappingSource?: "stored-toss-stock-universe" | "toss-stock-master";
 };
+
+class UpstreamRateLimitError extends Error {}
 type YahooResult = { bars: ChartExplorerBar[]; displayName: string; sourceDate: string | null; currency: string | null; timezone: string };
 
 function isRecord(value: unknown): value is ValueRecord {
@@ -477,7 +479,6 @@ export class ChartExplorerService {
       source = "Toss OpenAPI · adjusted daily candles";
       adjusted = true;
       if (!this.toss.configured) return { status: 200, payload: unavailable({ date, symbol, displayName, instrumentType: type, timeframe, reason: "toss_not_configured", source, adjusted }) };
-      if (!this.takeUpstreamSlot()) return { status: 429, payload: unavailable({ date, symbol, displayName, instrumentType: type, timeframe, reason: "rate_limited", source, adjusted }) };
       try {
         const response = await this.fetchTossDailyHistory(symbol, date);
         dailyBars = response.bars;
@@ -485,6 +486,9 @@ export class ChartExplorerService {
         currency = response.currency;
         fetchedAt = new Date().toISOString();
       } catch (error) {
+        if (error instanceof UpstreamRateLimitError) {
+          return { status: 429, payload: unavailable({ date, symbol, displayName, instrumentType: type, timeframe, reason: "rate_limited", source, adjusted }) };
+        }
         return { status: 200, payload: unavailable({ date, symbol, displayName, instrumentType: type, timeframe, reason: reasonForToss(error), source, adjusted, currency, liveFetch: true }) };
       }
     } else {
@@ -650,6 +654,7 @@ export class ChartExplorerService {
     const pending = this.krxCalendarInFlight.get(date);
     if (pending) return pending;
     if (!this.toss.configured) throw new TypeError("toss-not-configured");
+    if (!this.takeUpstreamSlot()) throw new TypeError("krx-calendar-request-limit");
     const request = (async () => {
       const delay = KRX_CALENDAR_MIN_INTERVAL_MS - (Date.now() - this.lastKrxCalendarRequestAt);
       if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
@@ -680,6 +685,7 @@ export class ChartExplorerService {
     const candles: ChartExplorerBar[] = [];
     const currencies: Array<string | null> = [];
     for (let pageIndex = 0; pageIndex < MAX_DAILY_PAGES; pageIndex += 1) {
+      if (!this.takeUpstreamSlot()) throw new UpstreamRateLimitError("rate_limited");
       const response = await this.toss.getPriorityDailyHistoryPage(symbol, before);
       const page = response.result;
       if (!isRecord(page) || Object.keys(page).some((key) => !["candles", "nextBefore"].includes(key)) || !Array.isArray(page.candles) || page.candles.length > PAGE_SIZE) {
