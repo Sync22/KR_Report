@@ -56,6 +56,13 @@ if (-not (Test-Path -LiteralPath $startScript)) { throw "Missing Next launcher: 
 $listener = Get-ListenerProcess -LocalPort $Port
 if ($null -ne $listener) {
   if (-not (Test-ProjectNextProcess -Listener $listener -LocalPort $Port)) {
+    $projectNextProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue | Where-Object {
+      Test-ProjectNextProcess -Listener ([pscustomobject]@{ Process = $_ }) -LocalPort $Port
+    })
+    if ($projectNextProcesses.Count -eq 1 -and (Test-HealthyProjectNext -LocalPort $Port)) {
+      Write-Output "Existing project Next service is healthy at http://127.0.0.1:$Port (PID $($projectNextProcesses[0].ProcessId); listener owner metadata unavailable); no child started."
+      exit 0
+    }
     $name = if ($null -eq $listener.Process) { 'unknown/system process' } else { [string]$listener.Process.Name }
     throw "Port $Port is occupied by an unverified process (PID $($listener.ProcessId); $name). It was not stopped."
   }
@@ -64,6 +71,24 @@ if ($null -ne $listener) {
   }
   Write-Output "Existing project Next service is healthy at http://127.0.0.1:$Port (PID $($listener.ProcessId)); no child started."
   exit 0
+}
+
+$projectNextProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue | Where-Object {
+  Test-ProjectNextProcess -Listener ([pscustomobject]@{ Process = $_ }) -LocalPort $Port
+})
+if ($projectNextProcesses.Count -gt 1) {
+  throw "Multiple project Next processes match port $Port; no child started."
+}
+if ($projectNextProcesses.Count -eq 1) {
+  $projectNext = $projectNextProcesses[0]
+  if (Test-HealthyProjectNext -LocalPort $Port) {
+    Write-Output "Existing project Next service is healthy at http://127.0.0.1:$Port (PID $($projectNext.ProcessId); listener metadata unavailable); no child started."
+    exit 0
+  }
+  throw "Verified Next process exists for port $Port (PID $($projectNext.ProcessId)) but is not healthy. It was not stopped and no child started."
+}
+if (Test-NetConnection -ComputerName '127.0.0.1' -Port $Port -InformationLevel Quiet -WarningAction SilentlyContinue) {
+  throw "Port $Port responds, but its process could not be verified. No child started and no process was stopped."
 }
 
 $powershell = (Get-Command powershell.exe -ErrorAction Stop).Source
@@ -81,7 +106,26 @@ for ($attempt = 0; $attempt -lt 60; $attempt++) {
       }
     }
     else {
+      $projectNextProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue | Where-Object {
+        Test-ProjectNextProcess -Listener ([pscustomobject]@{ Process = $_ }) -LocalPort $Port
+      })
+      if ($projectNextProcesses.Count -gt 1) { throw "Multiple project Next processes match port $Port; no process was stopped." }
+      if ($projectNextProcesses.Count -eq 1 -and (Test-HealthyProjectNext -LocalPort $Port)) {
+        Write-Output "Started project Next service at http://127.0.0.1:$Port (PID $($projectNextProcesses[0].ProcessId); listener owner metadata unavailable; launcher PID $($child.Id))."
+        exit 0
+      }
+      if ($null -eq $listener.Process -and -not $child.HasExited) { continue }
       throw "Port $Port became occupied by an unverified listener (PID $($listener.ProcessId)). It was not stopped."
+    }
+  }
+  elseif ($attempt % 4 -eq 3) {
+    $projectNextProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue | Where-Object {
+      Test-ProjectNextProcess -Listener ([pscustomobject]@{ Process = $_ }) -LocalPort $Port
+    })
+    if ($projectNextProcesses.Count -gt 1) { throw "Multiple project Next processes match port $Port; no process was stopped." }
+    if ($projectNextProcesses.Count -eq 1 -and (Test-HealthyProjectNext -LocalPort $Port)) {
+      Write-Output "Started project Next service at http://127.0.0.1:$Port (PID $($projectNextProcesses[0].ProcessId); listener metadata unavailable; launcher PID $($child.Id))."
+      exit 0
     }
   }
   if ($child.HasExited) { throw "Next launcher exited with code $($child.ExitCode) before port $Port became healthy. Check logs/next-web-view.log." }
