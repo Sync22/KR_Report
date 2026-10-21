@@ -27,11 +27,11 @@ PUBLIC_DOC_PATTERNS = (
     re.compile(r"\d{5,}:[A-Za-z0-9_-]{20,}"),
 )
 
-# The operator-only mini-PC runbook must name its host folder and loopback preview port.
+# The operator-only mini-PC runbook must name its host folder and loopback operation port.
 PRIVATE_OPERATION_DETAILS = {
     Path("docs/codex/mini-pc-runbook.md"): (
         "C:\\Users\\MING\\Codex\\02.Stock_Moniter",
-        "http://127.0.0.1:3010",
+        "http://127.0.0.1:8780",
     ),
 }
 

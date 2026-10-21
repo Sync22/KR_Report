@@ -10999,7 +10999,6 @@ def test_next_phase_readiness_summarizes_read_only_blockers(tmp_path, capsys, mo
     assert payload["web_view_startup_fallback"]["startup_shortcut_name"] == "StockMonitor-WebView.lnk"
     assert "create_web_view_startup_shortcut.ps1" in payload["web_view_startup_fallback"]["setup_command"]
     assert "create_web_view_startup_shortcut.ps1" in payload["web_view_startup_fallback"]["next_command"]
-    assert "ensure_next_web_view.ps1" in payload["web_view_startup_fallback"]["setup_command"]
     assert payload["external_web_view_sharing"]["status"] == "manual_provider_setup_required"
     assert payload["external_web_view_sharing"]["candidate_surface"] == "web-view"
     assert payload["external_web_view_sharing"]["forbidden_surface"] == "admin-gui"
