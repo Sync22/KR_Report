@@ -242,7 +242,6 @@ export default function PublicHeader({ businessDate }: Readonly<{ businessDate: 
       <div className="public-header-top">
         <div className="public-brand-column">
           <Link className="public-brand" href={`${datePath}/main`} prefetch={false}>KR-Stock</Link>
-          <p className="public-header-subtitle">저장된 리서치 · <time dateTime={businessDate}>{businessDate}</time></p>
         </div>
         <nav className="public-section-nav" aria-label="참고 화면">
           <Link href="/archive" prefetch={false}>아카이브</Link>

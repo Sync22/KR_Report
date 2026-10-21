@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import type { CandidateEvidenceRow } from "@/domain/candidate-evidence";
 import { dailyStoredTimeLabel, type DailyStockMarketReference } from "@/domain/daily";
+import { compactMarketDateTime, formatMarketTurnover } from "@/domain/market-display";
 import {
   isMainTop2IndicatorsSnapshot,
   isIntradayMarketTopSnapshot,
@@ -53,6 +54,18 @@ function percent(value: unknown): string {
 function dateTimeLabel(value: unknown): string {
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return "시각 자료 없음";
   return new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Seoul" }).format(new Date(value));
+}
+
+function marketStatusLabel(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) return "시장 상태 자료 없음";
+  const status = value.trim();
+  return ({ OPEN: "장중", CLOSE: "장 마감", CLOSED: "장 마감" } as Record<string, string>)[status.toUpperCase()] ?? status;
+}
+
+function marketTradeTime(value: unknown, status?: unknown): string {
+  const time = compactMarketDateTime(value);
+  if (time) return time;
+  return status ? `${marketStatusLabel(status)} · 시각 없음` : "시각 자료 없음";
 }
 
 function stateText(value: unknown): string {
@@ -238,11 +251,13 @@ export default function MainTop2Client({ businessDate, briefingHeadline, reportC
           <p className="eyebrow">MAIN / 저장 리서치</p>
           <h1>오늘의 관찰</h1>
         </div>
-        <div className="main-edition-date">
-          <time dateTime={businessDate}>{businessDate}</time>
-          <span>저장 리포트 {reportCount ?? "자료 없음"}건 · 요약 종목 {summaryStockCount ?? "자료 없음"}</span>
+        <div className="main-edition-headline-row">
+          <p className="main-edition-headline">{briefingHeadline || "선택 날짜의 저장 리포트 요약입니다."}</p>
+          <div className="main-edition-date">
+            <time dateTime={businessDate}>{businessDate}</time>
+            <span>저장 리포트 {reportCount ?? "자료 없음"}건 · 요약 종목 {summaryStockCount ?? "자료 없음"}</span>
+          </div>
         </div>
-        <p className="main-edition-headline">{briefingHeadline || "선택 날짜의 저장 리포트 요약입니다."}</p>
       </header>
       <div className="candidate-ledger-wrap">
         <p className="candidate-ledger-kicker">우선 확인 / 저장 후보 근거 원장</p>
@@ -311,7 +326,7 @@ export default function MainTop2Client({ businessDate, briefingHeadline, reportC
           <div className="main-priority-control-group" aria-label="장중 참고">
             <span className="main-priority-control-label">장중 참고</span>
             <button type="button" onClick={loadQuoteReference} disabled={quoteLoading}>{quoteLoading ? "현재가 조회 중" : "Toss 현재가 · 수급"}</button>
-            <button type="button" onClick={loadIntradayMarketTop} disabled={intradayLoading || !canOverlapIntradayMarketTop} title={!canOverlapIntradayMarketTop ? intradayMarketTopReason : undefined}>{intradayLoading ? "겹침 조회 중" : "거래대금 겹침"}</button>
+            <button type="button" onClick={loadIntradayMarketTop} disabled={intradayLoading || !canOverlapIntradayMarketTop} title={!canOverlapIntradayMarketTop ? intradayMarketTopReason : undefined} aria-controls={intradayView ? "intraday-market-top-result" : undefined} aria-busy={intradayLoading}>{intradayLoading ? "겹침 조회 중" : "거래대금 겹침"}</button>
           </div>
           <div className="main-priority-control-group" aria-label="차트 범위와 보조 지표">
             <label htmlFor="top2-daily-range">일봉 범위
@@ -336,17 +351,17 @@ export default function MainTop2Client({ businessDate, briefingHeadline, reportC
           </div>
         </div>
         <div className="main-market-reference-actions">
-          <span>시장 기준</span>
-          <button
-            id="toss-market-refresh"
-            className="reference-action-button"
-            type="button"
-            onClick={loadMarketContext}
-            disabled={marketLoading}
-            data-state={marketLoading ? "loading" : marketView ? "shown" : "idle"}
-            aria-controls={marketView ? "toss-market-context-result" : undefined}
-            aria-busy={marketLoading}
-          >{marketLoading ? "조회 중" : marketView ? "다시 확인" : "지수 · 수급 확인"}</button>
+            <span>시장 기준</span>
+            <button
+              id="toss-market-refresh"
+              className="reference-action-button"
+              type="button"
+              onClick={loadMarketContext}
+              disabled={marketLoading}
+              data-state={marketLoading ? "loading" : marketView ? "shown" : "idle"}
+              aria-controls={marketView ? "toss-market-context-result" : undefined}
+              aria-busy={marketLoading}
+            >{marketLoading ? "조회 중" : marketView ? "다시 확인" : "지수 · 수급 확인"}</button>
         </div>
       </div>
       <p className="main-priority-status" aria-live="polite">조회 결과는 선택일 참고용으로 표시되며 저장 원장과 후보 순서는 바뀌지 않습니다.</p>
@@ -375,24 +390,26 @@ function QuoteReference({ data, source, codes }: Readonly<{ data: RecordValue; s
   if (Array.isArray(investor.items)) for (const raw of investor.items) {
     const item = record(raw); investorMap.set(String(item.symbol ?? ""), item);
   }
-  const fetchedAt = text(source === "Toss" ? data.fetched_at : data.checked_at);
+  const fetchedAt = compactMarketDateTime(source === "Toss" ? data.fetched_at : data.checked_at) ?? "시각 자료 없음";
   return <section className="data-section" aria-label={`${source} 현재가 참고`}>
-    <p className="data-note">출처: {source} · 기준일 {text(data.priority_date)} · 확인 시각: {fetchedAt} · {data.live_fetch === true ? "실시간 조회" : "저장/캐시 참고"} · 후보 순서 변경 없음</p>
-    <div className="table-wrap"><table>
-      <thead><tr><th scope="col">Main 후보</th><th scope="col">현재가 참고</th><th scope="col">등락</th><th scope="col">당일 수급 참고</th><th scope="col">기준 시각</th></tr></thead>
+    <p className="data-note">출처 {source} · 기준일 {text(data.priority_date)} · 확인 {fetchedAt} · {data.live_fetch === true ? "실시간 조회" : "저장/캐시 참고"} · 후보 순서 변경 없음</p>
+    <div className="table-wrap"><table className={`main-reference-ledger main-mobile-ledger main-quote-ledger${source === "Naver" ? " main-naver-ledger" : ""}`}>
+      <thead><tr><th scope="col">Main 후보</th><th scope="col">현재가 참고</th><th scope="col">등락</th><th scope="col">당일 수급 참고</th>{source === "Naver" ? <th scope="col">거래대금</th> : null}<th scope="col">기준 시각</th></tr></thead>
       <tbody>{codes.map((code) => {
         const item = quoteMap.get(code);
         const flow = investorMap.get(code);
         const currentPrice = source === "Toss" ? item?.lastPrice : item?.current_price;
         const change = source === "Toss" ? item?.changeRate : item?.change_percent;
-        const referenceTime = source === "Toss" ? flow?.updated_at : item?.trade_time ?? item?.market_status;
-        return <tr key={code}><td>{code}</td><td>{amount(currentPrice)}</td><td>{percent(change)}</td>
-          <td>{flow ? `외국인 ${amount(flow.foreigner_net_buy_volume, "주")} · 기관 ${amount(flow.institution_net_buy_volume, "주")}` : source === "Toss" ? "수급 참고 없음" : text(item?.market_status, "수급 참고 없음")}</td><td>{text(referenceTime)}</td>
+        const referenceTime = source === "Toss" ? flow?.updated_at : item?.trade_time;
+        return <tr key={code}><td data-label="Main 후보"><strong>{item?.stock_name ? String(item.stock_name) : code}</strong><small>{code}</small></td><td data-label="현재가 참고">{amount(currentPrice)}</td><td data-label="등락">{percent(change)}</td>
+          <td data-label="당일 수급 참고">{flow ? `외국인 ${amount(flow.foreigner_net_buy_volume, "주")} · 기관 ${amount(flow.institution_net_buy_volume, "주")}` : source === "Toss" ? "수급 참고 없음" : "저장 수급 없음"}</td>
+          {source === "Naver" ? <td data-label="거래대금"><strong>{formatMarketTurnover(item?.trade_amount)}</strong></td> : null}
+          <td data-label="기준 시각">{marketTradeTime(referenceTime, source === "Naver" ? item?.market_status : undefined)}</td>
         </tr>;
       })}</tbody>
     </table></div>
-    {source === "Toss" ? <p className="data-note">수급 기준일 {text(investor.reference_date)} · 기준 시각은 각 행의 updated_at으로 표시합니다. 수급은 provisional입니다.</p> : <p className="data-note">Naver fallback 참고 · 종목별 거래 시각은 행의 trade_time을 따릅니다.</p>}
-    {data.cache === "stale" ? <p className="data-note">이전 조회값 · 마지막 성공 {text(data.fetched_at)} · 최신 조회 실패</p> : null}
+    {source === "Toss" ? <p className="data-note">수급 기준일 {text(investor.reference_date)} · 각 행의 시각은 KST 기준 · 수급은 잠정 참고값입니다.</p> : <p className="data-note">Naver fallback 참고 · 거래대금은 만 원 단위 절삭 표시 · 거래 시각과 시장 상태를 분리해 표시합니다.</p>}
+    {data.cache === "stale" ? <p className="data-note">이전 조회값 · 마지막 성공 {compactMarketDateTime(data.fetched_at) ?? "시각 자료 없음"} · 최신 조회 실패</p> : null}
   </section>;
 }
 
@@ -442,39 +459,46 @@ function IntradayMarketTop({ data, codes }: Readonly<{ data: RecordValue; codes:
   const quoteItems = Array.isArray(quotes.items) ? quotes.items.map(record).filter((item) => codes.includes(String(item.stock_code))) : [];
   const errors = Array.isArray(reference.errors) ? reference.errors : [];
   const quoteErrors = Array.isArray(quotes.errors) ? quotes.errors : [];
-  return <section className="data-section" aria-label="Naver 거래대금 겹침 결과">
-    <p className="data-note">출처 Naver 장중 거래대금 상위 · 확인 시각 {text(reference.checked_at)} · 조회 {text(reference.calls, "0")}회 · 오류 {errors.length}건</p>
+  return <details id="intraday-market-top-result" className="data-section main-reference-result reference-result-details" aria-label="장중 거래대금 상위와 Main Top2 현재가 참고" open>
+    <summary>장중 거래대금 상위 · Main Top2 현재가 참고</summary>
+    <header className="main-reference-ledger-heading"><h3>장중 거래대금 상위</h3><p className="data-note">출처 Naver · 확인 {compactMarketDateTime(reference.checked_at) ?? "시각 자료 없음"} · 조회 {text(reference.calls, "0")}회 · 오류 {errors.length}건</p></header>
     {!status.can_overlap_intraday_market_top && !items.length ? <Message>{text(reference.empty_reason ?? status.reason)}</Message> : null}
-    {items.length ? <div className="table-wrap"><table>
-      <thead><tr><th scope="col">종목</th><th scope="col">시장/순위</th><th scope="col">현재가/등락</th><th scope="col">거래대금</th><th scope="col">리포트/겹침</th><th scope="col">거래 시각</th></tr></thead>
+    {items.length ? <div className="table-wrap"><table className="main-reference-ledger main-mobile-ledger main-intraday-ledger main-naver-ledger">
+      <thead><tr><th scope="col">순위</th><th scope="col">종목</th><th scope="col">거래대금</th><th scope="col">현재가 · 등락</th><th scope="col">리포트 · 겹침</th><th scope="col">거래 시각</th></tr></thead>
       <tbody>{items.map((item, index) => <tr key={`${String(item.stock_code)}-${index}`}>
-        <td>{String(item.stock_name)} ({String(item.stock_code)})</td><td>{String(item.market)} · {String(item.rank)}위</td>
-        <td>{amount(item.current_price)} · {percent(item.change_percent)}</td><td>{amount(item.trade_amount)}</td>
-        <td>리포트 {String(item.mention_count)}건{codes.includes(String(item.stock_code)) ? " · Main Top2 포함" : ""}</td>
-        <td>{text(item.trade_time ?? item.checked_at)}</td>
+        <td data-label="순위"><span className="main-reference-ledger-rank">{String(item.rank ?? index + 1).padStart(2, "0")}</span></td>
+        <td data-label="종목"><strong>{String(item.stock_name)} ({String(item.stock_code)})</strong><small>{String(item.market)} · {marketStatusLabel(item.market_status)}</small></td>
+        <td data-label="거래대금"><strong className="main-reference-ledger-turnover">{formatMarketTurnover(item.trade_amount)}</strong></td>
+        <td data-label="현재가 · 등락"><strong>{amount(item.current_price)}</strong><small>{percent(item.change_percent)}</small></td>
+        <td data-label="리포트 · 겹침">리포트 {String(item.mention_count)}건<small>{codes.includes(String(item.stock_code)) ? "Main Top2 포함" : "겹침 없음"}</small></td>
+        <td data-label="거래 시각"><strong>{compactMarketDateTime(item.trade_time) ?? "시각 자료 없음"}</strong><small>{item.market_status ? `시장 상태 ${marketStatusLabel(item.market_status)}` : "거래 상태 자료 없음"}</small></td>
       </tr>)}</tbody>
     </table></div> : null}
     {reference.empty_reason && items.length ? <p className="data-note">{String(reference.empty_reason)}</p> : null}
-    <h3>Main Top2 Naver 현재가 참고</h3>
-    <p className="data-note">출처 {text(quotes.source)} · 조회 상태 {quotes.live_fetch === true ? "실시간 조회" : "조회 안 함"} · 오류 {quoteErrors.length}건</p>
-    {quoteItems.length ? <div className="table-wrap"><table>
-      <thead><tr><th scope="col">종목</th><th scope="col">현재가/등락</th><th scope="col">거래대금</th><th scope="col">거래 시각</th><th scope="col">종목 식별 출처</th></tr></thead>
+    <header className="main-reference-ledger-heading"><h3>Main Top2 Naver 현재가 참고</h3><p className="data-note">출처 {text(quotes.source)} · 확인 {compactMarketDateTime(quotes.checked_at) ?? "시각 자료 없음"} · 조회 상태 {quotes.live_fetch === true ? "실시간 조회" : "조회 안 함"} · 오류 {quoteErrors.length}건</p></header>
+    {quoteItems.length ? <div className="table-wrap"><table className="main-reference-ledger main-mobile-ledger main-naver-ledger">
+      <thead><tr><th scope="col">종목</th><th scope="col">현재가 · 등락</th><th scope="col">거래대금</th><th scope="col">거래 시각</th><th scope="col">종목 식별 출처</th></tr></thead>
       <tbody>{quoteItems.map((item, index) => <tr key={`${String(item.stock_code)}-${index}`}>
-        <td>{String(item.stock_name)} ({String(item.stock_code)})</td><td>{amount(item.current_price)} · {percent(item.change_percent)}</td>
-        <td>{amount(item.trade_amount)}</td><td>{text(item.trade_time ?? item.market_status)}</td><td>{item.resolution_source === "summary_stock_code" ? "저장 종목 코드" : "Naver 이름 검색"}</td>
+        <td data-label="종목"><strong>{String(item.stock_name)} ({String(item.stock_code)})</strong></td><td data-label="현재가 · 등락"><strong>{amount(item.current_price)}</strong><small>{percent(item.change_percent)}</small></td>
+        <td data-label="거래대금"><strong className="main-reference-ledger-turnover">{formatMarketTurnover(item.trade_amount)}</strong></td>
+        <td data-label="거래 시각"><strong>{compactMarketDateTime(item.trade_time) ?? "시각 자료 없음"}</strong><small>{item.market_status ? `시장 상태 ${marketStatusLabel(item.market_status)}` : "거래 상태 자료 없음"}</small></td>
+        <td data-label="종목 식별 출처">{item.resolution_source === "summary_stock_code" ? "저장 종목 코드" : "Naver 이름 검색"}</td>
       </tr>)}</tbody>
     </table></div> : <Message>Main Top2 Naver 현재가 자료가 없습니다.</Message>}
     <p className="data-note">거래대금 겹침은 참고 범위 표시이며 후보 생성이나 순위 변경에 쓰지 않습니다.</p>
-  </section>;
+  </details>;
 }
 
 function IndicatorsView({ payload, range, series }: Readonly<{ payload: MainTop2IndicatorsSnapshot; range: number; series: IndicatorSeries }>) {
-  return <section id="priority-indicators-result" className="data-section main-reference-result" aria-label="Main Top2 지표 응답">
-    {payload.items.map((item) => item.available ? <IndicatorItem key={item.stock_code} item={item} range={range} series={series} /> : <article className="data-section" key={item.stock_code}>
-      <h3>{item.stock_name} ({item.stock_code})</h3><Message>지표 자료 없음 · {stateText(item.reason)}</Message>
-      <p className="data-note">시장 분류 출처: {text(item.market_source)} · 기준일 {text(item.market_source_date)}</p>
-    </article>)}
-  </section>;
+  return <details id="priority-indicators-result" className="data-section main-reference-result reference-result-details" aria-label="Main Top2 그래프 결과" open>
+    <summary>Main Top2 그래프 · {range}거래일 범위</summary>
+    <section aria-label="Main Top2 지표 응답">
+      {payload.items.map((item) => item.available ? <IndicatorItem key={item.stock_code} item={item} range={range} series={series} /> : <article className="data-section" key={item.stock_code}>
+        <h3>{item.stock_name} ({item.stock_code})</h3><Message>지표 자료 없음 · {stateText(item.reason)}</Message>
+        <p className="data-note">시장 분류 출처: {text(item.market_source)} · 기준일 {text(item.market_source_date)}</p>
+      </article>)}
+    </section>
+  </details>;
 }
 
 function IndicatorPriceChart({ item, bars }: Readonly<{ item: MainTop2IndicatorItem; bars: IndicatorChartBar[] }>) {
@@ -641,10 +665,13 @@ function IndicatorItem({ item, range, series }: Readonly<{ item: MainTop2Indicat
   const structures = snapshot.structures;
 
   return <article className="main-top2-indicator-item" aria-label={`${item.stock_name} 기술 참고`}>
-    <h3>{item.stock_name} ({item.stock_code})</h3>
-    <p className="data-note">요청일 {item.requested_as_of} · 실제 봉 {text(snapshot.barAsOf)} · 출처 {text(snapshot.source)} · 조회 {dateTimeLabel(snapshot.sourceFetchedAt)} · 봉 확정 {stateText(snapshot.barStatus)} · 출처 기준 {text(snapshot.sourceDate)}</p>
+    <header className="main-top2-indicator-heading">
+      <div><p className="eyebrow">Main Top2 · 선택 종목</p><h3>{item.stock_name} ({item.stock_code})</h3></div>
+      <div className="main-top2-condition-status"><span>조건 상태</span><strong>{text(item.condition_status)}</strong></div>
+    </header>
+    <p className="data-note main-top2-indicator-provenance">요청일 {item.requested_as_of} · 실제 봉 {text(snapshot.barAsOf)} · 출처 {text(snapshot.source)} · 조회 {compactMarketDateTime(snapshot.sourceFetchedAt) ?? "시각 자료 없음"} · 봉 확정 {stateText(snapshot.barStatus)} · 출처 기준 {text(snapshot.sourceDate)}</p>
     <section className="condition-card" aria-label="사용자 정의 가격 조건 상태">
-      <div className="condition-card-heading"><h4>{text(item.condition_status)}</h4><span>사용자 정의 Main 조건</span></div>
+      <div className="condition-card-heading"><h4>확인 기준과 이유</h4><span>사용자 정의 Main 조건</span></div>
       <p className="condition-explanation">{text(item.condition_explanation)}</p>
       <dl className="indicator-condition-grid">
         <div><dt>선택일 종가</dt><dd>{amount(conditions.reference_close)} · 기준봉 {text(conditions.reference_bar_date)}</dd></div>
@@ -684,7 +711,7 @@ function IndicatorItem({ item, range, series }: Readonly<{ item: MainTop2Indicat
       </section>
     </details>
 
-    <details className="data-section"><summary><strong>출처 · 이력 · 구조 측정 참고</strong></summary>
+    <details className="indicator-details"><summary>출처 · 이력 · 구조 측정 참고</summary>
       <p className="data-note indicator-history">가져온 일봉: Toss {typeof item.candle_count === "number" ? item.candle_count : "자료 없음"}봉 · 차트 {visibleBars.length}봉 · {typeof item.pages_fetched === "number" ? item.pages_fetched : "자료 없음"}페이지 · {indicatorHistoryStatusLabel(item.history_status)}</p>
       {structures.length ? structures.map((structure, index) => <section className="data-section" key={`${String(structure.family)}-${index}`}>
         <h4>{structureFamilyLabel(structure.family)} · {stateText(structure.status)}</h4>

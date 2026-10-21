@@ -31,6 +31,7 @@ export default async function MainTop2Page({ params, workspace }: Readonly<{ par
   if (!isCandidateEvidenceSnapshot(payload, date)) return <main><p className="eyebrow">Stock Monitor · 공개 web-view</p><h1>Main · 우선 확인</h1><Message>후보 응답 형식을 확인할 수 없습니다.</Message></main>;
   const candidates = payload.rows.filter((row) => row.selected).slice(0, 2);
   const daily = isDailySnapshot(dailySnapshot, date) ? dailySnapshot : null;
+  const mainFreshnessItems = daily?.source_freshness_summary.items.filter((item) => item.key !== "toss_etf" && item.key !== "toss_openapi") ?? [];
   const briefingHeadline = daily?.market_briefing?.time_slot_mood_card?.headline ?? null;
   const canOverlapIntradayMarketTop = daily?.market_commentary?.same_day_report_status?.can_overlap_intraday_market_top ?? false;
   const intradayMarketTopReason = daily?.market_commentary?.same_day_report_status?.reason ?? "저장된 당일 상태를 확인할 수 없습니다.";
@@ -122,8 +123,8 @@ export default async function MainTop2Page({ params, workspace }: Readonly<{ par
           <h2 id="main-source-heading" className="main-proof-heading">출처 원장 / 기준 시점</h2>
           <section className="source-freshness-summary">
             <div className="source-freshness-head"><b>데이터 기준</b><span className="status-pill">저장 상태</span></div>
-            {daily?.source_freshness_summary.items.length ? <ul className="source-freshness-items">
-              {daily.source_freshness_summary.items.map((item) => {
+            {mainFreshnessItems.length ? <ul className="source-freshness-items">
+              {mainFreshnessItems.map((item) => {
                 const count = item.count === undefined ? "" : ` · ${new Intl.NumberFormat("ko-KR").format(item.count)}건`;
                 const coverage = item.coverage_count === undefined || item.candidate_count === undefined
                   ? "" : ` · 후보 ${new Intl.NumberFormat("ko-KR").format(item.coverage_count)}/${new Intl.NumberFormat("ko-KR").format(item.candidate_count)}`;

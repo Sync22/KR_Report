@@ -64,15 +64,16 @@ export default async function CandidateEvidencePage({
         {!payload.available || payload.rows.length === 0 ? (
           <Message>선택한 날짜에 저장된 관찰 후보가 없습니다.</Message>
         ) : (
+          <>
+          <p className="candidate-ledger-kicker">우선 확인 / 저장 후보 근거 원장</p>
+          <div className="watch-candidate-ledger-head"><span>순서</span><span>종목</span><span>관찰 이유</span><span>저장 뉴스 · 확인 공백</span><span>상세</span></div>
           <div className="watch-candidate-grid" aria-label="저장 관찰 후보">
             {payload.rows.map((item, index) => {
               const news = item.news_observation_badge;
               const newsLabel = index >= 2 && news.available !== true
                 ? "Top2 뉴스 수집 대상 아님"
                 : news.connection_label ?? news.display_label ?? "저장 뉴스 없음";
-              const missing = item.missing_information.length
-                ? ` · 확인 공백 ${item.missing_information.join(" · ")}`
-                : "";
+              const missing = item.missing_information.length ? item.missing_information.join(" · ") : "누락 항목 없음";
               return (
                 <a
                   className="watch-candidate-card"
@@ -80,19 +81,22 @@ export default async function CandidateEvidencePage({
                   aria-current={selectedCandidate?.stock_code === item.stock_code ? "page" : undefined}
                   key={item.stock_code}
                 >
-                  <div className="watch-candidate-heading">
-                    <div><span className="watch-candidate-rank">{index + 1}.</span> <strong>{item.stock_name} ({item.stock_code})</strong></div>
+                  <span className="watch-candidate-rank">{String(index + 1).padStart(2, "0")}</span>
+                  <div className="watch-candidate-stock">
+                    <strong>{item.stock_name}</strong><small>{item.stock_code}</small>
                     <span className="candidate-priority">{item.observation_priority}</span>
                   </div>
-                  <p className="watch-candidate-reason">{item.why_notable.slice(0, 3).join(" · ") || "저장 근거 확인"}</p>
-                  <div className="watch-candidate-footer">
-                    <p className="watch-candidate-news">뉴스: {newsLabel}{missing}</p>
-                    <span className="watch-candidate-open">종목 상세 보기 <span aria-hidden="true">→</span></span>
+                  <div className="watch-candidate-reason"><span className="watch-candidate-field-label">관찰 이유</span><strong>{item.why_notable.slice(0, 3).join(" · ") || "저장 근거 확인"}</strong></div>
+                  <div className="watch-candidate-evidence">
+                    <div><span className="watch-candidate-field-label">저장 뉴스</span><span>{newsLabel}</span></div>
+                    <div><span className="watch-candidate-field-label">확인 공백</span><span>{missing}</span></div>
                   </div>
+                  <span className="watch-candidate-open">종목 상세 보기 <span aria-hidden="true">→</span></span>
                 </a>
               );
             })}
           </div>
+          </>
         )}
       </section>
       <SelectedStockPanel

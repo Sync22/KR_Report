@@ -107,7 +107,7 @@ export default async function StockSearchPage({
           />
           {visibleStocks.length === 0 ? <Message>선택일에 표시할 종목 요약이 없습니다.</Message> : (
             <div className="table-wrap stock-summary-table-wrap">
-              <table className="mobile-card-table">
+              <table className="mobile-card-table main-reference-ledger stock-main-ledger">
                 <caption className="sr-only">선택일 종목 요약 · 기준일 {date}</caption>
                 <thead><tr>
                   <th scope="col">종목</th><th scope="col">건수</th><th scope="col">증권사</th>
