@@ -22,11 +22,15 @@ test("root opens the latest Main view without an access-code", async () => {
   const archiveResponse = await fetch(new URL("/api/archive?limit=20", origin));
   assert.equal(archiveResponse.status, 200);
   const archive = await archiveResponse.json();
-  const response = await fetch(new URL("/", origin));
+  const response = await fetch(new URL("/", origin), { redirect: "manual" });
   assert.equal(response.status, 200);
-  assert.equal(response.url, new URL(`/daily/${archive.latest_business_date}/main`, origin).href);
+  assert.equal(response.url, new URL("/", origin).href);
+  assert.equal(response.headers.get("location"), null);
   const html = await response.text();
-  assert.match(html, /오늘의 우선순위/);
+  assert.match(html, /aria-label="일일 화면"/);
+  assert.ok(html.includes('<div id="daily-main-panel" role="tabpanel" aria-labelledby="daily-main-tab">'));
+  assert.match(html, new RegExp(archive.latest_business_date));
+  assert.match(html, /aria-label="Main Top2 저장 근거"/);
   assert.doesNotMatch(html, /입장코드|로그인/i);
 });
 

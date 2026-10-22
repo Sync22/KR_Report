@@ -10,6 +10,7 @@ const tabRoutes: Record<DailyTab, string> = {
 };
 
 export function dailyTabFromPathname(pathname: string): DailyTab | null {
+  if (pathname === "/") return "main";
   if (pathname.endsWith("/main")) return "main";
   if (pathname.endsWith("/candidates")) return "watch";
   if (pathname.endsWith("/chart")) return "chart";
@@ -18,7 +19,7 @@ export function dailyTabFromPathname(pathname: string): DailyTab | null {
 }
 
 export function isDailyTabPage(pathname: string): boolean {
-  return /^\/daily\/\d{4}-\d{2}-\d{2}\/(?:main|candidates|stocks|chart)$/.test(pathname);
+  return pathname === "/" || /^\/daily\/\d{4}-\d{2}-\d{2}\/(?:main|candidates|stocks|chart)$/.test(pathname);
 }
 
 export function dailyTabHref(date: string, tab: DailyTab, search: string, pathname: string): string {
