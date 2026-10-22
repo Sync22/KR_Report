@@ -133,6 +133,24 @@ test("uses previous-window low crossing for an observed support break", () => {
   assert.equal(pattern.measurements.rvol20Previous, 2.4);
 });
 
+test("uses a separately versioned 1-minute horizontal pattern rule", () => {
+  const bars = datedBars(24, () => ({ open: 100, high: 101, low: 99, close: 100, volume: 100 }));
+  bars.forEach((bar, index) => { bar.time = new Date(Date.UTC(2026, 9, 22, 0, index)).toISOString(); });
+  bars[23] = { ...bars[23], open: 60, high: 101, low: 59, close: 60, volume: 240 };
+  const pattern = detectChartLabPatterns(bars, "1m").find((item) => item.kind === "support-breakout");
+  assert.ok(pattern);
+  assert.equal(pattern.ruleVersion, "horizontal-m1-v1");
+  assert.equal(pattern.status, "observed-crossing");
+});
+
+test("minute flag and triangle rules carry separate experimental versions", () => {
+  const toMinuteBars = (bars) => bars.map((bar, index) => ({ ...bar, time: new Date(Date.UTC(2026, 9, 22, 9, index)).toISOString() }));
+  const flag = detectChartLabPatterns(toMinuteBars(flagBars()), "1m").find((item) => item.kind === "bull-flag");
+  const triangle = detectChartLabPatterns(toMinuteBars(triangleBars("ascending")), "1m").find((item) => item.kind === "ascending-triangle");
+  assert.equal(flag?.ruleVersion, "flag-m1-v1");
+  assert.equal(triangle?.ruleVersion, "triangle-m1-v1");
+});
+
 test("reports unsupported, insufficient, and calendar-gap data explicitly", () => {
   const short = datedBars(12, () => ({ open: 100, high: 101, low: 99, close: 100, volume: 100 }));
   assert.ok(detectChartLabPatterns(short, "1w").some((item) => item.status === "unsupported-timeframe"));

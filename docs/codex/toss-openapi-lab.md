@@ -1,6 +1,16 @@
 # Toss OpenAPI Lab
 
-Read-only Toss OpenAPI boundary, official inventory, and post-key probe procedure.
+Approved Toss REST read-only boundaries, the official API inventory, and manual lab probes.
+
+## Current API And Documentation Status (2026-10-21)
+
+- The official [latest REST OpenAPI document](https://openapi.tossinvest.com/openapi-docs/latest/openapi.json) was checked on 2026-10-21. It remains at `1.2.24`, with 38 paths, 41 operations, and 101 schemas; the automation run found every documented path and operationId. Its command did not explicitly compare HTTP methods, so the automation prompt was tightened the same day. A separate exact method/path/operationId comparison then found zero missing tuples. These values match the 2026-10-08 inventory snapshot.
+- There is no repository workflow, script, or Task Scheduler job for spec updates. The active Codex automation **Toss OpenAPI nightly spec check** runs daily at 22:00 KST. It compares the official version, path/operation/schema counts, and the exact method/path/operationId set; it never reads secrets or calls Toss runtime APIs. It updates this document only when those checked values change and commits/pushes `main` only when the worktree is clean and synchronized. It does not diff every request/response schema field or provider runtime behavior. This automation is separate from the `codex/toss-openapi` branch.
+- `StockMonitor-TossCloseSnapshot` collects market data; it does not monitor API-spec changes. Market-data reads use fixed REST GET operations; live token issuance uses the fixed OAuth endpoint. The separate WebSocket AsyncAPI is not connected.
+- The local Chart Lab report-focus monitor now has a separate, fixed `GET /api/v1/candles` profile using `interval=1m`, `count=200`, and `MARKET_DATA_CHART`; it calls only after the user starts the loopback monitor and only during the Toss KRX regular session. The existing cached Toss calendar determines session/holiday boundaries. This development implementation has not made a live provider request; the required calendar/chart permission and rate budget remain to be verified on the target host.
+- This inventory includes operations the project has not implemented or approved. Current runtime allowlists are defined in the promoted contracts below and in [Data governance](data-governance.md), not by the full inventory.
+- Python's gated 20:05 capture persists the approved market snapshot/listing cache. Next handles bounded server-side reads after explicit UI actions and does not write SQLite. Account/order APIs are not connected.
+- Before adding or changing a route, verify its operation and schema against the official spec, then update the allowlist and tests. The daily automation checks the documented REST inventory for spec drift.
 
 ## Current 20:00 Persistence Contract (2026-08-23)
 
@@ -90,10 +100,9 @@ Current decision:
 
 Canonical project boundaries still live in:
 
-- [surface-guide.md]({PROJECT_ROOT}/docs/codex/surface-guide.md)
-- [data-governance.md]({PROJECT_ROOT}/docs/codex/data-governance.md)
-- [data-governance.md]({PROJECT_ROOT}/docs/codex/data-governance.md)
-- [candidate-evidence.md]({PROJECT_ROOT}/docs/codex/candidate-evidence.md)
+- [Surface guide](surface-guide.md)
+- [Data governance](data-governance.md)
+- [Candidate evidence](candidate-evidence.md)
 
 This document supports those canonical docs. It does not override them.
 
@@ -284,8 +293,8 @@ Current post-key branch status:
 - No Toss value is connected to `admin-gui`. Telegram market-briefing slots
   remain bounded; on-demand stock lookup reads the stored universe before its
   Naver fallback. The existing 20:05 capture refreshes the listing cache.
-- See
-  [toss-openapi-postkey-readonly-lab-runbook.md]({PROJECT_ROOT}/docs/codex/toss-openapi-lab.md).
+- See the
+  [post-key read-only lab runbook](#toss-openapi-post-key-read-only-lab-runbook).
 
 ### Candidate 1: Contract And Tests Only
 
@@ -308,7 +317,8 @@ Second safe implementation:
 4. Keep account, holdings, buying-power, order history, and order operations
    out of the interface.
 
-No real HTTP client should be wired by default.
+This was a pre-key planning option. The approved, bounded clients are now
+implemented; only the manual lab CLI remains no-network by default.
 
 ## Post-Key Verification Sequence
 
@@ -364,14 +374,13 @@ Pre-key preparation is complete when:
 
 ## Purpose
 
-This is the local memory note for the official Toss Securities OpenAPI surface.
+This is a point-in-time reference for the full official Toss Securities REST
+OpenAPI surface. Approved runtime integrations already exist; the inventory is
+not an implementation list or permission to call every documented operation.
+Use the current contracts above to identify the small allowlisted subset.
 
-It records the full official API shape before any key, account, token, runtime
-probe, or production integration exists. The intent is broad preparation first,
-then later pruning through reviewed patches.
-
-This is not an approval to call Toss runtime APIs. The active safety contract is
-[toss-openapi-readonly-lab-contract.md]({PROJECT_ROOT}/docs/codex/toss-openapi-lab.md).
+This inventory is not an approval to call Toss runtime APIs. The active safety
+contract is the [Toss OpenAPI Read-Only Lab Contract](#toss-openapi-read-only-lab-contract).
 
 ## Snapshot
 
@@ -458,7 +467,7 @@ Default retry policy for any future lab client:
 | Market Data | `GET` | `/api/v1/orderbook` | `getOrderbook` | No | `symbol` | `MARKET_DATA` | Future read-only lab allowlist, top-2 only. |
 | Market Data | `GET` | `/api/v1/trades` | `getTrades` | No | `symbol`, optional `count` max 50 | `MARKET_DATA` | Future read-only lab allowlist, top-2 only. |
 | Market Data | `GET` | `/api/v1/price-limits` | `getPriceLimit` | No | `symbol` | `MARKET_DATA` | Future read-only lab allowlist. |
-| Market Data | `GET` | `/api/v1/candles` | `getCandles` | No | server-derived Top2 `symbol`, `interval=1d`, `count=200` per page, selected-date `before`/`nextBefore`, `adjusted=true`, maximum four pages | `MARKET_DATA_CHART` | Promoted only for the on-demand public Top2 chart/indicator panel. The UI selects a 50/100/200-trading-day display window (default 200, RSI 14 initially selected) from the bounded history. `1m`, arbitrary symbols, DB persistence, and scheduler use remain out of scope. |
+| Market Data | `GET` | `/api/v1/candles` | `getCandles` | No | Public Main: server-derived Top2 `symbol`, `interval=1d`, `count=200` per page, selected-date `before`/`nextBefore`, `adjusted=true`, maximum four pages. Local Chart Lab report alert: server-derived report-focus stock, `interval=1m`, one `count=200` page and current-time `before`. | `MARKET_DATA_CHART` | The 1d projection remains the public on-demand Main chart contract. The separate loopback Chart Lab monitor has a bounded 1m reader for up to three manually selected report-focus candidates; no arbitrary symbols, DB persistence from Next, or scheduler task. Actual host permission/rate behavior has not been validated by this development change. |
 | Stock Info | `GET` | `/api/v1/stocks` | `getStocks` | No | `symbols`, max 200 comma-separated | `STOCK` | Future reference allowlist. |
 | Stock Info | `GET` | `/api/v1/stocks/all` | `listStocks` | No | required `market`; optional `status`, `securityType`, `commonShare` | `STOCK_ALL` | Fixed KOSPI/KOSDAQ/KR_ETC once-daily capture; stored lookup and Top20 classification only. |
 | Stock Info | `GET` | `/api/v1/stocks/{symbol}/warnings` | `getStockWarnings` | No | path `symbol` | `STOCK` | Future caution/reference allowlist. |
@@ -699,8 +708,9 @@ This inventory was built from official documentation endpoints only:
 
 ## Purpose
 
-This runbook covers the first bounded Toss Securities OpenAPI validation after
-client credentials have been issued.
+This runbook covers manually invoked, bounded Toss Securities OpenAPI probes.
+The first live validation is recorded below. These probe steps do not describe
+or gate the promoted application routes listed at the top of this document.
 
 It does not approve account, asset, order-info, order-history, conditional-order
 history, order or conditional-order creation/modification/cancellation,
@@ -746,7 +756,7 @@ Do not paste credentials into chat, source files, commands, screenshots, logs,
 or test fixtures.
 
 Add only the real values to the local ignored `.env.toss-openapi` file. Use
-[.env.toss-openapi.example]({PROJECT_ROOT}/.env.toss-openapi.example) as the
+[.env.toss-openapi.example](../../.env.toss-openapi.example) as the
 field template:
 
 ```dotenv
@@ -895,6 +905,11 @@ Toss request.
 The former lab preview was promoted to the main GET-only `web-view` in a
 bounded form.
 
+The `python -m stock_monitor web-view` command and local access-gate details
+below describe the retained Python reference implementation. The active Next
+service reads through its own server-only provider; see the [Surface guide](surface-guide.md)
+for its current routes and behavior.
+
 The normal `web-view` command can show Toss current-price and same-day provisional
 investor-volume references directly
 in the existing top-two `?곗꽑 ?뺤씤` rows when `.env.toss-openapi` has
@@ -951,8 +966,9 @@ python -m stock_monitor web-view --host 127.0.0.1 --port 8792 --no-open
 
 1. Keep Toss credentials in the ignored project-root `.env.toss-openapi` file. The exact variable names and safe template are in [Local Key Input](#local-key-input); do not put values in `.env`, source, chat, screenshots, or logs.
 2. The read requires `STOCK_MONITOR_TOSS_OPENAPI_CLIENT_ID`, `STOCK_MONITOR_TOSS_OPENAPI_CLIENT_SECRET`, `STOCK_MONITOR_TOSS_OPENAPI_LIVE_ENABLED=true`, and `MARKET_DATA_CHART` permission on the Toss API client. The live-enabled value is a shared Toss read switch, so only enable it when the existing Toss live operations are intended to be available.
-3. Start or restart the local server with `python -m stock_monitor web-view --host 127.0.0.1 --port 8780 --no-open`, sign in through the existing local access gate, select a date with loaded Main candidates, then press `차트 · 지표 확인`.
-4. There is no Stock-Newbby server, fork URL, extra cache, or API key to configure. Stock Monitor fetches Toss candles and calculates the factual indicator series locally.
+3. The current web-view is Next.js. On the development PC, use [`scripts/start_next_web_view.ps1`](../../scripts/start_next_web_view.ps1) on port `3010`; the Windows operating service uses port `8780` as described in the [Mini PC runbook](mini-pc-runbook.md). Next has no access-code screen and calls its server-side Toss provider directly; it does not bridge through Python HTTP.
+4. Select a date with loaded Main candidates and press `차트 · 지표 확인`. This is an on-demand request; initial page rendering does not request Toss candles.
+5. There is no Stock-Newbby server, fork URL, extra cache, or API key to configure. Stock Monitor fetches Toss candles and calculates the factual indicator series locally.
 
 In the Main browser, the combined route is requested only after the user action. Direct GET clients may also call it, but cannot choose symbols: the server derives the requested date's Main Top2. For request parameters, page/cursor behavior, chart output, and error states, see the canonical [Data governance](data-governance.md#main-top2-technical-indicator-projection) contract.
 

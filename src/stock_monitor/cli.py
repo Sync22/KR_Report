@@ -37,6 +37,7 @@ from zoneinfo import ZoneInfo
 import stock_monitor.web_view_server as web_view_server_module
 import stock_monitor.web_view_http as web_view_http_module
 from stock_monitor.business_day import is_business_day, is_within_time_window, next_business_day, previous_business_day
+from stock_monitor.chart_alerts import default_chart_alert_spool_path, process_chart_alert_spool
 from stock_monitor.analysis.backtest_observation import (
     build_backtest_observation_rows,
     build_feature_availability_audit,
@@ -148,7 +149,6 @@ from stock_monitor.notify.formatter import (
     format_daily_summary_messages,
     format_intraday_market_briefing_message,
     format_market_close_briefing_message,
-    format_intraday_empty_message,
     format_intraday_batch_message,
     format_stock_selection_message,
     format_stock_code_lookup_message,
@@ -2124,6 +2124,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Process queued intraday Telegram alert batches for newly inserted reports.",
     )
     intraday_parser.add_argument("--dry-run", action="store_true")
+    intraday_parser.add_argument(
+        "--retry-ambiguous",
+        action="store_true",
+        help="Retry ambiguous batches only after manually confirming that they were not delivered.",
+    )
+
+    chart_alert_dispatch_parser = subparsers.add_parser(
+        "chart-alerts-dispatch",
+        help="Preview or explicitly send local report-focused chart alert events.",
+    )
+    chart_alert_dispatch_parser.add_argument("--spool", type=Path, help="Local Next event-spool directory.")
+    chart_alert_dispatch_parser.add_argument("--send", action="store_true", help="Write the Python outbox and send Telegram messages.")
+    chart_alert_dispatch_parser.add_argument("--watch", action="store_true", help="Keep polling the local spool; requires --send.")
+    chart_alert_dispatch_parser.add_argument("--interval-seconds", type=int, default=5)
+    chart_alert_dispatch_parser.add_argument("--limit", type=int, default=50)
+    chart_alert_dispatch_parser.add_argument("--json", action="store_true")
 
     shutdown_parser = subparsers.add_parser(
         "scheduled-shutdown",
@@ -2226,6 +2242,24 @@ def main(argv: list[str] | None = None) -> int:
     config = RuntimeConfig.from_env(headless=not getattr(args, "headed", False))
     config.ensure_runtime_dirs()
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+
+    if args.command == "chart-alerts-dispatch":
+        if args.watch and not args.send:
+            print("ERROR: --watch requires --send.", file=sys.stderr)
+            return 2
+        if not 1 <= args.interval_seconds <= 300 or not 1 <= args.limit <= 200:
+            print("ERROR: interval must be 1..300 seconds and limit must be 1..200.", file=sys.stderr)
+            return 2
+        return _run_chart_alert_dispatch(
+            config,
+            repository,
+            spool_path=args.spool,
+            send=args.send,
+            watch=args.watch,
+            interval_seconds=args.interval_seconds,
+            limit=args.limit,
+            as_json=args.json,
+        )
 
     if args.command == "toss-priority-baseline-collect":
         return _run_toss_priority_baseline_collect(
@@ -3169,7 +3203,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "krx-kind-market-action-check":
             return _run_krx_kind_market_action_check(config, repository, dry_run=args.dry_run)
         if args.command == "process-intraday-alerts":
-            return _run_process_intraday_alerts(config, repository, dry_run=args.dry_run)
+            return _run_process_intraday_alerts(
+                config,
+                repository,
+                dry_run=args.dry_run,
+                retry_ambiguous=args.retry_ambiguous,
+            )
         if args.command == "scheduled-shutdown":
             return _run_scheduled_shutdown(config, dry_run=args.dry_run, delay_seconds=args.delay_seconds)
     except Exception as exc:
@@ -10836,9 +10875,8 @@ def _run_manual_poll(
             dry_run=False,
             batch_ids=None,
         )
-        if insert_result.inserted == 0:
-            if processed_batches == 0:
-                _send_intraday_empty_notification(config, repository)
+        if insert_result.inserted == 0 and processed_batches == 0:
+            print("No new intraday reports; no Telegram broadcast sent.")
     return 0
 
 
@@ -18392,22 +18430,6 @@ def _build_daily_briefing_market_reference_lines(
     ]
 
 
-def _top_briefing_sector_focus(
-    summaries: list[DailyStockSummary],
-    quotes_by_stock_code: dict[str, StockQuoteSnapshot],
-) -> tuple[str, int] | None:
-    counts: Counter[str] = Counter()
-    for summary in summaries:
-        if not summary.stock_code:
-            continue
-        quote = quotes_by_stock_code.get(summary.stock_code)
-        if quote and quote.sector_name:
-            counts[quote.sector_name] += summary.mention_count
-    if not counts:
-        return None
-    return counts.most_common(1)[0]
-
-
 def _briefing_flow_direction_fragment(repository: StockMonitorRepository, business_date: date) -> str | None:
     flow_dates = repository.list_recent_market_investor_flow_dates(
         on_or_before=business_date,
@@ -18442,39 +18464,6 @@ def _briefing_flow_direction_fragment_from_rows(
     if reference_date != business_date:
         return f"{reference_date.strftime('%y.%m.%d')} 기준 {', '.join(directions)}"
     return ", ".join(directions)
-
-
-def _build_daily_briefing_core_point_lines(
-    repository: StockMonitorRepository,
-    business_date: date,
-    summaries: list[DailyStockSummary],
-    quotes_by_stock_code: dict[str, StockQuoteSnapshot],
-) -> tuple[list[str], list[str]]:
-    report_points: list[str] = []
-    stored_points: list[str] = []
-    indices = repository.list_market_index_daily(business_date, limit=200)
-    kospi = _find_named_market_index(indices, series="KOSPI", name="코스피")
-    kosdaq = _find_named_market_index(indices, series="KOSDAQ", name="코스닥")
-    if kospi is not None and kosdaq is not None:
-        kospi_direction = _market_direction_label(kospi.change_percent)
-        kosdaq_direction = _market_direction_label(kosdaq.change_percent)
-        if kospi_direction == kosdaq_direction:
-            stored_points.append(f"- {business_date.strftime('%y.%m.%d')} 기준 KOSPI/KOSDAQ 모두 {kospi_direction} 흐름")
-        else:
-            stored_points.append(
-                f"- {business_date.strftime('%y.%m.%d')} 기준 KOSPI {kospi_direction}, "
-                f"KOSDAQ {kosdaq_direction}으로 시장 방향이 엇갈림"
-            )
-    top_sector = _top_briefing_sector_focus(summaries, quotes_by_stock_code)
-    if top_sector:
-        report_points.append(f"- 리포트 집중 1위: {top_sector[0]} {top_sector[1]}건")
-    flow_fragment = _briefing_flow_direction_fragment(repository, business_date)
-    if flow_fragment:
-        stored_points.append(f"- KOSPI 수급: {flow_fragment} 우위")
-    return (
-        ["핵심 포인트", *report_points[:3]] if report_points else [],
-        ["저장 지수/수급 포인트", *stored_points[:3]] if stored_points else [],
-    )
 
 
 def _build_daily_briefing_flow_reference_lines(
@@ -23819,23 +23808,25 @@ def _build_market_briefing_priority_candidate_lines(
         lines.append(f"- 관찰 사유: {reason} / 리포트 {report_count}건")
         lines.append(f"- 판단 상태: {decision_label}")
 
-        if include_live_candidate_quotes and stock_code:
+        toss_quote = toss_quotes.get(stock_code)
+        toss_price = _safe_optional_int(toss_quote.get("lastPrice")) if toss_quote else None
+        has_current_toss_quote = toss_price is not None and toss_price > 0
+        if include_live_candidate_quotes and stock_code and not has_current_toss_quote:
             try:
                 quote = quote_fetcher(stock_code, timeout_seconds=timeout_seconds)
             except Exception:
-                lines.append("- 장중 참고: Naver 현재 참고값을 이번 회차에 확인하지 못했습니다.")
+                lines.append("- Naver 시세 참고: 이번 회차에 확인하지 못했습니다.")
             else:
-                if quote.trade_time is not None and quote.trade_time.date() == business_date:
-                    lines.append(f"- 장중 참고: {_format_market_briefing_naver_quote(quote)}")
+                quote_time_kst = _market_briefing_datetime_kst(quote.trade_time)
+                if quote_time_kst is not None and quote_time_kst.date() == business_date:
+                    lines.append(f"- Naver 시세 참고: {_format_market_briefing_naver_quote(quote)}")
 
         badge = row.get("news_observation_badge") if isinstance(row.get("news_observation_badge"), dict) else {}
         news_label = str(badge.get("display_label") or badge.get("connection_label") or "뉴스 근거 수집 전").strip()
         news_reason = str(badge.get("top_title") or badge.get("reason") or "").strip()
         lines.append(f"- 뉴스 근거: {news_label}{f' · {news_reason}' if news_reason else ''}")
 
-        toss_quote = toss_quotes.get(stock_code)
-        toss_price = _safe_optional_int(toss_quote.get("lastPrice")) if toss_quote else None
-        if toss_price is not None:
+        if has_current_toss_quote:
             checked_at = _market_briefing_toss_checked_time(
                 toss_quote.get("timestamp") or toss_payload.get("fetched_at")
             )
@@ -23862,7 +23853,7 @@ def _format_market_briefing_naver_quote(quote: StockQuoteSnapshot) -> str:
     change = _format_signed_percent(quote.prev_change_rate)
     turnover = _format_krx_flow_amount(quote.trade_amount) if quote.trade_amount is not None else "거래대금 확인 불가"
     status = _market_briefing_naver_market_status(quote.market_status)
-    checked_at = quote.trade_time.strftime("%H:%M") if quote.trade_time else None
+    checked_at = _market_briefing_toss_checked_time(quote.trade_time) if quote.trade_time else None
     parts = [price]
     if change:
         parts.append(change)
@@ -23870,7 +23861,7 @@ def _format_market_briefing_naver_quote(quote: StockQuoteSnapshot) -> str:
     if status:
         parts.append(status)
     if checked_at:
-        parts.append(f"확인 {checked_at}")
+        parts.append(f"시세 기준 {checked_at}")
     return " · ".join(parts)
 
 
@@ -24031,63 +24022,18 @@ def _build_market_briefing_toss_priority_investor_trading_lines(
     return lines if len(lines) > 1 else []
 
 
-def _build_intraday_toss_priority_snapshot_lines(toss_context: dict[str, object]) -> list[str]:
-    payload = toss_context.get("payload") if isinstance(toss_context.get("payload"), dict) else {}
-    names_by_symbol = toss_context.get("names_by_symbol") if isinstance(toss_context.get("names_by_symbol"), dict) else {}
-    quote_rows = payload.get("quotes") if isinstance(payload.get("quotes"), list) else []
-    investor_trading = payload.get("investor_trading") if isinstance(payload.get("investor_trading"), dict) else {}
-    investor_rows = investor_trading.get("items") if isinstance(investor_trading.get("items"), list) else []
-    quotes_by_symbol = {
-        str(row.get("symbol") or "").strip(): row
-        for row in quote_rows
-        if isinstance(row, dict) and str(row.get("symbol") or "").strip()
-    }
-    investor_by_symbol = {
-        str(row.get("symbol") or "").strip(): row
-        for row in investor_rows
-        if isinstance(row, dict) and str(row.get("symbol") or "").strip()
-    }
-    symbols = [
-        str(symbol).strip()
-        for symbol in payload.get("symbols", [])
-        if str(symbol).strip()
-    ]
-    if not symbols:
-        symbols = list(quotes_by_symbol)
-        symbols.extend(symbol for symbol in investor_by_symbol if symbol not in quotes_by_symbol)
-
-    lines: list[str] = []
-    for symbol in symbols:
-        quote = quotes_by_symbol.get(symbol)
-        investor = investor_by_symbol.get(symbol)
-        fragments: list[str] = []
-        if quote is not None:
-            last_price = _safe_optional_int(quote.get("lastPrice"))
-            if last_price is not None:
-                fragment = f"현재가 {last_price:,}원"
-                fragments.append(fragment)
-        if investor is not None:
-            flow_fragments: list[str] = []
-            for key, label in (("foreigner_net_buy_volume", "외국인"), ("institution_net_buy_volume", "기관")):
-                volume = _safe_optional_int(investor.get(key))
-                if volume is not None:
-                    direction = "순매수" if volume >= 0 else "순매도"
-                    flow_fragments.append(f"{label} {direction} {abs(volume):,}주")
-            if flow_fragments:
-                fragment = " · ".join(flow_fragments)
-                fragments.append(fragment)
-        elif quote is not None:
-            fragments.append("수급 확인 없음")
-        if fragments:
-            stock_name = str(names_by_symbol.get(symbol) or symbol)
-            lines.append(f"- {stock_name} | {' | '.join(fragments)}")
-    header = "우선 확인 · Toss"
-    return [header, *lines] if lines else []
-
-
 def _market_briefing_toss_checked_time(value: object) -> str | None:
-    raw = str(value or "").strip().replace("T", " ")
-    return raw[11:16] if len(raw) >= 16 and raw[11:16].count(":") == 1 else None
+    timestamp = _market_briefing_datetime_kst(value)
+    if timestamp is None:
+        return None
+    return timestamp.strftime("%y.%m.%d %H:%M KST")
+
+
+def _market_briefing_datetime_kst(value: object) -> datetime | None:
+    timestamp = _parse_market_briefing_toss_timestamp(value)
+    if timestamp is None:
+        return None
+    return timestamp.replace(tzinfo=ZoneInfo("Asia/Seoul")) if timestamp.tzinfo is None else timestamp.astimezone(ZoneInfo("Asia/Seoul"))
 
 
 def _parse_market_briefing_toss_timestamp(value: object) -> datetime | None:
@@ -24101,10 +24047,7 @@ def _parse_market_briefing_toss_timestamp(value: object) -> datetime | None:
 
 
 def _market_briefing_toss_timestamp(value: object) -> str | None:
-    timestamp = _parse_market_briefing_toss_timestamp(value)
-    if timestamp is None:
-        return None
-    return timestamp.isoformat(timespec="minutes").replace("T", " ")
+    return _market_briefing_toss_checked_time(value)
 
 
 def _market_briefing_toss_payload_is_current(
@@ -24113,7 +24056,7 @@ def _market_briefing_toss_payload_is_current(
     business_date: date,
     reference_date_key: str,
 ) -> bool:
-    fetched_timestamp = _parse_market_briefing_toss_timestamp(payload.get("fetched_at"))
+    fetched_timestamp = _market_briefing_datetime_kst(payload.get("fetched_at"))
     return (
         payload.get("live_fetch") is True
         and str(payload.get("cache") or "").strip().lower() != "stale"
@@ -24124,7 +24067,7 @@ def _market_briefing_toss_payload_is_current(
 
 
 def _market_briefing_toss_quote_row_is_current(quote: dict[str, object], *, business_date: date) -> bool:
-    timestamp = _parse_market_briefing_toss_timestamp(quote.get("timestamp"))
+    timestamp = _market_briefing_datetime_kst(quote.get("timestamp"))
     return timestamp is not None and timestamp.date() == business_date
 
 
@@ -24136,8 +24079,8 @@ def _build_market_briefing_live_toss_market_context_lines(
     payload = toss_context.get("market_context") if isinstance(toss_context.get("market_context"), dict) else {}
     cache_status = str(payload.get("cache") or "").strip().lower()
     ranked_at_value = payload.get("ranked_at")
-    ranked_timestamp = _parse_market_briefing_toss_timestamp(ranked_at_value)
-    fetched_timestamp = _parse_market_briefing_toss_timestamp(payload.get("fetched_at"))
+    ranked_timestamp = _market_briefing_datetime_kst(ranked_at_value)
+    fetched_timestamp = _market_briefing_datetime_kst(payload.get("fetched_at"))
     rankings = payload.get("rankings")
     has_rankings = isinstance(rankings, list) and bool(rankings)
     ranked_date_matches = (
@@ -24290,71 +24233,6 @@ def _format_market_index_price(item: dict[str, object], changes: dict[str, objec
 def _build_market_briefing_toss_market_context_lines(toss_context: dict[str, object]) -> list[str]:
     market_lines, overlap_lines, ranking_lines = _build_market_briefing_toss_market_context_sections(toss_context)
     return [*ranking_lines, *overlap_lines, *market_lines]
-
-
-def _build_daily_briefing_live_toss_market_context_lines(
-    toss_context: dict[str, object],
-    *,
-    business_date: date,
-) -> list[str]:
-    availability_lines = _build_market_briefing_live_toss_market_context_lines(
-        toss_context,
-        business_date=business_date,
-    )
-    unavailable = next(
-        (line for line in availability_lines[1:] if "당일 실시간 시장 데이터 확인 불가" in line),
-        None,
-    )
-    if unavailable:
-        return ["Toss 실시간 시장 참고", unavailable]
-
-    payload = toss_context.get("market_context") if isinstance(toss_context.get("market_context"), dict) else {}
-    market_prices = payload.get("market_prices") if isinstance(payload.get("market_prices"), list) else []
-    current_market_prices = [
-        item
-        for item in market_prices
-        if isinstance(item, dict)
-        and item.get("lastPrice") is not None
-        and _market_briefing_toss_quote_row_is_current(item, business_date=business_date)
-    ]
-    investor_flow = payload.get("investor_flow") if isinstance(payload.get("investor_flow"), dict) else {}
-    current_investor_flow = {}
-    for market in ("KOSPI", "KOSDAQ"):
-        record = investor_flow.get(market)
-        updated_at = _parse_market_briefing_toss_timestamp(record.get("updatedAt")) if isinstance(record, dict) else None
-        current_investor_flow[market] = (
-            record
-            if isinstance(record, dict)
-            and record.get("date") == business_date.isoformat()
-            and updated_at is not None
-            and updated_at.date() == business_date
-            else None
-        )
-    current_payload = {
-        **payload,
-        "market_prices": current_market_prices,
-        "investor_flow": current_investor_flow,
-    }
-    current_context = {**toss_context, "market_context": current_payload}
-    market_lines, overlap_lines, ranking_lines = _build_market_briefing_toss_market_context_sections(current_context)
-
-    changes = current_payload.get("market_price_changes")
-    changes = changes if isinstance(changes, dict) else {}
-    index_lines = []
-    for item in current_market_prices:
-        timestamp = _market_briefing_toss_timestamp(item.get("timestamp"))
-        if timestamp is None:
-            continue
-        index_lines.append(f"{_format_market_index_price(item, changes)} · 기준 {timestamp}")
-    market_lines = [line for line in market_lines if not line.startswith("- 당일 지수:")]
-    if index_lines:
-        market_lines.insert(0, "- 당일 지수: " + ", ".join(index_lines))
-
-    timestamp_suffix = availability_lines[0].partition(" · ")[2]
-    heading = "Toss 실시간 시장 참고"
-    if timestamp_suffix:
-        heading += f" · {timestamp_suffix}"
-    return [heading, *ranking_lines, *overlap_lines, *market_lines]
 
 
 def _build_market_briefing_source_freshness_summary(
@@ -24657,20 +24535,45 @@ def _send_market_briefing_message(
             "Telegram configuration is missing. Set STOCK_MONITOR_TELEGRAM_BOT_TOKEN and "
             "STOCK_MONITOR_TELEGRAM_CHAT_ID."
         )
-    message_id = send_telegram_message(
-        config.telegram_bot_token,
-        config.telegram_chat_id,
-        message,
-        timeout_seconds=config.telegram_timeout_seconds,
-        max_retries=config.telegram_max_retries,
-        retry_delay_seconds=config.telegram_retry_delay_seconds,
-    )
+    attempted_at = datetime.now(ZoneInfo(config.timezone))
+    try:
+        message_id = send_telegram_message(
+            config.telegram_bot_token,
+            config.telegram_chat_id,
+            message,
+            timeout_seconds=config.telegram_timeout_seconds,
+            max_retries=1,
+            retry_delay_seconds=config.telegram_retry_delay_seconds,
+        )
+    except Exception as exc:
+        ambiguous_send = _is_ambiguous_telegram_send_error(exc)
+        error_detail = str(exc)
+        repository.record_delivery(
+            DeliveryLog(
+                business_date=business_date,
+                channel=channel,
+                status="ambiguous" if ambiguous_send else "failed",
+                delivered_at=attempted_at,
+                detail=f"source={source}; {error_detail}",
+            )
+        )
+        repository.record_operation_event(
+            _operation_event(
+                config,
+                component="market-briefing",
+                event_type="telegram-send",
+                status="ambiguous" if ambiguous_send else "failed",
+                business_date=business_date,
+                detail=f"source={source}; ambiguous_send={str(ambiguous_send).lower()}; {error_detail}",
+            )
+        )
+        raise
     repository.record_delivery(
         DeliveryLog(
             business_date=business_date,
             channel=channel,
             status="sent",
-            delivered_at=datetime.now(ZoneInfo(config.timezone)),
+            delivered_at=attempted_at,
             message_id=str(message_id),
             detail=f"source={source}; market briefing",
         )
@@ -24800,6 +24703,10 @@ def _run_scheduled_market_briefing_slot(
         print(f"Skipping market briefing {slot}: {detail}")
         return 0
 
+    if not dry_run and not allow_repeat and repository.has_latest_delivery_status(today, delivery_channel, status="ambiguous"):
+        print(f"Market briefing {slot} has an ambiguous Telegram delivery for {today.isoformat()}; operator review is required.")
+        return 0
+
     already_sent = repository.has_successful_delivery(today, delivery_channel)
     if not allow_repeat and already_sent:
         print(f"Market briefing {slot} already sent for {today.isoformat()}; skipping.")
@@ -24913,42 +24820,11 @@ def _run_send_test_notification(
         messages = [custom_message]
     elif notification_format == "briefing":
         assert briefing_date is not None
-        market_reference_lines = _build_daily_briefing_market_reference_lines(repository, business_date)
-        flow_reference_lines = _build_daily_briefing_flow_reference_lines(repository, business_date)
-        report_core_point_lines, stored_core_point_lines = _build_daily_briefing_core_point_lines(
-            repository,
-            business_date,
-            summaries,
-            quotes_by_stock_code,
-        )
-        live_market_context_lines: list[str] = []
-        if delivery_channel == PRODUCTION_DELIVERY_CHANNEL:
-            if briefing_date == local_today:
-                toss_context = _build_market_briefing_toss_priority_context(
-                    config,
-                    repository,
-                    business_date=briefing_date,
-                    candidate_rows=[],
-                )
-                live_market_context_lines = _build_daily_briefing_live_toss_market_context_lines(
-                    toss_context,
-                    business_date=briefing_date,
-                )
-            else:
-                live_market_context_lines = [
-                    "Toss 실시간 시장 참고",
-                    "- 과거 날짜 브리핑이므로 실시간 조회를 생략했습니다.",
-                ]
         messages = format_daily_briefing_messages(
             business_date,
             summaries,
             briefing_date=briefing_date,
             quotes_by_stock_code=quotes_by_stock_code,
-            market_reference_lines=market_reference_lines,
-            flow_reference_lines=flow_reference_lines,
-            core_point_lines=report_core_point_lines,
-            stored_core_point_lines=stored_core_point_lines,
-            live_market_context_lines=live_market_context_lines,
             max_items=effective_limit or 5,
         )
     elif effective_limit is None:
@@ -24990,6 +24866,7 @@ def _run_send_test_notification(
             messages=messages,
             effective_min_mentions=effective_min_mentions,
             require_target_price=require_target_price,
+            allow_ambiguous_repeat=allow_repeat,
         )
     else:
         try:
@@ -25077,6 +24954,7 @@ def _send_production_daily_summary_fragments(
     messages: list[str],
     effective_min_mentions: int,
     require_target_price: bool,
+    allow_ambiguous_repeat: bool = False,
 ) -> list[str]:
     started_at = datetime.now(ZoneInfo(config.timezone))
     summary_signature = _daily_summary_delivery_signature(
@@ -25092,6 +24970,7 @@ def _send_production_daily_summary_fragments(
         summary_signature=summary_signature,
         messages=messages,
         started_at=started_at,
+        allow_ambiguous_repeat=allow_ambiguous_repeat,
     )
     pending_fragments = repository.list_pending_daily_summary_fragments(run.run_id)
     for fragment in pending_fragments:
@@ -25102,29 +24981,38 @@ def _send_production_daily_summary_fragments(
                 fragment.message_text,
                 parse_mode=None,
                 timeout_seconds=config.telegram_timeout_seconds,
-                max_retries=config.telegram_max_retries,
+                max_retries=1,
                 retry_delay_seconds=config.telegram_retry_delay_seconds,
             )
         except Exception as exc:
             failed_at = datetime.now(ZoneInfo(config.timezone))
             message_hash = _hash_text(fragment.message_text)[:16]
             ambiguous_send = _is_ambiguous_telegram_send_error(exc)
+            error_detail = str(exc)
             detail = (
                 f"source=scheduled; run_id={run.run_id}; "
                 f"fragment={fragment.fragment_index + 1}/{run.total_fragments}; "
-                f"message_hash={message_hash}; ambiguous_send={str(ambiguous_send).lower()}; {exc}"
+                f"message_hash={message_hash}; ambiguous_send={str(ambiguous_send).lower()}; {error_detail}"
             )
-            repository.mark_daily_summary_fragment_failed(
-                run.run_id,
-                fragment.fragment_index,
-                error_detail=str(exc),
-                failed_at=failed_at,
-            )
+            if ambiguous_send:
+                repository.mark_daily_summary_fragment_ambiguous(
+                    run.run_id,
+                    fragment.fragment_index,
+                    error_detail=error_detail,
+                    failed_at=failed_at,
+                )
+            else:
+                repository.mark_daily_summary_fragment_failed(
+                    run.run_id,
+                    fragment.fragment_index,
+                    error_detail=error_detail,
+                    failed_at=failed_at,
+                )
             repository.record_delivery(
                 DeliveryLog(
                     business_date=business_date,
                     channel=PRODUCTION_DELIVERY_CHANNEL,
-                    status="failed",
+                    status="ambiguous" if ambiguous_send else "failed",
                     delivered_at=failed_at,
                     detail=detail,
                 )
@@ -25134,7 +25022,7 @@ def _send_production_daily_summary_fragments(
                     config,
                     component="notify",
                     event_type="fragment",
-                    status="failed",
+                    status="ambiguous" if ambiguous_send else "failed",
                     business_date=business_date,
                     detail=detail,
                 )
@@ -25169,6 +25057,9 @@ def _send_production_daily_summary_fragments(
 
 
 def _is_ambiguous_telegram_send_error(exc: Exception) -> bool:
+    ambiguous = getattr(exc, "ambiguous", None)
+    if ambiguous is not None:
+        return bool(ambiguous)
     if isinstance(exc, TimeoutError):
         return True
     text = str(exc).lower()
@@ -25181,7 +25072,7 @@ def _is_ambiguous_telegram_send_error(exc: Exception) -> bool:
         "connection reset",
         "remote end closed",
     )
-    return any(marker in text for marker in ambiguous_markers)
+    return any(marker in text for marker in ambiguous_markers) or re.search(r"http error 5\d\d", text) is not None
 
 
 def _daily_summary_delivery_signature(
@@ -41866,7 +41757,7 @@ def _build_operator_health_snapshot(
     for component_key, component in (live_observation or {}).get("components", {}).items():
         evidence_status = component.get("evidence_status")
         if evidence_status == "attention" or (
-            evidence_status == "failed" and component_key in {"poll_news", "toss_market_context", "intraday"}
+            evidence_status == "failed" and component_key in {"poll_news", "toss_market_context", "intraday", "market_briefing"}
         ):
             last_event = component.get("last_event") or {}
             reason = str(component.get("attention_reason") or last_event.get("status") or "attention")
@@ -41912,6 +41803,7 @@ def _build_live_observation_snapshot(
         "notify": ("notify", {"send", "fragment", "early_notify", "late_notify", "run-guard"}),
         "poll": ("poll", {"manual-poll", "time-window", "run-guard"}),
         "intraday": ("intraday", {"send", "hourly-send", "empty-send"}),
+        "market_briefing": ("market-briefing", {"telegram-send"}),
         "poll_news": ("poll-news", {"scheduled-collect"}),
         "toss_market_context": ("toss-market-context", {"capture", "time-window", "run-guard"}),
         "krx_daily_backfill": ("krx", {"scheduled-daily-backfill", "backfill-missing"}),
@@ -42008,7 +41900,7 @@ def _build_telegram_timeout_trace(current: datetime, events: list[OperationEvent
         if event.event_time.date() == current.date()
         and event.component == "notify"
         and event.event_type == "fragment"
-        and event.status == "failed"
+        and event.status in {"failed", "ambiguous"}
         and "ambiguous_send=true" in event.detail
     ]
     latest = sorted(ambiguous_events, key=lambda event: event.event_time, reverse=True)[0] if ambiguous_events else None
@@ -42021,6 +41913,7 @@ def _build_telegram_timeout_trace(current: datetime, events: list[OperationEvent
 def _telegram_timeout_trace_event(event: OperationEvent) -> dict:
     return {
         "event_time": event.event_time.isoformat(),
+        "status": event.status,
         "business_date": event.business_date.isoformat() if event.business_date else None,
         "run_id": _extract_detail_field(event.detail, "run_id"),
         "fragment": _extract_detail_field(event.detail, "fragment"),
@@ -42092,6 +41985,8 @@ def _live_event_evidence_status(event: OperationEvent | None) -> str:
         return "missing"
     if event.status in {"failed", "error"}:
         return "failed"
+    if event.status == "ambiguous":
+        return "attention"
     if event.status in {"empty", "partial"}:
         return "attention"
     return "observed"
@@ -44758,14 +44653,61 @@ def _toss_cached_stock_lookup_candidates(
     return candidates, rows[0].business_date if rows else None
 
 
+def _run_chart_alert_dispatch(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    spool_path: Path | None,
+    send: bool,
+    watch: bool,
+    interval_seconds: int,
+    limit: int,
+    as_json: bool,
+) -> int:
+    target = spool_path or default_chart_alert_spool_path()
+    try:
+        while True:
+            result = process_chart_alert_spool(
+                repository,
+                target,
+                send=send,
+                bot_token=config.telegram_bot_token,
+                chat_id=config.telegram_chat_id,
+                limit=limit,
+            )
+            if as_json:
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+            elif send:
+                print(
+                    "Chart alert dispatch: "
+                    f"inserted={result['inserted_count']} sent={result['sent_count']} "
+                    f"ambiguous={result['ambiguous_count']} rejected={result['rejected_count']}"
+                )
+            else:
+                for message in result["previews"]:
+                    print(message)
+                    print()
+                print(f"Dry-run: preview={result['preview_count']} rejected={result['rejected_count']} · no DB write or Telegram send")
+            if not watch:
+                return 0
+            time.sleep(interval_seconds)
+    except KeyboardInterrupt:
+        print("Chart alert dispatcher stopped.")
+        return 130
+    except (OSError, ValueError) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 1
+
+
 def _run_process_intraday_alerts(
     config: RuntimeConfig,
     repository: StockMonitorRepository,
     *,
     dry_run: bool,
     batch_ids: set[str] | None = None,
+    retry_ambiguous: bool = False,
 ) -> int:
-    batches = repository.list_pending_intraday_alert_batches()
+    batches = repository.list_pending_intraday_alert_batches(include_ambiguous=retry_ambiguous)
     if batch_ids is not None:
         batches = [batch for batch in batches if batch.batch_id in batch_ids]
     if not batches:
@@ -44782,7 +44724,7 @@ def _run_process_intraday_alerts(
                 quotes_by_stock_code = _fetch_intraday_quotes_by_stock_code(config, reports)
                 print(
                     format_intraday_batch_message(
-                        batch.created_at,
+                        max((report.collected_at for report in reports), default=batch.created_at),
                         reports,
                         quotes_by_stock_code=quotes_by_stock_code,
                         offset=0,
@@ -44822,7 +44764,7 @@ def _run_process_intraday_alerts(
 
         quotes_by_stock_code = _fetch_intraday_quotes_by_stock_code(config, reports, repository=repository)
         message = format_intraday_batch_message(
-            batch.created_at,
+            max(report.collected_at for report in reports),
             reports,
             quotes_by_stock_code=quotes_by_stock_code,
             offset=0,
@@ -44841,26 +44783,46 @@ def _run_process_intraday_alerts(
                 config.telegram_chat_id,
                 message,
                 timeout_seconds=config.telegram_timeout_seconds,
-                max_retries=config.telegram_max_retries,
+                max_retries=1,
                 retry_delay_seconds=config.telegram_retry_delay_seconds,
             )
         except Exception as exc:
             send_error = exc
-            repository.mark_intraday_alert_batch_failed(
-                batch.batch_id,
-                attempted_at=attempted_at,
-                error_detail=str(exc),
-            )
+            ambiguous_send = _is_ambiguous_telegram_send_error(exc)
+            error_detail = str(exc)
+            if ambiguous_send:
+                repository.mark_intraday_alert_batches_ambiguous(
+                    (batch.batch_id,),
+                    attempted_at=attempted_at,
+                    error_detail=error_detail,
+                )
+                repository.record_delivery(
+                    DeliveryLog(
+                        business_date=batch.business_date,
+                        channel="telegram_intraday",
+                        status="ambiguous",
+                        delivered_at=attempted_at,
+                        detail=f"batch={batch.batch_id}; {error_detail}",
+                    )
+                )
+            else:
+                repository.mark_intraday_alert_batch_failed(
+                    batch.batch_id,
+                    attempted_at=attempted_at,
+                    error_detail=error_detail,
+                )
             repository.record_operation_event(
                 _operation_event(
                     config,
                     component="intraday",
                     event_type="send",
-                    status="failed",
+                    status="ambiguous" if ambiguous_send else "failed",
                     business_date=batch.business_date,
-                    detail=str(exc),
+                    detail=f"ambiguous_send={str(ambiguous_send).lower()}; {error_detail}",
                 )
             )
+            if ambiguous_send:
+                break
             continue
 
         repository.mark_intraday_alert_batch_sent(
@@ -44925,12 +44887,9 @@ def _run_scheduled_intraday_briefing(
     if not batches:
         if pending_batches:
             print("No current-day intraday batches; prior-day pending batches require operator recovery.")
-        return _send_intraday_empty_notification(
-            config,
-            repository,
-            polled_at=scheduled_run_at,
-            dry_run=dry_run,
-        )
+        else:
+            print("No current-day intraday batches; no Telegram broadcast sent.")
+        return 0
 
     reports_by_identity: dict[str, Report] = {}
     for batch in batches:
@@ -44961,37 +44920,13 @@ def _run_scheduled_intraday_briefing(
     quotes_by_stock_code = _fetch_intraday_quotes_by_stock_code(config, reports, repository=repository)
     default_limit = _effective_int_setting(config, repository, "notification_default_limit")
     message = format_intraday_batch_message(
-        scheduled_run_at,
+        max(report.collected_at for report in reports),
         reports,
         quotes_by_stock_code=quotes_by_stock_code,
         offset=0,
         limit=default_limit,
     )
     message = message.replace("\n다음, 전부, 처음", "")
-    if scheduled_run_at.hour >= 9:
-        toss_context = _build_market_briefing_toss_priority_context(
-            config,
-            repository,
-            business_date=scheduled_run_at.date(),
-            include_investor_trading=True,
-        )
-        priority_lines = _build_intraday_toss_priority_snapshot_lines(toss_context)
-        market_summary_lines, overlap_lines, ranking_lines = _build_market_briefing_toss_market_context_sections(toss_context)
-        market_payload = toss_context.get("market_context") if isinstance(toss_context.get("market_context"), dict) else {}
-        priority_payload = toss_context.get("payload") if isinstance(toss_context.get("payload"), dict) else {}
-        checked_at = _market_briefing_toss_checked_time(
-            market_payload.get("ranked_at") or market_payload.get("fetched_at") or priority_payload.get("fetched_at")
-        )
-        timestamp_lines = [f"Toss 기준 {checked_at}"] if checked_at else []
-        message_parts = [
-            "\n".join(timestamp_lines),
-            "\n".join(market_summary_lines),
-            "\n".join(priority_lines),
-            "\n".join(overlap_lines),
-            "\n".join(ranking_lines),
-            message,
-        ]
-        message = "\n\n".join(part for part in message_parts if part)
     if dry_run:
         print(message)
         return len(batches)
@@ -45009,24 +44944,42 @@ def _run_scheduled_intraday_briefing(
             config.telegram_chat_id,
             message,
             timeout_seconds=config.telegram_timeout_seconds,
-            max_retries=config.telegram_max_retries,
+            max_retries=1,
             retry_delay_seconds=config.telegram_retry_delay_seconds,
         )
     except Exception as exc:
-        for batch in batches:
-            repository.mark_intraday_alert_batch_failed(
-                batch.batch_id,
+        ambiguous_send = _is_ambiguous_telegram_send_error(exc)
+        error_detail = str(exc)
+        if ambiguous_send:
+            repository.mark_intraday_alert_batches_ambiguous(
+                batch_ids,
                 attempted_at=attempted_at,
-                error_detail=str(exc),
+                error_detail=error_detail,
             )
+            repository.record_delivery(
+                DeliveryLog(
+                    business_date=scheduled_run_at.date(),
+                    channel="telegram_intraday",
+                    status="ambiguous",
+                    delivered_at=attempted_at,
+                    detail=f"batches={len(batch_ids)}; {error_detail}",
+                )
+            )
+        else:
+            for batch in batches:
+                repository.mark_intraday_alert_batch_failed(
+                    batch.batch_id,
+                    attempted_at=attempted_at,
+                    error_detail=error_detail,
+                )
         repository.record_operation_event(
             _operation_event(
                 config,
                 component="intraday",
                 event_type="hourly-send",
-                status="failed",
+                status="ambiguous" if ambiguous_send else "failed",
                 business_date=scheduled_run_at.date(),
-                detail=str(exc),
+                detail=f"ambiguous_send={str(ambiguous_send).lower()}; {error_detail}",
             )
         )
         raise RuntimeError(f"Hourly intraday briefing delivery failed: {exc}") from exc
@@ -45058,79 +45011,6 @@ def _run_scheduled_intraday_briefing(
     )
     print(f"Sent hourly intraday briefing for {len(batch_ids)} batch(es).")
     return len(batches)
-
-
-def _send_intraday_empty_notification(
-    config: RuntimeConfig,
-    repository: StockMonitorRepository,
-    *,
-    polled_at: datetime | None = None,
-    dry_run: bool = False,
-) -> int:
-    message_time = polled_at or datetime.now(ZoneInfo(config.timezone))
-    message = format_intraday_empty_message(message_time)
-    if dry_run:
-        print(message)
-        return 0
-
-    attempted_at = datetime.now(ZoneInfo(config.timezone))
-    try:
-        if not config.telegram_bot_token or not config.telegram_chat_id:
-            raise RuntimeError(
-                "Telegram configuration is missing. Set STOCK_MONITOR_TELEGRAM_BOT_TOKEN and "
-                "STOCK_MONITOR_TELEGRAM_CHAT_ID."
-            )
-        message_id = send_telegram_message(
-            config.telegram_bot_token,
-            config.telegram_chat_id,
-            message,
-            timeout_seconds=config.telegram_timeout_seconds,
-            max_retries=config.telegram_max_retries,
-            retry_delay_seconds=config.telegram_retry_delay_seconds,
-        )
-    except Exception as exc:
-        repository.record_delivery(
-            DeliveryLog(
-                business_date=message_time.date(),
-                channel="telegram_intraday",
-                status="failed",
-                delivered_at=attempted_at,
-                detail=str(exc),
-            )
-        )
-        repository.record_operation_event(
-            _operation_event(
-                config,
-                component="intraday",
-                event_type="empty-send",
-                status="failed",
-                business_date=message_time.date(),
-                detail=str(exc),
-            )
-        )
-        raise
-    repository.record_delivery(
-        DeliveryLog(
-            business_date=message_time.date(),
-            channel="telegram_intraday",
-            status="sent_empty",
-            delivered_at=message_time,
-            message_id=message_id,
-            detail="intraday empty alert",
-        )
-    )
-    repository.record_operation_event(
-        _operation_event(
-            config,
-            component="intraday",
-            event_type="empty-send",
-            status="sent",
-            business_date=message_time.date(),
-            detail="intraday empty alert",
-        )
-    )
-    print(f"Intraday empty notification sent with message_id={message_id}")
-    return 0
 
 
 def _fetch_intraday_quotes_by_stock_code(
@@ -45262,7 +45142,7 @@ def _try_process_intraday_paging_command(
 
     quotes_by_stock_code = _fetch_intraday_quotes_by_stock_code(config, reports, repository=repository)
     message = format_intraday_batch_message(
-        created_at,
+        max(report.collected_at for report in reports),
         reports,
         quotes_by_stock_code=quotes_by_stock_code,
         offset=current_offset,
@@ -45322,7 +45202,7 @@ def _try_process_intraday_paging_command_with_fallback(
 
     quotes_by_stock_code = _fetch_intraday_quotes_by_stock_code(config, reports, repository=repository)
     message = format_intraday_batch_message(
-        created_at,
+        max(report.collected_at for report in reports),
         reports,
         quotes_by_stock_code=quotes_by_stock_code,
         offset=current_offset,

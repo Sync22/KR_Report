@@ -10,7 +10,7 @@ export type ChartLabPatternStatus =
   | "forming" | "observed-breakout" | "observed-crossing"
   | "unsupported-timeframe" | "insufficient-data" | "data-gap" | "invalid-data";
 export type ChartLabPatternFamily = "flag" | "triangle" | "horizontal" | "all";
-type PatternTimeframe = "1d" | "4h";
+type PatternTimeframe = "1d" | "4h" | "1m";
 export type ChartLabPoint = Readonly<{ time: string; index: number; price: number }>;
 export type ChartLabPattern = Readonly<{
   kind: ChartLabPatternKind;
@@ -54,9 +54,9 @@ const MAX_BARS = 240;
 const FLAG_MAX_ADJUSTMENT = 30;
 const TRIANGLE_MAX_BARS = 60;
 const RULES: Record<Exclude<ChartLabPatternFamily, "all">, Record<PatternTimeframe, string>> = {
-  flag: { "1d": "flag-d-v2", "4h": "flag-h4-v3" },
-  triangle: { "1d": "triangle-d-v2", "4h": "triangle-h4-v3" },
-  horizontal: { "1d": "horizontal-d-v1", "4h": "horizontal-h4-v1" },
+  flag: { "1d": "flag-d-v2", "4h": "flag-h4-v3", "1m": "flag-m1-v1" },
+  triangle: { "1d": "triangle-d-v2", "4h": "triangle-h4-v3", "1m": "triangle-m1-v1" },
+  horizontal: { "1d": "horizontal-d-v1", "4h": "horizontal-h4-v1", "1m": "horizontal-m1-v1" },
 } as const;
 
 function freezeDeep<T>(value: T): T {
@@ -75,11 +75,11 @@ function barIsValid(bar: ChartExplorerBar): boolean {
     bar.high >= Math.max(bar.open, bar.low, bar.close) && bar.low <= Math.min(bar.open, bar.high, bar.close);
 }
 
-function gapLimitMs(timeframe: ChartExplorerTimeframe): number {
-  return ({ "1d": 10, "1w": 35, "4h": 8, "1mo": 93 }[timeframe]) * 86_400_000;
+function gapLimitMs(timeframe: ChartExplorerTimeframe | "1m"): number {
+  return timeframe === "1m" ? 5 * 60_000 : ({ "1d": 10, "1w": 35, "4h": 8, "1mo": 93 }[timeframe]) * 86_400_000;
 }
 
-function segments(bars: readonly ChartExplorerBar[], offset: number, timeframe: ChartExplorerTimeframe): { segments: Segment[]; gaps: [number, number][] } {
+function segments(bars: readonly ChartExplorerBar[], offset: number, timeframe: ChartExplorerTimeframe | "1m"): { segments: Segment[]; gaps: [number, number][] } {
   const groups: Segment[] = [];
   const gaps: [number, number][] = [];
   let start = 0;
@@ -348,10 +348,10 @@ function diagnostic(family: ChartLabPatternFamily, status: ChartLabPatternStatus
 }
 
 /** Detect recent causal pattern snapshots. Latest-bar status remains observational without a source finality cutoff. */
-export function detectChartLabPatterns(bars: readonly ChartExplorerBar[], timeframe: ChartExplorerTimeframe): ChartLabPattern[] {
+export function detectChartLabPatterns(bars: readonly ChartExplorerBar[], timeframe: ChartExplorerTimeframe | "1m"): ChartLabPattern[] {
   const result: ChartLabPattern[] = [];
-  if (timeframe !== "1d" && timeframe !== "4h") {
-    result.push(diagnostic("all", "unsupported-timeframe", "Stock-Newbby pattern rules cover daily and 4-hour bars.",
+  if (timeframe !== "1d" && timeframe !== "4h" && timeframe !== "1m") {
+    result.push(diagnostic("all", "unsupported-timeframe", "This pattern engine supports daily, four-hour, and experimental one-minute bars.",
       "patterns-unsupported-v1", "unsupported", null, null, null, null));
     return freezeDeep(result);
   }

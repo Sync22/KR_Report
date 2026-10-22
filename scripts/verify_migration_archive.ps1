@@ -6,7 +6,6 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 
 $resolvedArchive = Resolve-Path -LiteralPath $ArchivePath
 if (-not $ChecksumPath) {
@@ -24,7 +23,16 @@ if (-not ($expectedHash -match "^[0-9A-F]{64}$")) {
     throw "Checksum file does not start with a SHA256 hash: $($resolvedChecksum.Path)"
 }
 
-$actualHash = (Get-FileHash -LiteralPath $resolvedArchive.Path -Algorithm SHA256).Hash.ToUpperInvariant()
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+$archiveStream = $null
+try {
+    $archiveStream = [System.IO.File]::OpenRead($resolvedArchive.Path)
+    $actualHash = ([System.BitConverter]::ToString($sha256.ComputeHash($archiveStream))).Replace("-", "").ToUpperInvariant()
+}
+finally {
+    if ($null -ne $archiveStream) { $archiveStream.Dispose() }
+    $sha256.Dispose()
+}
 if ($actualHash -ne $expectedHash) {
     throw "Archive hash mismatch: expected=$expectedHash actual=$actualHash archive=$($resolvedArchive.Path)"
 }

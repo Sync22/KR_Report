@@ -109,7 +109,8 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
                           'category_membership_snapshots',
                           'toss_priority_quote_baselines',
                           'toss_market_context_snapshots',
-                          'toss_stock_universe_cache'
+                          'toss_stock_universe_cache',
+                          'chart_alert_outbox'
                   )
                 """
             ).fetchall()
@@ -133,6 +134,7 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
         (9, "toss_market_context_snapshots"),
         (10, "news_evidence_lineage"),
         (11, "toss_stock_universe_cache"),
+        (12, "chart_alert_outbox"),
     ]
     assert snapshot_tables == {
         "stock_market_daily",
@@ -149,6 +151,7 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
         "toss_priority_quote_baselines",
         "toss_market_context_snapshots",
         "toss_stock_universe_cache",
+        "chart_alert_outbox",
     }
 
 
@@ -668,6 +671,7 @@ def test_repository_initialize_seeds_migration_history_for_existing_v1_database(
         (9, "toss_market_context_snapshots"),
         (10, "news_evidence_lineage"),
         (11, "toss_stock_universe_cache"),
+        (12, "chart_alert_outbox"),
     ]
 
 
@@ -679,7 +683,7 @@ def test_repository_initialize_is_noop_after_migration_history_seed(tmp_path) ->
     with repository.connect() as connection:
         migration_count = connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
 
-    assert migration_count == 11
+    assert migration_count == SCHEMA_VERSION
 
 
 def test_krx_snapshot_tables_enforce_daily_source_keys(tmp_path) -> None:

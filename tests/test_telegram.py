@@ -68,3 +68,51 @@ def test_get_telegram_updates_raises_readable_error_after_retries(monkeypatch) -
         raise AssertionError("Expected RuntimeError")
 
     assert calls["count"] == 2
+
+
+def test_send_telegram_marks_http_5xx_as_ambiguous(monkeypatch) -> None:
+    def fake_urlopen(_request, timeout):  # noqa: ARG001
+        raise error.HTTPError("https://api.telegram.org/botsecret/sendMessage", 502, "Bad Gateway", {}, None)
+
+    monkeypatch.setattr(telegram.request, "urlopen", fake_urlopen)
+
+    try:
+        telegram.send_telegram_message("secret", "chat", "hello", max_retries=1)
+    except telegram.TelegramRequestError as exc:
+        assert exc.ambiguous is True
+        assert "502" in str(exc)
+        assert "secret" not in str(exc)
+    else:
+        raise AssertionError("Expected TelegramRequestError")
+
+
+def test_send_telegram_marks_malformed_success_response_as_ambiguous(monkeypatch) -> None:
+    class MalformedResponse(_FakeResponse):
+        def read(self) -> bytes:
+            return b"{truncated"
+
+    monkeypatch.setattr(telegram.request, "urlopen", lambda *_args, **_kwargs: MalformedResponse({}))
+
+    try:
+        telegram.send_telegram_message("secret", "chat", "hello", max_retries=1)
+    except telegram.TelegramRequestError as exc:
+        assert exc.ambiguous is True
+        assert "JSONDecodeError" in str(exc)
+    else:
+        raise AssertionError("Expected TelegramRequestError")
+
+
+def test_send_telegram_api_rejection_is_not_ambiguous(monkeypatch) -> None:
+    monkeypatch.setattr(
+        telegram.request,
+        "urlopen",
+        lambda *_args, **_kwargs: _FakeResponse({"ok": False, "description": "invalid request"}),
+    )
+
+    try:
+        telegram.send_telegram_message("secret", "chat", "hello", max_retries=1)
+    except telegram.TelegramRequestError as exc:
+        assert exc.ambiguous is False
+        assert "invalid request" not in str(exc)
+    else:
+        raise AssertionError("Expected TelegramRequestError")

@@ -20,6 +20,7 @@ import { evaluateChartLabEntry, type ChartLabEntryResult, type ChartLabStrategy 
 import { isStockSearchSnapshot, type StockSearchItem } from "@/domain/stocks";
 import { buildChartReadout } from "@/domain/chart-readout";
 import ChartLabMonitorPanel from "@/components/client/chart-lab-monitor-panel";
+import ChartLabReportAlertPanel from "@/components/client/chart-lab-report-alert-panel";
 import { ChartLabAnalysisPanels, ChartLabPatternOverlay, ChartLabSignalOverlay, CHART_LAB_STRATEGIES } from "@/components/client/chart-lab-panels";
 import { addNonPassiveChartWheelListener } from "@/components/client/chart-wheel";
 
@@ -742,6 +743,7 @@ export default function ChartExplorerClient({ businessDate, initialSymbol, initi
         </div>
         <aside className="chart-side-column" aria-label="차트 참고 자료">
           <ChartLabMonitorPanel watchItems={groups.find((group) => group.name === selectedGroup)?.items ?? []} active={activeTab === "chart"} />
+          <ChartLabReportAlertPanel businessDate={businessDate} active={activeTab === "chart"} />
           <VolumeProfile snapshot={data} />
           <section className="chart-subpanel"><div className="chart-subpanel-heading"><h3>출처 · 기준 시점</h3><span>{data.source ?? "출처 없음"}</span></div><dl className="chart-provenance-list"><div><dt>요청 기준일</dt><dd>{data.requested_as_of}</dd></div><div><dt>실제 기준 봉</dt><dd>{chartTimeLabel(data.snapshot.barAsOf, data.timeframe)}</dd></div><div><dt>자료 기준일</dt><dd>{data.source_date ?? "자료 없음"}</dd></div><div><dt>수집 시각</dt><dd>{timeLabel(data.source_fetched_at)}</dd></div><div><dt>자료 상태</dt><dd>{getStatusLabel(data.bar_status)}</dd></div></dl>
             <p className="chart-data-basis">{data.live_fetch ? "조회 시 공급처 요청" : "서버 메모리 캐시 조회"} · 운영 SQLite 저장·후보 순서·주문 기능에 영향 없음</p></section>
@@ -750,7 +752,7 @@ export default function ChartExplorerClient({ businessDate, initialSymbol, initi
     </> : <div className="chart-explorer-layout">
       <div className="chart-main-column">{data ? <section className="chart-unavailable"><p className="eyebrow">자료 상태</p><h2>{symbolName || data.display_name || data.symbol || "종목"}</h2><p>{unavailableReasonLabel(data.reason)}</p><p className="data-note">출처 {data.source ?? "없음"} · 자료 기준일 {data.source_date ?? "없음"} · 요청 기준일 {businessDate}</p></section>
         : <section className="chart-empty"><p className="eyebrow">START WITH ONE SYMBOL</p><h2>종목을 골라 차트 자료를 확인하세요.</h2><p>저장 종목 검색 결과나 Yahoo 티커를 조회하면 가격·거래량·지표·출처를 한 화면에 표시합니다. 기본 화면에서는 외부 차트 자료를 요청하지 않습니다.</p></section>}</div>
-      <aside className="chart-side-column chart-side-column-single" aria-label="차트 참고 자료"><ChartLabMonitorPanel watchItems={groups.find((group) => group.name === selectedGroup)?.items ?? []} active={activeTab === "chart"} /></aside>
+      <aside className="chart-side-column chart-side-column-single" aria-label="차트 참고 자료"><ChartLabMonitorPanel watchItems={groups.find((group) => group.name === selectedGroup)?.items ?? []} active={activeTab === "chart"} /><ChartLabReportAlertPanel businessDate={businessDate} active={activeTab === "chart"} /></aside>
     </div>}
   </div>;
 }

@@ -661,7 +661,7 @@ def test_production_daily_fragment_timeout_failure_records_ambiguous_send_trace(
     events = repository.list_recent_operation_events(limit=1)
     assert events[0].component == "notify"
     assert events[0].event_type == "fragment"
-    assert events[0].status == "failed"
+    assert events[0].status == "ambiguous"
     assert "ambiguous_send=true" in events[0].detail
     assert f"message_hash={cli_module._hash_text('daily fragment maybe sent')[:16]}" in events[0].detail
 

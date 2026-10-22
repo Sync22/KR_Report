@@ -58,18 +58,12 @@ def _config_and_repository(tmp_path, monkeypatch) -> tuple[RuntimeConfig, StockM
     return config, repository
 
 
-def test_manual_poll_sends_intraday_empty_notification_when_no_new_reports(tmp_path, monkeypatch) -> None:
+def test_manual_poll_does_not_send_intraday_empty_notification_when_no_new_reports(tmp_path, monkeypatch) -> None:
     config, repository = _config_and_repository(tmp_path, monkeypatch)
     repository.insert_reports([_report()], queue_intraday_alerts=False)
 
     monkeypatch.setattr(cli_module, "fetch_reports", lambda *_args, **_kwargs: ([_report()], _inspection(1)))
 
-    empty_calls: list[datetime | None] = []
-    monkeypatch.setattr(
-        cli_module,
-        "_send_intraday_empty_notification",
-        lambda _config, _repository, *, polled_at=None, dry_run=False: empty_calls.append(polled_at) or 0,
-    )
     process_calls: list[object] = []
     monkeypatch.setattr(
         cli_module,
@@ -89,7 +83,7 @@ def test_manual_poll_sends_intraday_empty_notification_when_no_new_reports(tmp_p
 
     assert result == 0
     assert len(process_calls) == 1
-    assert len(empty_calls) == 1
+    assert repository.list_recent_deliveries(limit=10) == []
 
 
 def test_manual_poll_retries_pending_intraday_batches_before_empty_notification(tmp_path, monkeypatch) -> None:
@@ -99,16 +93,10 @@ def test_manual_poll_retries_pending_intraday_batches_before_empty_notification(
     monkeypatch.setattr(cli_module, "fetch_reports", lambda *_args, **_kwargs: ([_report()], _inspection(1)))
 
     process_calls: list[object] = []
-    empty_calls: list[object] = []
     monkeypatch.setattr(
         cli_module,
         "_run_process_intraday_alerts",
         lambda _config, _repository, **_kwargs: process_calls.append(_kwargs) or 1,
-    )
-    monkeypatch.setattr(
-        cli_module,
-        "_send_intraday_empty_notification",
-        lambda *_args, **_kwargs: empty_calls.append(_kwargs) or 0,
     )
 
     result = cli_module._run_manual_poll(
@@ -123,7 +111,6 @@ def test_manual_poll_retries_pending_intraday_batches_before_empty_notification(
 
     assert result == 0
     assert len(process_calls) == 1
-    assert not empty_calls
 
 
 def test_manual_poll_cli_exits_nonzero_when_intraday_delivery_fails(tmp_path, monkeypatch) -> None:
@@ -167,16 +154,10 @@ def test_scheduled_poll_outside_hourly_delivery_window_collects_without_telegram
     config, repository = _config_and_repository(tmp_path, monkeypatch)
     monkeypatch.setattr(cli_module, "fetch_reports", lambda *_args, **_kwargs: ([_report()], _inspection(1)))
     process_calls: list[object] = []
-    empty_calls: list[object] = []
     monkeypatch.setattr(
         cli_module,
         "_run_process_intraday_alerts",
         lambda *_args, **_kwargs: process_calls.append(_kwargs) or 0,
-    )
-    monkeypatch.setattr(
-        cli_module,
-        "_send_intraday_empty_notification",
-        lambda *_args, **_kwargs: empty_calls.append(_kwargs) or 0,
     )
 
     result = cli_module._run_manual_poll(
@@ -192,7 +173,6 @@ def test_scheduled_poll_outside_hourly_delivery_window_collects_without_telegram
 
     assert result == 0
     assert not process_calls
-    assert not empty_calls
     assert repository.count_pending_intraday_alert_batches() == 1
 
 
@@ -340,57 +320,19 @@ def test_scheduled_intraday_briefing_missing_report_batch_records_failure_and_ra
     )
 
 
-def test_scheduled_intraday_briefing_adds_available_toss_context_after_0930(tmp_path, monkeypatch) -> None:
+def test_scheduled_intraday_report_briefing_omits_market_context_after_0930(tmp_path, monkeypatch) -> None:
     config, repository = _config_and_repository(tmp_path, monkeypatch)
-    repository.insert_reports([_report()], queue_intraday_alerts=True)
+    repository.insert_reports(
+        [replace(_report(), collected_at=datetime(2026, 4, 24, 9, 32))],
+        queue_intraday_alerts=True,
+    )
     sent_messages: list[str] = []
-    captured: dict[str, object] = {}
-
     monkeypatch.setattr(cli_module, "_fetch_intraday_quotes_by_stock_code", lambda *_args, **_kwargs: {})
-
-    def fake_toss_context(*_args, **kwargs):
-        captured.update(kwargs)
-        return {
-            "names_by_symbol": {"005930": "Samsung Electronics", "000660": "SK hynix"},
-            "payload": {
-                "live_fetch": True,
-                "fetched_at": "2026-04-24T09:30:00+09:00",
-                "quotes": [{"symbol": "005930", "lastPrice": 72_000, "timestamp": "2026-04-24T09:29:00+09:00"}],
-                "investor_trading": {
-                    "available": True,
-                    "items": [
-                        {
-                            "symbol": "005930",
-                            "updated_at": "2026-04-24T09:28:00+09:00",
-                            "foreigner_net_buy_volume": 60,
-                            "institution_net_buy_volume": -20,
-                        }
-                    ],
-                },
-            },
-            "market_context": {
-                "live_fetch": True,
-                "ranked_at": "2026-04-24T09:30:00+09:00",
-                "rankings": [
-                    {"symbol": "005930", "price": {"lastPrice": "72000", "changeRate": "0.01"}},
-                    {"symbol": "000660", "price": {"lastPrice": "100000", "changeRate": "0.02"}},
-                ],
-                "etf_symbols": ["000660"],
-                "priority_overlap_symbols": ["005930"],
-                "market_prices": [{"symbol": "KOSPI", "lastPrice": "6913.85"}],
-                "market_price_changes": {"KOSPI": {"change_rate": "0.0125"}},
-                "investor_flow": {
-                        "KOSPI": {
-                            "updatedAt": "2026-04-24T09:30:00+09:00",
-                            "individual": {"buyAmount": "200", "sellAmount": "150"},
-                            "foreigner": {"buyAmount": "100", "sellAmount": "40"},
-                        "institution": {"buyAmount": "30", "sellAmount": "50"},
-                    }
-                },
-            },
-        }
-
-    monkeypatch.setattr(cli_module, "_build_market_briefing_toss_priority_context", fake_toss_context)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_market_briefing_toss_priority_context",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("report alerts must omit market flow")),
+    )
     monkeypatch.setattr(
         cli_module,
         "send_telegram_message",
@@ -405,29 +347,15 @@ def test_scheduled_intraday_briefing_adds_available_toss_context_after_0930(tmp_
     )
 
     assert result == 1
-    assert captured["include_investor_trading"] is True
-    assert "Toss 기준 09:30" in sent_messages[0]
-    assert "우선 확인 · Toss" in sent_messages[0]
-    assert "- Samsung Electronics | 현재가 72,000원 | 외국인 순매수 60주 · 기관 순매도 20주" in sent_messages[0]
-    assert "Toss 거래대금 상위 Top10" in sent_messages[0]
-    assert "- Samsung Electronics" in sent_messages[0]
-    assert "- SK hynix (100,000원, +2.00%)" in sent_messages[0]
-    assert "· 조회 09:29" not in sent_messages[0]
-    assert "· 수급 09:28" not in sent_messages[0]
-    assert "· 집계 09:30" not in sent_messages[0]
-    assert "· 갱신 09:30" not in sent_messages[0]
-    assert "개인 순유입 50원 · 외국인 순유입 60원 · 기관 순유출 20원" in sent_messages[0]
-    assert "KOSPI 6913.85 (+1.25%)" in sent_messages[0]
-    assert sent_messages[0].index("Toss 기준 09:30") < sent_messages[0].index("KOSPI 6913.85")
-    assert sent_messages[0].index("- KOSDAQ: 기준일 데이터 없음") < sent_messages[0].index("- 당일 시장 수급 잠정")
-    assert sent_messages[0].index("- 당일 시장 수급 잠정") < sent_messages[0].index("우선 확인 · Toss")
-    assert sent_messages[0].index("우선 확인 · Toss") < sent_messages[0].index("- 우선 확인 겹침: Samsung Electronics")
-    assert sent_messages[0].index("- 우선 확인 겹침: Samsung Electronics") < sent_messages[0].index("Toss 거래대금 상위 Top10")
-    assert sent_messages[0].index("Toss 거래대금 상위 ETF Top5") < sent_messages[0].index("장중 신규 리포트")
-    assert "Toss 우선확인 현재가" not in sent_messages[0]
-    assert "Toss 우선확인 당일 수급" not in sent_messages[0]
-    assert "Toss 거래대금 상위 Top10" in sent_messages[0]
-    assert "Toss 거래대금 상위 ETF Top5" in sent_messages[0]
+    assert "장중 신규 리포트" in sent_messages[0]
+    assert "리포트 영업일 26.04.24" in sent_messages[0]
+    assert "최근 수집 26.04.24 09:32 KST" in sent_messages[0]
+    assert "recovery visible" in sent_messages[0]
+    assert "목표가 92,000원" in sent_messages[0]
+    assert "리포트 의견 매수" in sent_messages[0]
+    assert "Toss" not in sent_messages[0]
+    assert "KOSPI" not in sent_messages[0]
+    assert "수급" not in sent_messages[0]
 
 
 def test_market_briefing_toss_context_resolves_ranked_stock_names_from_metadata(tmp_path, monkeypatch) -> None:
@@ -485,7 +413,7 @@ def test_market_briefing_toss_context_hides_unclassified_top20_symbols() -> None
     assert "122630" not in "\n".join(ranking_lines)
 
 
-def test_scheduled_intraday_briefing_sends_empty_without_sending_prior_day_batch(tmp_path, monkeypatch) -> None:
+def test_scheduled_intraday_briefing_sends_nothing_when_only_prior_day_batch_is_pending(tmp_path, monkeypatch) -> None:
     config, repository = _config_and_repository(tmp_path, monkeypatch)
     prior_day_report = replace(
         _report(),
@@ -494,11 +422,10 @@ def test_scheduled_intraday_briefing_sends_empty_without_sending_prior_day_batch
         collected_at=datetime(2026, 4, 23, 16, 0, 0),
     )
     repository.insert_reports([prior_day_report], queue_intraday_alerts=True)
-    empty_calls: list[object] = []
     monkeypatch.setattr(
         cli_module,
-        "_send_intraday_empty_notification",
-        lambda *_args, **_kwargs: empty_calls.append(_kwargs) or 0,
+        "send_telegram_message",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not send an empty alert")),
     )
 
     result = cli_module._run_scheduled_intraday_briefing(
@@ -509,11 +436,8 @@ def test_scheduled_intraday_briefing_sends_empty_without_sending_prior_day_batch
     )
 
     assert result == 0
-    assert empty_calls == [{
-        "polled_at": datetime(2026, 4, 24, 8, 30, tzinfo=cli_module.ZoneInfo(config.timezone)),
-        "dry_run": False,
-    }]
     assert repository.count_pending_intraday_alert_batches() == 1
+    assert repository.list_recent_deliveries(limit=10) == []
 
 
 def test_scheduled_poll_propagates_hourly_intraday_delivery_failure(tmp_path, monkeypatch) -> None:
@@ -546,79 +470,6 @@ def test_scheduled_poll_propagates_hourly_intraday_delivery_failure(tmp_path, mo
         status="failed",
         limit=1,
     )
-
-
-def test_empty_intraday_notification_failure_is_recorded_and_raised(tmp_path, monkeypatch) -> None:
-    config, repository = _config_and_repository(tmp_path, monkeypatch)
-    polled_at = datetime(2026, 4, 24, 8, 30)
-
-    def fail_send(*_args, **_kwargs):
-        raise RuntimeError("telegram unavailable")
-
-    monkeypatch.setattr(cli_module, "send_telegram_message", fail_send)
-
-    with pytest.raises(RuntimeError, match="telegram unavailable"):
-        cli_module._send_intraday_empty_notification(config, repository, polled_at=polled_at)
-
-    deliveries = repository.list_recent_deliveries(limit=1)
-    assert len(deliveries) == 1
-    delivery = deliveries[0]
-    assert delivery.business_date == polled_at.date()
-    assert delivery.channel == "telegram_intraday"
-    assert delivery.status == "failed"
-    assert "telegram unavailable" in (delivery.detail or "")
-    assert repository.list_operation_events(
-        component="intraday",
-        event_type="empty-send",
-        business_date=polled_at.date(),
-        status="failed",
-        limit=1,
-    )
-
-
-def test_empty_intraday_notification_missing_config_is_recorded_and_raised(tmp_path, monkeypatch) -> None:
-    config, repository = _config_and_repository(tmp_path, monkeypatch)
-    config = replace(config, telegram_bot_token="", telegram_chat_id="")
-    polled_at = datetime(2026, 4, 24, 8, 30)
-    monkeypatch.setattr(
-        cli_module,
-        "send_telegram_message",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not attempt a send")),
-    )
-
-    with pytest.raises(RuntimeError, match="Telegram configuration is missing"):
-        cli_module._send_intraday_empty_notification(config, repository, polled_at=polled_at)
-
-    deliveries = repository.list_recent_deliveries(limit=1)
-    assert len(deliveries) == 1
-    assert deliveries[0].channel == "telegram_intraday"
-    assert deliveries[0].status == "failed"
-    assert "Telegram configuration is missing" in (deliveries[0].detail or "")
-    assert repository.list_operation_events(
-        component="intraday",
-        event_type="empty-send",
-        business_date=polled_at.date(),
-        status="failed",
-        limit=1,
-    )
-
-
-def test_empty_intraday_notification_success_records_intraday_event(tmp_path, monkeypatch) -> None:
-    config, repository = _config_and_repository(tmp_path, monkeypatch)
-    polled_at = datetime(2026, 4, 24, 8, 30)
-    monkeypatch.setattr(cli_module, "send_telegram_message", lambda *_args, **_kwargs: "message-2")
-
-    result = cli_module._send_intraday_empty_notification(config, repository, polled_at=polled_at)
-
-    assert result == 0
-    events = repository.list_operation_events(
-        component="intraday",
-        event_type="empty-send",
-        business_date=polled_at.date(),
-        status="sent",
-        limit=1,
-    )
-    assert len(events) == 1
 
 
 def test_scheduled_intraday_briefing_limits_stock_blocks_without_paging_prompt(tmp_path, monkeypatch) -> None:

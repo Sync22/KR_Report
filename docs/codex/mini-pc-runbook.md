@@ -58,7 +58,7 @@ This table is the current scheduler contract. Later KRX-specific procedures in t
 | Task | Contract |
 | --- | --- |
 | `StockMonitor-Notify` | `08:20` KST on Korean business days. Runtime guard allows production send only from `08:00` to `08:30` unless `--allow-late` is explicit. |
-| `StockMonitor-Poll` | Collects every 30 minutes from `08:30` to `16:30` KST. Telegram report briefings send at `08:30`, then hourly from `09:30` through `15:30`; after a successful poll, a slot with no current-day batch sends a `0건` notice. Prior-date pending batches remain for operator recovery and must not suppress today's empty notice. The `16:00` and `16:30` polls collect without Telegram delivery. |
+| `StockMonitor-Poll` | Collects every 30 minutes from `08:30` to `16:30` KST. Report-only Telegram briefings send at `08:30`, then hourly from `09:30` through `15:30` only when current-day report batches exist. Their header shows report business date and latest actual `collected_at` in KST. They do not include market index, investor flow, turnover rankings, or broad market summaries. Empty slots do not send repetitive `0건` messages. Prior-date pending batches remain for operator recovery and are never included in today's briefing. The `16:00` and `16:30` polls collect without Telegram delivery. Market-flow context belongs to the separate mood/lunch/preclose briefing tasks. |
 | `StockMonitor-MarketBriefingMood` / `Lunch` / `Preclose` | Independent report-count market-briefing slots at `09:15` / `12:00` / `15:15` KST. Scheduled live sends require `market_briefing_phone_review_accepted=true` and manual Telegram review sends on at least three distinct business dates; this counts matching review records across the full delivery history, not the most recent 200 unrelated deliveries. A scheduler result of `0` can mean the slot was skipped by a guard; confirm a sent delivery record. |
 | `StockMonitor-TossCloseSnapshot` | `20:05` KST on Korean business days; captures the `20:00` integrated-market close baseline, Top20 market context, and fixed-market Toss listing cache used by stored lookups. Requires the current DB schema. |
 | `StockMonitor-TelegramCommands` | Hidden worker starts at `08:00`, checks Telegram commands every 1 minute, exits at `16:30`, and skips market holidays/no-run dates. During `09:00~15:30`, it also checks the official KIND `서킷브레이커/사이드카` market-action category and sends one operator alert per official acceptance number. |
@@ -96,7 +96,9 @@ Both Next package scripts bind Next.js to `127.0.0.1`. The Next server writes to
 
 **Cutover record (2026-10-20):** Next moved to `127.0.0.1:8780`. Prior 10/19 and 10/20 stored-route DTO/provenance comparisons matched 28/28; their timing remains supplemental because the DB mtime advanced during the run. The 10/20 Poll returned result `0` after a cache-miss read overlapped it. That cutover source passed `npm test` 155/155, typecheck, and build; build ID `MRZVh9lSv3ga1TRq2_7js` served on 8780. Health, Main, archive, and local Chart Lab returned 200. A local request with simulated non-loopback `Host` and `x-forwarded-host` returned 404 for the Chart Lab page and 403 for its monitor API; the actual tunnel host was not tested. The application has no access-code routes by design. External provider smoke was not run because the public hostname was unavailable; no Cloudflare setting was changed.
 
-**Latest main refresh (2026-10-22):** code commit `273fcfb8bdecdd4e49747df7742d5dc172a9dea1` passed `npm test` 162/162 with the project `.venv` (Python 3.12.14), `npm run typecheck`, and `npm run build` on Node 24.22.1 LTS / npm 11.19.1. The Node ZIP checksum matched the official release checksum. Build ID `TevSlKw7tmZyOVLz8JPf0` is running on 8780 as PID `30336`; `/health` (`x-stock-monitor-service: next-web-view`), Main, and `/api/archive?limit=1` returned 200. `/` now renders latest Main in the same response without the old 307 redirect; its latest-date lookup is limited to one archive date. External before/after timings are recorded in [Operations performance observation](operations-performance-observation.md). The user PATH prefers Node 24; Node 22.21.1 remains installed for rollback. The web-view scheduled task and database were not changed.
+**Previous main refresh before the Chart Lab alert sync (2026-10-22):** code commit `273fcfb8bdecdd4e49747df7742d5dc172a9dea1` passed `npm test` 162/162 with the project `.venv` (Python 3.12.14), `npm run typecheck`, and `npm run build` on Node 24.22.1 LTS / npm 11.19.1. The Node ZIP checksum matched the official release checksum. Build ID `TevSlKw7tmZyOVLz8JPf0` was serving on 8780 at that check; `/health` (`x-stock-monitor-service: next-web-view`), Main, and `/api/archive?limit=1` returned 200. `/` rendered latest Main in the same response without the old 307 redirect; its latest-date lookup was limited to one archive date. External before/after timings are recorded in [Operations performance observation](operations-performance-observation.md). The user PATH preferred Node 24; Node 22.21.1 remained installed for rollback. This is a historical snapshot, not the current process or post-sync acceptance state.
+
+**Development source handoff (2026-10-22):** the next `main` sync includes the Chart Lab report-focus alert path, Chart Explorer updates, Telegram delivery safety, and the third-pass Telegram date/time/Toss-priority copy review. Development verification passed: Python `pytest` 1,278; web `npm test` 173/173, `npm run typecheck`, and `npm run build`; `compileall` and `git diff --check`. Python-backed web fixtures require the project `.venv\Scripts` at the front of `PATH`. These are development-PC results only. Operations-PC DB migration, WAL concurrency, live Toss access, Next restart/recovery, and Telegram delivery have not been tested in this sync.
 
 Use this as the first-check reference for every new Next V1 session on the Operations PC. The prompt below directs the session to read this section before inspecting the DB or starting a service.
 
@@ -110,11 +112,14 @@ docs/codex/operating-guide.md, docs/codex/surface-guide.md,
 docs/codex/data-governance.md, and this file's “Next V1 Operations-PC Acceptance Guide”.
 Follow that guide as the required initial-check and test order.
 
-First inspect the checked-out codex/next-v1 source and commit, Windows/CPU/RAM,
+First inspect the checked-out main source and commit, Windows/CPU/RAM,
 Python/Node/npm versions, node:sqlite support, current listeners on Next port 8780
 and optional preview port 3010, intended DB selection, backup/verification state, and
 DB/WAL/SHM metadata. Report sanitized status only: do not print .env values,
 access codes, cookies, credentials, or DB rows.
+
+Sync only `origin/main` after confirming there are no local changes to overwrite.
+Do not use the retired `codex/next-v1` branch or its worktree.
 
 For a new source build, run only the setup and checks needed for that build; reuse
 evidence for unchanged code and build IDs. Use the bounded acceptance checklist
@@ -127,6 +132,79 @@ expand these checks into additional reliability investigations. Keep optional
 observations separate from acceptance.
 ```
 
+#### Post-sync Chart Lab and Telegram Test Prompt
+
+```text
+Work only in C:\Users\MING\Codex\02.Stock_Moniter on the Intel N100 Windows Operations PC.
+
+This is a post-sync test of the latest origin/main source. First read AGENTS.md,
+docs/codex/documentation-index.md, docs/codex/operating-guide.md,
+docs/codex/data-governance.md, docs/codex/chart-alert-proposal.md, and this file's
+Next V1 Operations-PC Acceptance Guide. Confirm the current source SHA with
+git rev-parse HEAD after a fast-forward-only sync of main; do not reset or discard
+local changes, and do not use codex/next-v1.
+
+Start with `git status --short --branch` and `git branch --show-current`. If the
+worktree is dirty, preserve it and stop before syncing. Run `git fetch origin main`.
+If the current branch is not `main`, switch to an existing local `main`; if none
+exists, create a tracking `main` with `git switch --track -c main origin/main`.
+Keep old branches intact. Then run `git pull --ff-only origin main` and record
+`git rev-parse HEAD`.
+
+Record sanitized OS/CPU/RAM and Python/Node/npm versions. Confirm the current
+Next listener identity on 127.0.0.1:8780 and the selected DB path without printing
+secrets or DB rows. Do not start port 3010, choose another port, or kill an
+unverified process.
+
+Run the source checks from the project root:
+  .\.venv\Scripts\python.exe -m pytest -q
+  .\.venv\Scripts\python.exe -m compileall -q src/stock_monitor tests
+  Push-Location .\web
+  npm ci
+  $venvScripts = (Resolve-Path ..\.venv\Scripts).Path
+  $env:PATH = "$venvScripts;$env:PATH"
+  npm test
+  npm run typecheck
+  npm run build
+  Pop-Location
+
+Before DB checks, confirm a recent verified backup and run db-verify. Rehearse
+schema 12 only with `python -m stock_monitor db-migration-rehearsal --json` against
+the temporary copy; require `writes_source_db=false` and a successful copy verify.
+Never run `db-migrate` against the live operating DB in this test. If backup or
+readiness is missing, stop that DB portion and report it.
+
+For notification copy, use `python -m stock_monitor scheduled-notify --dry-run --format briefing`;
+this must not send Telegram and may make bounded current-price reference GETs.
+Skip that preview if provider access is not approved. For chart-alert copy, use the
+default no-send preview `python -m stock_monitor chart-alerts-dispatch --json`;
+never pass `--send` or `--watch`. A bounded Toss/Naver preview is optional: do at
+most one `python -m stock_monitor market-briefing --date YYYY-MM-DD` preview for
+the same business date, without `--send`, and only when provider access is already
+configured and rate limits permit it; otherwise mark it not run. Report which
+same-date source won and its displayed KST time without pasting credentials.
+
+If the user-facing Next build needs a restart to load the synced source, follow
+the controlled 8780 procedure in this runbook. Stop only the verified project
+Next process after DB readiness and build pass; do not alter Task Scheduler,
+Cloudflare, Python services, or the operating DB schema. Do not send a real
+Telegram message or register a chart-alert task. If doing one UI monitor check,
+confirm the Toss route is allowed, start it once from Chart Lab, verify one
+bounded minute-bar observation, then pause it; it may update only per-user local
+ChartLab JSON/spool state, not the operating SQLite DB. Otherwise mark provider
+behavior not verified.
+
+Return PASS / FAIL / NOT RUN with exact command and sanitized evidence. Separate
+development-PC results from Operations-PC results. Include listener identity,
+build ID, health/Main response, DB migration rehearsal output, and remaining gates.
+Do not claim acceptance until the documented DB/WAL, restart/recovery, and
+delivery gates have actually been completed.
+```
+
+The tests use `--dry-run`/default preview paths only. This prompt does not authorize
+live Telegram delivery, Task Scheduler registration, Cloudflare changes, or a live
+DB schema migration.
+
 #### Before first start
 
 1. Transfer source, tests, scripts, and canonical docs. Transfer the operating DB and `.env` only through the existing backup/restore and secret-handling procedures; never put either in Git or in a source archive. Do not initialize or migrate the DB from Next.
@@ -136,6 +214,8 @@ observations separate from acceptance.
    ```powershell
    Push-Location .\web
    npm ci
+   $venvScripts = (Resolve-Path ..\.venv\Scripts).Path
+   $env:PATH = "$venvScripts;$env:PATH"
    npm test
    npm run typecheck
    npm run build
@@ -196,6 +276,7 @@ Current important behavior:
 
 - daily summary notification filters default to `2+` reports and target-price required
 - intraday alert first page uses `7` stock blocks
+- a Telegram send with an uncertain outcome is held as `ambiguous` and is not automatically retried. Check the destination first; only when the message is confirmed absent should an operator explicitly retry with `scheduled-notify --allow-repeat --allow-late`, `scheduled-market-briefing-slot --slot <mood|lunch|preclose> --allow-repeat --allow-late`, or `process-intraday-alerts --retry-ambiguous`. A confirmed-sent ambiguous item stays held to avoid a duplicate.
 - Telegram supports `다음`, `전부`, `처음`, `/종목검색`, `/종목코드`, `/메모`, `/도움말`, `/명령어`
 - `admin-gui` is a local control-capable page, not a shared user page
 - `web-view` exists as a separate GET-only user page and is the only candidate for future friend-facing sharing

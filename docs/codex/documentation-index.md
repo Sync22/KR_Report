@@ -14,9 +14,10 @@ This is the documentation skeleton. Read this file first, then open only the bra
 | [Candidate evidence](candidate-evidence.md) | Candidate DTO and evidence/target-progress/operator-memo implementation rules. |
 | [News intelligence](news-intelligence.md) | Operator-only news collection and future public-safe projection boundary. |
 | [Decision journal](decision-journal.md) | Read-only Decision Journal v0 contract. |
-| [Toss OpenAPI lab](toss-openapi-lab.md) | Read-only lab boundary, inventory, and post-key probe sequence. |
+| [Toss OpenAPI lab](toss-openapi-lab.md) | Approved read-only API boundaries, manually checked REST spec snapshot, and lab-only probe instructions. |
 | [Mini PC runbook](mini-pc-runbook.md) | Migration, restore, scheduler handoff, Next V1 Operations-PC initial check, and weekly sync. |
 | [Operations performance observation](operations-performance-observation.md) | Post-move N100 route timings, resource use, SQLite/WAL concurrency, stability, and recovery results; never fill from development-PC data. |
+| [Chart alert design and status](chart-alert-proposal.md) | Report-focused 1-minute chart monitoring, local event spool, Python outbox, and dev/operations verification boundary. |
 | [Research notes](research-notes.md) | Backtest, scoring hold, and Telegram briefing research. |
 | [History](history.md) | Traceability only; never treat it as current operating guidance. |
 
@@ -31,7 +32,8 @@ This is the documentation skeleton. Read this file first, then open only the bra
 
 ## Historical Material
 
-- `docs/superpowers/plans/` and `docs/superpowers/specs/` contain dated design and execution records, not current implementation instructions.
+- `docs/superpowers/plans/2026-10-16-stock-newbby-chart-lab.md` is the Chart Lab execution record; its unchecked items remain verification gaps. Current behavior is owned by [Data governance](data-governance.md#chart-lab-local-test-surface) and [Surface guide](surface-guide.md#chart-lab-local-only-test-surface).
+- Other files under `docs/superpowers/plans/` and `docs/superpowers/specs/` contain dated design and execution records, not current implementation instructions.
 - `stock_research_monitor_mvp.md` records product requirements and future intent. Verify present implementation in this index's canonical contracts and source.
 - Use [Operating guide](operating-guide.md) for current project work, [History](history.md) for durable dated decisions, and Git for routine code-change traceability.
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from stock_monitor.fetch.naver_stock_quote import StockQuoteSnapshot
 from stock_monitor.fetch.naver_stock_search import StockCodeLookupEntry
@@ -10,9 +11,9 @@ from stock_monitor.summary import _group_reports_for_summary, build_daily_summar
 
 
 _OPINION_LABELS = {
-    "buy": "매수",
-    "neutral": "중립",
-    "sell": "매도",
+    "buy": "리포트 의견 매수",
+    "neutral": "리포트 의견 중립",
+    "sell": "리포트 의견 매도",
     "N/A": "의견 없음",
 }
 
@@ -28,7 +29,11 @@ def _format_short_date(target: date) -> str:
 
 
 def _format_short_datetime(target: datetime) -> str:
-    return target.strftime("%y.%m.%d %H:%M")
+    return _as_kst(target).strftime("%y.%m.%d %H:%M KST")
+
+
+def _as_kst(target: datetime) -> datetime:
+    return target.replace(tzinfo=ZoneInfo("Asia/Seoul")) if target.tzinfo is None else target.astimezone(ZoneInfo("Asia/Seoul"))
 
 
 def _format_opinion(opinion: str) -> str:
@@ -72,12 +77,18 @@ def _format_stock_name(stock_name: str, stock_code: str | None) -> str:
     return f"{stock_name}({stock_code})" if stock_code else stock_name
 
 
-def _format_quote_fragment(quote: StockQuoteSnapshot | None) -> str | None:
+def _format_quote_fragment(
+    quote: StockQuoteSnapshot | None,
+    *,
+    reference_label: str | None = None,
+) -> str | None:
     if quote is None:
         return None
     parts: list[str] = []
     if quote.current_price is not None:
-        parts.append(f"현재가 {quote.current_price:,}원")
+        price_label = reference_label or "Naver 현재가 참고"
+        as_of = f" · 시세 기준 {_format_short_datetime(quote.trade_time)}" if quote.trade_time else " · 시각 미확인"
+        parts.append(f"{price_label} {quote.current_price:,}원{as_of}")
     if quote.sector_name:
         parts.append(quote.sector_name)
     if not parts:
@@ -85,9 +96,15 @@ def _format_quote_fragment(quote: StockQuoteSnapshot | None) -> str | None:
     return " | ".join(parts)
 
 
-def _format_stock_header(stock_name: str, stock_code: str | None, quote: StockQuoteSnapshot | None = None) -> str:
+def _format_stock_header(
+    stock_name: str,
+    stock_code: str | None,
+    quote: StockQuoteSnapshot | None = None,
+    *,
+    quote_reference_label: str | None = None,
+) -> str:
     display_name = _format_stock_name(stock_name, stock_code)
-    quote_fragment = _format_quote_fragment(quote)
+    quote_fragment = _format_quote_fragment(quote, reference_label=quote_reference_label)
     return display_name if quote_fragment is None else f"{display_name} | {quote_fragment}"
 
 
@@ -114,9 +131,8 @@ def _format_briefing_sector_focus(
 
 def _format_briefing_check_points() -> list[str]:
     return [
-        "- 리포트가 몰린 업종과 수급 방향이 같은지 확인",
-        "- 목표가 괴리율이 큰 종목은 웹뷰 관찰탭에서 세부 확인",
-        "- 당일 현재가는 장 시작 후 변동 가능",
+        "- 목표가와 의견은 각 리포트의 출처·기준일을 확인",
+        "- 당일 현재가는 변동 가능한 참고값",
     ]
 
 
@@ -127,27 +143,36 @@ def _summary_group_lookup_key(summary: DailyStockSummary) -> tuple[object, ...]:
 
 
 def _build_intraday_stock_blocks(
-    polled_at: datetime,
+    collected_at: datetime,
     reports: list[Report],
     quotes_by_stock_code: dict[str, StockQuoteSnapshot] | None = None,
 ) -> list[list[str]]:
     grouped_reports = _group_reports_for_summary(reports)
 
-    summaries = _sort_summaries(build_daily_summaries(reports, generated_at=polled_at))
+    summaries = _sort_summaries(build_daily_summaries(reports, generated_at=collected_at))
     blocks: list[list[str]] = []
     for summary in summaries:
         group = grouped_reports.get(_summary_group_lookup_key(summary), [])
         summary_quote = None
         if summary.stock_code and quotes_by_stock_code:
             summary_quote = quotes_by_stock_code.get(summary.stock_code)
+            if summary_quote and (summary_quote.trade_time is None or _as_kst(summary_quote.trade_time).date() != summary.business_date):
+                summary_quote = None
         if len(group) == 1:
             report = group[0]
             report_quote = None
             if report.stock_code and quotes_by_stock_code:
                 report_quote = quotes_by_stock_code.get(report.stock_code)
+                if report_quote and (report_quote.trade_time is None or _as_kst(report_quote.trade_time).date() != report.business_date):
+                    report_quote = None
             blocks.append(
                 [
-                    _format_stock_header(report.stock_name, report.stock_code, report_quote),
+                    _format_stock_header(
+                        report.stock_name,
+                        report.stock_code,
+                        report_quote,
+                        quote_reference_label="Naver 현재가 참고",
+                    ),
                     report.broker_name,
                     report.title,
                     f"목표가 {_format_target_values(report.target_price_value, report.target_price_value)} | "
@@ -157,7 +182,12 @@ def _build_intraday_stock_blocks(
         else:
             blocks.append(
                 [
-                    _format_stock_header(summary.stock_name, summary.stock_code, summary_quote),
+                    _format_stock_header(
+                        summary.stock_name,
+                        summary.stock_code,
+                        summary_quote,
+                        quote_reference_label="Naver 현재가 참고",
+                    ),
                     f"{summary.mention_count}건 | {_format_broker_display(summary)}",
                     f"목표가 {_format_target_range(summary)} | {_format_opinion(summary.dominant_opinion)}",
                 ]
@@ -173,7 +203,7 @@ def format_daily_summary_message(
     limit: int | None = None,
     quotes_by_stock_code: dict[str, StockQuoteSnapshot] | None = None,
 ) -> str:
-    lines = [f"전일자 리포트 (총 {_format_total_count(summaries)}건 | {_format_short_date(business_date)}({_weekday_label(business_date)}))"]
+    lines = [f"리포트 요약 (총 {_format_total_count(summaries)}건 | 기준일 {_format_short_date(business_date)}({_weekday_label(business_date)}))"]
     if not summaries:
         lines.append("- 신규 리포트 없음")
         return "\n".join(lines)
@@ -211,7 +241,7 @@ def format_daily_summary_messages(
     quotes_by_stock_code: dict[str, StockQuoteSnapshot] | None = None,
     max_chars: int = 3000,
 ) -> list[str]:
-    header = f"전일자 리포트 (총 {_format_total_count(summaries)}건 | {_format_short_date(business_date)}({_weekday_label(business_date)}))"
+    header = f"리포트 요약 (총 {_format_total_count(summaries)}건 | 기준일 {_format_short_date(business_date)}({_weekday_label(business_date)}))"
     if not summaries:
         return ["\n".join([header, "- 신규 리포트 없음"])]
 
@@ -262,36 +292,20 @@ def format_daily_briefing_messages(
     *,
     briefing_date: date,
     quotes_by_stock_code: dict[str, StockQuoteSnapshot] | None = None,
-    market_reference_lines: list[str] | None = None,
-    flow_reference_lines: list[str] | None = None,
-    core_point_lines: list[str] | None = None,
-    stored_core_point_lines: list[str] | None = None,
-    live_market_context_lines: list[str] | None = None,
     max_items: int = 7,
     max_chars: int = 3000,
 ) -> list[str]:
     header = f"국장 시작 전 리포트 브리핑 · {_format_short_date(briefing_date)}"
-    basis = "기준: 전일 리포트 / Toss 실시간 자료와 저장 종가 비교를 구분"
+    basis = f"기준: 리포트 영업일 {_format_short_date(business_date)} / 브리핑일 {_format_short_date(briefing_date)}"
     if not summaries:
-        previous_close_lines = [
-            *(market_reference_lines or []),
-            *(flow_reference_lines or []),
-            *(stored_core_point_lines or []),
-        ] or ["- 저장된 시장/수급 참고값 없음"]
-        sections = [
-            "\n".join([header, basis]),
-            "\n".join(live_market_context_lines) if live_market_context_lines else "",
-            "\n".join(["전일 리포트", "리포트 집중", "- 신규 리포트 없음"]),
-            "\n".join(["이전 종가 비교", *previous_close_lines]),
-        ]
-        return ["\n\n".join(section for section in sections if section)]
+        return ["\n\n".join([f"{header}\n{basis}", "대상일 리포트\n리포트 집중\n- 신규 리포트 없음"])]
 
     ordered = _sort_summaries(summaries)
     focus_lines = _format_briefing_sector_focus(ordered, quotes_by_stock_code)
     current_quotes_by_stock_code = {
         stock_code: quote
         for stock_code, quote in (quotes_by_stock_code or {}).items()
-        if quote.trade_time is not None and quote.trade_time.date() == briefing_date
+        if quote.trade_time is not None and _as_kst(quote.trade_time).date() == briefing_date
     }
     blocks: list[str] = []
     for summary in ordered[:max_items]:
@@ -299,7 +313,12 @@ def format_daily_briefing_messages(
         blocks.append(
             "\n".join(
                 [
-                    _format_stock_header(summary.stock_name, summary.stock_code, summary_quote),
+                    _format_stock_header(
+                        summary.stock_name,
+                        summary.stock_code,
+                        summary_quote,
+                        quote_reference_label="Naver 현재가 참고",
+                    ),
                     f"{summary.mention_count}건 | {_format_broker_display(summary)}",
                     f"목표가 {_format_target_range(summary)} | {_format_opinion(summary.dominant_opinion)}",
                 ]
@@ -313,39 +332,18 @@ def format_daily_briefing_messages(
 
     report_section = "\n\n".join(
         [section for section in [
-            "전일 리포트",
+            "대상일 리포트",
             "\n".join(["리포트 집중", *focus_lines]),
-            "\n".join(core_point_lines) if core_point_lines else "",
             "\n\n".join(["주요 종목", *blocks]),
             "\n".join(["확인 포인트", *footer_lines]),
         ] if section]
     )
-    previous_close_lines = [
-        *(market_reference_lines or []),
-        *(flow_reference_lines or []),
-        *(stored_core_point_lines or []),
-    ] or ["- 저장된 시장/수급 참고값 없음"]
     full_message = "\n\n".join(
-        section
-        for section in (
-            "\n".join([header, basis]),
-            "\n".join(live_market_context_lines) if live_market_context_lines else "",
-            report_section,
-            "\n".join(["이전 종가 비교", *previous_close_lines]),
-        )
-        if section
+        ["\n".join([header, basis]), report_section]
     )
     if len(full_message) <= max_chars:
         return [full_message]
-    context = "\n\n".join(
-        section
-        for section in (
-            "\n".join([header, basis]),
-            "\n".join(live_market_context_lines) if live_market_context_lines else "",
-            "\n".join(["이전 종가 비교", *previous_close_lines]),
-        )
-        if section
-    )
+    context = "\n".join([header, basis])
     summary_max_chars = max_chars - len(context) - 2
     while summary_max_chars > 0:
         pages = format_daily_summary_messages(
@@ -376,7 +374,7 @@ def format_market_close_briefing_message(
     header = f"오늘의 시장 분위기 · {_format_short_date(business_date)}"
     basis = "기준: 당일 리포트 / Toss 저장값은 항목별 기준일 표시"
     report_lines = [
-        "리포트 흐름",
+        "당일 누적 리포트 흐름",
         f"- 리포트 {report_count}건 / {stock_count}종목",
     ]
     if notable_lines:
@@ -416,7 +414,7 @@ def format_intraday_market_briefing_message(
 ) -> str:
     header = f"오늘의 시장 분위기 · {_format_short_date(business_date)}"
     basis = "기준: 당일 리포트 / Toss 실시간 참고와 저장 종가 비교를 구분"
-    report_lines = ["리포트 흐름", f"- 리포트 {report_count}건 / {stock_count}종목"]
+    report_lines = ["당일 누적 리포트 흐름", f"- 리포트 {report_count}건 / {stock_count}종목"]
     if notable_lines:
         report_lines.extend(notable_lines)
     else:
@@ -435,19 +433,23 @@ def format_intraday_market_briefing_message(
 
 
 def format_intraday_batch_message(
-    polled_at: datetime,
+    collected_at: datetime,
     reports: list[Report],
     *,
     quotes_by_stock_code: dict[str, StockQuoteSnapshot] | None = None,
     offset: int = 0,
     limit: int | None = None,
 ) -> str:
-    lines = [f"장중 신규 리포트 ({len(reports)}건 | {_format_short_datetime(polled_at)})"]
+    report_dates = ", ".join(_format_short_date(day) for day in sorted({report.business_date for report in reports}))
+    lines = [
+        f"장중 신규 리포트 ({len(reports)}건 | 리포트 영업일 {report_dates or '확인 불가'} | "
+        f"최근 수집 {_format_short_datetime(collected_at)})"
+    ]
     if not reports:
         lines.append("- 신규 리포트 없음")
         return "\n".join(lines)
 
-    blocks = _build_intraday_stock_blocks(polled_at, reports, quotes_by_stock_code)
+    blocks = _build_intraday_stock_blocks(collected_at, reports, quotes_by_stock_code)
     visible_blocks = blocks[offset:] if limit is None else blocks[offset : offset + limit]
     if not visible_blocks:
         lines.append("- 표시할 종목이 없습니다")
@@ -466,10 +468,6 @@ def format_intraday_batch_message(
         lines.append("다음, 전부, 처음")
 
     return "\n".join(lines)
-
-
-def format_intraday_empty_message(polled_at: datetime) -> str:
-    return f"장중 신규 리포트가 없습니다 (0건 | {_format_short_datetime(polled_at)})"
 
 
 def format_stock_research_lookup_message(

@@ -164,7 +164,8 @@ def test_verify_migration_archive_checks_sha256_sidecar() -> None:
 
     assert "[string]$ArchivePath" in script
     assert "[switch]$FailOnSensitiveEntries" in script
-    assert "Get-FileHash" in script
+    assert "System.Security.Cryptography.SHA256" in script
+    assert "ComputeHash($archiveStream)" in script
     assert ".sha256" in script
     assert "SHA256 verified" in script
     assert "Archive hash mismatch" in script

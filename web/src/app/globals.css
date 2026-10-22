@@ -995,6 +995,14 @@ details[open] > .disclosure-summary::after { content: "▾ 접기"; }
 .chart-lab-event-list > strong { font-size: 10px; }
 .chart-lab-event-list li > span { display: block; margin-bottom: 3px; color: var(--sm-body); font-size: 10px; }
 .chart-lab-monitor-footnote { margin-top: 9px; }
+.chart-report-alert-status { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 8px 0; color: var(--sm-muted); font-size: 9px; }
+.chart-report-alert-candidates, .chart-report-alert-watches { display: grid; gap: 0; margin: 8px 0; padding: 0; list-style: none; }
+.chart-report-alert-candidates li, .chart-report-alert-watches li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 0; border-top: 1px solid var(--sm-line); }
+.chart-report-alert-candidates li > span, .chart-report-alert-watches li > span { display: grid; min-width: 0; gap: 2px; }
+.chart-report-alert-candidates strong, .chart-report-alert-watches strong { overflow: hidden; color: var(--sm-ink); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.chart-report-alert-candidates small, .chart-report-alert-watches small { color: var(--sm-muted); font-size: 9px; line-height: 1.4; }
+.chart-report-alert-candidates button, .chart-report-alert-watches button { min-height: 28px; flex: none; padding: 4px 7px; font-size: 9px; }
+.chart-report-alerts .chart-lab-event-list { margin-top: 8px; }
 
 button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid rgba(22, 51, 0, .28); outline-offset: 2px; }
 

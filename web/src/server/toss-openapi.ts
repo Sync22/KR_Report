@@ -240,6 +240,31 @@ export class TossOpenApiClient {
     return { result: page, rateLimit: response.rateLimit };
   }
 
+  async getChartAlertMinuteCandles(symbol: string, before: string): Promise<TossReadonlyResponse> {
+    if (!this.configured || !/^\d{6}$/.test(symbol) || !isOffsetDateTime(before)) {
+      throw new TossOpenApiError("Toss chart-alert candle request is outside the fixed read-only profile.");
+    }
+    const url = new URL("/api/v1/candles", TOSS_OPENAPI_BASE_URL);
+    for (const [key, value] of Object.entries({ symbol, interval: "1m", count: "200", before, adjusted: "true" })) {
+      url.searchParams.set(key, value);
+    }
+    const response = await this.getWithToken("chart alert minute candles", url);
+    const page = response.payload.result;
+    if (!isRecord(page) || Object.keys(page).some((key) => !["candles", "nextBefore"].includes(key)) ||
+      !Array.isArray(page.candles) || page.candles.length > 200 ||
+      (page.nextBefore !== undefined && page.nextBefore !== null && typeof page.nextBefore !== "string")) {
+      throw new TossOpenApiError("Toss chart-alert candle response had an unexpected shape.", undefined, undefined, undefined, "invalid_provider_response");
+    }
+    for (const candle of page.candles) {
+      if (!isRecord(candle) || Object.keys(candle).some((key) => !MARKET_CANDLE_FIELDS.includes(key)) ||
+        MARKET_CANDLE_FIELDS.some((key) => !Object.hasOwn(candle, key)) || typeof candle.timestamp !== "string" ||
+        Object.values(candle).some((value) => value !== null && !["string", "number", "boolean"].includes(typeof value))) {
+        throw new TossOpenApiError("Toss chart-alert candle response included an unsupported item.", undefined, undefined, undefined, "invalid_provider_response");
+      }
+    }
+    return { result: page, rateLimit: response.rateLimit };
+  }
+
   async getPriorityInvestorTrading(symbol: string, date: string): Promise<TossReadonlyResponse> {
     if (!this.configured || !/^\d{6}$/.test(symbol) || !isIsoDate(date)) {
       throw new TossOpenApiError("Toss investor-trading request is outside the fixed read-only profile.");

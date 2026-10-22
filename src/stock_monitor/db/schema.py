@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 @dataclass(frozen=True)
@@ -511,6 +511,50 @@ TOSS_STOCK_UNIVERSE_CACHE_MIGRATION = SchemaMigration(
 )
 
 
+CHART_ALERT_OUTBOX_MIGRATION = SchemaMigration(
+    version=12,
+    name="chart_alert_outbox",
+    statements=(
+        """
+        CREATE TABLE IF NOT EXISTS chart_alert_outbox (
+            event_id TEXT PRIMARY KEY,
+            watch_id TEXT NOT NULL,
+            report_business_date TEXT NOT NULL,
+            stock_code TEXT NOT NULL,
+            stock_name TEXT NOT NULL,
+            report_count INTEGER NOT NULL,
+            rule_key TEXT NOT NULL,
+            rule_version TEXT NOT NULL,
+            timeframe TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            observed_state TEXT NOT NULL,
+            basis_bar_time TEXT NOT NULL,
+            source TEXT NOT NULL,
+            source_fetched_at TEXT NOT NULL,
+            finality TEXT NOT NULL,
+            message_text TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('pending', 'sending', 'sent', 'ambiguous')),
+            attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+            sent_at TEXT,
+            telegram_message_id TEXT,
+            last_error_kind TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_chart_alert_outbox_status_created
+        ON chart_alert_outbox (status, created_at)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_chart_alert_outbox_report_stock
+        ON chart_alert_outbox (report_business_date, stock_code)
+        """,
+    ),
+)
+
+
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     KRX_MARKET_SNAPSHOT_MIGRATION,
     APP_SETTINGS_MIGRATION,
@@ -522,6 +566,7 @@ SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     TOSS_MARKET_CONTEXT_SNAPSHOT_MIGRATION,
     NEWS_EVIDENCE_LINEAGE_MIGRATION,
     TOSS_STOCK_UNIVERSE_CACHE_MIGRATION,
+    CHART_ALERT_OUTBOX_MIGRATION,
 )
 
 

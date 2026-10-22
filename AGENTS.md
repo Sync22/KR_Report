@@ -61,7 +61,7 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
 - `web-view` 기본 로드는 stored-data 기반이어야 한다.
 - KRX 저장 행은 과거 분석/복기 전용으로 유지하며, 신규 웹뷰·스케줄러 시장 기준값은 Toss 20:00 저장 스냅샷을 사용한다.
 - `.env` raw login 확인이 가능하면 browser login automation보다 우선한다.
-- 외부 실험 도구/라이브러리는 production runtime, scheduler task, public `web-view` 기능으로 바로 연결하지 않는다. 사용자가 승인한 Chart Lab은 Stock-Newbby의 기능을 별도 local-only 경로로 이식하되 [독립 데이터 계약](docs/codex/data-governance.md#chart-lab-local-test-surface)을 따른다. 기존 운영 SQLite·scheduler·Telegram·브로커 계정·주문 경로는 연결하지 않는다.
+- 외부 실험 도구/라이브러리는 production runtime, scheduler task, public `web-view` 기능으로 바로 연결하지 않는다. 사용자가 승인한 Chart Lab은 Stock-Newbby의 기능을 별도 local-only 경로로 이식하되 [독립 데이터 계약](docs/codex/data-governance.md#chart-lab-local-test-surface)을 따른다. Chart Lab의 보고서 집중 알림 예외는 Next가 loopback local JSON/spool만 쓰고 Python이 schema 12 outbox를 쓰는 구조이며, 명시적 `chart-alerts-dispatch --send` 없이는 Telegram을 보내지 않는다. 운영 DB·Task Scheduler에 적용하거나 자동 발송을 등록하는 일은 별도 운영 검증과 승인 전까지 하지 않는다.
 
 ## Current Operating State
 
@@ -102,7 +102,7 @@ SQLite에 저장하고, 다음 영업일 아침 브리핑과 운영용 상태 �
 - `chart-assistant` (Stock-Newbby)
   - global Codex skill로 설치됨. 사용자가 요청한 경우 on-demand 차트/기술 근거 검토에 사용한다
   - 출력에 source, 기준 시각, provisional/confirmation 상태를 보존하고 수익성·매매 지시로 해석하지 않는다
-  - Stock-Newbby의 별도 cache/provider는 Main 후보 순서, 운영 Stock Monitor SQLite, scheduler, Telegram에 연결하지 않는다. Chart Lab 감시 상태는 별도 local state 파일만 사용한다.
+  - Stock-Newbby의 Chart Lab provider는 Main 후보 순서와 public DTO에 연결하지 않는다. 일반 차트 감시 상태는 별도 local state 파일에 둔다. 보고서 집중 알림은 같은 날의 `리포트 집중` 후보만 서버에서 재검증하며, Next는 local state/spool, Python은 SQLite outbox와 명시적 Telegram 발송만 담당한다. 운영 scheduler는 연결하지 않는다.
   - 로컬 서버 시작, 실시간 source 요청, monitor start/pause는 사용자 요청이 있을 때만 수행한다
 - `operator-review`
   - `admin-gui`와 public `web-view`에 넣지 않는 operator 전용 근거 검토면이며, 별도 GET-only 서버로 `127.0.0.1`에만 바인딩한다
@@ -195,7 +195,7 @@ Stock Monitor-specific rule:
 
 - Preserve the `admin-gui` vs GET-only `web-view` boundary.
 - Do not add public numeric scores, investment grades, generic trading calls, broker execution, or order-routing behavior. The separate user-defined Main Top2 threshold-condition projection is the sole chart-derived public exception; its contract is in [data-governance.md](docs/codex/data-governance.md#main-top2-technical-indicator-projection).
-- Do not connect lab/source probes to production DB writes, Telegram, scheduler, admin-gui, or web-view.
+- Do not connect arbitrary lab/source probes to production DB writes, Telegram, scheduler, admin-gui, or web-view. The separately approved Chart Lab report-focus alert path is limited by [data governance](docs/codex/data-governance.md#chart-lab-local-test-surface): loopback Next writes local state/spool only; Python alone writes the alert outbox and only sends on explicit `--send`; no scheduler task or operating-DB activation is included.
 - SchemaSpy remains lab-only / repeatable-lab candidate after jars are staged.
 - QuantDinger remains hold.
 - OpenAlgo remains future-lab only.

@@ -921,9 +921,39 @@ class StockMonitorRepository:
         summary_signature: str,
         messages: list[str],
         started_at: datetime,
+        allow_ambiguous_repeat: bool = False,
     ) -> DailySummaryDeliveryRun:
         with self.connect() as connection:
             with connection:
+                ambiguous_row = connection.execute(
+                    """
+                    SELECT run_id
+                    FROM daily_summary_delivery_runs
+                    WHERE business_date = ?
+                      AND channel = ?
+                      AND status = 'ambiguous'
+                    LIMIT 1
+                    """,
+                    (business_date.isoformat(), channel),
+                ).fetchone()
+                if ambiguous_row and not allow_ambiguous_repeat:
+                    raise RuntimeError(
+                        "An ambiguous daily summary Telegram delivery exists for this date and channel; "
+                        "operator review is required before another send."
+                    )
+                if ambiguous_row:
+                    connection.execute(
+                        """
+                        UPDATE daily_summary_delivery_runs
+                        SET status = 'superseded',
+                            finished_at = ?,
+                            last_error = 'operator-authorized retry after ambiguous delivery'
+                        WHERE business_date = ?
+                          AND channel = ?
+                          AND status = 'ambiguous'
+                        """,
+                        (started_at.isoformat(), business_date.isoformat(), channel),
+                    )
                 connection.execute(
                     """
                     UPDATE daily_summary_delivery_runs
@@ -1148,6 +1178,37 @@ class StockMonitorRepository:
                         failed_at.isoformat(),
                         run_id,
                     ),
+                )
+
+    def mark_daily_summary_fragment_ambiguous(
+        self,
+        run_id: str,
+        fragment_index: int,
+        *,
+        error_detail: str,
+        failed_at: datetime,
+    ) -> None:
+        with self.connect() as connection:
+            with connection:
+                connection.execute(
+                    """
+                    UPDATE daily_summary_delivery_fragments
+                    SET status = 'ambiguous',
+                        last_error = ?
+                    WHERE run_id = ?
+                      AND fragment_index = ?
+                    """,
+                    (error_detail, run_id, fragment_index),
+                )
+                connection.execute(
+                    """
+                    UPDATE daily_summary_delivery_runs
+                    SET status = 'ambiguous',
+                        last_error = ?,
+                        finished_at = ?
+                    WHERE run_id = ?
+                    """,
+                    (error_detail, failed_at.isoformat(), run_id),
                 )
 
     def complete_daily_summary_run(
@@ -3548,7 +3609,7 @@ class StockMonitorRepository:
             ).fetchone()
         return int(row["count"])
 
-    def list_pending_intraday_alert_batches(self) -> list[IntradayAlertBatch]:
+    def list_pending_intraday_alert_batches(self, *, include_ambiguous: bool = False) -> list[IntradayAlertBatch]:
         with self.connect() as connection:
             rows = connection.execute(
                 """
@@ -3563,8 +3624,10 @@ class StockMonitorRepository:
                     error_detail
                 FROM intraday_alert_batches
                 WHERE status IN ('pending', 'failed')
+                   OR (? = 1 AND status = 'ambiguous')
                 ORDER BY created_at ASC, batch_id ASC
-                """
+                """,
+                (1 if include_ambiguous else 0,),
             ).fetchall()
         return [self._row_to_intraday_batch(row) for row in rows]
 
@@ -3685,6 +3748,29 @@ class StockMonitorRepository:
                     ),
                 )
 
+    def mark_intraday_alert_batches_ambiguous(
+        self,
+        batch_ids: tuple[str, ...],
+        *,
+        attempted_at: datetime,
+        error_detail: str,
+    ) -> None:
+        if not batch_ids:
+            return
+        placeholders = ", ".join("?" for _ in batch_ids)
+        with self.connect() as connection:
+            with connection:
+                connection.execute(
+                    f"""
+                    UPDATE intraday_alert_batches
+                    SET status = 'ambiguous',
+                        last_attempt_at = ?,
+                        error_detail = ?
+                    WHERE batch_id IN ({placeholders})
+                    """,
+                    (attempted_at.isoformat(), error_detail, *batch_ids),
+                )
+
     def mark_intraday_alert_batch_failed(
         self,
         batch_id: str,
@@ -3710,6 +3796,9 @@ class StockMonitorRepository:
                 )
 
     def has_successful_delivery(self, business_date: date, channel: str) -> bool:
+        return self.has_delivery_status(business_date, channel, status="sent")
+
+    def has_delivery_status(self, business_date: date, channel: str, *, status: str) -> bool:
         with self.connect() as connection:
             row = connection.execute(
                 """
@@ -3717,12 +3806,27 @@ class StockMonitorRepository:
                 FROM delivery_log
                 WHERE business_date = ?
                   AND channel = ?
-                  AND status = 'sent'
+                  AND status = ?
+                LIMIT 1
+                """,
+                (business_date.isoformat(), channel, status),
+            ).fetchone()
+        return row is not None
+
+    def has_latest_delivery_status(self, business_date: date, channel: str, *, status: str) -> bool:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT status
+                FROM delivery_log
+                WHERE business_date = ?
+                  AND channel = ?
+                ORDER BY delivered_at DESC, id DESC
                 LIMIT 1
                 """,
                 (business_date.isoformat(), channel),
             ).fetchone()
-        return row is not None
+        return bool(row and row["status"] == status)
 
     @staticmethod
     def _encode_json_tuple(values: tuple[str, ...]) -> str:

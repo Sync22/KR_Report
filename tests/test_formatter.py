@@ -8,7 +8,6 @@ from stock_monitor.notify.formatter import (
     format_daily_summary_message,
     format_daily_summary_messages,
     format_market_close_briefing_message,
-    format_intraday_empty_message,
     format_intraday_batch_message,
     format_stock_code_lookup_message,
     format_stock_research_lookup_message,
@@ -72,13 +71,13 @@ def test_format_daily_summary_message_uses_short_date_labels_and_sorted_output()
     )
     lines = message.splitlines()
 
-    assert lines[0] == "전일자 리포트 (총 03건 | 26.04.24(금))"
-    assert lines[2] == "JB금융지주(175330) | 현재가 15,500원 | 은행"
+    assert lines[0] == "리포트 요약 (총 03건 | 기준일 26.04.24(금))"
+    assert lines[2] == "JB금융지주(175330) | Naver 현재가 참고 15,500원 · 시세 기준 26.04.24 15:30 KST | 은행"
     assert lines[3] == "2건 | 교보증권(2)"
-    assert lines[4] == "목표가 38,000원 ~ 39,000원 | 중립"
-    assert lines[6] == "현대차(005380) | 현재가 412,000원 | 자동차"
+    assert lines[4] == "목표가 38,000원 ~ 39,000원 | 리포트 의견 중립"
+    assert lines[6] == "현대차(005380) | Naver 현재가 참고 412,000원 · 시세 기준 26.04.24 15:30 KST | 자동차"
     assert lines[7] == "1건 | 교보증권(1)"
-    assert lines[8] == "목표가 800,000원 | 매수"
+    assert lines[8] == "목표가 800,000원 | 리포트 의견 매수"
 
 
 def test_format_daily_summary_message_truncates_long_broker_list() -> None:
@@ -116,9 +115,9 @@ def test_format_daily_summary_message_truncates_long_broker_list() -> None:
     )
     lines = message.splitlines()
 
-    assert lines[2] == "SK하이닉스(000660) | 현재가 1,720,000원 | 반도체와반도체장비"
+    assert lines[2] == "SK하이닉스(000660) | Naver 현재가 참고 1,720,000원 · 시세 기준 26.04.24 15:30 KST | 반도체와반도체장비"
     assert lines[3] == "6건 | DS투자증권(1), 교보증권(1), 대신증권(1) 외 3곳"
-    assert lines[4] == "목표가 1,600,000원 ~ 1,900,000원 | 매수"
+    assert lines[4] == "목표가 1,600,000원 ~ 1,900,000원 | 리포트 의견 매수"
 
 
 def test_format_daily_summary_message_displays_missing_values_without_na_label() -> None:
@@ -242,37 +241,19 @@ def test_format_daily_briefing_messages_builds_morning_briefing_without_recommen
         summaries,
         briefing_date=date(2026, 5, 14),
         quotes_by_stock_code=quotes_by_stock_code,
-        market_reference_lines=[
-            "지수 참고 · 26.05.13 Toss 저장값",
-            "- KOSPI 7,844.01 +2.63% / KOSDAQ 1,176.93 -0.20%",
-        ],
-        flow_reference_lines=[
-            "수급 참고 · 26.05.12 KOSPI 저장값 / 리포트일 전 최신",
-            "- 개인 매수 우위 6.7조 / 외국인 매도 우위 5.6조 / 기관 매도 우위 1.2조",
-        ],
-        core_point_lines=[
-            "핵심 포인트",
-            "- KOSPI 상승, KOSDAQ 하락으로 시장 방향이 엇갈림",
-            "- 리포트 집중 1위: 반도체와반도체장비 4건",
-        ],
         max_items=2,
     )
     message = messages[0]
 
     assert "국장 시작 전 리포트 브리핑 · 26.05.14" in message
-    assert "기준: 전일 리포트 / Toss 실시간 자료와 저장 종가 비교를 구분" in message
-    assert "전일 리포트" in message
+    assert "기준: 리포트 영업일 26.05.13 / 브리핑일 26.05.14" in message
+    assert "대상일 리포트" in message
     assert "리포트 집중" in message
     assert "- 반도체와반도체장비 4건" in message
-    assert message.index("\n\n전일 리포트") < message.index("이전 종가 비교")
-    assert message.index("이전 종가 비교") < message.index("지수 참고 · 26.05.13 Toss 저장값")
-    assert message.index("이전 종가 비교") < message.index("수급 참고 · 26.05.12 KOSPI 저장값")
-    assert "지수 참고 · 26.05.13 Toss 저장값" in message
-    assert "KOSPI 7,844.01 +2.63%" in message
-    assert "수급 참고 · 26.05.12 KOSPI 저장값 / 리포트일 전 최신" in message
-    assert "개인 매수 우위 6.7조" in message
-    assert "핵심 포인트" in message
-    assert "리포트 집중 1위: 반도체와반도체장비 4건" in message
+    assert "이전 종가 비교" not in message
+    assert "지수 참고" not in message
+    assert "수급 참고" not in message
+    assert "Toss 실시간" not in message
     assert "주요 종목" in message
     assert "삼성전자(005930)" in message
     assert "현재가 279,000원" not in message
@@ -283,7 +264,42 @@ def test_format_daily_briefing_messages_builds_morning_briefing_without_recommen
     assert "전략 제안" not in message
 
 
-def test_format_daily_briefing_messages_keeps_market_context_when_summaries_overflow() -> None:
+def test_format_daily_briefing_labels_naver_quote_as_reference_with_as_of_time() -> None:
+    summary = DailyStockSummary(
+        business_date=date(2026, 5, 13),
+        stock_name="삼성전자",
+        stock_code="005930",
+        mention_count=1,
+        broker_display="NH투자증권(1)",
+        target_price_min=80_000,
+        target_price_max=80_000,
+        dominant_opinion="buy",
+        generated_at=datetime(2026, 5, 13, 16, 0),
+    )
+    quote = StockQuoteSnapshot(
+        stock_code="005930",
+        stock_name="삼성전자",
+        sector_code="27",
+        sector_name="반도체",
+        current_price=70_000,
+        market_status="OPEN",
+        trade_time=datetime(2026, 5, 14, 8, 12),
+        prev_close_price=69_000,
+    )
+
+    message = format_daily_briefing_messages(
+        date(2026, 5, 13),
+        [summary],
+        briefing_date=date(2026, 5, 14),
+        quotes_by_stock_code={"005930": quote},
+    )[0]
+
+    assert "리포트 영업일 26.05.13" in message
+    assert "Naver 현재가 참고 70,000원 · 시세 기준 26.05.14 08:12 KST" in message
+    assert "목표가 80,000원 | 리포트 의견 매수" in message
+
+
+def test_format_daily_briefing_messages_paginates_report_content_without_market_context() -> None:
     summaries = [
         DailyStockSummary(
             business_date=date(2026, 5, 13),
@@ -304,17 +320,12 @@ def test_format_daily_briefing_messages_keeps_market_context_when_summaries_over
         date(2026, 5, 13),
         summaries,
         briefing_date=date(2026, 5, 14),
-        live_market_context_lines=["LIVE-MARKET-CONTEXT", "- KOSPI intraday"],
-        market_reference_lines=["PREVIOUS-CLOSE-CONTEXT", "- KOSPI close"],
-        flow_reference_lines=["PREVIOUS-FLOW-CONTEXT", "- Foreign flow"],
         max_items=8,
         max_chars=max_chars,
     )
 
     assert len(messages) > 1
-    assert "LIVE-MARKET-CONTEXT" in messages[0]
-    assert "PREVIOUS-CLOSE-CONTEXT" in messages[0]
-    assert "PREVIOUS-FLOW-CONTEXT" in messages[0]
+    assert all("시장" not in message and "수급" not in message and "흐름" not in message for message in messages)
     assert all(len(message) <= max_chars for message in messages)
 
 
@@ -394,11 +405,49 @@ def test_format_intraday_batch_message_keeps_single_report_detail() -> None:
     )
     lines = message.splitlines()
 
-    assert lines[0] == "장중 신규 리포트 (1건 | 26.04.24 09:30)"
-    assert lines[2] == "삼성전자(005930) | 현재가 91,500원 | 반도체와반도체장비"
+    assert lines[0] == "장중 신규 리포트 (1건 | 리포트 영업일 26.04.24 | 최근 수집 26.04.24 09:30 KST)"
+    assert lines[2] == "삼성전자(005930) | Naver 현재가 참고 91,500원 · 시세 기준 26.04.24 09:30 KST | 반도체와반도체장비"
     assert lines[3] == "NH투자증권"
     assert lines[4] == "상황 회복 가시화"
-    assert lines[5] == "목표가 92,000원 | 매수"
+    assert lines[5] == "목표가 92,000원 | 리포트 의견 매수"
+
+
+def test_intraday_report_omits_previous_day_quote_instead_of_calling_it_current() -> None:
+    report = Report(
+        stock_name="삼성전자",
+        stock_code="005930",
+        title="실적 전망",
+        broker_name="NH투자증권",
+        published_at=datetime(2026, 4, 24, 9, 0),
+        collected_at=datetime(2026, 4, 24, 9, 32),
+        business_date=date(2026, 4, 24),
+        target_price_raw="92000",
+        target_price_value=92_000,
+        opinion_raw="Buy",
+        opinion_normalized="buy",
+        source_url="https://example.test/report/1",
+        source_id="1",
+        identity_key="identity-stale-quote",
+    )
+    stale_quote = StockQuoteSnapshot(
+        stock_code="005930",
+        stock_name="삼성전자",
+        sector_code=None,
+        sector_name=None,
+        current_price=91_500,
+        market_status="CLOSE",
+        trade_time=datetime(2026, 4, 23, 15, 30),
+        prev_close_price=90_000,
+    )
+
+    message = format_intraday_batch_message(
+        datetime(2026, 4, 24, 9, 32),
+        [report],
+        quotes_by_stock_code={"005930": stale_quote},
+    )
+
+    assert "Naver 현재가 참고" not in message
+    assert "91,500원" not in message
 
 
 def test_format_intraday_batch_message_groups_reports_by_stock_when_multiple() -> None:
@@ -457,10 +506,10 @@ def test_format_intraday_batch_message_groups_reports_by_stock_when_multiple() -
     )
     lines = message.splitlines()
 
-    assert lines[0] == "장중 신규 리포트 (2건 | 26.04.24 09:30)"
-    assert lines[2] == "삼성전자(005930) | 현재가 96,000원 | 반도체와반도체장비"
+    assert lines[0] == "장중 신규 리포트 (2건 | 리포트 영업일 26.04.24 | 최근 수집 26.04.24 09:30 KST)"
+    assert lines[2] == "삼성전자(005930) | Naver 현재가 참고 96,000원 · 시세 기준 26.04.24 09:30 KST | 반도체와반도체장비"
     assert lines[3] == "2건 | NH투자증권(1), 메리츠증권(1)"
-    assert lines[4] == "목표가 92,000원 ~ 100,000원 | 매수"
+    assert lines[4] == "목표가 92,000원 ~ 100,000원 | 리포트 의견 매수"
 
 
 def test_format_intraday_batch_message_groups_same_code_name_drift() -> None:
@@ -502,7 +551,7 @@ def test_format_intraday_batch_message_groups_same_code_name_drift() -> None:
     message = format_intraday_batch_message(datetime(2026, 4, 24, 9, 30, 0), reports)
 
     assert "2건 |" in message
-    assert "목표가 120,000원 ~ 140,000원 | 매수" in message
+    assert "목표가 120,000원 ~ 140,000원 | 리포트 의견 매수" in message
     assert "cash flow visible" not in message
 
 
@@ -583,10 +632,10 @@ def test_format_stock_research_lookup_message_shows_current_price_on_first_line(
     )
 
     assert "종목 리포트 조회 (SK텔레콤(017670) | 최근 15일)" in message
-    assert "SK텔레콤(017670) | 현재가 219,500원 | 무선통신서비스" in message
+    assert "SK텔레콤(017670) | Naver 현재가 참고 219,500원 · 시세 기준 26.04.24 16:10 KST | 무선통신서비스" in message
     assert "2건 | 유안타증권, 하나증권" in message
-    assert "목표가 118,000원 ~ 140,000원 | 매수" in message
-    assert "- 26.04.20 | 유안타증권 | 목표가 118,000원 | 매수 | 반영한다고 했제" in message
+    assert "목표가 118,000원 ~ 140,000원 | 리포트 의견 매수" in message
+    assert "- 26.04.20 | 유안타증권 | 목표가 118,000원 | 리포트 의견 매수 | 반영한다고 했제" in message
 
 
 def test_format_stock_research_lookup_message_omits_current_price_when_missing() -> None:
@@ -641,7 +690,7 @@ def test_format_stock_research_lookup_message_ignores_na_opinion_for_dominant_op
 
     message = format_stock_research_lookup_message("017670", "SK텔레콤", entries, lookback_days=15)
 
-    assert "목표가 140,000원 | 매수" in message
+    assert "목표가 140,000원 | 리포트 의견 매수" in message
     assert "- 26.04.20 | 유안타증권 | 목표가 - | 의견 없음 | 목표가 없음" in message
 
 

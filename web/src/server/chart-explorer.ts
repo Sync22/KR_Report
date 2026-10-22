@@ -12,6 +12,7 @@ import {
   type ChartExplorerSuccess,
   type ChartExplorerTimeframe,
 } from "../domain/chart-explorer.ts";
+import { parseMinuteCandles, type ChartAlertMinuteBar } from "../domain/chart-alerts.ts";
 import { buildChartExplorerProjection } from "./web-view-indicators.ts";
 import { getStockSearchSnapshot } from "./stock-search.ts";
 import { TossOpenApiClient, TossOpenApiError, readTossOpenApiConfig, type TossKrxMarketDay } from "./toss-openapi.ts";
@@ -43,6 +44,9 @@ type ServiceResult = {
   sessionContinuityStatus?: SessionContinuityStatus;
   marketMappingSource?: "stored-toss-stock-universe" | "toss-stock-master";
 };
+export type ChartAlertMinuteResult =
+  | { status: 200; available: true; symbol: string; displayName: string; bars: ChartAlertMinuteBar[]; source: "Toss OpenAPI · 1m candles"; sourceFetchedAt: string; barStatus: "unknown" }
+  | { status: number; available: false; reason: string };
 
 class UpstreamRateLimitError extends Error {}
 type YahooResult = { bars: ChartExplorerBar[]; displayName: string; sourceDate: string | null; currency: string | null; timezone: string };
@@ -374,6 +378,8 @@ export class ChartExplorerService {
   private readonly toss = new TossOpenApiClient();
   private readonly timezone = process.env.STOCK_MONITOR_TIMEZONE?.trim() || "Asia/Seoul";
   private readonly cache = new Map<string, { expiresAt: number; result: ServiceResult }>();
+  private readonly alertMinuteCache = new Map<string, { expiresAt: number; result: ChartAlertMinuteResult }>();
+  private readonly alertMinuteInFlight = new Map<string, Promise<ChartAlertMinuteResult>>();
   private readonly inFlight = new Map<string, Promise<ServiceResult>>();
   private readonly krxCalendarCache = new Map<string, { expiresAt: number; day: TossKrxMarketDay }>();
   private readonly krxCalendarBundleCache = new Map<string, { expiresAt: number; days: TossKrxMarketDay[] }>();
@@ -381,6 +387,15 @@ export class ChartExplorerService {
   private readonly currentKrxMarketCache = new Map<string, { expiresAt: number; market: "KOSPI" | "KOSDAQ" }>();
   private upstreamRequestTimes: number[] = [];
   private lastKrxCalendarRequestAt = 0;
+
+  get chartAlertProviderConfigured(): boolean { return this.toss.configured; }
+
+  async isKrxMarketOpenAt(instant: Date): Promise<boolean> {
+    const date = calendarDate(instant, "Asia/Seoul");
+    const day = await this.getKrxCalendarDay(date);
+    const session = day.regularMarket;
+    return !!session && instant.getTime() >= Date.parse(session.startTime) && instant.getTime() <= Date.parse(session.endTime);
+  }
 
   private takeUpstreamSlot(): boolean {
     const now = Date.now();
@@ -410,6 +425,42 @@ export class ChartExplorerService {
       return result;
     }).finally(() => this.inFlight.delete(key));
     this.inFlight.set(key, request);
+    return request;
+  }
+
+  async getAlertMinuteBars(date: string, symbol: string): Promise<ChartAlertMinuteResult> {
+    if (!isBusinessDate(date) || !/^\d{6}$/.test(symbol)) return { status: 400, available: false, reason: "invalid_query" };
+    let item;
+    try {
+      item = getStockSearchSnapshot(date, symbol, 1).items.find((candidate) => candidate.stock_code === symbol);
+    } catch {
+      return { status: 503, available: false, reason: "stored_lookup_unavailable" };
+    }
+    if (!item) return { status: 404, available: false, reason: "symbol_not_found" };
+    if (!this.toss.configured) return { status: 503, available: false, reason: "toss_not_configured" };
+    const cached = this.alertMinuteCache.get(symbol);
+    if (cached && cached.expiresAt > Date.now()) return cached.result;
+    if (cached) this.alertMinuteCache.delete(symbol);
+    const pending = this.alertMinuteInFlight.get(symbol);
+    if (pending) return pending;
+    if (!this.takeUpstreamSlot()) return { status: 429, available: false, reason: "rate_limited" };
+    const request = (async (): Promise<ChartAlertMinuteResult> => {
+      try {
+        const response = await this.toss.getChartAlertMinuteCandles(symbol, new Date().toISOString());
+        const page = response.result as ValueRecord;
+        const bars = parseMinuteCandles(page.candles);
+        if (!bars.length) return { status: 502, available: false, reason: "no_chart_data" };
+        const result: ChartAlertMinuteResult = {
+          status: 200, available: true, symbol, displayName: normalizeName(item.stock_name, symbol), bars,
+          source: "Toss OpenAPI · 1m candles", sourceFetchedAt: new Date().toISOString(), barStatus: "unknown",
+        };
+        this.alertMinuteCache.set(symbol, { expiresAt: Date.now() + CACHE_TTL_MS, result });
+        return result;
+      } catch (error) {
+        return { status: 502, available: false, reason: error instanceof TossOpenApiError ? reasonForToss(error) : "provider_unavailable" };
+      }
+    })().finally(() => this.alertMinuteInFlight.delete(symbol));
+    this.alertMinuteInFlight.set(symbol, request);
     return request;
   }
 
