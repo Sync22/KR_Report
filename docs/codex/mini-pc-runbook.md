@@ -168,19 +168,24 @@ Run the source checks from the project root:
   npm run build
   Pop-Location
 
-Before DB checks, confirm a recent verified backup and run db-verify. Rehearse
-schema 12 only with `python -m stock_monitor db-migration-rehearsal --json` against
-the temporary copy; require `writes_source_db=false` and a successful copy verify.
-Never run `db-migrate` against the live operating DB in this test. If backup or
-readiness is missing, stop that DB portion and report it.
+Before DB checks, confirm a recent verified backup and run
+`.\.venv\Scripts\python.exe -m stock_monitor db-verify --json`. Rehearse schema
+12 only with
+`.\.venv\Scripts\python.exe -m stock_monitor db-migration-rehearsal --json`
+against the temporary copy; require `writes_source_db=false` and a successful
+copy verify. Never run `db-migrate` against the live operating DB in this test.
+If backup or readiness is missing, stop that DB portion and report it.
 
-For notification copy, use `python -m stock_monitor scheduled-notify --dry-run --format briefing`;
+For notification copy, use
+`.\.venv\Scripts\python.exe -m stock_monitor scheduled-notify --dry-run --format briefing`;
 this must not send Telegram and may make bounded current-price reference GETs.
 Skip that preview if provider access is not approved. For chart-alert copy, use the
-default no-send preview `python -m stock_monitor chart-alerts-dispatch --json`;
+default no-send preview
+`.\.venv\Scripts\python.exe -m stock_monitor chart-alerts-dispatch --json`;
 never pass `--send` or `--watch`. A bounded Toss/Naver preview is optional: do at
-most one `python -m stock_monitor market-briefing --date YYYY-MM-DD` preview for
-the same business date, without `--send`, and only when provider access is already
+most one
+`.\.venv\Scripts\python.exe -m stock_monitor market-briefing --date YYYY-MM-DD`
+preview for the same business date, without `--send`, and only when provider access is already
 configured and rate limits permit it; otherwise mark it not run. Report which
 same-date source won and its displayed KST time without pasting credentials.
 
