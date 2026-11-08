@@ -26,13 +26,40 @@ if (-not $SkipPreflight) {
 }
 
 $excludedDirectories = @(
+    ".git",
+    ".codegraph",
+    ".codex",
+    ".codex-remote-attachments",
+    ".playwright-mcp",
+    ".vscode",
+    ".idea",
     ".pytest_cache",
+    ".tmp_pytest",
+    ".ruff_cache",
+    ".mypy_cache",
     ".venv",
+    "node_modules",
+    ".next",
     "__pycache__",
-    "_tmp_webview",
+    "build",
+    "dist",
+    "error_logs",
+    "output",
     "playwright-report",
+    "test-results",
+    "_tmp_webview",
+    "snapshots",
+    "*_snapshot",
+    "*.egg-info",
+    "operator_photo_inbox",
+    "docs/codex/operations",
     "scripts/experimental/.venv-botasaurus",
-    "scripts/experimental/.venv-kronos"
+    "scripts/experimental/.venv-scrapling",
+    "scripts/experimental/.venv-kronos",
+    "scripts/experimental/.hf-kronos",
+    "scripts/experimental/.codegraph",
+    "scripts/experimental/codex_home_probe",
+    "scripts/experimental/node_tooling"
 )
 
 if (-not $IncludeBackups) {
@@ -48,7 +75,27 @@ $excludedFiles = @(
 $excludedFilePatterns = @(
     "Stock_Moniter_migration_*.zip",
     "Stock_Moniter_migration_*.zip.sha256",
+    "*.zip",
+    "*.zip.sha256",
+    "*.7z",
     "*.log",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "*.crt",
+    "*.cer",
+    "*.der",
+    "*.sqlite",
+    "*.sqlite3",
+    "*.db",
+    "*.tsbuildinfo",
+    "*.pyc",
+    "*.pyo",
+    "*.pyd",
+    '*$py.class',
+    "*.code-workspace",
+    ".tmp_admin_gui.*",
     "data/*.log"
 )
 
@@ -65,14 +112,24 @@ function Convert-ToRelativePath([string]$Path) {
 
 function Test-ExcludedPath([string]$Path) {
     $relative = Convert-ToRelativePath $Path
-    if (-not $IncludeEnv -and $relative -eq ".env") {
+    $leaf = Split-Path -Leaf $relative
+    if ($leaf -eq ".env.toss-openapi" -or ($leaf -like ".env.*" -and $leaf -notlike "*.example")) {
+        return $true
+    }
+    if ($relative -eq ".env" -and -not $IncludeEnv) {
+        return $true
+    }
+    if ($leaf -eq ".env" -and $relative -ne ".env") {
+        return $true
+    }
+    if ($leaf -like "*.env" -and $leaf -ne ".env") {
         return $true
     }
     if ($relative -eq "data/access_code.json") {
         return $true
     }
     foreach ($directory in $excludedDirectories) {
-        if ($relative -eq $directory -or $relative.StartsWith("$directory/")) {
+        if ($relative -eq $directory -or $relative.StartsWith("$directory/") -or $relative.Contains("/$directory/") -or ($relative.Split("/") | Where-Object { $_ -like $directory })) {
             return $true
         }
     }
@@ -82,6 +139,9 @@ function Test-ExcludedPath([string]$Path) {
         }
     }
     foreach ($filePattern in $excludedFilePatterns) {
+        if ($relative -eq "data/stock_monitor.db" -and $filePattern -eq "*.db") {
+            continue
+        }
         if ($relative -like $filePattern -or (Split-Path -Leaf $relative) -like $filePattern) {
             return $true
         }
