@@ -239,6 +239,40 @@ def test_create_migration_archive_always_excludes_toss_credentials_even_with_inc
         )
 
 
+def test_create_migration_archive_refuses_sqlite_sidecars(tmp_path) -> None:
+    project = tmp_path / "project"
+    scripts = project / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "create_migration_archive.ps1").write_text(
+        (PROJECT_ROOT / "scripts" / "create_migration_archive.ps1").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    database_dir = project / "data"
+    database_dir.mkdir()
+    (database_dir / "stock_monitor.db").write_bytes(b"dummy database")
+    for suffix in ("-wal", "-shm", "-journal"):
+        (database_dir / f"stock_monitor.db{suffix}").write_bytes(b"dummy sidecar")
+
+    archive_path = tmp_path / "migration.zip"
+    command = (
+        "Import-Module Microsoft.PowerShell.Utility; & "
+        f"'{str(scripts / 'create_migration_archive.ps1').replace(chr(39), chr(39) * 2)}' -SkipPreflight "
+        f"-DestinationPath '{str(archive_path).replace(chr(39), chr(39) * 2)}'"
+    )
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=project,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "SQLite sidecar" in output
+    assert not archive_path.exists()
+
+
 def test_verify_migration_archive_checks_sha256_sidecar() -> None:
     script = (PROJECT_ROOT / "scripts" / "verify_migration_archive.ps1").read_text(encoding="utf-8")
 
@@ -417,6 +451,7 @@ def test_verify_migration_archive_rejects_private_keys_and_archives(tmp_path) ->
         archive.writestr("02.Stock_Moniter/data/other.db", "dummy database")
         archive.writestr("02.Stock_Moniter/nested/private.sqlite", "dummy database")
         archive.writestr("02.Stock_Moniter/nested/private.sqlite3", "dummy database")
+        archive.writestr("02.Stock_Moniter/nested/data/stock_monitor.db", "duplicate database")
         archive.writestr("02.Stock_Moniter/docs/codex/operations/local.md", "dummy metadata\n")
         archive.writestr("02.Stock_Moniter/scripts/experimental/.venv-botasaurus/pyvenv.cfg", "dummy metadata\n")
         archive.writestr("02.Stock_Moniter/scripts/experimental/.hf-kronos/cache.bin", "dummy metadata\n")
@@ -460,6 +495,7 @@ def test_verify_migration_archive_rejects_private_keys_and_archives(tmp_path) ->
     assert "02.Stock_Moniter/data/other.db" in output
     assert "02.Stock_Moniter/nested/private.sqlite" in output
     assert "02.Stock_Moniter/nested/private.sqlite3" in output
+    assert "02.Stock_Moniter/nested/data/stock_monitor.db" in output
     assert "02.Stock_Moniter/docs/codex/operations/local.md" in output
     assert "02.Stock_Moniter/scripts/experimental/.venv-botasaurus/pyvenv.cfg" in output
     assert "02.Stock_Moniter/scripts/experimental/.hf-kronos/cache.bin" in output
@@ -471,8 +507,40 @@ def test_verify_migration_archive_rejects_private_keys_and_archives(tmp_path) ->
             "nested/workspace.code-workspace", "nested/.tmp_admin_gui.session",
         ]
     )
-    assert "data/stock_monitor.db" not in output
+    assert "02.Stock_Moniter/data/stock_monitor.db" not in output
     assert "02.Stock_Moniter/.env.toss-openapi.example" not in output
+
+
+def test_verify_migration_archive_rejects_sqlite_sidecars(tmp_path) -> None:
+    archive_path = tmp_path / "manual_sqlite_sidecars.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        _write_required_migration_entries(archive)
+        for suffix in ("-wal", "-shm", "-journal"):
+            archive.writestr(f"02.Stock_Moniter/data/stock_monitor.db{suffix}", "dummy sidecar")
+    digest = hashlib.sha256(archive_path.read_bytes()).hexdigest().upper()
+    archive_path.with_suffix(archive_path.suffix + ".sha256").write_text(
+        f"{digest}  {archive_path.name}\n",
+        encoding="ascii",
+    )
+
+    result = subprocess.run(
+        [
+            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+            str(PROJECT_ROOT / "scripts" / "verify_migration_archive.ps1"),
+            "-ArchivePath", str(archive_path), "-FailOnSensitiveEntries",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "Sensitive migration entries are not allowed" in output
+    assert all(
+        f"02.Stock_Moniter/data/stock_monitor.db{suffix}" in output
+        for suffix in ("-wal", "-shm", "-journal")
+    )
 
 
 def test_verify_migration_archive_accepts_required_env_example(tmp_path) -> None:

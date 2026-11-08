@@ -25,6 +25,17 @@ if (-not $SkipPreflight) {
     }
 }
 
+$databaseSidecarPaths = @(
+    (Join-Path $projectRoot "data/stock_monitor.db-wal"),
+    (Join-Path $projectRoot "data/stock_monitor.db-shm"),
+    (Join-Path $projectRoot "data/stock_monitor.db-journal")
+)
+$existingDatabaseSidecars = @($databaseSidecarPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+if ($existingDatabaseSidecars.Count -gt 0) {
+    $sidecarNames = @($existingDatabaseSidecars | ForEach-Object { Split-Path -Leaf $_ })
+    throw "Cannot create a migration archive while SQLite sidecar files exist: $($sidecarNames -join ', '). Stop all DB readers and writers, create a consistent DB snapshot, then retry. Do not delete sidecars manually."
+}
+
 $excludedDirectories = @(
     ".git",
     ".codegraph",
@@ -89,6 +100,15 @@ $excludedFilePatterns = @(
     "*.sqlite",
     "*.sqlite3",
     "*.db",
+    "*.sqlite-wal",
+    "*.sqlite-shm",
+    "*.sqlite-journal",
+    "*.sqlite3-wal",
+    "*.sqlite3-shm",
+    "*.sqlite3-journal",
+    "*.db-wal",
+    "*.db-shm",
+    "*.db-journal",
     "*.tsbuildinfo",
     "*.pyc",
     "*.pyo",

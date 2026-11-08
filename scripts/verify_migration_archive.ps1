@@ -55,6 +55,15 @@ $sensitiveEntries = @(
     "*.db",
     "*.sqlite",
     "*.sqlite3",
+    "*.sqlite-wal",
+    "*.sqlite-shm",
+    "*.sqlite-journal",
+    "*.sqlite3-wal",
+    "*.sqlite3-shm",
+    "*.sqlite3-journal",
+    "*.db-wal",
+    "*.db-shm",
+    "*.db-journal",
     "*.zip",
     "*.zip.sha256",
     "*.7z",
@@ -114,6 +123,25 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Output "- archive_entries_checked: $($archiveEntries.Count)"
 $normalizedArchiveEntries = @($archiveEntries | ForEach-Object { $_ -replace "\\", "/" })
+$archiveRootPrefix = $null
+$rootAgentEntries = @($normalizedArchiveEntries | Where-Object { $_ -eq "AGENTS.md" -or $_.EndsWith("/AGENTS.md") })
+if ($rootAgentEntries.Count -gt 0) {
+    $shortestRootAgentDepth = ($rootAgentEntries | ForEach-Object { ($_ -split "/").Count } | Measure-Object -Minimum).Minimum
+    $shortestRootAgentEntries = @($rootAgentEntries | Where-Object { ($_ -split "/").Count -eq $shortestRootAgentDepth })
+    if ($shortestRootAgentEntries.Count -eq 1) {
+        $rootAgentEntry = $shortestRootAgentEntries[0]
+        if ($rootAgentEntry -eq "AGENTS.md") {
+            $archiveRootPrefix = ""
+        }
+        else {
+            $archiveRootPrefix = $rootAgentEntry.Substring(0, $rootAgentEntry.Length - "/AGENTS.md".Length)
+        }
+    }
+}
+$allowedDatabaseEntry = $null
+if ($null -ne $archiveRootPrefix) {
+    $allowedDatabaseEntry = if ($archiveRootPrefix) { "$archiveRootPrefix/data/stock_monitor.db" } else { "data/stock_monitor.db" }
+}
 
 $requiredEntries = @(
     "AGENTS.md",
@@ -200,7 +228,7 @@ function Test-SensitiveArchiveEntry([string]$NormalizedEntry, [string]$Sensitive
             return $true
         }
     }
-    if (($NormalizedEntry -eq "data/stock_monitor.db" -or $NormalizedEntry.EndsWith("/data/stock_monitor.db")) -and $SensitiveEntry -in @("*.db", "*.sqlite", "*.sqlite3")) {
+    if ($NormalizedEntry -eq $allowedDatabaseEntry -and $SensitiveEntry -in @("*.db", "*.sqlite", "*.sqlite3")) {
         return $false
     }
     if ($SensitiveEntry -eq ".env.*" -and $leaf -like ".env.*" -and $leaf -notlike "*.example") {
