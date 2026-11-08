@@ -261,6 +261,8 @@ Pop-Location
 
 Proceed only when rehearsal reports source DB unchanged, target schema 13, and successful copy verification. Apply the migration explicitly, then verify schema, integrity, and foreign keys before restarting any writer. After the application health check passes, create and restore-smoke a post-migration backup using schema-13 code:
 
+Before the first post-upgrade notification, review any existing `daily_summary_delivery_runs` in `ambiguous` or `superseded` state whose sent fragment content overlaps the requested retry. The new sender blocks retries that could replay those fragments; reconcile each outstanding run before resuming scheduled notifications.
+
 ```powershell
 .\.venv\Scripts\python.exe -m stock_monitor db-migrate
 .\.venv\Scripts\python.exe -m stock_monitor db-verify --json
