@@ -1100,6 +1100,23 @@ class StockMonitorRepository:
                             """,
                             (started_at.isoformat(), business_date.isoformat(), channel),
                         )
+                superseded_sent_hashes = connection.execute(
+                    """
+                    SELECT DISTINCT fragment.message_hash
+                    FROM daily_summary_delivery_runs AS run
+                    JOIN daily_summary_delivery_fragments AS fragment USING (run_id)
+                    WHERE run.business_date = ?
+                      AND run.channel = ?
+                      AND run.status = 'superseded'
+                      AND fragment.status = 'sent'
+                    """,
+                    (business_date.isoformat(), channel),
+                ).fetchall()
+                message_hashes = {_hash_text(message) for message in messages}
+                if any(row["message_hash"] in message_hashes for row in superseded_sent_hashes):
+                    if recovered_stale_sends:
+                        connection.commit()
+                    raise RuntimeError("A superseded daily summary has sent fragments that overlap this retry; review before retrying.")
                 sending_row = connection.execute(
                     """
                     SELECT run_id, summary_signature
@@ -1371,7 +1388,7 @@ class StockMonitorRepository:
                         last_error = NULL
                     WHERE run_id = ?
                       AND fragment_index = ?
-                      AND status = 'sending'
+                      AND status IN ('sending', 'ambiguous')
                       AND attempted_at = ?
                     """,
                     (
@@ -1401,7 +1418,7 @@ class StockMonitorRepository:
                         last_error = ?
                     WHERE run_id = ?
                       AND fragment_index = ?
-                      AND status = 'sending'
+                      AND status IN ('sending', 'ambiguous')
                       AND attempted_at = ?
                     """,
                     (
@@ -1419,7 +1436,7 @@ class StockMonitorRepository:
                     SET status = 'failed',
                         last_error = ?,
                         finished_at = ?
-                    WHERE run_id = ? AND status = 'sending'
+                    WHERE run_id = ? AND status IN ('sending', 'ambiguous')
                     """,
                     (
                         error_detail,
@@ -1446,7 +1463,7 @@ class StockMonitorRepository:
                         last_error = ?
                     WHERE run_id = ?
                       AND fragment_index = ?
-                      AND status = 'sending'
+                      AND status IN ('sending', 'ambiguous')
                       AND attempted_at = ?
                     """,
                     (error_detail, run_id, fragment_index, attempted_at.isoformat()),
@@ -1459,7 +1476,7 @@ class StockMonitorRepository:
                     SET status = 'ambiguous',
                         last_error = ?,
                         finished_at = ?
-                    WHERE run_id = ? AND status = 'sending'
+                    WHERE run_id = ? AND status IN ('sending', 'ambiguous')
                     """,
                     (error_detail, failed_at.isoformat(), run_id),
                 )

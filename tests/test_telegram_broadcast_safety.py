@@ -273,6 +273,74 @@ def test_changed_daily_summary_is_blocked_after_a_partial_failed_delivery(tmp_pa
     assert [fragment.status for fragment in fragments] == ["sent", "failed"]
 
 
+@pytest.mark.parametrize("retry_messages", [None, ["sent fragment", "updated failed fragment"]])
+def test_superseded_partial_daily_summary_is_not_restarted_with_all_fragments(
+    tmp_path,
+    monkeypatch,
+    retry_messages,
+) -> None:
+    config, repository = _config_and_repository(tmp_path, monkeypatch)
+    business_date = date(2026, 4, 24)
+    messages = ["sent fragment", "failed fragment"]
+    signature = cli_module._daily_summary_delivery_signature(
+        business_date,
+        channel=cli_module.PRODUCTION_DELIVERY_CHANNEL,
+        effective_min_mentions=1,
+        require_target_price=False,
+        messages=messages,
+    )
+    run = repository.start_or_resume_daily_summary_run(
+        business_date=business_date,
+        channel=cli_module.PRODUCTION_DELIVERY_CHANNEL,
+        summary_signature=signature,
+        messages=messages,
+        started_at=datetime(2026, 4, 24, 8, 0),
+    )
+    first_attempt_at = datetime(2026, 4, 24, 8, 1)
+    assert repository.claim_daily_summary_fragment(run.run_id, 0, attempted_at=first_attempt_at)
+    repository.mark_daily_summary_fragment_sent(
+        run.run_id,
+        0,
+        attempted_at=first_attempt_at,
+        message_id="already-sent",
+        sent_at=datetime(2026, 4, 24, 8, 2),
+    )
+    second_attempt_at = datetime(2026, 4, 24, 8, 3)
+    assert repository.claim_daily_summary_fragment(run.run_id, 1, attempted_at=second_attempt_at)
+    repository.mark_daily_summary_fragment_failed(
+        run.run_id,
+        1,
+        attempted_at=second_attempt_at,
+        error_detail="Telegram rejected the request",
+        failed_at=datetime(2026, 4, 24, 8, 4),
+    )
+    with repository.connect() as connection:
+        with connection:
+            connection.execute(
+                "UPDATE daily_summary_delivery_runs SET status = 'superseded' WHERE run_id = ?",
+                (run.run_id,),
+            )
+    sent_messages: list[str] = []
+    monkeypatch.setattr(
+        cli_module,
+        "send_telegram_message",
+        lambda _token, _chat_id, message, **_kwargs: sent_messages.append(message) or "unexpected-send",
+    )
+
+    with pytest.raises(RuntimeError, match="superseded daily summary has sent fragments"):
+        cli_module._send_production_daily_summary_fragments(
+            config,
+            repository,
+            business_date=business_date,
+            messages=retry_messages or messages,
+            effective_min_mentions=1,
+            require_target_price=False,
+        )
+
+    assert sent_messages == []
+    assert [fragment.status for fragment in repository.list_daily_summary_fragments(run.run_id)] == ["sent", "failed"]
+
+
 def test_interrupted_daily_summary_send_becomes_ambiguous_without_resend(tmp_path, monkeypatch) -> None:
     config, repository = _config_and_repository(tmp_path, monkeypatch)
     messages = ["daily summary"]

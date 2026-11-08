@@ -8,6 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from pathlib import Path
 
+import pytest
+
 from stock_monitor.db import schema as schema_module
 from stock_monitor.db.repository import StockMonitorRepository
 from stock_monitor.db.schema import SCHEMA_STATEMENTS, SCHEMA_VERSION, SchemaMigration
@@ -1715,6 +1717,52 @@ def test_repository_ignores_late_daily_summary_result_from_recovered_attempt(tmp
     assert fragment["status"] == "sending"
     assert fragment["attempted_at"] == retry_attempt_at.isoformat()
     assert fragment["message_id"] is None
+
+
+def test_repository_reconciles_late_success_for_the_same_recovered_attempt(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+    business_date = date(2026, 4, 24)
+    messages = ["fragment"]
+    signature = "signature-a"
+    attempted_at = datetime(2026, 4, 24, 8, 0)
+    run = repository.start_or_resume_daily_summary_run(
+        business_date=business_date,
+        channel="telegram",
+        summary_signature=signature,
+        messages=messages,
+        started_at=attempted_at,
+    )
+    assert repository.claim_daily_summary_fragment(run.run_id, 0, attempted_at=attempted_at)
+
+    with pytest.raises(RuntimeError, match="operator review is required"):
+        repository.start_or_resume_daily_summary_run(
+            business_date=business_date,
+            channel="telegram",
+            summary_signature=signature,
+            messages=messages,
+            started_at=datetime(2026, 4, 24, 8, 2),
+            stale_before=datetime(2026, 4, 24, 8, 1),
+        )
+
+    repository.mark_daily_summary_fragment_sent(
+        run.run_id,
+        0,
+        attempted_at=attempted_at,
+        message_id="late-success",
+        sent_at=datetime(2026, 4, 24, 8, 3),
+    )
+    repository.complete_daily_summary_run(run.run_id, finished_at=datetime(2026, 4, 24, 8, 4))
+
+    fragment = repository.list_daily_summary_fragments(run.run_id)[0]
+    assert fragment.status == "sent"
+    assert fragment.message_id == "late-success"
+    with repository.connect() as connection:
+        run_status = connection.execute(
+            "SELECT status FROM daily_summary_delivery_runs WHERE run_id = ?",
+            (run.run_id,),
+        ).fetchone()["status"]
+    assert run_status == "sent"
 
 
 def test_schema_initialization_takes_immediate_lock_before_reading_version() -> None:
