@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 @dataclass(frozen=True)
@@ -554,6 +554,14 @@ CHART_ALERT_OUTBOX_MIGRATION = SchemaMigration(
     ),
 )
 
+DAILY_SUMMARY_FRAGMENT_ATTEMPT_MIGRATION = SchemaMigration(
+    version=13,
+    name="daily_summary_fragment_attempted_at",
+    statements=(
+        "ALTER TABLE daily_summary_delivery_fragments ADD COLUMN attempted_at TEXT",
+    ),
+)
+
 
 SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     KRX_MARKET_SNAPSHOT_MIGRATION,
@@ -567,6 +575,7 @@ SCHEMA_MIGRATIONS: tuple[SchemaMigration, ...] = (
     NEWS_EVIDENCE_LINEAGE_MIGRATION,
     TOSS_STOCK_UNIVERSE_CACHE_MIGRATION,
     CHART_ALERT_OUTBOX_MIGRATION,
+    DAILY_SUMMARY_FRAGMENT_ATTEMPT_MIGRATION,
 )
 
 
@@ -802,21 +811,28 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 
 def initialize_schema(connection: sqlite3.Connection) -> SchemaMigrationStatus:
-    current_version = _get_user_version(connection)
-    if current_version > SCHEMA_VERSION:
-        raise RuntimeError(
-            f"Database schema version {current_version} is newer than supported version {SCHEMA_VERSION}."
-        )
-    if current_version == 0:
-        for statement in SCHEMA_STATEMENTS:
-            connection.execute(statement)
-        connection.execute(SCHEMA_MIGRATIONS_TABLE_STATEMENT)
-        _set_user_version(connection, 1)
-        _record_schema_migration(connection, 1, BASELINE_MIGRATION_NAME)
-    else:
-        connection.execute(SCHEMA_MIGRATIONS_TABLE_STATEMENT)
-        _record_baseline_if_needed(connection)
-    return apply_schema_migrations(connection)
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        current_version = _get_user_version(connection)
+        if current_version > SCHEMA_VERSION:
+            raise RuntimeError(
+                f"Database schema version {current_version} is newer than supported version {SCHEMA_VERSION}."
+            )
+        if current_version == 0:
+            for statement in SCHEMA_STATEMENTS:
+                connection.execute(statement)
+            connection.execute(SCHEMA_MIGRATIONS_TABLE_STATEMENT)
+            _set_user_version(connection, 1)
+            _record_schema_migration(connection, 1, BASELINE_MIGRATION_NAME)
+        else:
+            connection.execute(SCHEMA_MIGRATIONS_TABLE_STATEMENT)
+            _record_baseline_if_needed(connection)
+        status = apply_schema_migrations(connection)
+    except BaseException:
+        connection.rollback()
+        raise
+    connection.commit()
+    return status
 
 
 def apply_schema_migrations(

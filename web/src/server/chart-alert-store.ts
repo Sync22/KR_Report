@@ -125,28 +125,23 @@ export async function writeChartAlertEvent(event: ChartAlertEvent, folder = char
 
 export async function acquireChartAlertLock(filePath: string): Promise<(() => Promise<void>) | null> {
   await mkdir(path.dirname(filePath), { recursive: true });
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const token = randomUUID();
-    const contents = JSON.stringify({ pid: process.pid, token, started_at: new Date().toISOString() });
-    try {
-      const handle = await open(filePath, "wx", 0o600);
-      try { await handle.writeFile(contents, "utf8"); await handle.sync(); }
-      catch (error) { await handle.close(); await unlink(filePath).catch(() => undefined); throw error; }
-      await handle.close();
-      return async () => {
-        try {
-          const owner = JSON.parse(await readFile(filePath, "utf8")) as Record<string, unknown>;
-          if (owner.token === token && owner.pid === process.pid) await unlink(filePath);
-        } catch { /* A replacement owner or already-removed lease must remain untouched. */ }
-      };
-    } catch (error) {
-      if (record(error).code !== "EEXIST") throw error;
-      const stale = await staleLock(filePath);
-      if (!stale || attempt > 0) return null;
-      await unlink(filePath).catch(() => undefined);
-    }
+  const token = randomUUID();
+  const contents = JSON.stringify({ pid: process.pid, token, started_at: new Date().toISOString() });
+  try {
+    const handle = await open(filePath, "wx", 0o600);
+    try { await handle.writeFile(contents, "utf8"); await handle.sync(); }
+    catch (error) { await handle.close(); await unlink(filePath).catch(() => undefined); throw error; }
+    await handle.close();
+    return async () => {
+      try {
+        const owner = JSON.parse(await readFile(filePath, "utf8")) as Record<string, unknown>;
+        if (owner.token === token && owner.pid === process.pid) await unlink(filePath);
+      } catch { /* A replacement owner or already-removed lease must remain untouched. */ }
+    };
+  } catch (error) {
+    if (record(error).code !== "EEXIST") throw error;
+    return null;
   }
-  return null;
 }
 
 function localStateRoot(): string {
@@ -213,13 +208,4 @@ function validateState(input: unknown): ChartAlertState {
   })) throw new TypeError("invalid-chart-alert-state");
   return { schemaVersion: 1, running: state.running, startedAt: state.startedAt, lastPollAt: state.lastPollAt,
     lastError: state.lastError, watches, events: state.events as ChartAlertEvent[] };
-}
-
-async function staleLock(filePath: string): Promise<boolean> {
-  try {
-    const owner = record(JSON.parse(await readFile(filePath, "utf8")));
-    if (!Number.isInteger(owner.pid) || Number(owner.pid) <= 0 || typeof owner.token !== "string") return false;
-    try { process.kill(Number(owner.pid), 0); return false; }
-    catch (error) { return record(error).code === "ESRCH"; }
-  } catch { return false; }
 }

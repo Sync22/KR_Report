@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { ChartAlertMonitorService } from "../src/server/chart-alert-monitor.ts";
-import { readChartAlertState } from "../src/server/chart-alert-store.ts";
+import { acquireChartAlertLock, readChartAlertState } from "../src/server/chart-alert-store.ts";
 
 function pattern(status) {
   return {
@@ -80,6 +80,19 @@ test("one report-alert monitor owns the shared local poll lease", async () => {
   } finally {
     await first.pause().catch(() => undefined);
     await second.pause().catch(() => undefined);
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
+test("report-alert lock recovery preserves stale-looking locks for manual verification", async () => {
+  const folder = await mkdtemp(path.join(os.tmpdir(), "chart-alert-stale-lock-"));
+  const lockPath = path.join(folder, "report-alerts.json.lock");
+  const contents = JSON.stringify({ pid: 2_000_000_000, token: "old-owner", started_at: "2026-10-22T00:00:00.000Z" });
+  try {
+    await writeFile(lockPath, contents);
+    assert.equal(await acquireChartAlertLock(lockPath), null);
+    assert.equal(await readFile(lockPath, "utf8"), contents);
+  } finally {
     await rm(folder, { recursive: true, force: true });
   }
 });

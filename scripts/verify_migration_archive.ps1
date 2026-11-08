@@ -43,6 +43,37 @@ Write-Output "- checksum_file: $($resolvedChecksum.Path)"
 
 $sensitiveEntries = @(
     ".env",
+    ".env.*",
+    "*.env",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "*.crt",
+    "*.cer",
+    "*.der",
+    "*.db",
+    "*.sqlite",
+    "*.sqlite3",
+    "*.sqlite-wal",
+    "*.sqlite-shm",
+    "*.sqlite-journal",
+    "*.sqlite3-wal",
+    "*.sqlite3-shm",
+    "*.sqlite3-journal",
+    "*.db-wal",
+    "*.db-shm",
+    "*.db-journal",
+    "*.zip",
+    "*.zip.sha256",
+    "*.7z",
+    "*.tsbuildinfo",
+    "*.pyc",
+    "*.pyo",
+    "*.pyd",
+    '*$py.class',
+    "*.code-workspace",
+    ".tmp_admin_gui.*",
     "data/access_code.json",
     "data/backups",
     "data/restore-smoke",
@@ -50,12 +81,67 @@ $sensitiveEntries = @(
     "Stock_Moniter_migration_*.zip.sha256",
     "*.log"
 )
+$sensitiveDirectories = @(
+    ".git",
+    ".codegraph",
+    ".codex",
+    ".codex-remote-attachments",
+    ".playwright-mcp",
+    ".vscode",
+    ".idea",
+    ".pytest_cache",
+    ".tmp_pytest",
+    ".ruff_cache",
+    ".mypy_cache",
+    ".venv",
+    "node_modules",
+    ".next",
+    "__pycache__",
+    "build",
+    "dist",
+    "error_logs",
+    "output",
+    "playwright-report",
+    "test-results",
+    "_tmp_webview",
+    "snapshots",
+    "*_snapshot",
+    "*.egg-info",
+    "operator_photo_inbox",
+    "docs/codex/operations",
+    "scripts/experimental/.venv-botasaurus",
+    "scripts/experimental/.venv-scrapling",
+    "scripts/experimental/.venv-kronos",
+    "scripts/experimental/.hf-kronos",
+    "scripts/experimental/.codegraph",
+    "scripts/experimental/codex_home_probe",
+    "scripts/experimental/node_tooling"
+)
 $archiveEntries = tar -tf $resolvedArchive.Path
 if ($LASTEXITCODE -ne 0) {
     throw "Archive entry listing failed with exit code $LASTEXITCODE archive=$($resolvedArchive.Path)"
 }
 Write-Output "- archive_entries_checked: $($archiveEntries.Count)"
 $normalizedArchiveEntries = @($archiveEntries | ForEach-Object { $_ -replace "\\", "/" })
+$archiveRootPrefix = $null
+$rootAgentEntries = @($normalizedArchiveEntries | Where-Object { $_ -eq "AGENTS.md" -or $_.EndsWith("/AGENTS.md") })
+if ($rootAgentEntries.Count -gt 0) {
+    $shortestRootAgentDepth = ($rootAgentEntries | ForEach-Object { ($_ -split "/").Count } | Measure-Object -Minimum).Minimum
+    $shortestRootAgentEntries = @($rootAgentEntries | Where-Object { ($_ -split "/").Count -eq $shortestRootAgentDepth })
+    if ($shortestRootAgentEntries.Count -eq 1) {
+        $rootAgentEntry = $shortestRootAgentEntries[0]
+        if ($rootAgentEntry -eq "AGENTS.md") {
+            $archiveRootPrefix = ""
+        }
+        else {
+            $archiveRootPrefix = $rootAgentEntry.Substring(0, $rootAgentEntry.Length - "/AGENTS.md".Length)
+        }
+    }
+}
+$allowedDatabaseEntry = $null
+if ($null -ne $archiveRootPrefix) {
+    $allowedDatabaseEntry = if ($archiveRootPrefix) { "$archiveRootPrefix/data/stock_monitor.db" } else { "data/stock_monitor.db" }
+}
 
 $requiredEntries = @(
     "AGENTS.md",
@@ -131,6 +217,26 @@ if ($missingRequiredEntries.Count -gt 0) {
 Write-Output "- required_entries: ok"
 
 function Test-SensitiveArchiveEntry([string]$NormalizedEntry, [string]$SensitiveEntry) {
+    $leaf = Split-Path -Leaf $NormalizedEntry
+    foreach ($directory in $sensitiveDirectories) {
+        if ($directory.Contains("/")) {
+            if ($NormalizedEntry -eq $directory -or $NormalizedEntry.StartsWith("$directory/") -or $NormalizedEntry.Contains("/$directory/")) {
+                return $true
+            }
+        }
+        elseif ($NormalizedEntry -split "/" | Where-Object { $_ -like $directory }) {
+            return $true
+        }
+    }
+    if ($NormalizedEntry -eq $allowedDatabaseEntry -and $SensitiveEntry -in @("*.db", "*.sqlite", "*.sqlite3")) {
+        return $false
+    }
+    if ($SensitiveEntry -eq ".env.*" -and $leaf -like ".env.*" -and $leaf -notlike "*.example") {
+        return $true
+    }
+    if ($SensitiveEntry -eq ".env.*") {
+        return $false
+    }
     if ($NormalizedEntry -eq $SensitiveEntry) {
         return $true
     }
@@ -149,11 +255,8 @@ function Test-SensitiveArchiveEntry([string]$NormalizedEntry, [string]$Sensitive
     if ($SensitiveEntry -eq "*.log" -and $NormalizedEntry.EndsWith(".log")) {
         return $true
     }
-    if ($SensitiveEntry -like "Stock_Moniter_migration_*") {
-        $leaf = Split-Path -Leaf $NormalizedEntry
-        if ($leaf -like $SensitiveEntry) {
-            return $true
-        }
+    if ($SensitiveEntry.Contains("*") -and $leaf -like $SensitiveEntry) {
+        return $true
     }
     return $false
 }

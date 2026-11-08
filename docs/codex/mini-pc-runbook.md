@@ -75,12 +75,15 @@ External `web-view` runtime note:
 
 ### Next.js Operations Web View
 
+Next.js 16.4.5 declares Node `>=20.9.0`, but this app opens SQLite with `node:sqlite` `DatabaseSync` options `readOnly` and `timeout`, so its effective runtime minimum is Node `v22.16.0`. The last recorded Operations-PC runtime (`v24.22.1` on 2026-10-22) meets that minimum, but is historical evidence only. Recheck `node --version` using the same account and PATH as the web-view task before rollout.
+
 The Next.js web-view under `web/` replaced the Python web-view listener on `127.0.0.1:8780` on 2026-10-20. The existing tunnel target is unchanged. Python collection, SQLite writes, scheduler jobs, Telegram, `admin-gui`, and `operator-review` remain on their existing paths. All public GET route handlers run directly in Next. Stored projections use Node `node:sqlite` with `readOnly` and `query_only`; bounded Naver/Toss references use fixed endpoints and server-derived symbols. The daily API's optional Naver market-top query runs only when the stored same-date eligibility permits it. The rotation API uses exact-date Toss ETF rows; `/assets/cycle.jpg` serves only the fixed project image. The startup script passes the resolved DB, calendar, rotation-coordinate path, and eligible Toss settings to the Next server process only; secrets are not placed in browser code, command-line arguments, API responses, or logs. Next has no access-code or login routes by design. The 2026-10-20 cutover used build `MRZVh9lSv3ga1TRq2_7js`; external provider smoke was not run because the public hostname was unavailable in this workspace.
 
 The developer-PC notes from the 2026-10-12 preview used Node `v24.15.0` and npm `11.13.0`; this is not verification of the N100 runtime. Recheck the installed runtime after the move. From the project root `C:\Users\MING\Codex\02.Stock_Moniter` in PowerShell:
 
 ```powershell
 Push-Location .\web
+node --version
 npm run build
 Pop-Location
 .\scripts\start_next_web_view.ps1 -Status
@@ -170,10 +173,10 @@ Run the source checks from the project root:
 
 Before DB checks, confirm a recent verified backup and run
 `.\.venv\Scripts\python.exe -m stock_monitor db-verify --json`. Rehearse schema
-12 only with
+13 only with
 `.\.venv\Scripts\python.exe -m stock_monitor db-migration-rehearsal --json`
 against the temporary copy; require `writes_source_db=false` and a successful
-copy verify. Never run `db-migrate` against the live operating DB in this test.
+copy verify at target schema 13. Never run `db-migrate` against the live operating DB in this test.
 If backup or readiness is missing, stop that DB portion and report it.
 
 For notification copy, use
@@ -231,6 +234,63 @@ DB schema migration.
 5. Verify a recent database backup exists before direct DB/WAL checks. If it does not, use the standard backup and restore-smoke steps in [First Verification Commands](#first-verification-commands); keep the original operating DB in place.
 6. Run `python -m stock_monitor db-verify` and the existing mini-PC readiness checks from [First Verification Commands](#first-verification-commands). Resolve DB or runtime failures before starting Next.
 
+#### Schema 13 migration, backup, and rollback
+
+Schema 13 adds nullable `attempted_at` to daily-summary fragments. It does not rebuild a table or delete schema-12 history. `db-migrate` applies migrations in a transaction; a failed migration rolls back that transaction. Next opens SQLite read-only and must never be used to migrate the database.
+
+Before replacing the installed source, schedule an approved maintenance window. Let any active Telegram request finish and confirm its sender process has exited before stopping SQLite writers; schema-12 did not persist fragment attempt timestamps, so a forced stop during a POST leaves an outcome that cannot be recovered from the DB. On the current schema-12 installation, verify and smoke-test the pre-migration backup with the schema-12 code; the schema-13 verifier will correctly report a schema-12 copy as not current:
+
+```powershell
+.\.venv\Scripts\python.exe -m stock_monitor db-verify --json
+.\.venv\Scripts\python.exe -m stock_monitor db-backup --tag pre-schema13
+.\.venv\Scripts\python.exe -m stock_monitor db-restore-smoke .\data\backups\<exact-pre-schema13-backup-name>.db
+```
+
+Keep this backup outside Git and migration archives. After updating the source and locked web dependencies, verify Node with the web-view task's account, then run the migration preview and rehearsal against the untouched operating DB:
+
+```powershell
+Push-Location .\web
+node --version
+npm ci
+npm run typecheck
+npm run build
+Pop-Location
+.\.venv\Scripts\python.exe -m stock_monitor db-migrate --dry-run
+.\.venv\Scripts\python.exe -m stock_monitor db-migration-rehearsal --json
+```
+
+Proceed only when rehearsal reports source DB unchanged, target schema 13, and successful copy verification. Apply the migration explicitly, then verify schema, integrity, and foreign keys before restarting any writer. After the application health check passes, create and restore-smoke a post-migration backup using schema-13 code:
+
+Before the first post-upgrade notification, review any existing `daily_summary_delivery_runs` in `ambiguous` or `superseded` state whose sent fragment content overlaps the requested retry. The new sender blocks retries that could replay those fragments; reconcile each outstanding run before resuming scheduled notifications.
+
+```powershell
+.\.venv\Scripts\python.exe -m stock_monitor db-migrate
+.\.venv\Scripts\python.exe -m stock_monitor db-verify --json
+.\.venv\Scripts\python.exe -m stock_monitor db-backup --tag post-schema13
+.\.venv\Scripts\python.exe -m stock_monitor db-restore-smoke .\data\backups\<exact-post-schema13-backup-name>.db
+```
+
+If migration fails, do not start the updated workers. Keep the operating DB and pre-migration backup, run `db-verify --json`, and stop for diagnosis if schema 12 or integrity is not confirmed. Do not repeatedly retry a failed migration without a successful copy rehearsal.
+
+If migration commits but the updated app cannot start or pass its health check, stop the new web-view process and all scheduled/database-writing processes first. Preserve the failed schema-13 DB and its `-wal`/`-shm` files together with logs. Restore the verified pre-schema13 backup and the previous matching application release as one rollback; do not run old code against schema 13 or new code against schema 12 unless that pairing is separately verified. Any writes made after the pre-migration backup will be absent from the restored DB and must be reconciled from the preserved failed copy before work resumes.
+
+The project has no command that replaces the operating DB. For an approved offline restore, fill in the absolute DB path reported by `db-verify` and the exact verified backup path; run only after confirming that every reader and writer has stopped. This moves the current DB and any SQLite sidecars into a timestamped recovery directory instead of deleting them:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$databasePath = '<absolute configured DB path>'
+$backupPath = (Resolve-Path -LiteralPath '<absolute pre-schema13 backup path>').Path
+if (-not [System.IO.Path]::IsPathRooted($databasePath) -or -not (Test-Path -LiteralPath $databasePath -PathType Leaf)) { throw 'Verify the configured DB path and confirm the current DB exists.' }
+$recoveryDir = Join-Path (Split-Path -Parent $databasePath) ('schema13-failed-' + (Get-Date -Format 'yyyyMMdd_HHmmss_fff'))
+New-Item -ItemType Directory -Path $recoveryDir | Out-Null
+foreach ($path in @($databasePath, "$databasePath-wal", "$databasePath-shm")) {
+    if (Test-Path -LiteralPath $path) { Move-Item -LiteralPath $path -Destination $recoveryDir }
+}
+Copy-Item -LiteralPath $backupPath -Destination $databasePath
+```
+
+Run `db-verify --json` with the previous release and confirm schema `12/12` before restarting it. Never run this restore while an app, scheduler task, or DB reader has the file open.
+
 #### Start, check, stop, and restart
 
 ```powershell
@@ -281,7 +341,7 @@ Current important behavior:
 
 - daily summary notification filters default to `2+` reports and target-price required
 - intraday alert first page uses `7` stock blocks
-- a Telegram send with an uncertain outcome is held as `ambiguous` and is not automatically retried. Check the destination first; only when the message is confirmed absent should an operator explicitly retry with `scheduled-notify --allow-repeat --allow-late`, `scheduled-market-briefing-slot --slot <mood|lunch|preclose> --allow-repeat --allow-late`, or `process-intraday-alerts --retry-ambiguous`. A confirmed-sent ambiguous item stays held to avoid a duplicate.
+- a Telegram send with an uncertain outcome is held as `ambiguous` and is not automatically retried. Before an explicit retry, confirm both that the message is absent and that the original sender process has exited; the timeout-plus-grace stale threshold alone does not prove the worker stopped. Use `scheduled-notify --allow-repeat --allow-late`, `scheduled-market-briefing-slot --slot <mood|lunch|preclose> --allow-repeat --allow-late`, or `process-intraday-alerts --retry-ambiguous`. A confirmed-sent ambiguous item stays held to avoid a duplicate.
 - Telegram supports `다음`, `전부`, `처음`, `/종목검색`, `/종목코드`, `/메모`, `/도움말`, `/명령어`
 - `admin-gui` is a local control-capable page, not a shared user page
 - `web-view` exists as a separate GET-only user page and is the only candidate for future friend-facing sharing
@@ -380,6 +440,7 @@ Default behavior:
 
 - runs `mini-pc-preflight --require-backup --require-env` first on the source desktop; add `--require-mini-pc-profile` only on the target mini PC after setting `operation_profile=mini-pc`
 - includes `data/stock_monitor.db`
+- refuses archive creation while the database's `-wal`, `-shm`, or `-journal` sidecars exist; stop all DB readers/writers and ensure SQLite has closed cleanly before retrying. Do not delete sidecars manually.
 - excludes `.env`
 - always excludes `data/access_code.json`; set a fresh entry code on the target host with `python -m stock_monitor access-code set`
 - excludes `data/backups`
@@ -406,7 +467,7 @@ Verify the archive after copying it to the target host:
 
 The command reads the adjacent `.sha256` sidecar by default and fails if the copied zip does not match.
 The verifier also checks that required project entries such as `AGENTS.md`, `pyproject.toml`, `src/stock_monitor/cli.py`, `data/stock_monitor.db`, canonical docs, migration scripts, external-readiness scripts, and mini-PC scheduler scripts exist inside the zip.
-Use `-FailOnSensitiveEntries` when validating a manually created archive or any archive intended for non-local transfer; it fails if `.env`, `data/access_code.json`, `data/backups`, `data/restore-smoke`, log files, or nested migration zip files appear inside the zip.
+Use `-FailOnSensitiveEntries` when validating a manually created archive or any archive intended for non-local transfer; it fails if secrets, DB backup files or SQLite sidecars, `data/backups`, `data/restore-smoke`, local build/cache artifacts, log files, or nested migration zip files appear inside the zip. The required project-root `data/stock_monitor.db` remains allowed.
 
 ## Restore Draft
 

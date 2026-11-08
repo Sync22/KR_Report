@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import errno
 import json
 import os
 import re
@@ -291,20 +290,13 @@ def _chart_alert_dispatch_lock(spool_dir: Path):
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     token = uuid4().hex
     contents = json.dumps({"pid": os.getpid(), "token": token, "started_at": datetime.now(timezone.utc).isoformat()})
-    for attempt in range(2):
-        try:
-            with lock_path.open("x", encoding="utf-8") as handle:
-                handle.write(contents)
-                handle.flush()
-                os.fsync(handle.fileno())
-            break
-        except FileExistsError:
-            if attempt or not _stale_dispatch_lock(lock_path):
-                raise ValueError("chart-alert-dispatch-owned-elsewhere")
-            try:
-                lock_path.unlink()
-            except FileNotFoundError:
-                pass
+    try:
+        with lock_path.open("x", encoding="utf-8") as handle:
+            handle.write(contents)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except FileExistsError:
+        raise ValueError("chart-alert-dispatch-owned-elsewhere")
     try:
         yield
     finally:
@@ -314,21 +306,6 @@ def _chart_alert_dispatch_lock(spool_dir: Path):
                 lock_path.unlink()
         except (AttributeError, FileNotFoundError, OSError, UnicodeError, json.JSONDecodeError):
             pass
-
-
-def _stale_dispatch_lock(lock_path: Path) -> bool:
-    try:
-        owner = json.loads(lock_path.read_text(encoding="utf-8"))
-        pid = owner.get("pid") if isinstance(owner, dict) else None
-        if type(pid) is not int or pid <= 0 or not isinstance(owner.get("token"), str):
-            return False
-        try:
-            os.kill(pid, 0)
-            return False
-        except OSError as error:
-            return isinstance(error, ProcessLookupError) or error.errno == errno.ESRCH or getattr(error, "winerror", None) in (87, 1168)
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return False
 
 
 def _require_chart_alert_table(repository: StockMonitorRepository) -> None:

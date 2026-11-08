@@ -755,7 +755,9 @@ Current official spec snapshot:
 Do not paste credentials into chat, source files, commands, screenshots, logs,
 or test fixtures.
 
-Add only the real values to the local ignored `.env.toss-openapi` file. Use
+Add only the real values to the local ignored `.env.toss-openapi` file. This
+file contains secrets and is always excluded from migration archives, including
+when `.env` is intentionally included. Use
 [.env.toss-openapi.example](../../.env.toss-openapi.example) as the
 field template:
 

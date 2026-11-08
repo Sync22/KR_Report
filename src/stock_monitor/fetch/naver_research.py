@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -29,6 +30,7 @@ class PageInspection:
     api_pages_fetched: int
     api_items: tuple[dict[str, Any], ...]
     candidate_rows: tuple[CandidateRow, ...]
+    api_item_parse_error_count: int = 0
 
 
 def inspect_company_page(
@@ -67,10 +69,18 @@ def fetch_reports(
     )
     collected_at = datetime.now(ZoneInfo(config.timezone))
     reports: list[Report] = []
+    api_item_parse_error_count = 0
     for item in inspection.api_items:
-        parsed = _parse_api_item(item, collected_at, config.timezone, config.holiday_overrides)
+        parsed, malformed_write_date = _parse_api_item_result(item, collected_at, config.timezone, config.holiday_overrides)
+        api_item_parse_error_count += malformed_write_date
         if parsed is not None:
             reports.append(parsed)
+    if api_item_parse_error_count:
+        inspection = replace(inspection, api_item_parse_error_count=api_item_parse_error_count)
+        logging.getLogger(__name__).warning(
+            "Skipped %d Naver research API item(s) with malformed writeDate values.",
+            api_item_parse_error_count,
+        )
 
     if reports:
         return reports[:limit] if limit is not None else reports, inspection
@@ -117,13 +127,20 @@ def parse_reports_from_inspection_fixture_payload(
     timezone = str(payload.get("timezone") or "Asia/Seoul")
     collected_raw = payload.get("collected_at")
     collected_at = datetime.fromisoformat(str(collected_raw)) if collected_raw else datetime.now(ZoneInfo(timezone))
-    api_reports = [
-        report
-        for item in payload.get("api_items", [])
-        if isinstance(item, dict)
-        for report in [_parse_api_item(item, collected_at, timezone, holiday_overrides)]
-        if report is not None
-    ]
+    api_reports: list[Report] = []
+    api_item_parse_error_count = 0
+    for item in payload.get("api_items", []):
+        if not isinstance(item, dict):
+            continue
+        report, malformed_write_date = _parse_api_item_result(item, collected_at, timezone, holiday_overrides)
+        api_item_parse_error_count += malformed_write_date
+        if report is not None:
+            api_reports.append(report)
+    if api_item_parse_error_count:
+        logging.getLogger(__name__).warning(
+            "Skipped %d Naver research API item(s) with malformed writeDate values.",
+            api_item_parse_error_count,
+        )
     if api_reports:
         return api_reports
 
@@ -346,12 +363,27 @@ def _parse_api_item(
     timezone: str,
     holiday_overrides: frozenset[datetime.date] | frozenset | set | None = None,
 ) -> Report | None:
+    return _parse_api_item_result(item, collected_at, timezone, holiday_overrides)[0]
+
+
+def _parse_api_item_result(
+    item: dict[str, Any],
+    collected_at: datetime,
+    timezone: str,
+    holiday_overrides: frozenset[datetime.date] | frozenset | set | None = None,
+) -> tuple[Report | None, int]:
+    write_date = item.get("writeDate")
+    if not isinstance(write_date, str):
+        return None, 1
+    published_at = _parse_published_at(write_date, timezone)
+    if published_at is None:
+        return None, 1
+
     stock_name = item.get("itemName")
     title = item.get("title")
     broker_name = item.get("brokerName")
-    published_at = _parse_published_at(item.get("writeDate", ""), timezone)
     if not all([stock_name, title, broker_name, published_at]):
-        return None
+        return None, 0
 
     goal_price = item.get("goalPrice")
     target_price_raw = str(goal_price) if goal_price not in {None, ""} else None
@@ -376,7 +408,7 @@ def _parse_api_item(
         opinion_normalized=normalize_opinion(item.get("opinion") or item.get("opinionText")),
         source_url=source_url,
         source_id=source_id,
-    ).with_identity()
+    ).with_identity(), 0
 
 
 def _extract_core_fields(
@@ -433,14 +465,17 @@ def _parse_published_at(value: str, timezone: str) -> datetime | None:
         if not match:
             continue
         parts = {key: int(raw) for key, raw in match.groupdict(default="0").items()}
-        return datetime(
-            year=parts["year"],
-            month=parts["month"],
-            day=parts["day"],
-            hour=parts.get("hour", 0),
-            minute=parts.get("minute", 0),
-            tzinfo=ZoneInfo(timezone),
-        )
+        try:
+            return datetime(
+                year=parts["year"],
+                month=parts["month"],
+                day=parts["day"],
+                hour=parts.get("hour", 0),
+                minute=parts.get("minute", 0),
+                tzinfo=ZoneInfo(timezone),
+            )
+        except ValueError:
+            return None
     return None
 
 

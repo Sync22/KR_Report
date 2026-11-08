@@ -10,6 +10,18 @@ Current operating state, delivery sequence, roadmap, and work board.
 <!-- Merged from: docs/codex/operating-guide.md -->
 ## Current Work
 
+### Telegram delivery and Naver parser hardening (2026-11-08, development-only)
+
+KRX/KIND notices now claim a durable `sending` delivery row for the date and acceptance-number channel before Telegram `sendMessage`. Each `sendMessage` makes one POST attempt; a definite API rejection is `failed`, while transport errors, timeouts, HTTP 5xx, and invalid responses are `ambiguous`. An interrupted `sending` claim becomes `ambiguous` after the request timeout plus a grace period and is not automatically retried. Safe Telegram read requests retain their configured retries.
+
+After reviewing an ambiguous notice, an operator can make one explicit retry attempt with `krx-kind-market-action-check --retry-ambiguous`; this flag defaults off and scheduled paths do not set it. Before retrying, confirm both that the message was not delivered and that the original sender process has exited; the timeout-plus-grace stale threshold alone does not prove the worker stopped. A concurrent Daily Summary caller that cannot claim the remaining fragments reports the run as still in progress, so it cannot record whole-run success. Telegram command replies advance the existing update cursor after an ambiguous outcome to suppress replay, while leaving delivered-page counts unchanged; definite rejections keep the cursor available for retry.
+
+Daily Summary fragments are claimed as `sending` with a persisted attempt time before POST. SQLite serializes the claim so concurrent workers cannot send the same fragment. A same-signature manual retry resumes the stored run and sends only unresolved fragments; a changed summary is blocked while an incomplete run contains sent fragments. Legacy `superseded` runs are blocked when their sent fragment content overlaps the requested retry. A stale interrupted fragment becomes `ambiguous`; automatic resend remains held until operator review. Schema migration 13 adds the nullable attempt-time column without rebuilding tables or removing schema-12 history. Schema initialization and migration now acquire `BEGIN IMMEDIATE` before reading `user_version` and roll back on failure.
+
+Naver API rows with a non-string or invalid `writeDate` are skipped individually; valid rows in the same batch continue. The shared date parser also returns no date for impossible DOM dates instead of aborting fallback parsing. The malformed-date count is logged and included in the poll operation event.
+
+The focused Python regression set passed **128 tests** using temporary databases, coordinated subprocess initialization, and fake Telegram responses. No live Telegram send, operating database write, scheduler change, or deployment was performed. Operations-PC concurrency and restart behavior remain unverified.
+
 ### Report-focus Chart Lab alert path (2026-10-22, development-only)
 
 The local `차트` tab now has a separately controlled report-focus watch. The route revalidates selected-date `리포트 집중` evidence, caps the watch at three symbols, and polls one bounded Toss 1-minute candle page per due symbol only during the Toss KRX regular session. A single per-user lock prevents the development preview and operating service from both owning the monitor. First poll establishes a baseline; only later `m1-v1` state transitions are written to the local event spool. Candle finality stays unknown.

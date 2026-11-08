@@ -159,6 +159,120 @@ def test_create_migration_archive_excludes_secrets_and_transient_files_by_defaul
     assert ".sha256" in script
 
 
+def test_create_migration_archive_always_excludes_toss_credentials_even_with_include_env(tmp_path) -> None:
+    project = tmp_path / "project"
+    scripts = project / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "create_migration_archive.ps1").write_text(
+        (PROJECT_ROOT / "scripts" / "create_migration_archive.ps1").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (project / ".env").write_text("DUMMY_ENV=value\n", encoding="utf-8")
+    (project / ".env.toss-openapi").write_text("DUMMY_TOKEN=value\n", encoding="utf-8")
+    (project / ".env.local").write_text("DUMMY_SECRET=value\n", encoding="utf-8")
+    (project / ".env.example").write_text("DUMMY_TEMPLATE=value\n", encoding="utf-8")
+    (project / ".env.toss-openapi.example").write_text("DUMMY_TEMPLATE=value\n", encoding="utf-8")
+    for filename in [
+        "private.pem", "private.key", "private.p12", "private.pfx", "private.crt", "private.cer", "private.der",
+        "deploy-key.pem", "telegram.env",
+    ]:
+        (project / filename).write_text("DUMMY_PRIVATE=value\n", encoding="utf-8")
+    (project / "nested" / ".env").parent.mkdir()
+    (project / "nested" / ".env").write_text("DUMMY_NESTED=value\n", encoding="utf-8")
+    (project / "data").mkdir()
+    (project / "data" / "stock_monitor.db").write_text("dummy db", encoding="utf-8")
+    photo = project / "data" / "operator_photo_inbox" / "nested" / "photo.jpg"
+    photo.parent.mkdir(parents=True)
+    photo.write_bytes(b"dummy photo")
+    (project / "archive.zip").write_text("dummy archive", encoding="utf-8")
+    (project / "archive.7z").write_text("dummy archive", encoding="utf-8")
+    for directory in [
+        ".git", ".codegraph", ".codex", ".codex-remote-attachments", ".playwright-mcp", ".vscode", ".idea",
+        "node_modules", ".next", ".tmp_pytest", "test-results", "web/node_modules", "web/.next",
+        "docs/codex/operations", "scripts/experimental/.venv-botasaurus", "scripts/experimental/.venv-scrapling",
+        "scripts/experimental/.venv-kronos", "scripts/experimental/.hf-kronos", "scripts/experimental/.codegraph",
+        "scripts/experimental/codex_home_probe", "scripts/experimental/node_tooling",
+    ]:
+        artifact = project / directory / "private.txt"
+        artifact.parent.mkdir(parents=True)
+        artifact.write_text("local artifact\n", encoding="utf-8")
+    archive_path = tmp_path / "migration.zip"
+    script_path = scripts / "create_migration_archive.ps1"
+    command = (
+        "Import-Module Microsoft.PowerShell.Utility; & "
+        f"'{str(script_path).replace(chr(39), chr(39) * 2)}' -SkipPreflight -IncludeEnv "
+        f"-DestinationPath '{str(archive_path).replace(chr(39), chr(39) * 2)}'"
+    )
+
+    result = subprocess.run(
+        [
+            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command,
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=project,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    with zipfile.ZipFile(archive_path) as archive:
+        assert ".env" in archive.namelist()
+        assert ".env.example" in archive.namelist()
+        assert ".env.toss-openapi.example" in archive.namelist()
+        assert "data/stock_monitor.db" in archive.namelist()
+        assert "nested/.env" not in archive.namelist()
+        assert ".env.toss-openapi" not in archive.namelist()
+        assert ".env.local" not in archive.namelist()
+        assert not any(
+            name != ".env" and name.endswith((".pem", ".key", ".p12", ".pfx", ".crt", ".cer", ".der", ".env", ".zip", ".7z"))
+            for name in archive.namelist()
+        )
+        assert not any(
+            set(name.split("/"))
+            & {
+                ".git", ".codegraph", ".codex", ".codex-remote-attachments", ".playwright-mcp", ".vscode",
+                ".idea", "node_modules", ".next", ".tmp_pytest", "test-results", "operator_photo_inbox",
+                "operations", ".venv-botasaurus", ".venv-scrapling", ".venv-kronos", ".hf-kronos",
+                ".codegraph", "codex_home_probe", "node_tooling",
+            }
+            for name in archive.namelist()
+        )
+
+
+def test_create_migration_archive_refuses_sqlite_sidecars(tmp_path) -> None:
+    project = tmp_path / "project"
+    scripts = project / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "create_migration_archive.ps1").write_text(
+        (PROJECT_ROOT / "scripts" / "create_migration_archive.ps1").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    database_dir = project / "data"
+    database_dir.mkdir()
+    (database_dir / "stock_monitor.db").write_bytes(b"dummy database")
+    for suffix in ("-wal", "-shm", "-journal"):
+        (database_dir / f"stock_monitor.db{suffix}").write_bytes(b"dummy sidecar")
+
+    archive_path = tmp_path / "migration.zip"
+    command = (
+        "Import-Module Microsoft.PowerShell.Utility; & "
+        f"'{str(scripts / 'create_migration_archive.ps1').replace(chr(39), chr(39) * 2)}' -SkipPreflight "
+        f"-DestinationPath '{str(archive_path).replace(chr(39), chr(39) * 2)}'"
+    )
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=project,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "SQLite sidecar" in output
+    assert not archive_path.exists()
+
+
 def test_verify_migration_archive_checks_sha256_sidecar() -> None:
     script = (PROJECT_ROOT / "scripts" / "verify_migration_archive.ps1").read_text(encoding="utf-8")
 
@@ -290,6 +404,169 @@ def test_verify_migration_archive_can_fail_for_sensitive_entries_inside_zip(tmp_
     assert result.returncode != 0
     assert "Sensitive migration entries are not allowed" in output
     assert "02.Stock_Moniter/.env" in output
+
+
+def test_verify_migration_archive_rejects_nested_toss_credentials_with_backslashes(tmp_path) -> None:
+    archive_path = tmp_path / "manual_toss_secret.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        _write_required_migration_entries(archive)
+        archive.writestr(r"02.Stock_Moniter\nested\.env.toss-openapi", "DUMMY_TOKEN=value\n")
+        archive.writestr("02.Stock_Moniter/.env.local", "DUMMY_SECRET=value\n")
+    digest = hashlib.sha256(archive_path.read_bytes()).hexdigest().upper()
+    archive_path.with_suffix(archive_path.suffix + ".sha256").write_text(
+        f"{digest}  {archive_path.name}\n", encoding="ascii"
+    )
+
+    result = subprocess.run(
+        [
+            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+            str(PROJECT_ROOT / "scripts" / "verify_migration_archive.ps1"),
+            "-ArchivePath", str(archive_path), "-FailOnSensitiveEntries",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "Sensitive migration entries are not allowed" in output
+    assert "02.Stock_Moniter/nested/.env.toss-openapi" in output
+    assert "02.Stock_Moniter/.env.local" in output
+
+
+def test_verify_migration_archive_rejects_private_keys_and_archives(tmp_path) -> None:
+    archive_path = tmp_path / "manual_private_files.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        _write_required_migration_entries(archive)
+        for filename in [
+            "private.pem", "private.key", "private.p12", "private.pfx", "private.crt", "private.cer", "private.der",
+            "deploy-key.pem", "telegram.env", "backup.zip", "bundle.7z",
+        ]:
+            archive.writestr(f"02.Stock_Moniter/nested/{filename}", "DUMMY_PRIVATE=value\n")
+        archive.writestr("02.Stock_Moniter/.git/config", "dummy metadata\n")
+        archive.writestr("02.Stock_Moniter/web/node_modules/pkg/file.js", "dummy metadata\n")
+        archive.writestr("02.Stock_Moniter/web/.next/cache/file", "dummy metadata\n")
+        archive.writestr("02.Stock_Moniter/data/operator_photo_inbox/nested/photo.jpg", "dummy photo")
+        archive.writestr("02.Stock_Moniter/data/other.db", "dummy database")
+        archive.writestr("02.Stock_Moniter/nested/private.sqlite", "dummy database")
+        archive.writestr("02.Stock_Moniter/nested/private.sqlite3", "dummy database")
+        archive.writestr("02.Stock_Moniter/nested/data/stock_monitor.db", "duplicate database")
+        archive.writestr("02.Stock_Moniter/docs/codex/operations/local.md", "dummy metadata\n")
+        archive.writestr("02.Stock_Moniter/scripts/experimental/.venv-botasaurus/pyvenv.cfg", "dummy metadata\n")
+        archive.writestr("02.Stock_Moniter/scripts/experimental/.hf-kronos/cache.bin", "dummy metadata\n")
+        archive.writestr("02.Stock_Moniter/scripts/experimental/codex_home_probe/state.json", "dummy metadata\n")
+        for filename in [
+            "web/tsconfig.tsbuildinfo", "nested/compiled.pyc", "nested/compiled.pyo", "nested/compiled.pyd",
+            "nested/workspace.code-workspace", "nested/.tmp_admin_gui.session",
+        ]:
+            archive.writestr(f"02.Stock_Moniter/{filename}", "dummy local artifact\n")
+        archive.writestr("02.Stock_Moniter/.env.toss-openapi.example", "DUMMY_TEMPLATE=value\n")
+    digest = hashlib.sha256(archive_path.read_bytes()).hexdigest().upper()
+    archive_path.with_suffix(archive_path.suffix + ".sha256").write_text(
+        f"{digest}  {archive_path.name}\n", encoding="ascii"
+    )
+
+    result = subprocess.run(
+        [
+            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+            str(PROJECT_ROOT / "scripts" / "verify_migration_archive.ps1"),
+            "-ArchivePath", str(archive_path), "-FailOnSensitiveEntries",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "Sensitive migration entries are not allowed" in output
+    assert all(
+        f"02.Stock_Moniter/nested/{filename}" in output
+        for filename in [
+            "private.pem", "private.key", "private.p12", "private.pfx", "private.crt", "private.cer", "private.der",
+            "deploy-key.pem", "telegram.env", "backup.zip", "bundle.7z",
+        ]
+    )
+    assert "02.Stock_Moniter/.git/config" in output
+    assert "02.Stock_Moniter/web/node_modules/pkg/file.js" in output
+    assert "02.Stock_Moniter/web/.next/cache/file" in output
+    assert "02.Stock_Moniter/data/operator_photo_inbox/nested/photo.jpg" in output
+    assert "02.Stock_Moniter/data/other.db" in output
+    assert "02.Stock_Moniter/nested/private.sqlite" in output
+    assert "02.Stock_Moniter/nested/private.sqlite3" in output
+    assert "02.Stock_Moniter/nested/data/stock_monitor.db" in output
+    assert "02.Stock_Moniter/docs/codex/operations/local.md" in output
+    assert "02.Stock_Moniter/scripts/experimental/.venv-botasaurus/pyvenv.cfg" in output
+    assert "02.Stock_Moniter/scripts/experimental/.hf-kronos/cache.bin" in output
+    assert "02.Stock_Moniter/scripts/experimental/codex_home_probe/state.json" in output
+    assert all(
+        f"02.Stock_Moniter/{filename}" in output
+        for filename in [
+            "web/tsconfig.tsbuildinfo", "nested/compiled.pyc", "nested/compiled.pyo", "nested/compiled.pyd",
+            "nested/workspace.code-workspace", "nested/.tmp_admin_gui.session",
+        ]
+    )
+    assert "02.Stock_Moniter/data/stock_monitor.db" not in output
+    assert "02.Stock_Moniter/.env.toss-openapi.example" not in output
+
+
+def test_verify_migration_archive_rejects_sqlite_sidecars(tmp_path) -> None:
+    archive_path = tmp_path / "manual_sqlite_sidecars.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        _write_required_migration_entries(archive)
+        for suffix in ("-wal", "-shm", "-journal"):
+            archive.writestr(f"02.Stock_Moniter/data/stock_monitor.db{suffix}", "dummy sidecar")
+    digest = hashlib.sha256(archive_path.read_bytes()).hexdigest().upper()
+    archive_path.with_suffix(archive_path.suffix + ".sha256").write_text(
+        f"{digest}  {archive_path.name}\n",
+        encoding="ascii",
+    )
+
+    result = subprocess.run(
+        [
+            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+            str(PROJECT_ROOT / "scripts" / "verify_migration_archive.ps1"),
+            "-ArchivePath", str(archive_path), "-FailOnSensitiveEntries",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "Sensitive migration entries are not allowed" in output
+    assert all(
+        f"02.Stock_Moniter/data/stock_monitor.db{suffix}" in output
+        for suffix in ("-wal", "-shm", "-journal")
+    )
+
+
+def test_verify_migration_archive_accepts_required_env_example(tmp_path) -> None:
+    archive_path = tmp_path / "migration_with_template.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        _write_required_migration_entries(archive)
+        archive.writestr("02.Stock_Moniter/.env.toss-openapi.example", "DUMMY_TEMPLATE=value\n")
+    digest = hashlib.sha256(archive_path.read_bytes()).hexdigest().upper()
+    archive_path.with_suffix(archive_path.suffix + ".sha256").write_text(
+        f"{digest}  {archive_path.name}\n", encoding="ascii"
+    )
+
+    result = subprocess.run(
+        [
+            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+            str(PROJECT_ROOT / "scripts" / "verify_migration_archive.ps1"),
+            "-ArchivePath", str(archive_path), "-FailOnSensitiveEntries",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "required_entries: ok" in result.stdout
+    assert "sensitive_entries: none" in result.stdout
 
 
 def test_verify_migration_archive_can_fail_for_transient_entries_inside_zip(tmp_path) -> None:

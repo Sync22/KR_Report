@@ -43,6 +43,7 @@ def _inspection(row_count: int) -> object:
             "api_pages_fetched": 1,
             "api_items": [{} for _ in range(row_count)],
             "candidate_rows": [object() for _ in range(row_count)],
+            "api_item_parse_error_count": 0,
         },
     )()
 
