@@ -238,7 +238,7 @@ DB schema migration.
 
 Schema 13 adds nullable `attempted_at` to daily-summary fragments. It does not rebuild a table or delete schema-12 history. `db-migrate` applies migrations in a transaction; a failed migration rolls back that transaction. Next opens SQLite read-only and must never be used to migrate the database.
 
-Before replacing the installed source, schedule an approved maintenance window and stop every SQLite writer. On the current schema-12 installation, verify and smoke-test the pre-migration backup with the schema-12 code; the schema-13 verifier will correctly report a schema-12 copy as not current:
+Before replacing the installed source, schedule an approved maintenance window. Let any active Telegram request finish and confirm its sender process has exited before stopping SQLite writers; schema-12 did not persist fragment attempt timestamps, so a forced stop during a POST leaves an outcome that cannot be recovered from the DB. On the current schema-12 installation, verify and smoke-test the pre-migration backup with the schema-12 code; the schema-13 verifier will correctly report a schema-12 copy as not current:
 
 ```powershell
 .\.venv\Scripts\python.exe -m stock_monitor db-verify --json
@@ -339,7 +339,7 @@ Current important behavior:
 
 - daily summary notification filters default to `2+` reports and target-price required
 - intraday alert first page uses `7` stock blocks
-- a Telegram send with an uncertain outcome is held as `ambiguous` and is not automatically retried. Check the destination first; only when the message is confirmed absent should an operator explicitly retry with `scheduled-notify --allow-repeat --allow-late`, `scheduled-market-briefing-slot --slot <mood|lunch|preclose> --allow-repeat --allow-late`, or `process-intraday-alerts --retry-ambiguous`. A confirmed-sent ambiguous item stays held to avoid a duplicate.
+- a Telegram send with an uncertain outcome is held as `ambiguous` and is not automatically retried. Before an explicit retry, confirm both that the message is absent and that the original sender process has exited; the timeout-plus-grace stale threshold alone does not prove the worker stopped. Use `scheduled-notify --allow-repeat --allow-late`, `scheduled-market-briefing-slot --slot <mood|lunch|preclose> --allow-repeat --allow-late`, or `process-intraday-alerts --retry-ambiguous`. A confirmed-sent ambiguous item stays held to avoid a duplicate.
 - Telegram supports `다음`, `전부`, `처음`, `/종목검색`, `/종목코드`, `/메모`, `/도움말`, `/명령어`
 - `admin-gui` is a local control-capable page, not a shared user page
 - `web-view` exists as a separate GET-only user page and is the only candidate for future friend-facing sharing
@@ -438,6 +438,7 @@ Default behavior:
 
 - runs `mini-pc-preflight --require-backup --require-env` first on the source desktop; add `--require-mini-pc-profile` only on the target mini PC after setting `operation_profile=mini-pc`
 - includes `data/stock_monitor.db`
+- refuses archive creation while the database's `-wal`, `-shm`, or `-journal` sidecars exist; stop all DB readers/writers and ensure SQLite has closed cleanly before retrying. Do not delete sidecars manually.
 - excludes `.env`
 - always excludes `data/access_code.json`; set a fresh entry code on the target host with `python -m stock_monitor access-code set`
 - excludes `data/backups`
@@ -464,7 +465,7 @@ Verify the archive after copying it to the target host:
 
 The command reads the adjacent `.sha256` sidecar by default and fails if the copied zip does not match.
 The verifier also checks that required project entries such as `AGENTS.md`, `pyproject.toml`, `src/stock_monitor/cli.py`, `data/stock_monitor.db`, canonical docs, migration scripts, external-readiness scripts, and mini-PC scheduler scripts exist inside the zip.
-Use `-FailOnSensitiveEntries` when validating a manually created archive or any archive intended for non-local transfer; it fails if `.env`, `data/access_code.json`, `data/backups`, `data/restore-smoke`, log files, or nested migration zip files appear inside the zip.
+Use `-FailOnSensitiveEntries` when validating a manually created archive or any archive intended for non-local transfer; it fails if secrets, DB backup files or SQLite sidecars, `data/backups`, `data/restore-smoke`, local build/cache artifacts, log files, or nested migration zip files appear inside the zip. The required project-root `data/stock_monitor.db` remains allowed.
 
 ## Restore Draft
 
