@@ -165,6 +165,21 @@ def test_chart_alert_transport_error_is_ambiguous_and_not_resent(tmp_path: Path)
     assert tuple(row) == ("ambiguous", 1)
 
 
+def test_chart_alert_dispatch_preserves_stale_looking_lock_for_manual_verification(tmp_path: Path) -> None:
+    repository = repository_with_focus_reports(tmp_path)
+    repository.migrate_schema()
+    spool = tmp_path / "spool"
+    spool.mkdir()
+    lock_path = tmp_path / "alert-dispatch.lock"
+    contents = json.dumps({"pid": 2_000_000_000, "token": "old-owner", "started_at": "2026-10-22T00:00:00+00:00"})
+    lock_path.write_text(contents, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="chart-alert-dispatch-owned-elsewhere"):
+        process_chart_alert_spool(repository, spool, send=True, bot_token="test-token", chat_id="test-chat")
+
+    assert lock_path.read_text(encoding="utf-8") == contents
+
+
 def test_chart_alert_cli_defaults_to_preview_and_requires_send_for_watch_mode() -> None:
     parser = build_parser()
     preview = parser.parse_args(["chart-alerts-dispatch"])
