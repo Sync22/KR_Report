@@ -75,12 +75,15 @@ External `web-view` runtime note:
 
 ### Next.js Operations Web View
 
+Next.js 16.4.5 declares Node `>=20.9.0`, but this app opens SQLite with `node:sqlite` `DatabaseSync` options `readOnly` and `timeout`, so its effective runtime minimum is Node `v22.16.0`. The last recorded Operations-PC runtime (`v24.22.1` on 2026-10-22) meets that minimum, but is historical evidence only. Recheck `node --version` using the same account and PATH as the web-view task before rollout.
+
 The Next.js web-view under `web/` replaced the Python web-view listener on `127.0.0.1:8780` on 2026-10-20. The existing tunnel target is unchanged. Python collection, SQLite writes, scheduler jobs, Telegram, `admin-gui`, and `operator-review` remain on their existing paths. All public GET route handlers run directly in Next. Stored projections use Node `node:sqlite` with `readOnly` and `query_only`; bounded Naver/Toss references use fixed endpoints and server-derived symbols. The daily API's optional Naver market-top query runs only when the stored same-date eligibility permits it. The rotation API uses exact-date Toss ETF rows; `/assets/cycle.jpg` serves only the fixed project image. The startup script passes the resolved DB, calendar, rotation-coordinate path, and eligible Toss settings to the Next server process only; secrets are not placed in browser code, command-line arguments, API responses, or logs. Next has no access-code or login routes by design. The 2026-10-20 cutover used build `MRZVh9lSv3ga1TRq2_7js`; external provider smoke was not run because the public hostname was unavailable in this workspace.
 
 The developer-PC notes from the 2026-10-12 preview used Node `v24.15.0` and npm `11.13.0`; this is not verification of the N100 runtime. Recheck the installed runtime after the move. From the project root `C:\Users\MING\Codex\02.Stock_Moniter` in PowerShell:
 
 ```powershell
 Push-Location .\web
+node --version
 npm run build
 Pop-Location
 .\scripts\start_next_web_view.ps1 -Status
@@ -170,10 +173,10 @@ Run the source checks from the project root:
 
 Before DB checks, confirm a recent verified backup and run
 `.\.venv\Scripts\python.exe -m stock_monitor db-verify --json`. Rehearse schema
-12 only with
+13 only with
 `.\.venv\Scripts\python.exe -m stock_monitor db-migration-rehearsal --json`
 against the temporary copy; require `writes_source_db=false` and a successful
-copy verify. Never run `db-migrate` against the live operating DB in this test.
+copy verify at target schema 13. Never run `db-migrate` against the live operating DB in this test.
 If backup or readiness is missing, stop that DB portion and report it.
 
 For notification copy, use
@@ -230,6 +233,61 @@ DB schema migration.
 4. Confirm the launcher resolves the intended Operations-PC DB and existing calendar/configuration without printing `.env` contents. Record only the DB file's size and last-write time and the `-wal`/`-shm` presence/size; do not inspect or copy DB rows for the log.
 5. Verify a recent database backup exists before direct DB/WAL checks. If it does not, use the standard backup and restore-smoke steps in [First Verification Commands](#first-verification-commands); keep the original operating DB in place.
 6. Run `python -m stock_monitor db-verify` and the existing mini-PC readiness checks from [First Verification Commands](#first-verification-commands). Resolve DB or runtime failures before starting Next.
+
+#### Schema 13 migration, backup, and rollback
+
+Schema 13 adds nullable `attempted_at` to daily-summary fragments. It does not rebuild a table or delete schema-12 history. `db-migrate` applies migrations in a transaction; a failed migration rolls back that transaction. Next opens SQLite read-only and must never be used to migrate the database.
+
+Before replacing the installed source, schedule an approved maintenance window and stop every SQLite writer. On the current schema-12 installation, verify and smoke-test the pre-migration backup with the schema-12 code; the schema-13 verifier will correctly report a schema-12 copy as not current:
+
+```powershell
+.\.venv\Scripts\python.exe -m stock_monitor db-verify --json
+.\.venv\Scripts\python.exe -m stock_monitor db-backup --tag pre-schema13
+.\.venv\Scripts\python.exe -m stock_monitor db-restore-smoke .\data\backups\<exact-pre-schema13-backup-name>.db
+```
+
+Keep this backup outside Git and migration archives. After updating the source and locked web dependencies, verify Node with the web-view task's account, then run the migration preview and rehearsal against the untouched operating DB:
+
+```powershell
+Push-Location .\web
+node --version
+npm ci
+npm run typecheck
+npm run build
+Pop-Location
+.\.venv\Scripts\python.exe -m stock_monitor db-migrate --dry-run
+.\.venv\Scripts\python.exe -m stock_monitor db-migration-rehearsal --json
+```
+
+Proceed only when rehearsal reports source DB unchanged, target schema 13, and successful copy verification. Apply the migration explicitly, then verify schema, integrity, and foreign keys before restarting any writer. After the application health check passes, create and restore-smoke a post-migration backup using schema-13 code:
+
+```powershell
+.\.venv\Scripts\python.exe -m stock_monitor db-migrate
+.\.venv\Scripts\python.exe -m stock_monitor db-verify --json
+.\.venv\Scripts\python.exe -m stock_monitor db-backup --tag post-schema13
+.\.venv\Scripts\python.exe -m stock_monitor db-restore-smoke .\data\backups\<exact-post-schema13-backup-name>.db
+```
+
+If migration fails, do not start the updated workers. Keep the operating DB and pre-migration backup, run `db-verify --json`, and stop for diagnosis if schema 12 or integrity is not confirmed. Do not repeatedly retry a failed migration without a successful copy rehearsal.
+
+If migration commits but the updated app cannot start or pass its health check, stop the new web-view process and all scheduled/database-writing processes first. Preserve the failed schema-13 DB and its `-wal`/`-shm` files together with logs. Restore the verified pre-schema13 backup and the previous matching application release as one rollback; do not run old code against schema 13 or new code against schema 12 unless that pairing is separately verified. Any writes made after the pre-migration backup will be absent from the restored DB and must be reconciled from the preserved failed copy before work resumes.
+
+The project has no command that replaces the operating DB. For an approved offline restore, fill in the absolute DB path reported by `db-verify` and the exact verified backup path; run only after confirming that every reader and writer has stopped. This moves the current DB and any SQLite sidecars into a timestamped recovery directory instead of deleting them:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$databasePath = '<absolute configured DB path>'
+$backupPath = (Resolve-Path -LiteralPath '<absolute pre-schema13 backup path>').Path
+if (-not [System.IO.Path]::IsPathRooted($databasePath) -or -not (Test-Path -LiteralPath $databasePath -PathType Leaf)) { throw 'Verify the configured DB path and confirm the current DB exists.' }
+$recoveryDir = Join-Path (Split-Path -Parent $databasePath) ('schema13-failed-' + (Get-Date -Format 'yyyyMMdd_HHmmss_fff'))
+New-Item -ItemType Directory -Path $recoveryDir | Out-Null
+foreach ($path in @($databasePath, "$databasePath-wal", "$databasePath-shm")) {
+    if (Test-Path -LiteralPath $path) { Move-Item -LiteralPath $path -Destination $recoveryDir }
+}
+Copy-Item -LiteralPath $backupPath -Destination $databasePath
+```
+
+Run `db-verify --json` with the previous release and confirm schema `12/12` before restarting it. Never run this restore while an app, scheduler task, or DB reader has the file open.
 
 #### Start, check, stop, and restart
 
