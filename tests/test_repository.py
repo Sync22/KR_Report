@@ -1,9 +1,16 @@
 import json
+import os
 import sqlite3
+import subprocess
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
+from pathlib import Path
 
+from stock_monitor.db import schema as schema_module
 from stock_monitor.db.repository import StockMonitorRepository
-from stock_monitor.db.schema import SCHEMA_STATEMENTS, SCHEMA_VERSION
+from stock_monitor.db.schema import SCHEMA_STATEMENTS, SCHEMA_VERSION, SchemaMigration
 from stock_monitor.models import (
     AppSetting,
     CategoryCatalogItem,
@@ -135,6 +142,7 @@ def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:
         (10, "news_evidence_lineage"),
         (11, "toss_stock_universe_cache"),
         (12, "chart_alert_outbox"),
+        (13, "daily_summary_fragment_attempted_at"),
     ]
     assert snapshot_tables == {
         "stock_market_daily",
@@ -599,7 +607,9 @@ def test_repository_migrates_v9_news_evidence_without_losing_legacy_row(tmp_path
             connection.execute("ALTER TABLE report_linked_news_evidence DROP COLUMN canonical_url")
             connection.execute("ALTER TABLE report_linked_news_evidence DROP COLUMN lineage_type")
             connection.execute("ALTER TABLE report_linked_news_evidence DROP COLUMN lineage_reason")
+            connection.execute("ALTER TABLE daily_summary_delivery_fragments DROP COLUMN attempted_at")
             connection.execute("DELETE FROM schema_migrations WHERE version = 10")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 13")
             connection.execute("PRAGMA user_version = 9")
 
     status = repository.migrate_schema()
@@ -672,6 +682,7 @@ def test_repository_initialize_seeds_migration_history_for_existing_v1_database(
         (10, "news_evidence_lineage"),
         (11, "toss_stock_universe_cache"),
         (12, "chart_alert_outbox"),
+        (13, "daily_summary_fragment_attempted_at"),
     ]
 
 
@@ -1604,6 +1615,158 @@ def test_repository_resumes_daily_summary_delivery_fragments(tmp_path) -> None:
     fragments = repository.list_daily_summary_fragments(resumed.run_id)
     assert [fragment.status for fragment in fragments] == ["sent", "sent"]
     assert [fragment.message_id for fragment in fragments] == ["message-1", "message-2"]
+
+
+def test_repository_claims_daily_summary_fragment_once_across_workers(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+    run = repository.start_or_resume_daily_summary_run(
+        business_date=date(2026, 4, 24),
+        channel="telegram",
+        summary_signature="signature-a",
+        messages=["fragment 1"],
+        started_at=datetime(2026, 4, 25, 8, 0, 0),
+    )
+
+    def claim() -> bool:
+        return repository.claim_daily_summary_fragment(
+            run.run_id,
+            0,
+            attempted_at=datetime(2026, 4, 25, 8, 1, 0),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        claims = list(executor.map(lambda _index: claim(), range(2)))
+
+    assert sorted(claims) == [False, True]
+    with repository.connect() as connection:
+        row = connection.execute(
+            "SELECT status, attempted_at FROM daily_summary_delivery_fragments WHERE run_id = ?",
+            (run.run_id,),
+        ).fetchone()
+        run_status = connection.execute(
+            "SELECT status FROM daily_summary_delivery_runs WHERE run_id = ?",
+            (run.run_id,),
+        ).fetchone()["status"]
+    assert row["status"] == "sending"
+    assert row["attempted_at"] == "2026-04-25T08:01:00"
+    assert run_status == "sending"
+
+
+def test_schema_initialization_takes_immediate_lock_before_reading_version() -> None:
+    connection = sqlite3.connect(":memory:")
+    statements: list[str] = []
+    connection.set_trace_callback(statements.append)
+
+    schema_module.initialize_schema(connection)
+
+    first_version_read = next(index for index, sql in enumerate(statements) if sql.startswith("PRAGMA user_version"))
+    assert "BEGIN IMMEDIATE" in statements[:first_version_read]
+    connection.close()
+
+
+def test_two_processes_initialize_fresh_database_without_losing_migration_history(tmp_path) -> None:
+    db_path = tmp_path / "stock_monitor.db"
+    gate_path = tmp_path / "start"
+    ready_paths = (tmp_path / "ready-1", tmp_path / "ready-2")
+    worker = """
+import sys
+import time
+from pathlib import Path
+from stock_monitor.db.repository import StockMonitorRepository
+database = Path(sys.argv[1])
+gate = Path(sys.argv[2])
+ready = Path(sys.argv[3])
+ready.write_text("ready", encoding="ascii")
+while not gate.exists():
+    time.sleep(0.005)
+StockMonitorRepository(database).initialize()
+"""
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = os.pathsep.join(
+        filter(None, [str(Path(__file__).resolve().parents[1] / "src"), environment.get("PYTHONPATH")])
+    )
+    processes: list[subprocess.Popen[str]] = []
+    try:
+        for ready_path in ready_paths:
+            processes.append(
+                subprocess.Popen(
+                    [sys.executable, "-c", worker, str(db_path), str(gate_path), str(ready_path)],
+                    cwd=Path(__file__).resolve().parents[1],
+                    env=environment,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+            )
+        deadline = time.monotonic() + 15
+        while not all(ready_path.exists() for ready_path in ready_paths):
+            if any(process.poll() is not None for process in processes):
+                raise AssertionError("A schema initialization worker exited before reaching the barrier.")
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Schema initialization workers did not reach the barrier in time.")
+            time.sleep(0.01)
+        gate_path.write_text("start", encoding="ascii")
+        outputs = [process.communicate(timeout=15) for process in processes]
+
+        assert [process.returncode for process in processes] == [0, 0], outputs
+        with sqlite3.connect(db_path) as connection:
+            assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+            assert connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall() == [
+                (version,) for version in range(1, SCHEMA_VERSION + 1)
+            ]
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.terminate()
+        for process in processes:
+            try:
+                process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()
+
+
+def test_failed_schema_13_migration_rolls_back_and_preserves_version_12_history(tmp_path, monkeypatch) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+    with repository.connect() as connection:
+        with connection:
+            connection.execute("ALTER TABLE daily_summary_delivery_fragments DROP COLUMN attempted_at")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 13")
+            connection.execute("PRAGMA user_version = 12")
+
+    migration = next(item for item in schema_module.SCHEMA_MIGRATIONS if item.version == 13)
+    monkeypatch.setattr(
+        schema_module,
+        "SCHEMA_MIGRATIONS",
+        tuple(
+            SchemaMigration(item.version, item.name, (*item.statements, "SELECT * FROM table_that_does_not_exist"))
+            if item.version == 13
+            else item
+            for item in schema_module.SCHEMA_MIGRATIONS
+        ),
+    )
+    connection = sqlite3.connect(repository.db_path)
+    try:
+        try:
+            schema_module.initialize_schema(connection)
+        except sqlite3.OperationalError:
+            pass
+        else:
+            raise AssertionError("Expected schema migration failure")
+
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 12
+        assert connection.execute(
+            "SELECT version FROM schema_migrations ORDER BY version"
+        ).fetchall() == [(version,) for version in range(1, 13)]
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(daily_summary_delivery_fragments)")
+        }
+        assert "attempted_at" not in columns
+    finally:
+        connection.close()
 
 
 def test_repository_supersedes_pending_daily_summary_run_when_signature_changes(tmp_path) -> None:

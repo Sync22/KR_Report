@@ -913,6 +913,76 @@ class StockMonitorRepository:
                     ),
                 )
 
+    def claim_delivery(
+        self,
+        business_date: date,
+        channel: str,
+        *,
+        claimed_at: datetime,
+        stale_before: datetime,
+        detail: str,
+        allow_ambiguous_repeat: bool = False,
+    ) -> int | None:
+        with self.connect() as connection:
+            with connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    """
+                    SELECT id, status, delivered_at, detail
+                    FROM delivery_log
+                    WHERE business_date = ? AND channel = ?
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (business_date.isoformat(), channel),
+                ).fetchone()
+                if row:
+                    if row["status"] == "sending":
+                        if datetime.fromisoformat(row["delivered_at"]) > stale_before:
+                            return None
+                        connection.execute(
+                            """
+                            UPDATE delivery_log
+                            SET status = 'ambiguous',
+                                detail = ?
+                            WHERE id = ? AND status = 'sending'
+                            """,
+                            (f"{row['detail'] or detail}; interrupted send; operator review is required", row["id"]),
+                        )
+                        if not allow_ambiguous_repeat:
+                            return None
+                    elif row["status"] == "sent" or (row["status"] == "ambiguous" and not allow_ambiguous_repeat):
+                        return None
+                cursor = connection.execute(
+                    """
+                    INSERT INTO delivery_log (
+                        business_date, channel, status, delivered_at, detail
+                    ) VALUES (?, ?, 'sending', ?, ?)
+                    """,
+                    (business_date.isoformat(), channel, claimed_at.isoformat(), detail),
+                )
+                return int(cursor.lastrowid)
+
+    def update_delivery_attempt(
+        self,
+        delivery_id: int,
+        *,
+        status: str,
+        delivered_at: datetime,
+        message_id: str | None,
+        detail: str,
+    ) -> None:
+        with self.connect() as connection:
+            with connection:
+                connection.execute(
+                    """
+                    UPDATE delivery_log
+                    SET status = ?, delivered_at = ?, message_id = ?, detail = ?
+                    WHERE id = ?
+                    """,
+                    (status, delivered_at.isoformat(), message_id, detail, delivery_id),
+                )
+
     def start_or_resume_daily_summary_run(
         self,
         *,
@@ -921,10 +991,45 @@ class StockMonitorRepository:
         summary_signature: str,
         messages: list[str],
         started_at: datetime,
+        stale_before: datetime | None = None,
         allow_ambiguous_repeat: bool = False,
     ) -> DailySummaryDeliveryRun:
         with self.connect() as connection:
             with connection:
+                connection.execute("BEGIN IMMEDIATE")
+                recovered_stale_sends = False
+                if stale_before is not None:
+                    stale_rows = connection.execute(
+                        """
+                        SELECT DISTINCT run.run_id
+                        FROM daily_summary_delivery_runs AS run
+                        JOIN daily_summary_delivery_fragments AS fragment USING (run_id)
+                        WHERE run.business_date = ?
+                          AND run.channel = ?
+                          AND fragment.status = 'sending'
+                          AND fragment.attempted_at <= ?
+                        """,
+                        (business_date.isoformat(), channel, stale_before.isoformat()),
+                    ).fetchall()
+                    recovered_stale_sends = bool(stale_rows)
+                    for stale_row in stale_rows:
+                        error_detail = "interrupted while sending; operator review is required"
+                        connection.execute(
+                            """
+                            UPDATE daily_summary_delivery_fragments
+                            SET status = 'ambiguous', last_error = ?
+                            WHERE run_id = ? AND status = 'sending'
+                            """,
+                            (error_detail, stale_row["run_id"]),
+                        )
+                        connection.execute(
+                            """
+                            UPDATE daily_summary_delivery_runs
+                            SET status = 'ambiguous', last_error = ?, finished_at = ?
+                            WHERE run_id = ?
+                            """,
+                            (error_detail, started_at.isoformat(), stale_row["run_id"]),
+                        )
                 ambiguous_row = connection.execute(
                     """
                     SELECT run_id
@@ -937,6 +1042,8 @@ class StockMonitorRepository:
                     (business_date.isoformat(), channel),
                 ).fetchone()
                 if ambiguous_row and not allow_ambiguous_repeat:
+                    if recovered_stale_sends:
+                        connection.commit()
                     raise RuntimeError(
                         "An ambiguous daily summary Telegram delivery exists for this date and channel; "
                         "operator review is required before another send."
@@ -954,6 +1061,17 @@ class StockMonitorRepository:
                         """,
                         (started_at.isoformat(), business_date.isoformat(), channel),
                     )
+                sending_row = connection.execute(
+                    """
+                    SELECT run_id, summary_signature
+                    FROM daily_summary_delivery_runs
+                    WHERE business_date = ? AND channel = ? AND status = 'sending'
+                    LIMIT 1
+                    """,
+                    (business_date.isoformat(), channel),
+                ).fetchone()
+                if sending_row and sending_row["summary_signature"] != summary_signature:
+                    raise RuntimeError("A daily summary Telegram delivery is already in progress for this date and channel.")
                 connection.execute(
                     """
                     UPDATE daily_summary_delivery_runs
@@ -988,7 +1106,7 @@ class StockMonitorRepository:
                     WHERE business_date = ?
                       AND channel = ?
                       AND summary_signature = ?
-                      AND status IN ('pending', 'failed')
+                      AND status IN ('pending', 'failed', 'sending')
                     ORDER BY started_at DESC
                     LIMIT 1
                     """,
@@ -999,8 +1117,10 @@ class StockMonitorRepository:
                     ),
                 ).fetchone()
                 if row:
+                    if row["status"] == "sending":
+                        return self._row_to_daily_summary_delivery_run(row)
                     connection.execute(
-                    """
+                        """
                         UPDATE daily_summary_delivery_runs
                         SET status = 'pending',
                             finished_at = NULL,
@@ -1091,6 +1211,61 @@ class StockMonitorRepository:
                 (run_id,),
             ).fetchall()
         return [self._row_to_daily_summary_delivery_fragment(row) for row in rows]
+
+    def claim_daily_summary_fragment(
+        self,
+        run_id: str,
+        fragment_index: int,
+        *,
+        attempted_at: datetime,
+    ) -> bool:
+        with self.connect() as connection:
+            with connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    """
+                    SELECT status
+                    FROM daily_summary_delivery_fragments
+                    WHERE run_id = ? AND fragment_index = ?
+                    """,
+                    (run_id, fragment_index),
+                ).fetchone()
+                if row is None or row["status"] not in {"pending", "failed"}:
+                    return False
+                if connection.execute(
+                    "SELECT 1 FROM daily_summary_delivery_fragments WHERE run_id = ? AND status = 'sending' LIMIT 1",
+                    (run_id,),
+                ).fetchone():
+                    return False
+                first_unsent = connection.execute(
+                    """
+                    SELECT MIN(fragment_index)
+                    FROM daily_summary_delivery_fragments
+                    WHERE run_id = ? AND status IN ('pending', 'failed', 'sending', 'ambiguous')
+                    """,
+                    (run_id,),
+                ).fetchone()[0]
+                if first_unsent != fragment_index:
+                    return False
+                cursor = connection.execute(
+                    """
+                    UPDATE daily_summary_delivery_fragments
+                    SET status = 'sending', attempted_at = ?, last_error = NULL
+                    WHERE run_id = ? AND fragment_index = ? AND status IN ('pending', 'failed')
+                    """,
+                    (attempted_at.isoformat(), run_id, fragment_index),
+                )
+                if cursor.rowcount != 1:
+                    return False
+                connection.execute(
+                    """
+                    UPDATE daily_summary_delivery_runs
+                    SET status = 'sending', finished_at = NULL, last_error = NULL
+                    WHERE run_id = ?
+                    """,
+                    (run_id,),
+                )
+                return True
 
     def list_daily_summary_fragments(self, run_id: str) -> list[DailySummaryDeliveryFragment]:
         with self.connect() as connection:
@@ -1226,8 +1401,13 @@ class StockMonitorRepository:
                         finished_at = ?,
                         last_error = NULL
                     WHERE run_id = ?
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM daily_summary_delivery_fragments
+                          WHERE run_id = ? AND status <> 'sent'
+                      )
                     """,
-                    (finished_at.isoformat(), run_id),
+                    (finished_at.isoformat(), run_id, run_id),
                 )
 
     def record_operation_event(self, event: OperationEvent) -> None:

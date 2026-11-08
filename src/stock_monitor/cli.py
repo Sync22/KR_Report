@@ -2118,6 +2118,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Check official KRX KIND sidecar/circuit-breaker notices and alert the operator once per notice.",
     )
     kind_market_action_parser.add_argument("--dry-run", action="store_true")
+    kind_market_action_parser.add_argument(
+        "--retry-ambiguous",
+        action="store_true",
+        help="Retry ambiguous notices only after manually confirming that they were not delivered.",
+    )
 
     intraday_parser = subparsers.add_parser(
         "process-intraday-alerts",
@@ -3201,7 +3206,12 @@ def main(argv: list[str] | None = None) -> int:
                 interval_seconds=args.interval_seconds,
             )
         if args.command == "krx-kind-market-action-check":
-            return _run_krx_kind_market_action_check(config, repository, dry_run=args.dry_run)
+            return _run_krx_kind_market_action_check(
+                config,
+                repository,
+                dry_run=args.dry_run,
+                retry_ambiguous=args.retry_ambiguous,
+            )
         if args.command == "process-intraday-alerts":
             return _run_process_intraday_alerts(
                 config,
@@ -10824,6 +10834,7 @@ def _run_manual_poll(
             status="success",
             detail=(
                 f"attempted={insert_result.attempted}; inserted={insert_result.inserted}; "
+                f"api_item_parse_errors={inspection.api_item_parse_error_count}; "
                 f"intraday_batches={len(insert_result.intraday_batch_ids)}"
                 + (
                     f"; scheduled_run_at={scheduled_run_at.isoformat()}"
@@ -11125,7 +11136,8 @@ def _run_report_backfill_manual(
             detail=(
                 f"from={from_date.isoformat()}; to={to_date.isoformat()}; "
                 f"attempted={insert_result.attempted}; inserted={insert_result.inserted}; "
-                f"api_pages={inspection.api_pages_fetched}"
+                f"api_pages={inspection.api_pages_fetched}; "
+                f"api_item_parse_errors={inspection.api_item_parse_error_count}"
             ),
         )
     )
@@ -24970,10 +24982,18 @@ def _send_production_daily_summary_fragments(
         summary_signature=summary_signature,
         messages=messages,
         started_at=started_at,
+        stale_before=started_at - timedelta(seconds=config.telegram_timeout_seconds + 30),
         allow_ambiguous_repeat=allow_ambiguous_repeat,
     )
     pending_fragments = repository.list_pending_daily_summary_fragments(run.run_id)
     for fragment in pending_fragments:
+        attempted_at = datetime.now(ZoneInfo(config.timezone))
+        if not repository.claim_daily_summary_fragment(
+            run.run_id,
+            fragment.fragment_index,
+            attempted_at=attempted_at,
+        ):
+            continue
         try:
             message_id = send_telegram_message(
                 config.telegram_bot_token,
@@ -25051,6 +25071,9 @@ def _send_production_daily_summary_fragments(
         )
 
     finished_at = datetime.now(ZoneInfo(config.timezone))
+    fragments = repository.list_daily_summary_fragments(run.run_id)
+    if any(fragment.status != "sent" for fragment in fragments):
+        raise RuntimeError("Daily summary Telegram delivery is still in progress; no whole-run success was recorded.")
     repository.complete_daily_summary_run(run.run_id, finished_at=finished_at)
     fragments = repository.list_daily_summary_fragments(run.run_id)
     return [str(fragment.message_id) for fragment in fragments if fragment.message_id]
@@ -42601,6 +42624,7 @@ def _run_krx_kind_market_action_check(
     *,
     current: datetime | None = None,
     dry_run: bool = False,
+    retry_ambiguous: bool = False,
 ) -> int:
     repository.initialize()
     now = current or datetime.now(ZoneInfo(config.timezone))
@@ -42627,13 +42651,26 @@ def _run_krx_kind_market_action_check(
     notices = fetch_krx_kind_market_actions(today)
     for notice in notices:
         channel = f"{KRX_KIND_MARKET_ACTION_DELIVERY_CHANNEL_PREFIX}:{notice.acceptance_number}"
-        if repository.has_successful_delivery(today, channel):
-            continue
         if dry_run:
+            if repository.has_successful_delivery(today, channel):
+                continue
             print(f"Would alert KRX KIND market action {notice.acceptance_number}: {notice.title}")
+            continue
+        if repository.has_successful_delivery(today, channel):
             continue
         if not config.telegram_bot_token or not config.telegram_chat_id:
             raise RuntimeError("Telegram configuration is missing for KRX KIND market-action alerts.")
+        delivery_detail = f"source=krx-kind; acceptance_number={notice.acceptance_number}"
+        delivery_id = repository.claim_delivery(
+            today,
+            channel,
+            claimed_at=now,
+            stale_before=now - timedelta(seconds=config.telegram_timeout_seconds + 30),
+            detail=delivery_detail,
+            allow_ambiguous_repeat=retry_ambiguous,
+        )
+        if delivery_id is None:
+            continue
         try:
             message_id = send_telegram_message(
                 config.telegram_bot_token,
@@ -42644,26 +42681,32 @@ def _run_krx_kind_market_action_check(
                 retry_delay_seconds=config.telegram_retry_delay_seconds,
             )
         except Exception as exc:
+            ambiguous_send = _is_ambiguous_telegram_send_error(exc)
+            error_detail = f"{delivery_detail}; {exc}"
+            repository.update_delivery_attempt(
+                delivery_id,
+                status="ambiguous" if ambiguous_send else "failed",
+                delivered_at=datetime.now(ZoneInfo(config.timezone)),
+                message_id=None,
+                detail=error_detail,
+            )
             repository.record_operation_event(
                 _operation_event(
                     config,
                     component="krx-kind-market-action",
                     event_type="telegram-send",
-                    status="failed",
+                    status="ambiguous" if ambiguous_send else "failed",
                     business_date=today,
-                    detail=f"acceptance_number={notice.acceptance_number}; error={exc}",
+                    detail=f"acceptance_number={notice.acceptance_number}; {error_detail}",
                 )
             )
             raise
-        repository.record_delivery(
-            DeliveryLog(
-                business_date=today,
-                channel=channel,
-                status="sent",
-                delivered_at=now,
-                message_id=str(message_id),
-                detail=f"source=krx-kind; acceptance_number={notice.acceptance_number}",
-            )
+        repository.update_delivery_attempt(
+            delivery_id,
+            status="sent",
+            delivered_at=datetime.now(ZoneInfo(config.timezone)),
+            message_id=str(message_id),
+            detail=delivery_detail,
         )
         repository.record_operation_event(
             _operation_event(
@@ -43000,6 +43043,23 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
         return 0
 
     processed = 0
+
+    def send_update_reply(update_id: int, text: str) -> str:
+        try:
+            return send_telegram_message(
+                config.telegram_bot_token,
+                config.telegram_chat_id,
+                text,
+                timeout_seconds=config.telegram_timeout_seconds,
+                max_retries=config.telegram_max_retries,
+                retry_delay_seconds=config.telegram_retry_delay_seconds,
+            )
+        except Exception as exc:
+            if _is_ambiguous_telegram_send_error(exc):
+                state.last_update_id = max(state.last_update_id, update_id)
+                save_control_state(config.telegram_control_state_path, state)
+            raise
+
     for update in updates:
         update_id = int(update.get("update_id", 0))
         message = update.get("message") or {}
@@ -43030,14 +43090,7 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
                 selection_text=argument,
                 now=now,
             )
-            send_telegram_message(
-                config.telegram_bot_token,
-                config.telegram_chat_id,
-                response_text,
-                timeout_seconds=config.telegram_timeout_seconds,
-                max_retries=config.telegram_max_retries,
-                retry_delay_seconds=config.telegram_retry_delay_seconds,
-            )
+            send_update_reply(update_id, response_text)
             state.last_update_id = max(state.last_update_id, update_id)
             processed += 1
             save_control_state(config.telegram_control_state_path, state)
@@ -43046,14 +43099,7 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
         if command == "help":
             state.clear_pending_stock_selection()
             help_title = "도움말 안내" if "도움말" in text else "명령어 안내"
-            send_telegram_message(
-                config.telegram_bot_token,
-                config.telegram_chat_id,
-                _build_help_command_response(title=help_title),
-                timeout_seconds=config.telegram_timeout_seconds,
-                max_retries=config.telegram_max_retries,
-                retry_delay_seconds=config.telegram_retry_delay_seconds,
-            )
+            send_update_reply(update_id, _build_help_command_response(title=help_title))
             state.last_update_id = max(state.last_update_id, update_id)
             processed += 1
             save_control_state(config.telegram_control_state_path, state)
@@ -43065,14 +43111,7 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
             response_text = _format_market_commentary_telegram_message(
                 _build_market_commentary_practice_snapshot(config, repository, explicit_date)
             )
-            send_telegram_message(
-                config.telegram_bot_token,
-                config.telegram_chat_id,
-                response_text,
-                timeout_seconds=config.telegram_timeout_seconds,
-                max_retries=config.telegram_max_retries,
-                retry_delay_seconds=config.telegram_retry_delay_seconds,
-            )
+            send_update_reply(update_id, response_text)
             state.last_update_id = max(state.last_update_id, update_id)
             processed += 1
             save_control_state(config.telegram_control_state_path, state)
@@ -43089,14 +43128,7 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
                 state=state,
             )
             save_control_state(config.telegram_control_state_path, state)
-            send_telegram_message(
-                config.telegram_bot_token,
-                config.telegram_chat_id,
-                response_text,
-                timeout_seconds=config.telegram_timeout_seconds,
-                max_retries=config.telegram_max_retries,
-                retry_delay_seconds=config.telegram_retry_delay_seconds,
-            )
+            send_update_reply(update_id, response_text)
             state.last_update_id = max(state.last_update_id, update_id)
             processed += 1
             save_control_state(config.telegram_control_state_path, state)
@@ -43112,14 +43144,7 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
                 state=state,
             )
             save_control_state(config.telegram_control_state_path, state)
-            send_telegram_message(
-                config.telegram_bot_token,
-                config.telegram_chat_id,
-                response_text,
-                timeout_seconds=config.telegram_timeout_seconds,
-                max_retries=config.telegram_max_retries,
-                retry_delay_seconds=config.telegram_retry_delay_seconds,
-            )
+            send_update_reply(update_id, response_text)
             state.last_update_id = max(state.last_update_id, update_id)
             processed += 1
             save_control_state(config.telegram_control_state_path, state)
@@ -43136,14 +43161,7 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
                 state=state,
             )
             save_control_state(config.telegram_control_state_path, state)
-            send_telegram_message(
-                config.telegram_bot_token,
-                config.telegram_chat_id,
-                response_text,
-                timeout_seconds=config.telegram_timeout_seconds,
-                max_retries=config.telegram_max_retries,
-                retry_delay_seconds=config.telegram_retry_delay_seconds,
-            )
+            send_update_reply(update_id, response_text)
             state.last_update_id = max(state.last_update_id, update_id)
             processed += 1
             save_control_state(config.telegram_control_state_path, state)
@@ -43160,14 +43178,7 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
                 state=state,
             )
             save_control_state(config.telegram_control_state_path, state)
-            send_telegram_message(
-                config.telegram_bot_token,
-                config.telegram_chat_id,
-                response_text,
-                timeout_seconds=config.telegram_timeout_seconds,
-                max_retries=config.telegram_max_retries,
-                retry_delay_seconds=config.telegram_retry_delay_seconds,
-            )
+            send_update_reply(update_id, response_text)
             state.last_update_id = max(state.last_update_id, update_id)
             processed += 1
             save_control_state(config.telegram_control_state_path, state)
@@ -43176,14 +43187,7 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
         if command in {"operator_status", "today_status", "schedule_status", "webview_url"}:
             state.clear_pending_stock_selection()
             response_text = _build_read_only_status_command_response(config, repository, command=command, now=now)
-            send_telegram_message(
-                config.telegram_bot_token,
-                config.telegram_chat_id,
-                response_text,
-                timeout_seconds=config.telegram_timeout_seconds,
-                max_retries=config.telegram_max_retries,
-                retry_delay_seconds=config.telegram_retry_delay_seconds,
-            )
+            send_update_reply(update_id, response_text)
             state.last_update_id = max(state.last_update_id, update_id)
             processed += 1
             save_control_state(config.telegram_control_state_path, state)
@@ -43191,9 +43195,8 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
 
         if command == "unknown_slash":
             state.clear_pending_stock_selection()
-            send_telegram_message(
-                config.telegram_bot_token,
-                config.telegram_chat_id,
+            send_update_reply(
+                update_id,
                 "\n".join(
                     [
                         f"알 수 없는 명령어: {argument}",
@@ -43201,9 +43204,6 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
                         _build_help_command_response(title="명령어 안내"),
                     ]
                 ),
-                timeout_seconds=config.telegram_timeout_seconds,
-                max_retries=config.telegram_max_retries,
-                retry_delay_seconds=config.telegram_retry_delay_seconds,
             )
             state.last_update_id = max(state.last_update_id, update_id)
             processed += 1
@@ -43217,14 +43217,7 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
                 repository=repository,
                 query=argument,
             )
-            send_telegram_message(
-                config.telegram_bot_token,
-                config.telegram_chat_id,
-                response_text,
-                timeout_seconds=config.telegram_timeout_seconds,
-                max_retries=config.telegram_max_retries,
-                retry_delay_seconds=config.telegram_retry_delay_seconds,
-            )
+            send_update_reply(update_id, response_text)
             state.last_update_id = max(state.last_update_id, update_id)
             processed += 1
             save_control_state(config.telegram_control_state_path, state)
@@ -43240,14 +43233,7 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
                 lookback_days=15,
                 entry_limit=5,
             )
-            send_telegram_message(
-                config.telegram_bot_token,
-                config.telegram_chat_id,
-                response_text,
-                timeout_seconds=config.telegram_timeout_seconds,
-                max_retries=config.telegram_max_retries,
-                retry_delay_seconds=config.telegram_retry_delay_seconds,
-            )
+            send_update_reply(update_id, response_text)
             state.last_update_id = max(state.last_update_id, update_id)
             processed += 1
             save_control_state(config.telegram_control_state_path, state)
@@ -43260,6 +43246,7 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
                 repository,
                 state,
                 command=command,
+                send_reply=lambda reply: send_update_reply(update_id, reply),
             )
             if handled:
                 state.last_update_id = max(state.last_update_id, update_id)
@@ -43288,14 +43275,7 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
             limit = None
 
         if current_offset >= len(summaries):
-            send_telegram_message(
-                config.telegram_bot_token,
-                config.telegram_chat_id,
-                "추가로 표시할 종목이 없습니다.\n/처음 또는 /명령어를 입력해보세요.",
-                timeout_seconds=config.telegram_timeout_seconds,
-                max_retries=config.telegram_max_retries,
-                retry_delay_seconds=config.telegram_retry_delay_seconds,
-            )
+            send_update_reply(update_id, "추가로 표시할 종목이 없습니다.\n/처음 또는 /명령어를 입력해보세요.")
         else:
             quotes_by_stock_code = _fetch_daily_summary_quotes_by_stock_code(config, summaries, repository=repository)
             message_text = format_daily_summary_message(
@@ -43305,14 +43285,7 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
                 limit=limit,
                 quotes_by_stock_code=quotes_by_stock_code,
             )
-            send_telegram_message(
-                config.telegram_bot_token,
-                config.telegram_chat_id,
-                message_text,
-                timeout_seconds=config.telegram_timeout_seconds,
-                max_retries=config.telegram_max_retries,
-                retry_delay_seconds=config.telegram_retry_delay_seconds,
-            )
+            send_update_reply(update_id, message_text)
             delivered_now = len(summaries[current_offset:]) if limit is None else min(limit, len(summaries) - current_offset)
             state.set_delivered_for(business_date, current_offset + delivered_now)
 
@@ -44212,7 +44185,7 @@ def _run_progress_manual_poll_recovery(
 ) -> ProgressAutoRunResult:
     started = time.perf_counter()
     repository.initialize()
-    reports, _inspection = fetch_reports(config, limit=limit, headless=True)
+    reports, inspection = fetch_reports(config, limit=limit, headless=True)
     if not reports:
         return ProgressAutoRunResult(
             title="오늘 리포트 수집",
@@ -44230,7 +44203,8 @@ def _run_progress_manual_poll_recovery(
             status="success",
             detail=(
                 "source=telegram-progress; "
-                f"attempted={insert_result.attempted}; inserted={insert_result.inserted}; intraday_batches=0"
+                f"attempted={insert_result.attempted}; inserted={insert_result.inserted}; "
+                f"api_item_parse_errors={inspection.api_item_parse_error_count}; intraday_batches=0"
             ),
         )
     )
@@ -45174,6 +45148,7 @@ def _try_process_intraday_paging_command_with_fallback(
     state: TelegramControlState,
     *,
     command: str,
+    send_reply: Callable[[str], str],
 ) -> bool:
     if not state.active_intraday_batch_id or not state.active_intraday_created_at:
         state.clear_active_intraday_delivery()
@@ -45208,14 +45183,7 @@ def _try_process_intraday_paging_command_with_fallback(
         offset=current_offset,
         limit=limit,
     )
-    send_telegram_message(
-        config.telegram_bot_token,
-        config.telegram_chat_id,
-        message,
-        timeout_seconds=config.telegram_timeout_seconds,
-        max_retries=config.telegram_max_retries,
-        retry_delay_seconds=config.telegram_retry_delay_seconds,
-    )
+    send_reply(message)
     delivered_now = total_stock_blocks - current_offset if limit is None else min(
         limit,
         total_stock_blocks - current_offset,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
+from threading import Event
 
 import pytest
 
@@ -46,6 +48,19 @@ def test_ambiguous_daily_summary_is_held_and_not_sent_again(tmp_path, monkeypatc
 
     def ambiguous_send(*_args, **kwargs):
         sends.append(kwargs)
+        with repository.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT fragment.status, fragment.attempted_at, run.status AS run_status
+                FROM daily_summary_delivery_fragments AS fragment
+                JOIN daily_summary_delivery_runs AS run USING (run_id)
+                WHERE run.business_date = ?
+                """,
+                ("2026-04-24",),
+            ).fetchone()
+        assert row is not None and row["status"] == "sending"
+        assert row["attempted_at"] is not None
+        assert row["run_status"] == "sending"
         raise telegram.TelegramRequestError("Telegram sendMessage", 1, error_kind="TimeoutError", ambiguous=True)
 
     monkeypatch.setattr(cli_module, "send_telegram_message", ambiguous_send)
@@ -113,6 +128,90 @@ def test_ambiguous_daily_summary_is_held_and_not_sent_again(tmp_path, monkeypatc
             ("2026-04-24",),
         ).fetchall()
     assert [row["status"] for row in run_statuses] == ["superseded", "sent"]
+
+
+def test_interrupted_daily_summary_send_becomes_ambiguous_without_resend(tmp_path, monkeypatch) -> None:
+    config, repository = _config_and_repository(tmp_path, monkeypatch)
+    messages = ["daily summary"]
+    signature = cli_module._daily_summary_delivery_signature(
+        date(2026, 4, 24),
+        channel=cli_module.PRODUCTION_DELIVERY_CHANNEL,
+        effective_min_mentions=1,
+        require_target_price=False,
+        messages=messages,
+    )
+    run = repository.start_or_resume_daily_summary_run(
+        business_date=date(2026, 4, 24),
+        channel=cli_module.PRODUCTION_DELIVERY_CHANNEL,
+        summary_signature=signature,
+        messages=messages,
+        started_at=datetime(2026, 4, 24, 8, 0),
+    )
+    with repository.connect() as connection:
+        with connection:
+            connection.execute(
+                """
+                UPDATE daily_summary_delivery_fragments
+                SET status = 'sending', attempted_at = '2026-04-24T08:00:00'
+                WHERE run_id = ? AND fragment_index = 0
+                """,
+                (run.run_id,),
+            )
+            connection.execute(
+                "UPDATE daily_summary_delivery_runs SET status = 'sending' WHERE run_id = ?",
+                (run.run_id,),
+            )
+    sends: list[str] = []
+    monkeypatch.setattr(cli_module, "send_telegram_message", lambda *_args, **_kwargs: sends.append("sent"))
+
+    with pytest.raises(RuntimeError, match="operator review is required"):
+        cli_module._send_production_daily_summary_fragments(
+            config,
+            repository,
+            business_date=date(2026, 4, 24),
+            messages=messages,
+            effective_min_mentions=1,
+            require_target_price=False,
+        )
+
+    assert sends == []
+    fragments = repository.list_daily_summary_fragments(run.run_id)
+    assert fragments[0].status == "ambiguous"
+
+
+def test_concurrent_daily_summary_caller_does_not_report_in_progress_run_as_sent(tmp_path, monkeypatch) -> None:
+    config, repository = _config_and_repository(tmp_path, monkeypatch)
+    send_entered = Event()
+    release_send = Event()
+
+    def blocking_send(*_args, **_kwargs):
+        send_entered.set()
+        assert release_send.wait(timeout=5)
+        return "message-1"
+
+    monkeypatch.setattr(cli_module, "send_telegram_message", blocking_send)
+    arguments = {
+        "business_date": date(2026, 4, 24),
+        "messages": ["daily summary"],
+        "effective_min_mentions": 1,
+        "require_target_price": False,
+    }
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        first = executor.submit(cli_module._send_production_daily_summary_fragments, config, repository, **arguments)
+        assert send_entered.wait(timeout=5)
+        try:
+            with pytest.raises(RuntimeError, match="in progress"):
+                cli_module._send_production_daily_summary_fragments(config, repository, **arguments)
+        finally:
+            release_send.set()
+        assert first.result(timeout=5) == ["message-1"]
+
+    with repository.connect() as connection:
+        run = connection.execute(
+            "SELECT status FROM daily_summary_delivery_runs WHERE business_date = ?",
+            ("2026-04-24",),
+        ).fetchone()
+    assert run["status"] == "sent"
 
 
 def test_ambiguous_intraday_batch_is_not_selected_for_automatic_retry(tmp_path, monkeypatch) -> None:

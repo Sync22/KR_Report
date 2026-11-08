@@ -96,10 +96,11 @@ def send_telegram_message(
         payload_dict["parse_mode"] = parse_mode
     payload = parse.urlencode(payload_dict).encode("utf-8")
     http_request = request.Request(endpoint, data=payload, method="POST")
+    # Telegram may accept the POST even when the client loses its response.
     data = _request_json_with_retries(
         http_request,
         timeout_seconds=timeout_seconds,
-        max_retries=max_retries,
+        max_retries=1,
         retry_delay_seconds=retry_delay_seconds,
         operation_name="Telegram sendMessage",
         ambiguous_on_transport=True,
