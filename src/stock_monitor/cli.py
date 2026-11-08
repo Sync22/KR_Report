@@ -1497,7 +1497,11 @@ def build_parser() -> argparse.ArgumentParser:
     notify_parser.add_argument("--date", type=date.fromisoformat, help="Use an explicit business date.")
     notify_parser.add_argument("--message", help="Send a custom message instead of the summary.")
     notify_parser.add_argument("--dry-run", action="store_true")
-    notify_parser.add_argument("--allow-repeat", action="store_true")
+    notify_parser.add_argument(
+        "--allow-repeat",
+        action="store_true",
+        help="Allow a manual repeat; for an ambiguous send, confirm the message is absent and the prior sender exited.",
+    )
     notify_parser.add_argument("--limit", type=int, help="Override the default number of summarized stocks to send.")
     notify_parser.add_argument(
         "--format",
@@ -1522,7 +1526,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Send the previous business day's daily summary on configured business days.",
     )
     scheduled_notify_parser.add_argument("--dry-run", action="store_true")
-    scheduled_notify_parser.add_argument("--allow-repeat", action="store_true")
+    scheduled_notify_parser.add_argument(
+        "--allow-repeat",
+        action="store_true",
+        help="Allow a manual repeat; for an ambiguous send, confirm the message is absent and the prior sender exited.",
+    )
     scheduled_notify_parser.add_argument(
         "--format",
         dest="notification_format",
@@ -1621,7 +1629,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scheduled_market_briefing_slot_parser.add_argument("--slot", choices=tuple(MARKET_BRIEFING_SLOT_LABELS), required=True)
     scheduled_market_briefing_slot_parser.add_argument("--dry-run", action="store_true")
-    scheduled_market_briefing_slot_parser.add_argument("--allow-repeat", action="store_true")
+    scheduled_market_briefing_slot_parser.add_argument(
+        "--allow-repeat",
+        action="store_true",
+        help="Allow a manual repeat; for an ambiguous send, confirm the message is absent and the prior sender exited.",
+    )
     scheduled_market_briefing_slot_parser.add_argument(
         "--allow-late",
         action="store_true",
@@ -2121,7 +2133,7 @@ def build_parser() -> argparse.ArgumentParser:
     kind_market_action_parser.add_argument(
         "--retry-ambiguous",
         action="store_true",
-        help="Retry ambiguous notices only after manually confirming that they were not delivered.",
+        help="Retry only after confirming the notice was not delivered and the previous sender exited.",
     )
 
     intraday_parser = subparsers.add_parser(
@@ -2132,7 +2144,7 @@ def build_parser() -> argparse.ArgumentParser:
     intraday_parser.add_argument(
         "--retry-ambiguous",
         action="store_true",
-        help="Retry ambiguous batches only after manually confirming that they were not delivered.",
+        help="Retry only after confirming the batch was not delivered and the previous sender exited.",
     )
 
     chart_alert_dispatch_parser = subparsers.add_parser(
@@ -25018,6 +25030,7 @@ def _send_production_daily_summary_fragments(
                 repository.mark_daily_summary_fragment_ambiguous(
                     run.run_id,
                     fragment.fragment_index,
+                    attempted_at=attempted_at,
                     error_detail=error_detail,
                     failed_at=failed_at,
                 )
@@ -25025,6 +25038,7 @@ def _send_production_daily_summary_fragments(
                 repository.mark_daily_summary_fragment_failed(
                     run.run_id,
                     fragment.fragment_index,
+                    attempted_at=attempted_at,
                     error_detail=error_detail,
                     failed_at=failed_at,
                 )
@@ -25053,6 +25067,7 @@ def _send_production_daily_summary_fragments(
         repository.mark_daily_summary_fragment_sent(
             run.run_id,
             fragment.fragment_index,
+            attempted_at=attempted_at,
             message_id=str(message_id),
             sent_at=sent_at,
         )

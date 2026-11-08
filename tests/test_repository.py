@@ -1576,15 +1576,21 @@ def test_repository_resumes_daily_summary_delivery_fragments(tmp_path) -> None:
     assert run.total_fragments == 2
     assert [fragment.fragment_index for fragment in repository.list_pending_daily_summary_fragments(run.run_id)] == [0, 1]
 
+    first_attempt_at = datetime(2026, 4, 25, 8, 0, 30)
+    assert repository.claim_daily_summary_fragment(run.run_id, 0, attempted_at=first_attempt_at)
     repository.mark_daily_summary_fragment_sent(
         run.run_id,
         0,
+        attempted_at=first_attempt_at,
         message_id="message-1",
         sent_at=datetime(2026, 4, 25, 8, 1, 0),
     )
+    second_attempt_at = datetime(2026, 4, 25, 8, 1, 30)
+    assert repository.claim_daily_summary_fragment(run.run_id, 1, attempted_at=second_attempt_at)
     repository.mark_daily_summary_fragment_failed(
         run.run_id,
         1,
+        attempted_at=second_attempt_at,
         error_detail="network",
         failed_at=datetime(2026, 4, 25, 8, 2, 0),
     )
@@ -1604,9 +1610,12 @@ def test_repository_resumes_daily_summary_delivery_fragments(tmp_path) -> None:
     assert [fragment.fragment_index for fragment in pending] == [1]
     assert pending[0].message_text == "fragment 2"
 
+    retry_attempt_at = datetime(2026, 4, 25, 8, 3, 30)
+    assert repository.claim_daily_summary_fragment(resumed.run_id, 1, attempted_at=retry_attempt_at)
     repository.mark_daily_summary_fragment_sent(
         resumed.run_id,
         1,
+        attempted_at=retry_attempt_at,
         message_id="message-2",
         sent_at=datetime(2026, 4, 25, 8, 4, 0),
     )
@@ -1651,6 +1660,61 @@ def test_repository_claims_daily_summary_fragment_once_across_workers(tmp_path) 
     assert row["status"] == "sending"
     assert row["attempted_at"] == "2026-04-25T08:01:00"
     assert run_status == "sending"
+
+
+def test_repository_ignores_late_daily_summary_result_from_recovered_attempt(tmp_path) -> None:
+    repository = StockMonitorRepository(tmp_path / "stock_monitor.db")
+    repository.initialize()
+    business_date = date(2026, 4, 24)
+    messages = ["fragment"]
+    signature = "signature-a"
+    original_attempt_at = datetime(2026, 4, 24, 8, 0)
+    run = repository.start_or_resume_daily_summary_run(
+        business_date=business_date,
+        channel="telegram",
+        summary_signature=signature,
+        messages=messages,
+        started_at=original_attempt_at,
+    )
+    assert repository.claim_daily_summary_fragment(
+        run.run_id,
+        0,
+        attempted_at=original_attempt_at,
+    )
+
+    retry_started_at = datetime(2026, 4, 24, 8, 2)
+    repository.start_or_resume_daily_summary_run(
+        business_date=business_date,
+        channel="telegram",
+        summary_signature=signature,
+        messages=messages,
+        started_at=retry_started_at,
+        stale_before=datetime(2026, 4, 24, 8, 1),
+        allow_ambiguous_repeat=True,
+    )
+    retry_attempt_at = datetime(2026, 4, 24, 8, 2, 1)
+    assert repository.claim_daily_summary_fragment(
+        run.run_id,
+        0,
+        attempted_at=retry_attempt_at,
+    )
+
+    repository.mark_daily_summary_fragment_sent(
+        run.run_id,
+        0,
+        attempted_at=original_attempt_at,
+        message_id="late-original-message",
+        sent_at=datetime(2026, 4, 24, 8, 3),
+    )
+
+    with repository.connect() as connection:
+        fragment = connection.execute(
+            "SELECT status, attempted_at, message_id FROM daily_summary_delivery_fragments WHERE run_id = ?",
+            (run.run_id,),
+        ).fetchone()
+    assert fragment["status"] == "sending"
+    assert fragment["attempted_at"] == retry_attempt_at.isoformat()
+    assert fragment["message_id"] is None
 
 
 def test_schema_initialization_takes_immediate_lock_before_reading_version() -> None:

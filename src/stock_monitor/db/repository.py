@@ -1032,7 +1032,7 @@ class StockMonitorRepository:
                         )
                 ambiguous_row = connection.execute(
                     """
-                    SELECT run_id
+                    SELECT run_id, summary_signature
                     FROM daily_summary_delivery_runs
                     WHERE business_date = ?
                       AND channel = ?
@@ -1041,6 +1041,7 @@ class StockMonitorRepository:
                     """,
                     (business_date.isoformat(), channel),
                 ).fetchone()
+                resume_signature = summary_signature
                 if ambiguous_row and not allow_ambiguous_repeat:
                     if recovered_stale_sends:
                         connection.commit()
@@ -1049,18 +1050,56 @@ class StockMonitorRepository:
                         "operator review is required before another send."
                     )
                 if ambiguous_row:
-                    connection.execute(
-                        """
-                        UPDATE daily_summary_delivery_runs
-                        SET status = 'superseded',
-                            finished_at = ?,
-                            last_error = 'operator-authorized retry after ambiguous delivery'
-                        WHERE business_date = ?
-                          AND channel = ?
-                          AND status = 'ambiguous'
-                        """,
-                        (started_at.isoformat(), business_date.isoformat(), channel),
-                    )
+                    if ambiguous_row["summary_signature"] == summary_signature:
+                        resume_signature = ambiguous_row["summary_signature"]
+                        connection.execute(
+                            """
+                            UPDATE daily_summary_delivery_fragments
+                            SET status = 'failed',
+                                last_error = 'operator-authorized retry after ambiguous delivery'
+                            WHERE run_id = ? AND status = 'ambiguous'
+                            """,
+                            (ambiguous_row["run_id"],),
+                        )
+                        connection.execute(
+                            """
+                            UPDATE daily_summary_delivery_runs
+                            SET status = 'failed',
+                                finished_at = NULL,
+                                last_error = 'operator-authorized retry after ambiguous delivery'
+                            WHERE run_id = ?
+                            """,
+                            (ambiguous_row["run_id"],),
+                        )
+                    else:
+                        sent_fragment = connection.execute(
+                            """
+                            SELECT 1
+                            FROM daily_summary_delivery_fragments
+                            WHERE run_id = ? AND status = 'sent'
+                            LIMIT 1
+                            """,
+                            (ambiguous_row["run_id"],),
+                        ).fetchone()
+                        if sent_fragment:
+                            if recovered_stale_sends:
+                                connection.commit()
+                            raise RuntimeError(
+                                "The daily summary changed after fragments were sent; "
+                                "review the ambiguous run before retrying."
+                            )
+                        connection.execute(
+                            """
+                            UPDATE daily_summary_delivery_runs
+                            SET status = 'superseded',
+                                finished_at = ?,
+                                last_error = 'operator-authorized retry after ambiguous delivery'
+                            WHERE business_date = ?
+                              AND channel = ?
+                              AND status = 'ambiguous'
+                            """,
+                            (started_at.isoformat(), business_date.isoformat(), channel),
+                        )
                 sending_row = connection.execute(
                     """
                     SELECT run_id, summary_signature
@@ -1070,8 +1109,32 @@ class StockMonitorRepository:
                     """,
                     (business_date.isoformat(), channel),
                 ).fetchone()
-                if sending_row and sending_row["summary_signature"] != summary_signature:
+                if sending_row and sending_row["summary_signature"] != resume_signature:
                     raise RuntimeError("A daily summary Telegram delivery is already in progress for this date and channel.")
+                changed_partial_run = connection.execute(
+                    """
+                    SELECT run.run_id
+                    FROM daily_summary_delivery_runs AS run
+                    WHERE run.business_date = ?
+                      AND run.channel = ?
+                      AND run.status IN ('pending', 'failed')
+                      AND run.summary_signature <> ?
+                      AND EXISTS (
+                          SELECT 1
+                          FROM daily_summary_delivery_fragments AS fragment
+                          WHERE fragment.run_id = run.run_id AND fragment.status = 'sent'
+                      )
+                    LIMIT 1
+                    """,
+                    (business_date.isoformat(), channel, resume_signature),
+                ).fetchone()
+                if changed_partial_run:
+                    if recovered_stale_sends:
+                        connection.commit()
+                    raise RuntimeError(
+                        "The daily summary changed after fragments were sent; "
+                        "review the incomplete run before retrying."
+                    )
                 connection.execute(
                     """
                     UPDATE daily_summary_delivery_runs
@@ -1087,7 +1150,7 @@ class StockMonitorRepository:
                         started_at.isoformat(),
                         business_date.isoformat(),
                         channel,
-                        summary_signature,
+                        resume_signature,
                     ),
                 )
                 row = connection.execute(
@@ -1113,7 +1176,7 @@ class StockMonitorRepository:
                     (
                         business_date.isoformat(),
                         channel,
-                        summary_signature,
+                        resume_signature,
                     ),
                 ).fetchone()
                 if row:
@@ -1155,7 +1218,7 @@ class StockMonitorRepository:
                         run_id,
                         business_date.isoformat(),
                         channel,
-                        summary_signature,
+                        resume_signature,
                         len(messages),
                         started_at.isoformat(),
                     ),
@@ -1185,7 +1248,7 @@ class StockMonitorRepository:
                     business_date=business_date,
                     channel=channel,
                     status="pending",
-                    summary_signature=summary_signature,
+                    summary_signature=resume_signature,
                     total_fragments=len(messages),
                     started_at=started_at,
                 )
@@ -1293,6 +1356,7 @@ class StockMonitorRepository:
         run_id: str,
         fragment_index: int,
         *,
+        attempted_at: datetime,
         message_id: str,
         sent_at: datetime,
     ) -> None:
@@ -1307,12 +1371,15 @@ class StockMonitorRepository:
                         last_error = NULL
                     WHERE run_id = ?
                       AND fragment_index = ?
+                      AND status = 'sending'
+                      AND attempted_at = ?
                     """,
                     (
                         message_id,
                         sent_at.isoformat(),
                         run_id,
                         fragment_index,
+                        attempted_at.isoformat(),
                     ),
                 )
 
@@ -1321,32 +1388,38 @@ class StockMonitorRepository:
         run_id: str,
         fragment_index: int,
         *,
+        attempted_at: datetime,
         error_detail: str,
         failed_at: datetime,
     ) -> None:
         with self.connect() as connection:
             with connection:
-                connection.execute(
+                cursor = connection.execute(
                     """
                     UPDATE daily_summary_delivery_fragments
                     SET status = 'failed',
                         last_error = ?
                     WHERE run_id = ?
                       AND fragment_index = ?
+                      AND status = 'sending'
+                      AND attempted_at = ?
                     """,
                     (
                         error_detail,
                         run_id,
                         fragment_index,
+                        attempted_at.isoformat(),
                     ),
                 )
+                if cursor.rowcount != 1:
+                    return
                 connection.execute(
                     """
                     UPDATE daily_summary_delivery_runs
                     SET status = 'failed',
                         last_error = ?,
                         finished_at = ?
-                    WHERE run_id = ?
+                    WHERE run_id = ? AND status = 'sending'
                     """,
                     (
                         error_detail,
@@ -1360,28 +1433,33 @@ class StockMonitorRepository:
         run_id: str,
         fragment_index: int,
         *,
+        attempted_at: datetime,
         error_detail: str,
         failed_at: datetime,
     ) -> None:
         with self.connect() as connection:
             with connection:
-                connection.execute(
+                cursor = connection.execute(
                     """
                     UPDATE daily_summary_delivery_fragments
                     SET status = 'ambiguous',
                         last_error = ?
                     WHERE run_id = ?
                       AND fragment_index = ?
+                      AND status = 'sending'
+                      AND attempted_at = ?
                     """,
-                    (error_detail, run_id, fragment_index),
+                    (error_detail, run_id, fragment_index, attempted_at.isoformat()),
                 )
+                if cursor.rowcount != 1:
+                    return
                 connection.execute(
                     """
                     UPDATE daily_summary_delivery_runs
                     SET status = 'ambiguous',
                         last_error = ?,
                         finished_at = ?
-                    WHERE run_id = ?
+                    WHERE run_id = ? AND status = 'sending'
                     """,
                     (error_detail, failed_at.isoformat(), run_id),
                 )
