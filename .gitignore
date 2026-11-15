@@ -57,6 +57,8 @@ data/operator_photo_inbox/**
 *.sqlite
 *.sqlite3
 *.log
+*.delivery.lock
+*.zip.publication.lock
 *.zip
 *.7z
 *_snapshot/

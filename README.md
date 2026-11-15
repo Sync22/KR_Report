@@ -86,16 +86,30 @@ Source ownership stays explicit:
 
 ## Quick Start
 
+The Next.js web-view requires Node.js 22.16 or newer for its built-in SQLite reader and timeout support.
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 .\.venv\Scripts\python.exe -m playwright install chromium
-.\.venv\Scripts\python.exe -m pytest
+Push-Location .\tests
+..\.venv\Scripts\python.exe -m pytest .
+Pop-Location
 ```
 
-The project venv must be used for Python-backed Next regression tests as well. In PowerShell, prepend `..venvScripts` to the current process `PATH` before running `npm test`; otherwise a system Python without the project's `tzdata` dependency may be selected.
+The project venv must be used for Python-backed Next regression tests as well. In PowerShell, from the project root:
 
-실제 비밀값은 `.env`에만 둡니다. 추적되는 예시는 [.env.example](.env.example)을 참고하세요.
+```powershell
+Push-Location .\web
+$venvScripts = (Resolve-Path ..\.venv\Scripts).Path
+$env:PATH = "$venvScripts;$env:PATH"
+npm test
+Pop-Location
+```
+
+Otherwise a system Python without the project's `tzdata` dependency may be selected.
+
+실제 비밀값은 Git에서 제외된 `.env`와 `.env.toss-openapi`에 둡니다. 추적되는 예시는 [.env.example](.env.example)과 [.env.toss-openapi.example](.env.toss-openapi.example)을 참고하세요.
 
 ## Common Commands
 

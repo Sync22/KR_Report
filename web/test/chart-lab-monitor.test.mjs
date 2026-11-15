@@ -57,3 +57,68 @@ test("Chart Lab monitor enforces 20-symbol and 3-focus limits", async () => {
     await assert.rejects(monitor.configure(Array.from({ length: 4 }, (_, index) => ({ symbol: `SYM${index}`, name: "Test", focus: true }))), /invalid-chart-lab-state/);
   } finally { await rm(folder, { recursive: true, force: true }); }
 });
+
+test("Chart Lab monitor instances share one poll lease through pause and restart", async () => {
+  const folder = await mkdtemp(path.join(os.tmpdir(), "chart-lab-monitor-lock-"));
+  const file = path.join(folder, "monitor.json");
+  const pending = [];
+  let requests = 0;
+  let active = 0;
+  let maxActive = 0;
+  const createMonitor = () => new ChartLabMonitorService({
+    statePath: file,
+    getChart: async (date, symbol, timeframe) => {
+      requests += 1;
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => pending.push(resolve));
+      active -= 1;
+      return { status: 200, payload: { available: true, requested_as_of: date, symbol, timeframe, source: "Yahoo Finance",
+        source_fetched_at: "2026-10-16T00:00:00.000Z", source_date: "2026-10-15", adjusted: false, bar_status: "unknown", bars } };
+    },
+    detectPatterns: () => [],
+    now: () => new Date("2026-10-16T00:00:00.000Z"),
+  });
+  const first = createMonitor();
+  const second = createMonitor();
+  let secondPoll = Promise.resolve();
+  const waitFor = async (condition) => {
+    for (let attempt = 0; attempt < 200 && !condition(); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(condition());
+  };
+  try {
+    await first.configure([{ symbol: "005930", name: "Samsung Electronics", focus: true }]);
+    await first.start();
+    await waitFor(() => requests === 1);
+    assert.equal((await second.getStatus()).ownerActiveElsewhere, true);
+    await assert.rejects(second.configure([{ symbol: "000660", name: "SK hynix", focus: false }]), /monitor-owned-elsewhere/);
+    assert.equal((await readChartLabState(file)).symbols[0].symbol, "005930");
+    secondPoll = second.pollDueOnce();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(requests, 1, "a second server must not poll while another owns the monitor");
+    assert.equal((await first.pause()).running, false);
+    assert.equal((await second.getStatus()).ownerActiveElsewhere, true);
+    await assert.rejects(second.start(), /monitor-owned-elsewhere/);
+
+    pending[0]();
+    let restarted = false;
+    for (let attempt = 0; attempt < 200 && !restarted; attempt += 1) {
+      try { await second.start(); restarted = true; }
+      catch (error) {
+        assert.match(error.message, /monitor-owned-elsewhere/);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
+    assert.equal(restarted, true);
+    await waitFor(() => requests === 2);
+    assert.equal(maxActive, 1, "a paused request must finish before another server starts polling");
+    await second.pause();
+  } finally {
+    for (const resolve of pending) resolve();
+    await secondPoll.catch(() => undefined);
+    await first.pause().catch(() => undefined);
+    await second.pause().catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await rm(folder, { recursive: true, force: true });
+  }
+});

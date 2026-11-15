@@ -103,7 +103,7 @@ def test_ambiguous_daily_summary_is_held_and_not_sent_again(tmp_path, monkeypatc
         messages=["daily summary changed"],
         effective_min_mentions=1,
         require_target_price=False,
-        allow_ambiguous_repeat=True,
+        allow_repeat=True,
     )
     assert message_ids == ["reviewed-message"]
     assert len(sends) == 2

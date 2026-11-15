@@ -18,16 +18,7 @@ def query_int(query: str, name: str, *, default: int, minimum: int, maximum: int
 
 
 def discard_http_request_body(handler: BaseHTTPRequestHandler) -> None:
-    try:
-        content_length = int(handler.headers.get("Content-Length") or "0")
-    except ValueError:
-        return
-    if content_length <= 0:
-        return
-    try:
-        handler.rfile.read(content_length)
-    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
-        return
+    handler.close_connection = True
 
 
 def write_http_response(

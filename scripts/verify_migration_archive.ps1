@@ -2,12 +2,27 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ArchivePath,
     [string]$ChecksumPath = "",
+    [string]$PythonExe = "",
     [switch]$FailOnSensitiveEntries
 )
 
 $ErrorActionPreference = "Stop"
 
 $resolvedArchive = Resolve-Path -LiteralPath $ArchivePath
+$projectRoot = Split-Path -Parent $PSScriptRoot
+if (-not $PythonExe) {
+    $projectVenvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
+    $PythonExe = if (Test-Path -LiteralPath $projectVenvPython) {
+        (Resolve-Path -LiteralPath $projectVenvPython).Path
+    }
+    else {
+        (Get-Command python -ErrorAction Stop).Source
+    }
+}
+$snapshotHelper = Join-Path $PSScriptRoot "create_migration_archive_snapshot.py"
+if (-not (Test-Path -LiteralPath $snapshotHelper -PathType Leaf)) {
+    throw "Missing migration archive snapshot helper: $snapshotHelper"
+}
 if (-not $ChecksumPath) {
     $ChecksumPath = "$($resolvedArchive.Path).sha256"
 }
@@ -130,12 +145,24 @@ if ($missingRequiredEntries.Count -gt 0) {
 }
 Write-Output "- required_entries: ok"
 
+& $PythonExe $snapshotHelper verify-archive $resolvedArchive.Path
+if ($LASTEXITCODE -ne 0) {
+    throw "Migration archive SQLite verification failed with exit code $LASTEXITCODE"
+}
+Write-Output "- sqlite_snapshot: integrity and foreign keys verified"
+
 function Test-SensitiveArchiveEntry([string]$NormalizedEntry, [string]$SensitiveEntry) {
     if ($NormalizedEntry -eq $SensitiveEntry) {
         return $true
     }
-    if ($SensitiveEntry -eq ".env" -and $NormalizedEntry.EndsWith("/.env")) {
-        return $true
+    if ($SensitiveEntry -eq ".env") {
+        $leaf = Split-Path -Leaf $NormalizedEntry
+        if ($leaf -in @(".env.example", ".env.toss-openapi.example")) {
+            return $false
+        }
+        if ($NormalizedEntry.EndsWith("/.env") -or $leaf -like ".env.*" -or $leaf -like "*.env") {
+            return $true
+        }
     }
     if ($SensitiveEntry -eq "data/access_code.json" -and $NormalizedEntry.EndsWith("/data/access_code.json")) {
         return $true

@@ -78,27 +78,6 @@ function Remove-LegacyTask([string]$TaskName) {
     }
 }
 
-function Register-RepeatingWeekdayTask(
-    [string]$TaskName,
-    [string]$ScriptPath,
-    [string]$PythonCommand,
-    [string]$StartTime,
-    [string]$Duration,
-    [int]$RepeatIntervalMinutes
-) {
-    $taskRunCommand = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ScriptPath`" -PythonExe `"$PythonCommand`""
-    schtasks.exe /Create `
-        /TN $TaskName `
-        /TR $taskRunCommand `
-        /SC WEEKLY `
-        /MO 1 `
-        /D MON,TUE,WED,THU,FRI `
-        /ST $StartTime `
-        /RI $RepeatIntervalMinutes `
-        /DU $Duration `
-        /F | Out-Null
-}
-
 function Register-HourlyTask(
     [string]$TaskName,
     [string]$ScriptPath,

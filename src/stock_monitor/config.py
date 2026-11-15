@@ -21,6 +21,7 @@ DEFAULT_MARKET_HOLIDAYS_2024 = frozenset(
         date(2024, 9, 16),
         date(2024, 9, 17),
         date(2024, 9, 18),
+        date(2024, 10, 1),
         date(2024, 10, 3),
         date(2024, 10, 9),
         date(2024, 12, 25),
@@ -82,6 +83,8 @@ DEFAULT_MARKET_HOLIDAYS = (
     | DEFAULT_MARKET_HOLIDAYS_2025
     | DEFAULT_MARKET_HOLIDAYS_2026
 )
+# Extra overrides add dates; they do not extend the built-in annual coverage.
+DEFAULT_MARKET_HOLIDAY_COVERAGE_YEARS = frozenset({2024, 2025, 2026})
 
 
 def _read_dotenv(dotenv_path: Path) -> dict[str, str]:

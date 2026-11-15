@@ -53,8 +53,9 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "invalid_action" }, { status: 400, headers: NO_STORE });
   } catch (error) {
     const message = error instanceof TypeError ? error.message : "";
-    const status = message === "monitor-symbols-required" || message === "invalid-chart-lab-state" ? 400 : 503;
-    return Response.json({ error: status === 400 ? "invalid_monitor_state" : "monitor_state_unavailable" }, { status, headers: NO_STORE });
+    const status = message === "monitor-symbols-required" || message === "invalid-chart-lab-state" ? 400
+      : message === "monitor-owned-elsewhere" ? 409 : 503;
+    return Response.json({ error: status === 400 ? "invalid_monitor_state" : status === 409 ? message : "monitor_state_unavailable" }, { status, headers: NO_STORE });
   }
 }
 

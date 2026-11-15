@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+import os
 from pathlib import Path
+import subprocess
+import sys
+from threading import Event, Lock
 
 import pytest
 
@@ -14,6 +19,8 @@ from stock_monitor.chart_alerts import (
 )
 from stock_monitor.cli import build_parser
 from stock_monitor.db.repository import StockMonitorRepository
+from stock_monitor.file_lock import FILE_LOCK_MARKER, exclusive_file_lock
+import stock_monitor.chart_alerts as chart_alerts
 
 
 def event_payload(
@@ -174,3 +181,84 @@ def test_chart_alert_cli_defaults_to_preview_and_requires_send_for_watch_mode() 
     assert preview.watch is False
     assert sender.send is True
     assert sender.watch is True
+
+
+def test_concurrent_chart_alert_recovery_does_not_remove_a_new_lock_owner(tmp_path: Path) -> None:
+    spool = tmp_path / "ChartLab" / "alert-spool"
+    spool.mkdir(parents=True)
+    lock_path = spool.parent / "alert-dispatch.lock"
+    lock_path.write_text(json.dumps({"pid": 2_147_483_647, "token": "dead"}), encoding="utf-8")
+    child_code = "\n".join((
+        "import sys, time",
+        "sys.path.insert(0, sys.argv[1])",
+        "sys.path.insert(0, sys.argv[3])",
+        "from pathlib import Path",
+        "from stock_monitor.chart_alerts import _chart_alert_dispatch_lock",
+        "try:",
+        "    with _chart_alert_dispatch_lock(Path(sys.argv[2])):",
+        "        print('acquired', flush=True)",
+        "        time.sleep(30)",
+        "except ValueError as error:",
+        "    print(f'busy:{error}', flush=True)",
+        "    sys.exit(2)",
+    ))
+    process = None
+    try:
+        process = subprocess.Popen(
+            [sys._base_executable, "-c", child_code, str(Path(__file__).resolve().parents[1] / "src"), str(spool), str(Path(sys.prefix) / "Lib" / "site-packages")],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert process.stdout is not None
+        assert process.stdout.readline().strip() == "acquired"
+        with pytest.raises(ValueError, match="chart-alert-dispatch-owned-elsewhere"):
+            with chart_alerts._chart_alert_dispatch_lock(spool):
+                raise AssertionError("a second dispatcher must not acquire the native lock")
+        process.kill()
+        assert process.wait(timeout=5) != 0
+        with exclusive_file_lock(lock_path, blocking=False) as handle:
+            native_lock = handle.read()
+        assert native_lock.endswith(b"\n" + FILE_LOCK_MARKER)
+
+        with chart_alerts._chart_alert_dispatch_lock(spool):
+            pass
+        assert lock_path.read_bytes() == native_lock
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
+def test_chart_alert_dispatch_fails_closed_for_a_live_legacy_owner(tmp_path: Path, monkeypatch) -> None:
+    spool = tmp_path / "ChartLab" / "alert-spool"
+    spool.mkdir(parents=True)
+    lock_path = spool.parent / "alert-dispatch.lock"
+    legacy_lock = json.dumps({"pid": os.getpid(), "token": "legacy-owner"})
+    lock_path.write_text(legacy_lock, encoding="utf-8")
+    monkeypatch.setattr(chart_alerts, "_windows_dispatch_lock_stale", lambda _pid: False)
+    with pytest.raises(ValueError, match="chart-alert-dispatch-owned-elsewhere"):
+        with chart_alerts._chart_alert_dispatch_lock(spool):
+            raise AssertionError("a live legacy owner must remain exclusive")
+    assert lock_path.read_text(encoding="utf-8") == legacy_lock
+
+
+def test_windows_legacy_lock_probe_uses_waitable_process_handles(monkeypatch) -> None:
+    if os.name != "nt":
+        pytest.skip("Windows process handles are platform-specific")
+    process = subprocess.Popen([sys._base_executable, "-c", "import time; time.sleep(30)"])
+
+    def forbidden_kill(*_args) -> None:
+        raise AssertionError("Windows liveness checks must not call os.kill")
+
+    try:
+        monkeypatch.setattr(chart_alerts.os, "kill", forbidden_kill)
+        legacy_lock = json.dumps({"pid": process.pid, "token": "legacy-owner"}).encode("utf-8")
+        assert chart_alerts._stale_dispatch_lock(legacy_lock) is False
+        process.kill()
+        process.wait(timeout=5)
+        assert chart_alerts._stale_dispatch_lock(legacy_lock) is True
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)

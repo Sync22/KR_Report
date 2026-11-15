@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.16.0"
+  },
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",
@@ -13,7 +16,7 @@
     "bench:public-get": "node scripts/benchmark-public-get.mjs"
   },
   "dependencies": {
-    "next": "16.4.0",
+    "next": "16.4.6",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "server-only": "0.0.1"

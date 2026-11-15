@@ -7,6 +7,12 @@ import { fetchNaverMarketTopStocks, NaverMarketTopError, type NaverMarket, type 
 import { fetchNaverQuoteSnapshot, type NaverQuoteSnapshot } from "./priority-current-quotes.ts";
 
 const TOSS_SOURCE = "toss_openapi";
+const INTRADAY_CACHE_TTL_MS = 30_000;
+const MAX_INTRADAY_CACHE_ENTRIES = 256;
+
+type IntradayCacheEntry = { savedAt: number; reference: Record<string, unknown> };
+const intradayCache = new Map<string, IntradayCacheEntry>();
+const intradayInflight = new Map<string, Promise<Record<string, unknown>>>();
 
 type DailySummary = {
   business_date?: string;
@@ -718,6 +724,7 @@ export function buildMarketCommentaryPracticeSnapshot(
 type IntradaySummary = { stock_code: string | null; stock_name: string; mention_count: number };
 type IntradayMarketTopDependencies = {
   now?: Date;
+  clock?: () => number;
   timezone?: string;
   delaySeconds?: number;
   fetchPage?: (market: NaverMarket, page: number, pageSize: number) => Promise<NaverMarketTopStock[]>;
@@ -970,8 +977,19 @@ export async function overlayDailyIntradayMarketTop(
       return summary ? [summary] : [];
     });
 
-  const intradayQuoteReference = await buildIntradayQuoteReference(prioritySummaries, { ...dependencies, timezone });
-  const intradayMarketTopReference = await buildIntradayMarketTopReference(summaries, { ...dependencies, now, timezone });
+  const clock = dependencies.clock ?? (() => performance.now());
+  const summaryCohort = summaries.map((summary) => [summary.stock_code, summary.stock_name, summary.mention_count]);
+  const priorityCohort = prioritySummaries.map((summary) => [summary.stock_code, summary.stock_name, summary.mention_count]);
+  const delaySeconds = Math.max(0, dependencies.delaySeconds ?? 0.5);
+  const intradayQuoteReference = prioritySummaries.length
+    ? await cachedIntradayReference(JSON.stringify(["naver-quote", expectedDate, priorityCohort]),
+      () => buildIntradayQuoteReference(prioritySummaries, { ...dependencies, timezone }), clock)
+    : emptyIntradayQuoteReference(0);
+  const intradayMarketTopReference = await cachedIntradayReference(
+    JSON.stringify(["naver-market-top", expectedDate, timezone, 100, 20, delaySeconds, summaryCohort, priorityCohort]),
+    () => buildIntradayMarketTopReference(summaries, { ...dependencies, now, timezone }),
+    clock,
+  );
   const marketTopDetails = intradayMarketTopDetailLines(intradayMarketTopReference);
   const quoteDetails = intradayQuoteDetailLines(intradayQuoteReference);
   const notableLabel = summaries.slice(0, 3).map((summary) => summary.stock_name).join(", ") || "확인 후보 없음";
@@ -1011,4 +1029,36 @@ export async function overlayDailyIntradayMarketTop(
       comments,
     },
   };
+}
+
+async function cachedIntradayReference(
+  key: string,
+  build: () => Promise<Record<string, unknown>>,
+  clock: () => number,
+): Promise<Record<string, unknown>> {
+  const now = clock();
+  const cached = intradayCache.get(key);
+  if (cached && now - cached.savedAt <= INTRADAY_CACHE_TTL_MS) {
+    intradayCache.delete(key);
+    intradayCache.set(key, cached);
+    return cached.reference;
+  }
+  if (cached) intradayCache.delete(key);
+  const shared = intradayInflight.get(key);
+  if (shared) return shared;
+
+  const request = Promise.resolve().then(build).then((reference) => {
+    if (reference.live_fetch === true && Array.isArray(reference.errors) && reference.errors.length === 0) {
+      intradayCache.delete(key);
+      intradayCache.set(key, { savedAt: clock(), reference });
+      while (intradayCache.size > MAX_INTRADAY_CACHE_ENTRIES) intradayCache.delete(intradayCache.keys().next().value!);
+    }
+    return reference;
+  });
+  intradayInflight.set(key, request);
+  try {
+    return await request;
+  } finally {
+    if (intradayInflight.get(key) === request) intradayInflight.delete(key);
+  }
 }

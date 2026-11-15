@@ -10,6 +10,8 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import sys
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -34,8 +36,25 @@ def _parse_date(value: str) -> date:
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(str(db_path))
+    project_root = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(project_root / "src"))
+    from stock_monitor.config import RuntimeConfig
+
+    configured = RuntimeConfig.from_env(root_dir=project_root).db_path
+    operating_paths = {
+        project_root / "data/stock_monitor.db",
+        configured.resolve(),
+        (project_root / configured).resolve(),
+    }
+    source = db_path.resolve()
+    if any(
+        source == operating or (source.exists() and operating.exists() and source.samefile(operating))
+        for operating in operating_paths
+    ):
+        raise ValueError("The operating database cannot be used by the lab; provide a separate snapshot.")
+    connection = sqlite3.connect(f"{source.as_uri()}?mode=ro", uri=True)
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA query_only = ON")
     return connection
 
 
@@ -182,15 +201,14 @@ def _group_summary(rows: list[dict[str, Any]], *, key: str) -> list[dict[str, An
 
 def run_experiment(args: argparse.Namespace) -> dict[str, Any]:
     db_path = Path(args.db_path)
-    device = "cuda" if args.device == "auto" and torch.cuda.is_available() else ("cpu" if args.device == "auto" else args.device)
-    tokenizer = KronosTokenizer.from_pretrained(args.tokenizer, cache_dir=args.cache_dir)
-    model = Kronos.from_pretrained(args.model, cache_dir=args.cache_dir)
-    predictor = KronosPredictor(model, tokenizer, max_context=args.max_context, device=device)
-    predictor.model.eval()
-
     results: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
-    with _connect(db_path) as connection:
+    with closing(_connect(db_path)) as connection:
+        device = "cuda" if args.device == "auto" and torch.cuda.is_available() else ("cpu" if args.device == "auto" else args.device)
+        tokenizer = KronosTokenizer.from_pretrained(args.tokenizer, cache_dir=args.cache_dir)
+        model = Kronos.from_pretrained(args.model, cache_dir=args.cache_dir)
+        predictor = KronosPredictor(model, tokenizer, max_context=args.max_context, device=device)
+        predictor.model.eval()
         candidates = _load_candidates(
             connection,
             from_date=args.from_date,
@@ -288,7 +306,7 @@ def run_experiment(args: argparse.Namespace) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db-path", default="data/stock_monitor.db")
+    parser.add_argument("--db-path", required=True, help="Path to a separate, existing SQLite snapshot.")
     parser.add_argument("--from-date", type=_parse_date, required=True)
     parser.add_argument("--to-date", type=_parse_date, required=True)
     parser.add_argument("--mention-threshold", type=int, default=2)

@@ -161,6 +161,8 @@ export function buildStockSearchSnapshot(
              market_reference_date, source_rank
       FROM candidates
       WHERE TRIM(COALESCE(stock_code, '')) <> ''
+        AND length(TRIM(stock_code)) = 6
+        AND TRIM(stock_code) NOT GLOB '*[^0-9]*'
         AND (
           stock_code LIKE ? COLLATE NOCASE
           OR stock_name LIKE ? COLLATE NOCASE

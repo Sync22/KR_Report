@@ -38,6 +38,15 @@ The new Codex session on the mini PC should start from this project folder and r
 
 ## Migration Readiness Snapshot
 
+### Source safety changes awaiting operational validation (2026-11-15)
+
+- `create_migration_archive.ps1` resolves the DB using `RuntimeConfig` (`.env` plus environment precedence), including custom relative/external paths. It excludes the selected live DB, SQLite sidecars, and active delivery-lock files, creates a read-only SQLite backup at the portable archive member `data/stock_monitor.db`, and verifies integrity and foreign keys both before and after compression. Validation failure preserves the previous ZIP/checksum. A persistent per-destination publication lock protects concurrent publishers; a contending publisher fails before changing the existing pair. `-SkipPreflight` does not bypass snapshot verification. The source configuration is not rewritten for the destination machine.
+- `verify_migration_archive.ps1` verifies the actual SQLite member and refuses live `.db`/`.sqlite`/`.sqlite3` WAL, SHM, and journal files anywhere in the ZIP. It uses the current checkout's helper; a valid older archive need not contain that helper to be checked.
+- Scheduler verification checks the documented default profile's enabled state, weekdays, times, and repetition, including equivalent hourly trigger representations. Custom registration times are not certified by this default verifier. Principal, logon type, and run level are displayed; an expected task-account policy still needs operator confirmation. These checks do not establish the actual task state until the operator runs them on the target.
+- Automatic CLI runs outside `DEFAULT_MARKET_HOLIDAY_COVERAGE_YEARS` stop with `market_calendar_unsupported_year`. Current built-in coverage is 2024–2026, not a claim that every historical date was newly re-audited. The 2024-10-01 temporary closure was corrected using [Eurex's official KRX closure notice](https://www.eurex.com/ex-en/find/circulars/circular-4110148). The [government 2027 calendar announcement](https://www.kasa.go.kr/prog/plcyBrf/brief/kor/sub01_01_04/view.do?plcyBrfNo=431) is not treated as approval of a complete KRX trading calendar. Review/add the full exchange calendar and coverage year before enabling 2027 automatic operation; extra environment holiday dates alone do not enable it.
+
+Only development fixtures were exercised for these changes. No operating DB was opened or migrated, no Task Scheduler task was queried or changed, and no real message was sent. Stop older producers before a separately authorized rollout; review the [delivery recovery contract](data-governance.md#notification-delivery-recovery) before explicitly retrying ambiguous work.
+
 Current snapshot as of `2026-05-17 17:02 KST`:
 
 | Area | State | Migration note |

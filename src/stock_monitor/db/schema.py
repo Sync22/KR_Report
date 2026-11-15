@@ -866,6 +866,10 @@ def apply_schema_migrations(
 
 def get_schema_migration_status(connection: sqlite3.Connection) -> SchemaMigrationStatus:
     current_version = _get_user_version(connection)
+    if current_version > SCHEMA_VERSION:
+        raise RuntimeError(
+            f"Database schema version {current_version} is newer than supported version {SCHEMA_VERSION}."
+        )
     applied_versions = _list_applied_migration_versions(connection) if _schema_migrations_table_exists(connection) else ()
     pending = _pending_migrations(current_version)
     return SchemaMigrationStatus(

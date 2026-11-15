@@ -9,6 +9,7 @@ from dataclasses import replace
 from datetime import date, datetime, time as datetime_time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -37,6 +38,9 @@ from stock_monitor.models import (
     TossPriorityQuoteBaseline,
     TossStockUniverseEntry,
 )
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 PUBLIC_FORBIDDEN_KEYS = {
@@ -5506,7 +5510,18 @@ def test_web_view_intraday_overlay_populates_priority_quote_when_market_top_has_
                 collected_at=now,
                 source_id="priority-quote-report",
                 identity_key="priority-quote-report",
-            )
+            ),
+            Report(
+                business_date=business_date,
+                stock_name="웹뷰후보",
+                stock_code="000001",
+                title="웹뷰후보 추가 보고서",
+                broker_name="테스트증권2",
+                published_at=now,
+                collected_at=now,
+                source_id="priority-quote-report-2",
+                identity_key="priority-quote-report-2",
+            ),
         ]
     )
     repository.rebuild_daily_summaries(business_date)
@@ -5536,6 +5551,14 @@ def test_web_view_intraday_overlay_populates_priority_quote_when_market_top_has_
         now=now,
     )
 
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed = cls(2026, 5, 20, 12, 1, 0)
+            return fixed.replace(tzinfo=tz) if tz else fixed
+
+    monkeypatch.setattr(cli_module, "datetime", FixedDateTime)
+
     snapshot = cli_module._overlay_web_view_daily_intraday_market_top(
         config,
         repository,
@@ -5546,13 +5569,14 @@ def test_web_view_intraday_overlay_populates_priority_quote_when_market_top_has_
     )
 
     commentary = snapshot["market_commentary"]
+    assert commentary["intraday_market_top_reference"]["live_fetch"] is True
     assert commentary["intraday_market_top_reference"]["items"] == []
     assert commentary["intraday_quote_reference"]["live_fetch"] is True
     assert commentary["intraday_quote_reference"]["items"] == [
         {
             "stock_name": "웹뷰후보",
             "stock_code": "000001",
-            "mention_count": 1,
+            "mention_count": 2,
             "current_price": 10_500,
             "prev_close_price": 10_000,
             "change_price": 500,
@@ -7364,6 +7388,7 @@ def test_web_view_rotation_overlay_snapshot_uses_image_alias_layer(tmp_path, mon
 
 
 def test_web_view_server_serves_get_only_archive(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(PROJECT_ROOT)
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     config.ensure_runtime_dirs()

@@ -3,6 +3,7 @@ import "server-only";
 import type { ChartExplorerBar, ChartExplorerSuccess, ChartExplorerTimeframe } from "../domain/chart-explorer.ts";
 import { detectChartLabPatterns, type ChartLabPattern } from "../domain/chart-lab/patterns.ts";
 import { appendChartLabEvents, chartLabEventId, type ChartLabEventRecord } from "../domain/chart-lab/events.ts";
+import { acquireChartAlertLock } from "./chart-alert-store.ts";
 import { chartExplorerService } from "./chart-explorer.ts";
 import { chartLabStatePath, emptyChartLabState, readChartLabState, writeChartLabState, type ChartLabMonitorState } from "./chart-lab-store.ts";
 
@@ -22,56 +23,103 @@ type WatchSymbol = ChartLabMonitorState["symbols"][number];
 
 export class ChartLabMonitorService {
   private readonly dependencies: Dependencies;
+  private readonly lockPath: string;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private busy = false;
   private writes: Promise<void> = Promise.resolve();
+  private releaseLease: (() => Promise<void>) | null = null;
 
   constructor(dependencies: Partial<Dependencies> = {}) {
+    const statePath = dependencies.statePath ?? chartLabStatePath();
+    this.lockPath = `${statePath}.lock`;
     this.dependencies = {
-      statePath: dependencies.statePath ?? chartLabStatePath(),
+      statePath,
       getChart: dependencies.getChart ?? ((date, symbol, timeframe) => chartExplorerService.getChart(date, symbol, timeframe)),
       detectPatterns: dependencies.detectPatterns ?? detectChartLabPatterns,
       now: dependencies.now ?? (() => new Date()),
     };
   }
 
-  async getStatus(): Promise<{ state: ChartLabMonitorState; intervals: { regularMs: number; focusMs: number } }> {
+  async getStatus(): Promise<{ state: ChartLabMonitorState; intervals: { regularMs: number; focusMs: number }; ownerActiveElsewhere: boolean }> {
     const state = await this.read();
-    if (state.running && !this.timer && !this.busy) this.scheduleNext(state);
-    return { state, intervals: { regularMs: REGULAR_INTERVAL_MS, focusMs: FOCUS_INTERVAL_MS } };
+    let ownerActiveElsewhere = false;
+    if (!this.releaseLease) {
+      const release = await acquireChartAlertLock(this.lockPath);
+      if (release && state.running) this.releaseLease = release;
+      else if (release) await release();
+      else ownerActiveElsewhere = !this.releaseLease;
+    }
+    if (state.running && this.releaseLease && !this.timer && !this.busy) this.scheduleNext(state);
+    return { state, intervals: { regularMs: REGULAR_INTERVAL_MS, focusMs: FOCUS_INTERVAL_MS }, ownerActiveElsewhere };
   }
 
   async configure(input: ReadonlyArray<{ symbol: string; name: string; focus: boolean }>): Promise<ChartLabMonitorState> {
-    const state = await this.update((current) => {
-      const old = new Map(current.symbols.map((item) => [item.symbol, item]));
-      const symbols = input.map((item) => {
-        const prior = old.get(item.symbol);
-        return { symbol: item.symbol, name: item.name, focus: item.focus, lastPolledAt: prior?.lastPolledAt ?? null, failureCount: prior?.failureCount ?? 0 };
+    return this.withLease(async () => {
+      const state = await this.update((current) => {
+        const old = new Map(current.symbols.map((item) => [item.symbol, item]));
+        const symbols = input.map((item) => {
+          const prior = old.get(item.symbol);
+          return { symbol: item.symbol, name: item.name, focus: item.focus, lastPolledAt: prior?.lastPolledAt ?? null, failureCount: prior?.failureCount ?? 0 };
+        });
+        if (current.running && !symbols.length) throw new TypeError("monitor-symbols-required");
+        return { ...current, symbols };
       });
-      if (current.running && !symbols.length) throw new TypeError("monitor-symbols-required");
-      return { ...current, symbols };
+      if (state.running) this.scheduleNext(state);
+      return state;
     });
-    if (state.running) this.scheduleNext(state);
-    return state;
   }
 
   async start(): Promise<ChartLabMonitorState> {
-    const state = await this.update((current) => {
-      if (!current.symbols.length) throw new TypeError("monitor-symbols-required");
-      return current.running ? current : { ...current, running: true, startedAt: this.dependencies.now().toISOString(), lastError: null };
-    });
-    this.scheduleNext(state, 0);
-    return state;
+    if (!this.releaseLease) {
+      const release = await acquireChartAlertLock(this.lockPath);
+      if (!release && !this.releaseLease) throw new TypeError("monitor-owned-elsewhere");
+      if (release) this.releaseLease = release;
+    }
+    try {
+      const state = await this.update((current) => {
+        if (!current.symbols.length) throw new TypeError("monitor-symbols-required");
+        return current.running ? current : { ...current, running: true, startedAt: this.dependencies.now().toISOString(), lastError: null };
+      });
+      this.scheduleNext(state, 0);
+      return state;
+    } catch (error) {
+      if (!this.busy) await this.release();
+      throw error;
+    }
   }
 
   async pause(): Promise<ChartLabMonitorState> {
     this.clearTimer();
-    return this.update((current) => ({ ...current, running: false }));
+    if (!this.releaseLease) {
+      const release = await acquireChartAlertLock(this.lockPath);
+      if (!release && !this.releaseLease) throw new TypeError("monitor-owned-elsewhere");
+      if (release) this.releaseLease = release;
+    }
+    const state = await this.update((current) => ({ ...current, running: false }));
+    if (!this.busy) await this.release();
+    return state;
   }
 
   async pollDueOnce(): Promise<void> {
     this.clearTimer();
     await this.tick();
+  }
+
+  private async withLease<T>(work: () => Promise<T>): Promise<T> {
+    if (this.releaseLease) return work();
+    const release = await acquireChartAlertLock(this.lockPath);
+    if (!release) {
+      if (this.releaseLease) return work();
+      throw new TypeError("monitor-owned-elsewhere");
+    }
+    try { return await work(); }
+    finally { await release(); }
+  }
+
+  private async release(): Promise<void> {
+    const release = this.releaseLease;
+    this.releaseLease = null;
+    await release?.();
   }
 
   private async read(): Promise<ChartLabMonitorState> {
@@ -116,7 +164,7 @@ export class ChartLabMonitorService {
 
   private async tick(): Promise<void> {
     this.timer = null;
-    if (this.busy) return;
+    if (this.busy || !this.releaseLease) return;
     this.busy = true;
     let pollingSymbol: string | null = null;
     try {
@@ -148,6 +196,7 @@ export class ChartLabMonitorService {
       this.busy = false;
       const state = await this.read().catch(() => emptyChartLabState());
       if (state.running) this.scheduleNext(state);
+      else await this.release();
     }
   }
 

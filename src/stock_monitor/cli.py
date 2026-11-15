@@ -25,7 +25,7 @@ import threading
 import time
 import webbrowser
 from bisect import bisect_right
-from collections import Counter, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Callable, Sequence
 from datetime import date, datetime, time as datetime_time, timedelta
 from http import HTTPStatus
@@ -48,7 +48,11 @@ from stock_monitor.analysis.backtest_observation import (
     build_reaction_distribution_audit,
     build_weight_draft_audit,
 )
-from stock_monitor.config import DEFAULT_MARKET_HOLIDAYS, RuntimeConfig
+from stock_monitor.config import (
+    DEFAULT_MARKET_HOLIDAYS,
+    DEFAULT_MARKET_HOLIDAY_COVERAGE_YEARS,
+    RuntimeConfig,
+)
 from stock_monitor.db.repository import StockMonitorRepository
 from stock_monitor.fetch.naver_research import (
     fetch_reports,
@@ -135,6 +139,7 @@ from stock_monitor.models import (
     TossStockUniverseEntry,
     WorkerState,
 )
+from stock_monitor.naver_reference_cache import NaverReferenceCache
 from stock_monitor.notify.control import (
     PendingStockSelection,
     PendingStockSelectionCandidate,
@@ -143,6 +148,7 @@ from stock_monitor.notify.control import (
     parse_telegram_command,
     save_control_state,
 )
+from stock_monitor.notify.delivery_lock import delivery_lock
 from stock_monitor.notify.formatter import (
     format_daily_briefing_messages,
     format_daily_summary_message,
@@ -20573,7 +20579,12 @@ def _run_market_briefing(
         print(message)
         return 0
     _ensure_market_briefing_message_public_safe(message)
-    _send_market_briefing_message(config, repository, business_date=business_date, message=message, source="manual")
+    with delivery_lock(repository.db_path):
+        repository.recover_interrupted_market_briefing_deliveries(
+            channel_prefix=MARKET_BRIEFING_DELIVERY_CHANNEL,
+            recovered_at=datetime.now(ZoneInfo(config.timezone)),
+        )
+        _send_market_briefing_message(config, repository, business_date=business_date, message=message, source="manual")
     print(f"Market briefing sent for {business_date.isoformat()}.")
     return 0
 
@@ -24536,6 +24547,15 @@ def _send_market_briefing_message(
             "STOCK_MONITOR_TELEGRAM_CHAT_ID."
         )
     attempted_at = datetime.now(ZoneInfo(config.timezone))
+    attempt_id, previous_success = repository.begin_delivery_attempt(
+        DeliveryLog(
+            business_date=business_date,
+            channel=channel,
+            status="sending",
+            delivered_at=attempted_at,
+            detail=f"source={source}; market briefing",
+        )
+    )
     try:
         message_id = send_telegram_message(
             config.telegram_bot_token,
@@ -24548,7 +24568,8 @@ def _send_market_briefing_message(
     except Exception as exc:
         ambiguous_send = _is_ambiguous_telegram_send_error(exc)
         error_detail = str(exc)
-        repository.record_delivery(
+        repository.finish_delivery_attempt(
+            attempt_id,
             DeliveryLog(
                 business_date=business_date,
                 channel=channel,
@@ -24568,11 +24589,12 @@ def _send_market_briefing_message(
             )
         )
         raise
-    repository.record_delivery(
+    repository.finish_delivery_attempt(
+        attempt_id,
         DeliveryLog(
             business_date=business_date,
             channel=channel,
-            status="sent",
+            status="sent_repeat" if previous_success else "sent",
             delivered_at=attempted_at,
             message_id=str(message_id),
             detail=f"source={source}; market briefing",
@@ -24604,6 +24626,12 @@ def _run_scheduled_market_briefing_slot(
     repository.initialize()
     if slot not in MARKET_BRIEFING_SLOT_LABELS:
         raise ValueError(f"Unknown market briefing slot: {slot}")
+    if not dry_run:
+        with delivery_lock(repository.db_path):
+            repository.recover_interrupted_market_briefing_deliveries(
+                channel_prefix=MARKET_BRIEFING_DELIVERY_CHANNEL,
+                recovered_at=datetime.now(ZoneInfo(config.timezone)),
+            )
     now = datetime.now(ZoneInfo(config.timezone))
     today = now.date()
     component = f"market-briefing-{slot}"
@@ -24712,12 +24740,6 @@ def _run_scheduled_market_briefing_slot(
         print(f"Market briefing {slot} already sent for {today.isoformat()}; skipping.")
         return 0
 
-    send_channel = delivery_channel
-    send_source = f"scheduled:{slot}"
-    if allow_repeat and already_sent:
-        send_channel = f"{delivery_channel}:repeat:{now.strftime('%Y%m%d%H%M%S')}"
-        send_source = f"scheduled:{slot}:repeat"
-
     if not dry_run:
         news_collection = _collect_scheduled_market_briefing_news_observations(
             config,
@@ -24760,14 +24782,32 @@ def _run_scheduled_market_briefing_slot(
     if dry_run:
         print(message)
         return 0
-    message_id = _send_market_briefing_message(
-        config,
-        repository,
-        business_date=today,
-        message=message,
-        source=send_source,
-        channel=send_channel,
-    )
+    with delivery_lock(repository.db_path):
+        repository.recover_interrupted_market_briefing_deliveries(
+            channel_prefix=MARKET_BRIEFING_DELIVERY_CHANNEL,
+            recovered_at=datetime.now(ZoneInfo(config.timezone)),
+        )
+        if not allow_repeat and repository.has_latest_delivery_status(today, delivery_channel, status="ambiguous"):
+            print(f"Market briefing {slot} has an ambiguous Telegram delivery for {today.isoformat()}; operator review is required.")
+            return 0
+        already_sent = repository.has_successful_delivery(today, delivery_channel)
+        if not allow_repeat and already_sent:
+            print(f"Market briefing {slot} already sent for {today.isoformat()}; skipping.")
+            return 0
+        send_channel = delivery_channel
+        send_source = f"scheduled:{slot}"
+        if allow_repeat and already_sent:
+            repeat_at = datetime.now(ZoneInfo(config.timezone))
+            send_channel = f"{delivery_channel}:repeat:{repeat_at.strftime('%Y%m%d%H%M%S%f')}"
+            send_source = f"scheduled:{slot}:repeat"
+        message_id = _send_market_briefing_message(
+            config,
+            repository,
+            business_date=today,
+            message=message,
+            source=send_source,
+            channel=send_channel,
+        )
     print(f"Market briefing {slot} sent with message_id={message_id}")
     return 0
 
@@ -24866,7 +24906,7 @@ def _run_send_test_notification(
             messages=messages,
             effective_min_mentions=effective_min_mentions,
             require_target_price=require_target_price,
-            allow_ambiguous_repeat=allow_repeat,
+            allow_repeat=allow_repeat,
         )
     else:
         try:
@@ -24954,7 +24994,7 @@ def _send_production_daily_summary_fragments(
     messages: list[str],
     effective_min_mentions: int,
     require_target_price: bool,
-    allow_ambiguous_repeat: bool = False,
+    allow_repeat: bool = False,
 ) -> list[str]:
     started_at = datetime.now(ZoneInfo(config.timezone))
     summary_signature = _daily_summary_delivery_signature(
@@ -24970,10 +25010,13 @@ def _send_production_daily_summary_fragments(
         summary_signature=summary_signature,
         messages=messages,
         started_at=started_at,
-        allow_ambiguous_repeat=allow_ambiguous_repeat,
+        allow_ambiguous_repeat=allow_repeat,
+        allow_sent_repeat=allow_repeat,
     )
     pending_fragments = repository.list_pending_daily_summary_fragments(run.run_id)
     for fragment in pending_fragments:
+        if not repository.mark_daily_summary_fragment_sending(run.run_id, fragment.fragment_index):
+            raise RuntimeError("Daily summary fragment could not be claimed for Telegram delivery.")
         try:
             message_id = send_telegram_message(
                 config.telegram_bot_token,
@@ -25098,6 +25141,30 @@ def _hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _recover_interrupted_daily_summary_delivery(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+) -> None:
+    recovered_at = datetime.now(ZoneInfo(config.timezone))
+    repository.recover_interrupted_daily_summary_delivery(recovered_at=recovered_at)
+    repository.recover_interrupted_market_briefing_deliveries(
+        channel_prefix=MARKET_BRIEFING_DELIVERY_CHANNEL,
+        recovered_at=recovered_at,
+    )
+
+
+def _recover_interrupted_intraday_alert_batches(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+) -> None:
+    recovered_at = datetime.now(ZoneInfo(config.timezone))
+    repository.recover_interrupted_intraday_alert_batches(recovered_at=recovered_at)
+    repository.recover_interrupted_market_briefing_deliveries(
+        channel_prefix=MARKET_BRIEFING_DELIVERY_CHANNEL,
+        recovered_at=recovered_at,
+    )
+
+
 def _run_scheduled_notify(
     config: RuntimeConfig,
     repository: StockMonitorRepository,
@@ -25109,7 +25176,44 @@ def _run_scheduled_notify(
     include_no_target_price: bool = False,
     notification_format: str = "summary",
 ) -> int:
-    repository.initialize()
+    if dry_run:
+        repository.initialize()
+        return _run_scheduled_notify_unlocked(
+            config,
+            repository,
+            dry_run=dry_run,
+            allow_repeat=allow_repeat,
+            allow_late=allow_late,
+            min_mentions=min_mentions,
+            include_no_target_price=include_no_target_price,
+            notification_format=notification_format,
+        )
+    with delivery_lock(repository.db_path):
+        repository.initialize()
+        _recover_interrupted_daily_summary_delivery(config, repository)
+        return _run_scheduled_notify_unlocked(
+            config,
+            repository,
+            dry_run=dry_run,
+            allow_repeat=allow_repeat,
+            allow_late=allow_late,
+            min_mentions=min_mentions,
+            include_no_target_price=include_no_target_price,
+            notification_format=notification_format,
+        )
+
+
+def _run_scheduled_notify_unlocked(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    dry_run: bool,
+    allow_repeat: bool,
+    allow_late: bool = False,
+    min_mentions: int | None = None,
+    include_no_target_price: bool = False,
+    notification_format: str = "summary",
+) -> int:
     now = datetime.now(ZoneInfo(config.timezone))
     today = now.date()
     skip_reason = _scheduled_skip_reason(config, today, repository) or _operation_profile_skip_reason(
@@ -25209,7 +25313,9 @@ def _run_operator_status(
         print(f"- 실행 제외 사유: {status['run_skip_reason']}")
     holiday_coverage = status["market_holiday_coverage"]
     print(
-        f"- market holiday coverage: default through {holiday_coverage['default_max_date'] or 'N/A'} | "
+        f"- built-in market holiday years: {','.join(map(str, holiday_coverage['default_coverage_years']))} | "
+        f"current year supported={str(holiday_coverage['current_year_supported']).lower()} | "
+        f"default through {holiday_coverage['default_max_date'] or 'N/A'} | "
         f"configured through {holiday_coverage['configured_max_date'] or 'N/A'}"
     )
     if holiday_coverage["renewal_required"]:
@@ -26508,7 +26614,21 @@ def _make_admin_gui_handler(
             scheduler_cache["expires_at"] = 0.0
 
     class AdminGuiHandler(BaseHTTPRequestHandler):
+        def _check_host(self) -> bool:
+            if not _is_loopback_admin_host(str(self.server.server_address[0])):
+                return True
+            try:
+                host = url_parse.urlsplit(f"//{self.headers.get('Host', '')}").hostname or ""
+            except ValueError:
+                host = ""
+            if _is_loopback_admin_host(host):
+                return True
+            _write_http_response(self, HTTPStatus.FORBIDDEN, "invalid host", content_type="text/plain; charset=utf-8")
+            return False
+
         def do_GET(self) -> None:
+            if not self._check_host():
+                return
             if not _access_http_gate(self, config, surface_label="관리자 화면", surface_key="admin"):
                 return
             if self.path in {"/", "/index.html"}:
@@ -26539,6 +26659,20 @@ def _make_admin_gui_handler(
             _write_http_response(self, HTTPStatus.NOT_FOUND, "not found", content_type="text/plain; charset=utf-8")
 
         def do_POST(self) -> None:
+            if not self._check_host():
+                return
+            origin = self.headers.get("Origin")
+            host = self.headers.get("Host", "").lower()
+            if self.headers.get("Sec-Fetch-Site") not in {None, "none", "same-origin"} or (
+                origin is not None and origin.lower() not in {f"http://{host}", f"https://{host}"}
+            ):
+                _write_http_response(
+                    self,
+                    HTTPStatus.FORBIDDEN,
+                    "cross-origin request denied",
+                    content_type="text/plain; charset=utf-8",
+                )
+                return
             if not _access_http_gate(self, config, surface_label="관리자 화면", surface_key="admin"):
                 return
             try:
@@ -26581,10 +26715,11 @@ def _make_web_view_handler(
     limit: int,
     toss_quote_provider: TossPriorityQuoteProvider | None = None,
 ) -> type[BaseHTTPRequestHandler]:
-    response_cache: dict[str, tuple[float, bytes]] = {}
+    response_cache: OrderedDict[str, tuple[float, bytes]] = OrderedDict()
     response_cache_lock = threading.Lock()
-    response_cache_build_locks: dict[str, threading.Lock] = {}
+    response_cache_build_locks = tuple(threading.Lock() for _ in range(64))
     response_cache_ttl_seconds = 30.0
+    naver_reference_cache = NaverReferenceCache()
     api_perf_logger = ApiPerfLogger(config.root_dir / "logs")
     toss_provider = toss_quote_provider or TossPriorityQuoteProvider(
         config=TossOpenApiLabConfig.from_env(config.root_dir)
@@ -26594,29 +26729,45 @@ def _make_web_view_handler(
         now_monotonic = time.monotonic()
         with response_cache_lock:
             cached = response_cache.get(cache_key)
-            if not cached or now_monotonic - cached[0] > response_cache_ttl_seconds:
+            if not cached:
                 return None
+            if now_monotonic - cached[0] > response_cache_ttl_seconds:
+                response_cache.pop(cache_key)
+                return None
+            response_cache.move_to_end(cache_key)
             cached_body = cached[1]
         return json.loads(cached_body.decode("utf-8"))
 
-    def store_cached_json_payload(cache_key: str, payload: dict) -> None:
-        body = json_dumps_bytes(_compact_web_view_json_payload(cache_key, payload))
+    def store_cached_response(cache_key: str, body: bytes) -> None:
         with response_cache_lock:
             response_cache[cache_key] = (time.monotonic(), body)
+            response_cache.move_to_end(cache_key)
+            while len(response_cache) > 256:
+                response_cache.popitem(last=False)
+
+    def store_cached_json_payload(cache_key: str, payload: dict) -> None:
+        body = json_dumps_bytes(_compact_web_view_json_payload(cache_key, payload))
+        store_cached_response(cache_key, body)
 
     def cached_json_payload(cache_key: str, builder: Callable[[], dict]) -> tuple[bytes, str, float, float, float]:
         now_monotonic = time.monotonic()
         with response_cache_lock:
             cached = response_cache.get(cache_key)
             if cached and now_monotonic - cached[0] <= response_cache_ttl_seconds:
+                response_cache.move_to_end(cache_key)
                 return cached[1], "hit", 0.0, 0.0, 0.0
-            build_lock = response_cache_build_locks.setdefault(cache_key, threading.Lock())
+            if cached:
+                response_cache.pop(cache_key)
+            build_lock = response_cache_build_locks[hash(cache_key) % len(response_cache_build_locks)]
         with build_lock:
             now_monotonic = time.monotonic()
             with response_cache_lock:
                 cached = response_cache.get(cache_key)
                 if cached and now_monotonic - cached[0] <= response_cache_ttl_seconds:
+                    response_cache.move_to_end(cache_key)
                     return cached[1], "hit", 0.0, 0.0, 0.0
+                if cached:
+                    response_cache.pop(cache_key)
             metrics = RequestMetrics()
             build_start = time.perf_counter()
             with request_metrics_context(metrics):
@@ -26625,8 +26776,7 @@ def _make_web_view_handler(
             json_start = time.perf_counter()
             body = json_dumps_bytes(payload)
             json_ms = elapsed_ms(json_start)
-            with response_cache_lock:
-                response_cache[cache_key] = (time.monotonic(), body)
+            store_cached_response(cache_key, body)
             return body, "miss", json_ms, build_ms, metrics.db_ms
 
     def priority_candidate_rows(business_date: date) -> list[dict[str, object]]:
@@ -26857,21 +27007,7 @@ def _make_web_view_handler(
             "items": items,
         }
 
-    def build_daily_payload_for_route(
-        business_date: date,
-        *,
-        include_intraday_market_top: bool,
-        market_top_limit: int,
-        market_top_page_size: int,
-    ) -> dict:
-        if not include_intraday_market_top:
-            return build_web_view_daily_snapshot(
-                config,
-                repository,
-                business_date=business_date,
-                include_observation_summary=False,
-            )
-
+    def build_daily_base_payload(business_date: date) -> dict:
         base_cache_key = f"daily:{business_date.isoformat()}"
         base_payload = read_cached_json_payload(base_cache_key)
         if base_payload is None:
@@ -26882,14 +27018,71 @@ def _make_web_view_handler(
                 include_observation_summary=False,
             )
             store_cached_json_payload(base_cache_key, base_payload)
-        return _overlay_web_view_daily_intraday_market_top(
+        return base_payload
+
+    def build_daily_payload_for_route(business_date: date) -> dict:
+        return build_web_view_daily_snapshot(
             config,
             repository,
-            base_payload,
             business_date=business_date,
-            limit=market_top_limit,
-            page_size=market_top_page_size,
+            include_observation_summary=False,
         )
+
+    def daily_live_cache_key(
+        business_date: date,
+        base_payload: dict,
+        priority_rows: list[dict[str, object]],
+        market_top_limit: int,
+        market_top_page_size: int,
+    ) -> str:
+        summaries = [
+            [row.get("stock_code"), row.get("stock_name"), row.get("mention_count")]
+            for row in base_payload.get("stocks", [])
+            if isinstance(row, dict)
+        ]
+        priority_codes = [str(row.get("stock_code") or "").strip() for row in priority_rows]
+        digest = hashlib.sha256(json_dumps_bytes([
+            business_date.isoformat(), market_top_limit, market_top_page_size, 0.5, summaries, priority_codes,
+        ])).hexdigest()
+        return f"daily:{business_date.isoformat()}:market-top:{market_top_limit}:{market_top_page_size}:{digest}"
+
+    def daily_live_eligible(base_payload: dict, business_date: date) -> bool:
+        commentary = base_payload.get("market_commentary")
+        if not isinstance(commentary, dict):
+            return False
+        status = commentary.get("same_day_report_status")
+        if not isinstance(status, dict):
+            return False
+        current_date = datetime.now(ZoneInfo(config.timezone)).date()
+        return (
+            base_payload.get("business_date") == business_date.isoformat()
+            and commentary.get("business_date") == business_date.isoformat()
+            and status.get("business_date") == business_date.isoformat()
+            and status.get("can_overlap_intraday_market_top") is True
+            and current_date == business_date
+            and is_business_day(current_date, config.holiday_overrides)
+        )
+
+    def daily_live_cacheable(payload: dict) -> bool:
+        commentary = payload.get("market_commentary")
+        if not isinstance(commentary, dict):
+            return False
+        market_top = commentary.get("intraday_market_top_reference")
+        quotes = commentary.get("intraday_quote_reference")
+        return (
+            isinstance(market_top, dict)
+            and market_top.get("live_fetch") is True
+            and market_top.get("errors") == []
+            and isinstance(quotes, dict)
+            and quotes.get("errors") == []
+        )
+
+    def build_priority_current_quotes_selection(business_date: date) -> tuple[str | None, tuple[str, ...]]:
+        archive = build_web_view_archive_snapshot(config, repository, limit=1)
+        latest_business_date = archive.get("latest_business_date")
+        if latest_business_date and business_date.isoformat() != latest_business_date:
+            return str(latest_business_date), ()
+        return str(latest_business_date) if latest_business_date else None, priority_candidate_codes(business_date)
 
     def build_toss_priority_quotes_payload(business_date: date) -> tuple[HTTPStatus, dict]:
         archive = build_web_view_archive_snapshot(config, repository, limit=1)
@@ -27073,24 +27266,11 @@ def _make_web_view_handler(
             "derived_from": "web_view_candidate_evidence_top_2",
         }
 
-    def build_priority_current_quotes_payload(business_date: date) -> tuple[HTTPStatus, dict]:
-        archive = build_web_view_archive_snapshot(config, repository, limit=1)
-        latest_business_date = archive.get("latest_business_date")
-        if latest_business_date and business_date.isoformat() != latest_business_date:
-            return HTTPStatus.CONFLICT, {
-                "surface": "web-view-priority-current-quotes",
-                "read_only": True,
-                "live_fetch": False,
-                "writes_db": False,
-                "sends_telegram": False,
-                "registers_scheduler": False,
-                "affects_ordering": False,
-                "priority_date": business_date.isoformat(),
-                "latest_business_date": latest_business_date,
-                "items": [],
-                "reason": "latest_business_date_only",
-            }
-        symbols = priority_candidate_codes(business_date)
+    def build_priority_current_quotes_payload(
+        business_date: date,
+        latest_business_date: str | None,
+        symbols: tuple[str, ...],
+    ) -> dict:
         checked_at = datetime.now(ZoneInfo(config.timezone))
         items: list[dict[str, object]] = []
         errors: list[str] = []
@@ -27111,10 +27291,10 @@ def _make_web_view_handler(
                     "trade_time": quote.trade_time.isoformat() if quote.trade_time else None,
                 }
             )
-        return HTTPStatus.OK, {
+        return {
             "surface": "web-view-priority-current-quotes",
             "read_only": True,
-            "live_fetch": True,
+            "live_fetch": bool(symbols),
             "writes_db": False,
             "sends_telegram": False,
             "registers_scheduler": False,
@@ -27127,9 +27307,30 @@ def _make_web_view_handler(
             "derived_from": "web_view_candidate_evidence_top_2",
         }
 
-    def write_cached_json_response(handler: BaseHTTPRequestHandler, cache_key: str, builder: Callable[[], dict]) -> None:
+    def write_cached_json_response(
+        handler: BaseHTTPRequestHandler,
+        cache_key: str,
+        builder: Callable[[], dict],
+        *,
+        live_cacheable: Callable[[dict], bool] | None = None,
+    ) -> None:
         total_start = time.perf_counter()
-        body, cache_status, json_ms, build_ms, db_ms = cached_json_payload(cache_key, builder)
+        if live_cacheable is None:
+            body, cache_status, json_ms, build_ms, db_ms = cached_json_payload(cache_key, builder)
+        else:
+            metrics = RequestMetrics()
+            build_start = time.perf_counter()
+
+            def live_builder() -> dict:
+                with request_metrics_context(metrics):
+                    return _compact_web_view_json_payload(cache_key, builder())
+
+            payload, cache_status = naver_reference_cache.get_or_build(cache_key, live_builder, live_cacheable)
+            build_ms = elapsed_ms(build_start) if cache_status in {"miss", "uncached"} else 0.0
+            json_start = time.perf_counter()
+            body = json_dumps_bytes(payload)
+            json_ms = elapsed_ms(json_start)
+            db_ms = metrics.db_ms
         response_body, gzip_used = maybe_gzip(body, handler.headers.get("Accept-Encoding", ""))
         headers = {"Content-Encoding": "gzip"} if gzip_used else None
         _write_binary_http_response(
@@ -27406,7 +27607,49 @@ def _make_web_view_handler(
                     _write_http_response(self, HTTPStatus.BAD_REQUEST, "invalid date", content_type="text/plain; charset=utf-8")
                     return
                 try:
-                    status, payload = build_priority_current_quotes_payload(business_date)
+                    latest_business_date, symbols = build_priority_current_quotes_selection(business_date)
+                    if latest_business_date and business_date.isoformat() != latest_business_date:
+                        status = HTTPStatus.CONFLICT
+                        payload = {
+                            "surface": "web-view-priority-current-quotes",
+                            "read_only": True,
+                            "live_fetch": False,
+                            "writes_db": False,
+                            "sends_telegram": False,
+                            "registers_scheduler": False,
+                            "affects_ordering": False,
+                            "priority_date": business_date.isoformat(),
+                            "latest_business_date": latest_business_date,
+                            "items": [],
+                            "reason": "latest_business_date_only",
+                        }
+                        _write_http_response(
+                            self,
+                            status,
+                            json.dumps(payload, ensure_ascii=False),
+                            content_type="application/json; charset=utf-8",
+                        )
+                        return
+                    if not symbols:
+                        payload = build_priority_current_quotes_payload(business_date, latest_business_date, symbols)
+                        _write_http_response(
+                            self,
+                            HTTPStatus.OK,
+                            json.dumps(payload, ensure_ascii=False),
+                            content_type="application/json; charset=utf-8",
+                        )
+                        return
+                    cache_key = f"live:priority-current-quotes:{business_date.isoformat()}:{latest_business_date or ''}:{','.join(symbols)}"
+                    write_cached_json_response(
+                        self,
+                        cache_key,
+                        lambda: build_priority_current_quotes_payload(business_date, latest_business_date, symbols),
+                        live_cacheable=lambda result: result.get("live_fetch") is True
+                        and not result.get("errors")
+                        and isinstance(result.get("items"), list)
+                        and len(result["items"]) == len(symbols),
+                    )
+                    return
                 except RuntimeError:
                     status = HTTPStatus.BAD_GATEWAY
                     payload = {
@@ -27486,20 +27729,38 @@ def _make_web_view_handler(
                 ).lower() in {"1", "true", "yes"}
                 market_top_limit = _query_int(query, "market_top_limit", default=100, minimum=1, maximum=100)
                 market_top_page_size = _query_int(query, "market_top_page_size", default=20, minimum=1, maximum=20)
-                live_key = (
-                    f":market-top:{market_top_limit}:{market_top_page_size}"
-                    if include_intraday_market_top
-                    else ""
-                )
+                if include_intraday_market_top:
+                    base_payload = build_daily_base_payload(business_date)
+                    if not daily_live_eligible(base_payload, business_date):
+                        write_cached_json_response(self, f"daily:{business_date.isoformat()}", lambda: base_payload)
+                        return
+                    priority_rows = priority_candidate_rows(business_date)
+                    cache_key = daily_live_cache_key(
+                        business_date,
+                        base_payload,
+                        priority_rows,
+                        market_top_limit,
+                        market_top_page_size,
+                    )
+                    write_cached_json_response(
+                        self,
+                        cache_key,
+                        lambda: _overlay_web_view_daily_intraday_market_top(
+                            config,
+                            repository,
+                            base_payload,
+                            business_date=business_date,
+                            limit=market_top_limit,
+                            page_size=market_top_page_size,
+                            priority_rows=priority_rows,
+                        ),
+                        live_cacheable=daily_live_cacheable,
+                    )
+                    return
                 write_cached_json_response(
                     self,
-                    f"daily:{business_date.isoformat()}{live_key}",
-                    lambda: build_daily_payload_for_route(
-                        business_date=business_date,
-                        include_intraday_market_top=include_intraday_market_top,
-                        market_top_limit=market_top_limit,
-                        market_top_page_size=market_top_page_size,
-                    ),
+                    f"daily:{business_date.isoformat()}",
+                    lambda: build_daily_payload_for_route(business_date),
                 )
                 return
             if path == "/api/market":
@@ -28499,13 +28760,27 @@ def _access_cookie_valid(config: RuntimeConfig, cookie_value: str | None) -> boo
 
 
 def _read_access_code_from_form(handler: BaseHTTPRequestHandler) -> str:
-    length = int(handler.headers.get("Content-Length") or "0")
-    raw = handler.rfile.read(length).decode("utf-8") if length else ""
+    try:
+        length = int(handler.headers.get("Content-Length") or "0")
+    except ValueError:
+        handler.close_connection = True
+        return ""
+    if length < 0 or length > 4096:
+        handler.close_connection = True
+        return ""
+    try:
+        raw = handler.rfile.read(length).decode("utf-8") if length else ""
+    except UnicodeDecodeError:
+        handler.close_connection = True
+        return ""
     content_type = handler.headers.get("Content-Type", "")
     if "application/json" in content_type:
         try:
             payload = json.loads(raw or "{}")
         except json.JSONDecodeError:
+            return ""
+        if not isinstance(payload, dict):
+            handler.close_connection = True
             return ""
         return str(payload.get("access_code") or payload.get("code") or "")
     form = url_parse.parse_qs(raw)
@@ -29107,6 +29382,7 @@ def _render_admin_gui_html() -> str:
     function skipReasonLabel(reason) {
       const text = String(reason || "");
       if (!text) return "자동 실행 가능";
+      if (text.includes("market_calendar_unsupported_year")) return "KRX 기본 휴장일 표 연도 범위 밖";
       if (text.includes("configured market business day") || text.includes("market holiday") || text.includes("weekend")) return "시장 휴장일/주말";
       if (text.includes("paused")) return "운영 일시정지";
       if (text.includes("environment")) return "환경 설정 제외일";
@@ -34121,23 +34397,29 @@ def _build_market_holiday_coverage_snapshot(config: RuntimeConfig, current: date
         else 0
     )
     renewal_required = (
-        default_max_year is not None
-        and current.date().year >= default_max_year
-        and current.date().month >= MARKET_HOLIDAY_COVERAGE_WARNING_MONTH
-        and future_configured_holiday_count == 0
+        current.date().year not in DEFAULT_MARKET_HOLIDAY_COVERAGE_YEARS
+        or (
+            current.date().month >= MARKET_HOLIDAY_COVERAGE_WARNING_MONTH
+            and current.date().year + 1 not in DEFAULT_MARKET_HOLIDAY_COVERAGE_YEARS
+        )
     )
+    current_year_supported = current.date().year in DEFAULT_MARKET_HOLIDAY_COVERAGE_YEARS
     return {
         "default_max_date": default_max_date.isoformat() if default_max_date else None,
         "default_max_year": default_max_year,
+        "default_coverage_years": sorted(DEFAULT_MARKET_HOLIDAY_COVERAGE_YEARS),
+        "current_year_supported": current_year_supported,
         "configured_max_date": configured_max_date.isoformat() if configured_max_date else None,
         "configured_max_year": configured_max_year,
         "future_configured_holiday_count": future_configured_holiday_count,
         "warning_month": MARKET_HOLIDAY_COVERAGE_WARNING_MONTH,
         "renewal_required": renewal_required,
         "message": (
-            "Default KRX holiday coverage is nearing expiry; add verified future market holidays."
+            f"Built-in KRX holiday dates do not cover {current.date().year}; scheduled runs are blocked until the full KRX calendar is reviewed."
+            if not current_year_supported
+            else "Built-in KRX holiday coverage is nearing expiry; review the complete next-year KRX schedule."
             if renewal_required
-            else "Default KRX holiday coverage is current for the configured operating horizon."
+            else f"Built-in KRX holiday dates include {current.date().year}; additional KRX closures may still require review."
         ),
     }
 
@@ -34462,6 +34744,8 @@ def build_web_view_stock_search_snapshot(
                     source_rank
                 FROM candidates
                 WHERE TRIM(COALESCE(stock_code, '')) <> ''
+                  AND length(TRIM(stock_code)) = 6
+                  AND TRIM(stock_code) NOT GLOB '*[^0-9]*'
                   AND (
                     stock_code LIKE ? COLLATE NOCASE
                     OR stock_name LIKE ? COLLATE NOCASE
@@ -34584,23 +34868,25 @@ def _overlay_web_view_daily_intraday_market_top(
     business_date: date,
     limit: int,
     page_size: int,
+    priority_rows: list[dict[str, object]] | None = None,
 ) -> dict:
     current = datetime.now(ZoneInfo(config.timezone))
     payload = dict(base_snapshot)
     summaries = _web_view_daily_summaries_from_snapshot(payload, business_date=business_date, generated_at=current)
-    priority_snapshot = build_web_view_candidate_evidence_snapshot(
-        config,
-        repository,
-        business_date=business_date,
-        limit=2,
-    )
+    selected_priority_rows = priority_rows
+    if selected_priority_rows is None:
+        priority_snapshot = build_web_view_candidate_evidence_snapshot(
+            config,
+            repository,
+            business_date=business_date,
+            limit=2,
+        )
+        selected_priority_rows = _web_view_selected_candidate_rows(priority_snapshot.get("rows"))
     summaries_by_code = {str(summary.stock_code or "").strip(): summary for summary in summaries}
     priority_summaries = [
         summaries_by_code[stock_code]
         for stock_code in (
-            str(row.get("stock_code") or "").strip()
-            for row in priority_snapshot.get("rows", [])
-            if isinstance(row, dict)
+            str(row.get("stock_code") or "").strip() for row in selected_priority_rows
         )
         if stock_code in summaries_by_code
     ][:2]
@@ -41763,7 +42049,9 @@ def _build_operator_health_snapshot(
             reason = str(component.get("attention_reason") or last_event.get("status") or "attention")
             warning_checks.append(f"live_observation.{component_key}.{reason}")
 
-    if (market_holiday_coverage or {}).get("renewal_required"):
+    if (market_holiday_coverage or {}).get("current_year_supported") is False:
+        warning_checks.append("market_holidays.calendar_unsupported_year")
+    elif (market_holiday_coverage or {}).get("renewal_required"):
         warning_checks.append("market_holidays.default_coverage_expiring")
 
     level = "fail" if failing_checks else "warn" if warning_checks else "ok"
@@ -42325,6 +42613,7 @@ def _run_operator_control(config: RuntimeConfig, repository: StockMonitorReposit
         if explanation["effective_reason"]:
             print(f"- 대표 사유: {explanation['effective_reason']}")
         print(f"- 영업일: {'Y' if explanation['is_business_day'] else 'N'}")
+        print(f"- 기본 KRX 휴장일 표 연도 지원: {'Y' if explanation['market_calendar_supported'] else 'N'}")
         print(f"- 시장 휴장일: {'Y' if explanation['is_market_holiday'] else 'N'}")
         print(f"- 운영 일시정지: {'Y' if explanation['is_operator_paused'] else 'N'}")
         print(f"- env 실행 제외: {'Y' if explanation['is_env_run_suppressed'] else 'N'}")
@@ -43717,6 +44006,7 @@ def _explain_run_date(
     target: date,
 ) -> dict:
     matched_reasons: list[str] = []
+    market_calendar_supported = target.year in DEFAULT_MARKET_HOLIDAY_COVERAGE_YEARS
     is_market_holiday = target in config.holiday_overrides
     is_business = is_business_day(target, config.holiday_overrides)
     is_operator_paused = repository.is_operator_paused() if repository is not None else False
@@ -43728,9 +44018,15 @@ def _explain_run_date(
         db_reason = control.detail or "" if control else ""
 
     effective_reason = None
+    if is_business and not market_calendar_supported:
+        matched_reasons.append("market_calendar_unsupported_year")
+        effective_reason = (
+            f"market_calendar_unsupported_year: built-in KRX holiday dates do not cover {target.year}; "
+            "scheduled execution is blocked until the full KRX calendar is reviewed."
+        )
     if not is_business:
         matched_reasons.append("market_non_business_day")
-        effective_reason = f"{target.isoformat()} is not a configured market business day."
+        effective_reason = effective_reason or f"{target.isoformat()} is not a configured market business day."
     if is_operator_paused:
         matched_reasons.append("operator_pause")
         effective_reason = effective_reason or "Stock Monitor is paused by operator control."
@@ -43747,6 +44043,7 @@ def _explain_run_date(
         "effective_reason": effective_reason,
         "matched_reasons": matched_reasons,
         "is_business_day": is_business,
+        "market_calendar_supported": market_calendar_supported,
         "is_market_holiday": is_market_holiday,
         "is_operator_paused": is_operator_paused,
         "is_env_run_suppressed": is_env_run_suppressed,
@@ -44707,6 +45004,33 @@ def _run_process_intraday_alerts(
     batch_ids: set[str] | None = None,
     retry_ambiguous: bool = False,
 ) -> int:
+    if dry_run:
+        return _run_process_intraday_alerts_unlocked(
+            config,
+            repository,
+            dry_run=dry_run,
+            batch_ids=batch_ids,
+            retry_ambiguous=retry_ambiguous,
+        )
+    with delivery_lock(repository.db_path):
+        _recover_interrupted_intraday_alert_batches(config, repository)
+        return _run_process_intraday_alerts_unlocked(
+            config,
+            repository,
+            dry_run=dry_run,
+            batch_ids=batch_ids,
+            retry_ambiguous=retry_ambiguous,
+        )
+
+
+def _run_process_intraday_alerts_unlocked(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    dry_run: bool,
+    batch_ids: set[str] | None = None,
+    retry_ambiguous: bool = False,
+) -> int:
     batches = repository.list_pending_intraday_alert_batches(include_ambiguous=retry_ambiguous)
     if batch_ids is not None:
         batches = [batch for batch in batches if batch.batch_id in batch_ids]
@@ -44777,6 +45101,12 @@ def _run_process_intraday_alerts(
             continue
 
         attempted_at = datetime.now(ZoneInfo(config.timezone))
+        if not repository.mark_intraday_alert_batches_sending(
+            (batch.batch_id,),
+            attempted_at=attempted_at,
+            retry_ambiguous=retry_ambiguous,
+        ):
+            continue
         try:
             message_id = send_telegram_message(
                 config.telegram_bot_token,
@@ -44878,6 +45208,24 @@ def _run_scheduled_intraday_briefing(
     scheduled_run_at: datetime,
     dry_run: bool,
 ) -> int:
+    if dry_run:
+        return _run_scheduled_intraday_briefing_unlocked(
+            config, repository, scheduled_run_at=scheduled_run_at, dry_run=dry_run,
+        )
+    with delivery_lock(repository.db_path):
+        _recover_interrupted_intraday_alert_batches(config, repository)
+        return _run_scheduled_intraday_briefing_unlocked(
+            config, repository, scheduled_run_at=scheduled_run_at, dry_run=dry_run,
+        )
+
+
+def _run_scheduled_intraday_briefing_unlocked(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    *,
+    scheduled_run_at: datetime,
+    dry_run: bool,
+) -> int:
     pending_batches = repository.list_pending_intraday_alert_batches()
     batches = [
         batch
@@ -44938,6 +45286,8 @@ def _run_scheduled_intraday_briefing(
 
     attempted_at = datetime.now(ZoneInfo(config.timezone))
     batch_ids = tuple(batch.batch_id for batch in batches)
+    if not repository.mark_intraday_alert_batches_sending(batch_ids, attempted_at=attempted_at):
+        raise RuntimeError("Hourly intraday batches could not be claimed for Telegram delivery.")
     try:
         message_id = send_telegram_message(
             config.telegram_bot_token,

@@ -10,6 +10,16 @@ Current operating state, delivery sequence, roadmap, and work board.
 <!-- Merged from: docs/codex/operating-guide.md -->
 ## Current Work
 
+### Audit follow-up safety changes (2026-11-15, development-only)
+
+The daily/intraday and market-briefing send paths now persist an attempt before calling Telegram. A new per-DB lock owner holds interrupted attempts as ambiguous, and completed daily sends restore missing success logs without another transport call. Explicit repeats retain their own receipt/log. See [Notification delivery recovery](data-governance.md#notification-delivery-recovery) for the data contract; this does not provide exactly-once delivery or authorize a real send.
+
+Migration archives use a verified read-only SQLite backup of the configured DB, rather than raw main/WAL copies. Default scheduler registration checks now include enabled state and trigger timing; these checks were exercised only with offline task fixtures. The automatic date gate refuses years outside the built-in holiday coverage; adding a date through `STOCK_MONITOR_HOLIDAYS` does not approve a whole year. See [the Mini PC runbook](mini-pc-runbook.md) for rollout limits.
+
+The explicitly requested Naver references merge identical work and retain successful responses for 30 seconds, preserving the original source time. Chart lock recovery is serialized; the Python dispatcher uses a nonblocking kernel lock at its existing path. A leftover Next recovery guard is deliberately not automatically reaped: stop all potential owners and verify their state before any separate manual repair. Do not hot-replace older runners while they may still write under the older lock protocol.
+
+This work uses temporary SQLite/ZIP/state fixtures and fake providers/notifiers. No operating DB, actual scheduler, production listener, real provider data, Telegram delivery, or deployment was used. Integrated verification results are recorded in [the architecture audit](architecture-guide.md#repository-audit-2026-11-15).
+
 ### Report-focus Chart Lab alert path (2026-10-22, development-only)
 
 The local `차트` tab now has a separately controlled report-focus watch. The route revalidates selected-date `리포트 집중` evidence, caps the watch at three symbols, and polls one bounded Toss 1-minute candle page per due symbol only during the Toss KRX regular session. A single per-user lock prevents the development preview and operating service from both owning the monitor. First poll establishes a baseline; only later `m1-v1` state transitions are written to the local event spool. Candle finality stays unknown.

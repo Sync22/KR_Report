@@ -384,6 +384,73 @@ def test_admin_gui_operator_control_posts_update_state(tmp_path, monkeypatch) ->
         thread.join(timeout=5)
 
 
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Origin": "https://other.test"},
+        {"Origin": "null"},
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Sec-Fetch-Site": "same-site"},
+        {"Host": "other.test", "Origin": "http://other.test", "Sec-Fetch-Site": "same-origin"},
+    ],
+)
+def test_admin_gui_rejects_cross_origin_mutations(tmp_path, monkeypatch, headers) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    server = cli_module.create_admin_gui_server(config, repository, host="127.0.0.1", port=0, limit=2)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}/api/operator/pause",
+            data=b'{}',
+            headers={"Content-Type": "text/plain", **headers},
+            method="POST",
+        )
+        with pytest.raises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(request, timeout=5)
+        assert error.value.code == 403
+        assert repository.is_operator_paused() is False
+        if "Host" in headers:
+            status_request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/status", headers=headers
+            )
+            with pytest.raises(urllib.error.HTTPError) as status_error:
+                urllib.request.urlopen(status_request, timeout=5)
+            assert status_error.value.code == 403
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_admin_gui_accepts_same_origin_mutations(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    server = cli_module.create_admin_gui_server(config, repository, host="127.0.0.1", port=0, limit=2)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        request = urllib.request.Request(
+            base_url + "/api/operator/pause",
+            data=b'{}',
+            headers={"Content-Type": "application/json", "Origin": base_url, "Sec-Fetch-Site": "same-origin"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            assert response.status == 200
+        assert repository.is_operator_paused() is True
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_admin_gui_post_failure_records_event(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     monkeypatch.setattr(cli_module, "_load_scheduler_task_statuses", lambda _prefix="StockMonitor": [])

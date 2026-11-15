@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 type WatchItem = { symbol: string; name: string };
 type MonitorSymbol = WatchItem & { focus: boolean };
 type MonitorEvent = Record<string, unknown>;
-type MonitorState = { running: boolean; startedAt: string | null; lastPollAt: string | null; lastError: string | null; symbols: MonitorSymbol[]; events: MonitorEvent[] };
+type MonitorState = { running: boolean; startedAt: string | null; lastPollAt: string | null; lastError: string | null; symbols: MonitorSymbol[]; events: MonitorEvent[]; ownerActiveElsewhere: boolean };
 type Props = Readonly<{ watchItems: ReadonlyArray<WatchItem>; active: boolean }>;
 
 function record(value: unknown): Record<string, unknown> {
@@ -13,9 +13,10 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 function asMonitorState(value: unknown): MonitorState | null {
-  const state = record(record(value).state);
+  const payload = record(value);
+  const state = record(payload.state);
   if (typeof state.running !== "boolean" || !Array.isArray(state.symbols) || !Array.isArray(state.events)) return null;
-  return state as MonitorState;
+  return { ...state as MonitorState, ownerActiveElsewhere: payload.ownerActiveElsewhere === true };
 }
 
 function text(value: unknown, max = 140): string {
@@ -48,10 +49,10 @@ export default function ChartLabMonitorPanel({ watchItems, active }: Props) {
 
   useEffect(() => { if (active) void loadStatus(); }, [active, loadStatus]);
   useEffect(() => {
-    if (!active || !state?.running) return;
+    if (!active || (!state?.running && !state?.ownerActiveElsewhere)) return;
     const timer = window.setInterval(() => void loadStatus(), 10_000);
     return () => window.clearInterval(timer);
-  }, [active, loadStatus, state?.running]);
+  }, [active, loadStatus, state?.ownerActiveElsewhere, state?.running]);
 
   const candidates = useMemo(() => {
     const items = new Map<string, WatchItem>();
@@ -67,7 +68,8 @@ export default function ChartLabMonitorPanel({ watchItems, active }: Props) {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), cache: "no-store",
       });
       const payload: unknown = await response.json();
-      if (!response.ok) throw new Error(response.status === 400 ? "감시 종목 수와 집중 종목 수를 확인하세요." : "감시 설정을 저장하지 못했습니다.");
+      if (!response.ok) throw new Error(record(payload).error === "monitor-owned-elsewhere" ? "다른 로컬 서버가 감시를 소유하고 있습니다."
+        : response.status === 400 ? "감시 종목 수와 집중 종목 수를 확인하세요." : "감시 설정을 저장하지 못했습니다.");
       const next = asMonitorState(payload);
       if (!next) throw new Error("감시 상태 응답 형식을 확인할 수 없습니다.");
       setState(next); setSelected(next.symbols);
@@ -93,7 +95,7 @@ export default function ChartLabMonitorPanel({ watchItems, active }: Props) {
   }
 
   return <section className="chart-subpanel chart-lab-monitor" aria-label="서버 패턴 감시">
-    <div className="chart-subpanel-heading"><h3>로컬 패턴 감시</h3><span>{state?.running ? "실행 중" : "중지됨"}</span></div>
+    <div className="chart-subpanel-heading"><h3>로컬 패턴 감시</h3><span>{state?.ownerActiveElsewhere ? "다른 서버가 사용 중" : state?.running ? "실행 중" : "중지됨"}</span></div>
     <p className="chart-lab-monitor-note">관심 종목 중 최대 20개를 5분 간격으로 확인합니다. 집중 종목 최대 3개는 30초 간격이며, 시작을 눌러야 조회합니다.</p>
     {candidates.length ? <ul className="chart-lab-monitor-symbols">{candidates.map((item) => {
       const current = selected.find((entry) => entry.symbol === item.symbol);
@@ -104,10 +106,10 @@ export default function ChartLabMonitorPanel({ watchItems, active }: Props) {
       </li>;
     })}</ul> : <p className="data-note">먼저 관심 종목에 종목을 추가하세요.</p>}
     <div className="chart-lab-monitor-actions">
-      <button className="action-secondary" type="button" disabled={busy || !selected.length} onClick={() => void post("configure")}>감시 목록 저장</button>
+      <button className="action-secondary" type="button" disabled={busy || state?.ownerActiveElsewhere || !selected.length} onClick={() => void post("configure")}>감시 목록 저장</button>
       {state?.running
-        ? <button className="action-secondary" type="button" disabled={busy} onClick={() => void post("pause")}>감시 중지</button>
-        : <button className="action-primary" type="button" disabled={busy || !state?.symbols.length} onClick={() => void post("start")}>감시 시작</button>}
+        ? <button className="action-secondary" type="button" disabled={busy || state.ownerActiveElsewhere} onClick={() => void post("pause")}>감시 중지</button>
+        : <button className="action-primary" type="button" disabled={busy || state?.ownerActiveElsewhere || !state?.symbols.length} onClick={() => void post("start")}>감시 시작</button>}
       <button className="action-secondary" type="button" disabled={busy} onClick={() => void loadStatus()}>상태 새로고침</button>
     </div>
     <p className="chart-lab-monitor-status" aria-live="polite">마지막 조회 {dateTime(state?.lastPollAt)}{state?.lastError ? ` · 오류 ${text(state.lastError, 80)}` : ""}</p>

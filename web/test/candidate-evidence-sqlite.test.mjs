@@ -9,7 +9,7 @@ import test from "node:test";
 
 import { isCandidateEvidenceSnapshot } from "../src/domain/candidate-evidence.ts";
 
-test("candidate evidence preserves stored cohort order and drives latest-date-only Top2 quotes", async () => {
+test("candidate evidence preserves stored cohort order and drives latest-date-only Top2 quotes", async (t) => {
   const service = await import("../src/server/candidate-evidence.ts");
   const route = await import("../src/app/api/candidate-evidence/route.ts");
   const quoteRoute = await import("../src/app/api/priority-current-quotes/route.ts");
@@ -116,6 +116,8 @@ test("candidate evidence preserves stored cohort order and drives latest-date-on
 
     const originalFetch = globalThis.fetch;
     const originalPythonUrl = process.env.STOCK_MONITOR_PYTHON_WEB_VIEW_URL;
+    let referenceClock = performance.now();
+    t.mock.method(performance, "now", () => referenceClock);
     const quoteRequests = [];
     process.env.STOCK_MONITOR_PYTHON_WEB_VIEW_URL = "http://127.0.0.1:1";
     globalThis.fetch = async (input, init) => {
@@ -181,6 +183,7 @@ test("candidate evidence preserves stored cohort order and drives latest-date-on
       assert.equal(response.headers.get("allow"), "GET");
     }
 
+    referenceClock += 31_000;
     const failingFetch = globalThis.fetch;
     globalThis.fetch = async (input) => {
       if (String(input).includes("000002")) return new Response("[]", { status: 200 });

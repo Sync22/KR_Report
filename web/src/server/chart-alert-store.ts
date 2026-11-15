@@ -141,12 +141,44 @@ export async function acquireChartAlertLock(filePath: string): Promise<(() => Pr
       };
     } catch (error) {
       if (record(error).code !== "EEXIST") throw error;
-      const stale = await staleLock(filePath);
-      if (!stale || attempt > 0) return null;
-      await unlink(filePath).catch(() => undefined);
+      if (attempt > 0) return null;
+      const releaseRecovery = await acquireChartAlertRecoveryGuard(filePath);
+      if (!releaseRecovery) return null;
+      try {
+        if (!await staleLock(filePath)) return null;
+        await unlink(filePath).catch(() => undefined);
+      } finally {
+        await releaseRecovery();
+      }
     }
   }
   return null;
+}
+
+async function acquireChartAlertRecoveryGuard(filePath: string): Promise<(() => Promise<void>) | null> {
+  // shortcut: an orphan guard needs operator repair; replace it when Node supports native file locks.
+  const recoveryPath = `${filePath}.recovery`;
+  const token = randomUUID();
+  const handle = await open(recoveryPath, "wx", 0o600).catch((error) => {
+    if (record(error).code === "EEXIST") return null;
+    throw error;
+  });
+  if (!handle) return null;
+  try {
+    await handle.writeFile(JSON.stringify({ pid: process.pid, token }), "utf8");
+    await handle.sync();
+  } catch (error) {
+    await handle.close();
+    await unlink(recoveryPath).catch(() => undefined);
+    throw error;
+  }
+  await handle.close();
+  return async () => {
+    try {
+      const owner = JSON.parse(await readFile(recoveryPath, "utf8")) as Record<string, unknown>;
+      if (owner.token === token && owner.pid === process.pid) await unlink(recoveryPath);
+    } catch { /* A replacement recovery owner or already-removed guard must remain untouched. */ }
+  };
 }
 
 function localStateRoot(): string {

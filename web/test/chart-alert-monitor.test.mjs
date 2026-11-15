@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { ChartAlertMonitorService } from "../src/server/chart-alert-monitor.ts";
-import { readChartAlertState } from "../src/server/chart-alert-store.ts";
+import { readChartAlertState, writeChartAlertState } from "../src/server/chart-alert-store.ts";
 
 function pattern(status) {
   return {
@@ -80,6 +80,105 @@ test("one report-alert monitor owns the shared local poll lease", async () => {
   } finally {
     await first.pause().catch(() => undefined);
     await second.pause().catch(() => undefined);
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
+test("pause keeps the shared poll lease until an in-flight request finishes", async () => {
+  const folder = await mkdtemp(path.join(os.tmpdir(), "chart-alert-pause-lock-"));
+  const statePath = path.join(folder, "report-alerts.json");
+  const pending = [];
+  let requests = 0;
+  let active = 0;
+  let maxActive = 0;
+  const makeMonitor = () => new ChartAlertMonitorService({
+    statePath, lockPath: `${statePath}.lock`, spoolPath: path.join(folder, "spool"), marketOpen: () => true, providerConfigured: () => true,
+    getMinuteBars: async () => {
+      requests += 1;
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => pending.push(resolve));
+      active -= 1;
+      const time = new Date().toISOString();
+      return { status: 200, available: true, symbol: "005930", displayName: "삼성전자", bars: [{ time, open: 100, high: 101, low: 99, close: 100, volume: 1 }], source: "Toss OpenAPI · 1m candles", sourceFetchedAt: time, barStatus: "unknown" };
+    },
+    detectPatterns: () => [],
+  });
+  const first = makeMonitor();
+  const second = makeMonitor();
+  const watch = { report_business_date: "2026-10-22", stock_code: "005930", stock_name: "삼성전자", report_count: 2, report_reason: "리포트 집중" };
+  const waitFor = async (condition) => {
+    for (let attempt = 0; attempt < 200 && !condition(); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(condition());
+  };
+  try {
+    await first.addWatch(watch);
+    await second.addWatch(watch);
+    await first.start();
+    await waitFor(() => requests === 1);
+    assert.equal((await first.pause()).running, false);
+    await assert.rejects(second.start(), /chart-alert-monitor-owned-elsewhere/);
+
+    pending[0]();
+    let restarted = false;
+    for (let attempt = 0; attempt < 200 && !restarted; attempt += 1) {
+      try { await second.start(); restarted = true; }
+      catch (error) {
+        assert.match(error.message, /chart-alert-monitor-owned-elsewhere/);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
+    assert.equal(restarted, true);
+    await waitFor(() => requests === 2);
+    assert.equal(maxActive, 1);
+    await second.pause();
+  } finally {
+    for (const resolve of pending) resolve();
+    await first.pause().catch(() => undefined);
+    await second.pause().catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
+test("concurrent starts on one report-alert service keep the acquired lease", async () => {
+  const folder = await mkdtemp(path.join(os.tmpdir(), "chart-alert-start-race-"));
+  const monitors = [];
+  try {
+    for (let index = 0; index < 20; index += 1) {
+      const statePath = path.join(folder, `${index}.json`);
+      const monitor = new ChartAlertMonitorService({ statePath, marketOpen: () => false, providerConfigured: () => true });
+      monitors.push(monitor);
+      await monitor.addWatch({ report_business_date: "2026-10-22", stock_code: "005930", stock_name: "삼성전자", report_count: 2, report_reason: "리포트 집중" });
+      const starts = await Promise.allSettled(Array.from({ length: 8 }, () => monitor.start()));
+      assert.ok(starts.some((result) => result.status === "fulfilled"));
+      assert.equal((await monitor.pause()).running, false);
+    }
+  } finally {
+    await Promise.all(monitors.map((monitor) => monitor.pause().catch(() => undefined)));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
+test("concurrent status recovery on one report-alert service keeps the acquired lease", async () => {
+  const folder = await mkdtemp(path.join(os.tmpdir(), "chart-alert-status-race-"));
+  const monitors = [];
+  try {
+    for (let index = 0; index < 20; index += 1) {
+      const statePath = path.join(folder, `${index}.json`);
+      const monitor = new ChartAlertMonitorService({ statePath, marketOpen: () => false, providerConfigured: () => true });
+      monitors.push(monitor);
+      await monitor.addWatch({ report_business_date: "2026-10-22", stock_code: "005930", stock_name: "삼성전자", report_count: 2, report_reason: "리포트 집중" });
+      const state = await readChartAlertState(statePath);
+      await writeChartAlertState({ ...state, running: true }, statePath);
+      await Promise.all(Array.from({ length: 8 }, () => monitor.getStatus()));
+      assert.equal((await monitor.getStatus()).ownerActiveElsewhere, false);
+      assert.equal((await monitor.pause()).running, false);
+    }
+  } finally {
+    await Promise.all(monitors.map((monitor) => monitor.pause().catch(() => undefined)));
+    await new Promise((resolve) => setTimeout(resolve, 20));
     await rm(folder, { recursive: true, force: true });
   }
 });

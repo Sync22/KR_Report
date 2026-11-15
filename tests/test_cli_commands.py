@@ -93,8 +93,11 @@ from stock_monitor.models import (
 )
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
 def test_web_view_checks_do_not_import_cli_module() -> None:
-    source = Path("src/stock_monitor/cli_web_view_checks.py").read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "src/stock_monitor/cli_web_view_checks.py").read_text(encoding="utf-8")
 
     assert "stock_monitor import cli" not in source
     assert "stock_monitor.cli" not in source
@@ -102,7 +105,7 @@ def test_web_view_checks_do_not_import_cli_module() -> None:
 
 def test_web_view_server_module_does_not_import_cli_module() -> None:
     importlib.import_module("stock_monitor.web_view_server")
-    source = Path("src/stock_monitor/web_view_server.py").read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "src/stock_monitor/web_view_server.py").read_text(encoding="utf-8")
 
     assert "stock_monitor import cli" not in source
     assert "stock_monitor.cli" not in source
@@ -110,7 +113,7 @@ def test_web_view_server_module_does_not_import_cli_module() -> None:
 
 def test_web_view_http_module_does_not_import_cli_module() -> None:
     importlib.import_module("stock_monitor.web_view_http")
-    source = Path("src/stock_monitor/web_view_http.py").read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "src/stock_monitor/web_view_http.py").read_text(encoding="utf-8")
 
     assert "stock_monitor import cli" not in source
     assert "stock_monitor.cli" not in source
@@ -2918,7 +2921,7 @@ def test_web_view_browser_smoke_parser_accepts_latest_date_alias() -> None:
 
 
 def test_web_view_browser_render_smoke_opens_nested_market_reference() -> None:
-    source = Path("src/stock_monitor/cli_web_view_checks.py").read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "src/stock_monitor/cli_web_view_checks.py").read_text(encoding="utf-8")
     main_disclosure = source.index('market_details.locator(":scope > summary").click')
     nested_disclosure = source.index('market_reference.locator(":scope > summary").click')
     visible_notice = source.index('page.locator("#market-notice").wait_for(state="visible"')
@@ -5006,7 +5009,7 @@ def test_news_flow_source_probe_rejects_unsupported_url_without_fetch(capsys) ->
 
 
 def test_news_flow_preview_cli_uses_repository_fixture(capsys) -> None:
-    fixture = Path("tests/fixtures/news_flow_preview/market_flow_2026_06_01.json")
+    fixture = PROJECT_ROOT / "tests/fixtures/news_flow_preview/market_flow_2026_06_01.json"
 
     exit_code = cli_module.main(
         [
@@ -8985,8 +8988,8 @@ def test_realtime_first_review_snapshot_blocks_public_trading_wording(tmp_path) 
 
 
 def test_realtime_first_review_snapshot_powershell_scripts_document_safe_scheduler_boundary() -> None:
-    runner = Path("scripts/run_realtime_first_review_snapshot.ps1").read_text(encoding="utf-8")
-    registrar = Path("scripts/register_realtime_first_review_snapshot.ps1").read_text(encoding="utf-8")
+    runner = (PROJECT_ROOT / "scripts/run_realtime_first_review_snapshot.ps1").read_text(encoding="utf-8")
+    registrar = (PROJECT_ROOT / "scripts/register_realtime_first_review_snapshot.ps1").read_text(encoding="utf-8")
 
     assert "realtime-first-review-snapshot --date today --time 15:00" in runner
     assert "data/reviews/realtime-first" in runner
@@ -15671,14 +15674,14 @@ def test_docs_hygiene_audit_redacts_sensitive_values(tmp_path) -> None:
 
 
 def test_docs_hygiene_audit_current_public_docs_are_clean() -> None:
-    payload = cli_module._build_docs_hygiene_audit_payload(Path.cwd())
+    payload = cli_module._build_docs_hygiene_audit_payload(PROJECT_ROOT)
 
     assert payload["issue_count"] == 0
     assert payload["ready"] is True
 
 
 def test_docs_hygiene_audit_default_paths_include_core_contracts() -> None:
-    payload = cli_module._build_docs_hygiene_audit_payload(Path.cwd())
+    payload = cli_module._build_docs_hygiene_audit_payload(PROJECT_ROOT)
 
     assert "docs/codex/surface-guide.md" in payload["scanned_files"]
     assert "docs/codex/data-governance.md" in payload["scanned_files"]

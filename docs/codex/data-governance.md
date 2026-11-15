@@ -69,6 +69,18 @@ Do not describe the current public wording limits as a permanent product ceiling
 
 Public `web-view` GET builders and Next.js GET handlers are read-only with respect to SQLite. Python public query sessions set `query_only`; a missing `daily_stock_summaries` row remains missing in the response. Summary generation and repair stay in the existing Python collection/scheduler write path, never in a public GET or Next request.
 
+Explicitly requested Naver market-top and Top2 current-quote references reuse successful results for at most 30 seconds after completion, with a bounded process-local cache. Eligible date and server-selected cohort checks precede cache lookup; a changed cohort uses a different key. Concurrent identical work shares one provider request sequence. Preserve the original `checked_at`, trade time, and source metadata on a cache hit. Errors may be shared with callers already waiting for that request, but are not retained as successful cached results. These reads still require the existing user action and do not change stored evidence or candidate order.
+
+## Notification Delivery Recovery
+
+Python owns delivery state. Daily report fragments, intraday batches, and scheduled market-briefing attempts record `sending` durably before the Telegram call. Admission checks, orphan recovery, and the send/finalization sequence use the same per-database OS lock; do not hold a SQLite transaction open across the network request. Combined intraday messages claim their batches together or claim none.
+
+Once a new lock owner can establish that the previous sender has stopped, remaining `sending` claims become `ambiguous`. They are excluded from automatic retry. This also holds a claim interrupted before the transport call: avoiding an automatic duplicate takes precedence over assuming an unacknowledged message was not sent. A definite API rejection remains retryable under the existing failed-delivery policy. Explicit operator-reviewed repeat/retry commands remain the only way to retry an ambiguous outcome; see the notification workflow in [the operating guide](operating-guide.md).
+
+A completed daily run is authoritative even if the outer success log was not written. Reconcile its exact acknowledged message IDs into the log without resending, independently of later changes to the rebuilt message signature. Recovered explicit repeats keep their own `sent_repeat` log. Manual market-briefing sends remain explicit actions and do not gain an automatic repeat prohibition.
+
+These states use existing TEXT status columns and do not require a schema migration. Local claims cannot provide exactly-once transport semantics. Stop older runner versions before adopting the new claim/lock protocol; mixed-version hot replacement is not established by the temporary-fixture tests. This source change does not authorize an operating DB write, scheduler change, or real Telegram send.
+
 ## Chart Lab (local-only test surface)
 
 The user authorized a separate Chart Lab tab to test the broader Stock-Newbby chart-review workflow. This is not a friend-facing `web-view` feature and does not alter the public Main Top2 contract below. It may show A/B/C/F entry-condition review, R/H low-structure review, technical pattern/event history, and a user-started local pattern monitor. These are experimental rule outputs, not validated profitability claims, and do not place orders or connect broker/account APIs.

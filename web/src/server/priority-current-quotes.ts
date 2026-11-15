@@ -9,6 +9,8 @@ import { withReadOnlyDatabase } from "./sqlite.ts";
 const NAVER_QUOTE_ORIGIN = "https://stock.naver.com";
 const NAVER_QUOTE_TIMEOUT_MS = 8_000;
 const NAVER_QUOTE_MAX_RESPONSE_BYTES = 256 * 1024;
+const CACHE_TTL_SECONDS = 30;
+const MAX_CACHE_ENTRIES = 256;
 
 export type NaverQuoteSnapshot = {
   stock_code: string;
@@ -26,6 +28,8 @@ export type NaverQuoteSnapshot = {
 };
 
 type QuoteItem = NaverQuoteSnapshot;
+type PrioritySelection = { latestBusinessDate: string | null; codes: string[] | null };
+type CacheEntry = { savedAt: number; payload: Record<string, unknown> };
 
 function latestBusinessDate(database: DatabaseSync): string | null {
   const row = database.prepare(`
@@ -151,10 +155,122 @@ export async function fetchNaverQuoteSnapshot(stockCode: string): Promise<NaverQ
   return fetchQuote(stockCode);
 }
 
-export async function getPriorityCurrentQuotesSnapshot(businessDate: string): Promise<{ status: 200 | 409; payload: Record<string, unknown> }> {
-  const now = new Date();
-  const timezone = process.env.STOCK_MONITOR_TIMEZONE?.trim() || "Asia/Seoul";
-  const selection = withReadOnlyDatabase((database) => {
+export class PriorityCurrentQuotesService {
+  private readonly cache = new Map<string, CacheEntry>();
+  private readonly inflight = new Map<string, Promise<{ status: 200; payload: Record<string, unknown> }>>();
+  private readonly loadSelection: (businessDate: string, now: Date) => PrioritySelection;
+  private readonly fetchQuote: (stockCode: string) => Promise<QuoteItem>;
+  private readonly now: () => Date;
+  private readonly clock: () => number;
+
+  constructor(options: {
+    loadSelection?: (businessDate: string, now: Date) => PrioritySelection;
+    fetchQuote?: (stockCode: string) => Promise<QuoteItem>;
+    now?: () => Date;
+    clock?: () => number;
+  } = {}) {
+    this.loadSelection = options.loadSelection ?? loadPrioritySelection;
+    this.fetchQuote = options.fetchQuote ?? fetchQuote;
+    this.now = options.now ?? (() => new Date());
+    this.clock = options.clock ?? (() => performance.now() / 1000);
+  }
+
+  async getQuotes(businessDate: string): Promise<{ status: 200 | 409; payload: Record<string, unknown> }> {
+    if (!isBusinessDate(businessDate)) throw new RangeError("Invalid priority quote date");
+    const selection = this.loadSelection(businessDate, this.now());
+    if (selection.latestBusinessDate && businessDate !== selection.latestBusinessDate) return {
+      status: 409,
+      payload: {
+        surface: "web-view-priority-current-quotes",
+        read_only: true,
+        live_fetch: false,
+        writes_db: false,
+        sends_telegram: false,
+        registers_scheduler: false,
+        affects_ordering: false,
+        priority_date: businessDate,
+        latest_business_date: selection.latestBusinessDate,
+        items: [],
+        reason: "latest_business_date_only",
+      },
+    };
+
+    const codes = selection.codes ?? [];
+    const key = JSON.stringify([businessDate, selection.latestBusinessDate, codes]);
+    const now = this.clock();
+    const cached = this.cache.get(key);
+    if (cached && now - cached.savedAt <= CACHE_TTL_SECONDS) {
+      this.cache.delete(key);
+      this.cache.set(key, cached);
+      return { status: 200, payload: cached.payload };
+    }
+    if (cached) this.cache.delete(key);
+    const shared = this.inflight.get(key);
+    if (shared) return shared;
+
+    const request = this.fetchLive(businessDate, selection.latestBusinessDate, codes);
+    this.inflight.set(key, request);
+    try {
+      const result = await request;
+      if (codes.length && Array.isArray(result.payload.errors) && result.payload.errors.length === 0 &&
+        Array.isArray(result.payload.items) && result.payload.items.length === codes.length) {
+        this.cache.delete(key);
+        this.cache.set(key, { savedAt: this.clock(), payload: result.payload });
+        while (this.cache.size > MAX_CACHE_ENTRIES) this.cache.delete(this.cache.keys().next().value!);
+      }
+      return result;
+    } finally {
+      if (this.inflight.get(key) === request) this.inflight.delete(key);
+    }
+  }
+
+  private async fetchLive(
+    businessDate: string,
+    latestBusinessDate: string | null,
+    codes: string[],
+  ): Promise<{ status: 200; payload: Record<string, unknown> }> {
+    const timezone = process.env.STOCK_MONITOR_TIMEZONE?.trim() || "Asia/Seoul";
+    const checkedAt = dateTimeIso(this.now(), timezone);
+    const items: QuoteItem[] = [];
+    const errors: string[] = [];
+    for (const stockCode of codes) {
+      try {
+        items.push(await this.fetchQuote(stockCode));
+      } catch {
+        errors.push(stockCode);
+      }
+    }
+    return {
+      status: 200,
+      payload: {
+        surface: "web-view-priority-current-quotes",
+        read_only: true,
+        live_fetch: true,
+        writes_db: false,
+        sends_telegram: false,
+        registers_scheduler: false,
+        affects_ordering: false,
+        priority_date: businessDate,
+        latest_business_date: latestBusinessDate,
+        checked_at: checkedAt,
+        items: items.map((item) => ({
+          stock_code: item.stock_code,
+          stock_name: item.stock_name,
+          current_price: item.current_price,
+          change_percent: item.change_percent,
+          trade_amount: item.trade_amount,
+          market_status: item.market_status,
+          trade_time: item.trade_time,
+        })),
+        errors,
+        derived_from: "web_view_candidate_evidence_top_2",
+      },
+    };
+  }
+}
+
+function loadPrioritySelection(businessDate: string, now: Date): PrioritySelection {
+  return withReadOnlyDatabase((database) => {
     database.exec("BEGIN");
     try {
       const latestDate = latestBusinessDate(database);
@@ -170,58 +286,10 @@ export async function getPriorityCurrentQuotesSnapshot(businessDate: string): Pr
       database.exec("ROLLBACK");
     }
   });
+}
 
-  if (selection.latestBusinessDate && businessDate !== selection.latestBusinessDate) return {
-    status: 409,
-    payload: {
-      surface: "web-view-priority-current-quotes",
-      read_only: true,
-      live_fetch: false,
-      writes_db: false,
-      sends_telegram: false,
-      registers_scheduler: false,
-      affects_ordering: false,
-      priority_date: businessDate,
-      latest_business_date: selection.latestBusinessDate,
-      items: [],
-      reason: "latest_business_date_only",
-    },
-  };
+const priorityCurrentQuotesService = new PriorityCurrentQuotesService();
 
-  const checkedAt = dateTimeIso(new Date(), timezone);
-  const items: QuoteItem[] = [];
-  const errors: string[] = [];
-  for (const stockCode of selection.codes ?? []) {
-    try {
-      items.push(await fetchQuote(stockCode));
-    } catch {
-      errors.push(stockCode);
-    }
-  }
-  return {
-    status: 200,
-    payload: {
-      surface: "web-view-priority-current-quotes",
-      read_only: true,
-      live_fetch: true,
-      writes_db: false,
-      sends_telegram: false,
-      registers_scheduler: false,
-      affects_ordering: false,
-      priority_date: businessDate,
-      latest_business_date: selection.latestBusinessDate,
-      checked_at: checkedAt,
-      items: items.map((item) => ({
-        stock_code: item.stock_code,
-        stock_name: item.stock_name,
-        current_price: item.current_price,
-        change_percent: item.change_percent,
-        trade_amount: item.trade_amount,
-        market_status: item.market_status,
-        trade_time: item.trade_time,
-      })),
-      errors,
-      derived_from: "web_view_candidate_evidence_top_2",
-    },
-  };
+export function getPriorityCurrentQuotesSnapshot(businessDate: string): Promise<{ status: 200 | 409; payload: Record<string, unknown> }> {
+  return priorityCurrentQuotesService.getQuotes(businessDate);
 }

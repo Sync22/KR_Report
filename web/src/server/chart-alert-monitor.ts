@@ -50,9 +50,10 @@ export class ChartAlertMonitorService {
     const state = await this.read();
     const providerReady = this.dependencies.providerConfigured();
     if (state.running && !this.releaseLease) {
-      this.releaseLease = await acquireChartAlertLock(this.dependencies.lockPath);
-      if (this.releaseLease) this.schedule(0);
-      else return { state, intervals: { focusMs: POLL_INTERVAL_MS }, ownerActiveElsewhere: true, providerReady };
+      const release = await acquireChartAlertLock(this.dependencies.lockPath);
+      if (release) this.releaseLease = release;
+      if (!this.releaseLease) return { state, intervals: { focusMs: POLL_INTERVAL_MS }, ownerActiveElsewhere: true, providerReady };
+      this.schedule(0);
     }
     return { state, intervals: { focusMs: POLL_INTERVAL_MS }, ownerActiveElsewhere: false, providerReady };
   }
@@ -88,7 +89,10 @@ export class ChartAlertMonitorService {
 
   async start(): Promise<ChartAlertState> {
     if (!this.dependencies.providerConfigured()) throw new TypeError("chart-alert-provider-not-configured");
-    if (!this.releaseLease) this.releaseLease = await acquireChartAlertLock(this.dependencies.lockPath);
+    if (!this.releaseLease) {
+      const release = await acquireChartAlertLock(this.dependencies.lockPath);
+      if (release) this.releaseLease = release;
+    }
     if (!this.releaseLease) throw new TypeError("chart-alert-monitor-owned-elsewhere");
     try {
       const state = await this.update((current) => {
@@ -106,11 +110,12 @@ export class ChartAlertMonitorService {
   async pause(): Promise<ChartAlertState> {
     this.clearTimer();
     if (!this.releaseLease) {
-      this.releaseLease = await acquireChartAlertLock(this.dependencies.lockPath);
+      const release = await acquireChartAlertLock(this.dependencies.lockPath);
+      if (release) this.releaseLease = release;
       if (!this.releaseLease) throw new TypeError("chart-alert-monitor-owned-elsewhere");
     }
     const state = await this.update((current) => ({ ...current, running: false }));
-    await this.release();
+    if (!this.busy) await this.release();
     return state;
   }
 
@@ -212,6 +217,7 @@ export class ChartAlertMonitorService {
       this.busy = false;
       const state = await this.read().catch(() => emptyChartAlertState());
       if (state.running) this.schedule(this.nextDelay(state));
+      else await this.release();
     }
   }
 

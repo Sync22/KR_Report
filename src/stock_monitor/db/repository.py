@@ -913,6 +913,84 @@ class StockMonitorRepository:
                     ),
                 )
 
+    def begin_delivery_attempt(self, delivery: DeliveryLog) -> tuple[int, bool]:
+        with self.connect() as connection:
+            with connection:
+                previous_success = connection.execute(
+                    """
+                    SELECT 1 FROM delivery_log
+                    WHERE business_date = ?
+                      AND channel = ?
+                      AND status IN ('sent', 'sent_repeat')
+                    LIMIT 1
+                    """,
+                    (delivery.business_date.isoformat(), delivery.channel),
+                ).fetchone()
+                cursor = connection.execute(
+                    """
+                    INSERT INTO delivery_log (
+                        business_date, channel, status, delivered_at, message_id, detail
+                    ) VALUES (?, ?, 'sending', ?, NULL, ?)
+                    """,
+                    (
+                        delivery.business_date.isoformat(),
+                        delivery.channel,
+                        delivery.delivered_at.isoformat(),
+                        delivery.detail,
+                    ),
+                )
+                return int(cursor.lastrowid), previous_success is not None
+
+    def finish_delivery_attempt(self, attempt_id: int, delivery: DeliveryLog) -> None:
+        with self.connect() as connection:
+            with connection:
+                cursor = connection.execute(
+                    """
+                    UPDATE delivery_log
+                    SET status = ?, delivered_at = ?, message_id = ?, detail = ?
+                    WHERE id = ? AND status = 'sending'
+                    """,
+                    (
+                        delivery.status,
+                        delivery.delivered_at.isoformat(),
+                        delivery.message_id,
+                        delivery.detail,
+                        attempt_id,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise RuntimeError("Telegram delivery attempt is no longer sending.")
+
+    def recover_interrupted_market_briefing_deliveries(
+        self,
+        *,
+        channel_prefix: str,
+        recovered_at: datetime,
+    ) -> None:
+        detail = "source=recovery; ambiguous_send=true; interrupted during Telegram send; outcome unknown"
+        with self.connect() as connection:
+            with connection:
+                connection.execute(
+                    """
+                    UPDATE delivery_log
+                    SET status = 'ambiguous',
+                        delivered_at = ?,
+                        detail = CASE
+                            WHEN COALESCE(detail, '') = '' THEN ?
+                            ELSE detail || '; ' || ?
+                        END
+                    WHERE status = 'sending'
+                      AND substr(channel, 1, ?) = ?
+                    """,
+                    (
+                        recovered_at.isoformat(),
+                        detail,
+                        detail,
+                        len(channel_prefix),
+                        channel_prefix,
+                    ),
+                )
+
     def start_or_resume_daily_summary_run(
         self,
         *,
@@ -922,6 +1000,7 @@ class StockMonitorRepository:
         messages: list[str],
         started_at: datetime,
         allow_ambiguous_repeat: bool = False,
+        allow_sent_repeat: bool = False,
     ) -> DailySummaryDeliveryRun:
         with self.connect() as connection:
             with connection:
@@ -954,6 +1033,30 @@ class StockMonitorRepository:
                         """,
                         (started_at.isoformat(), business_date.isoformat(), channel),
                     )
+                if not allow_sent_repeat:
+                    sent_row = connection.execute(
+                        """
+                        SELECT
+                            run_id,
+                            business_date,
+                            channel,
+                            status,
+                            summary_signature,
+                            total_fragments,
+                            started_at,
+                            finished_at,
+                            last_error
+                        FROM daily_summary_delivery_runs
+                        WHERE business_date = ?
+                          AND channel = ?
+                          AND status = 'sent'
+                        ORDER BY finished_at DESC, started_at DESC
+                        LIMIT 1
+                        """,
+                        (business_date.isoformat(), channel),
+                    ).fetchone()
+                    if sent_row:
+                        return self._row_to_daily_summary_delivery_run(sent_row)
                 connection.execute(
                     """
                     UPDATE daily_summary_delivery_runs
@@ -1112,6 +1215,180 @@ class StockMonitorRepository:
                 (run_id,),
             ).fetchall()
         return [self._row_to_daily_summary_delivery_fragment(row) for row in rows]
+
+    def mark_daily_summary_fragment_sending(self, run_id: str, fragment_index: int) -> bool:
+        with self.connect() as connection:
+            with connection:
+                cursor = connection.execute(
+                    """
+                    UPDATE daily_summary_delivery_fragments
+                    SET status = 'sending', last_error = NULL
+                    WHERE run_id = ?
+                      AND fragment_index = ?
+                      AND status IN ('pending', 'failed')
+                    """,
+                    (run_id, fragment_index),
+                )
+                if cursor.rowcount != 1:
+                    return False
+                run_cursor = connection.execute(
+                    """
+                    UPDATE daily_summary_delivery_runs
+                    SET status = 'sending', finished_at = NULL, last_error = NULL
+                    WHERE run_id = ?
+                      AND status IN ('pending', 'failed', 'sending')
+                    """,
+                    (run_id,),
+                )
+                if run_cursor.rowcount != 1:
+                    raise RuntimeError("Daily summary run could not be claimed for Telegram delivery.")
+        return True
+
+    def recover_interrupted_daily_summary_delivery(self, *, recovered_at: datetime) -> None:
+        detail = "interrupted during Telegram send; outcome unknown"
+        recovered_at_text = recovered_at.isoformat()
+        with self.connect() as connection:
+            with connection:
+                connection.execute(
+                    """
+                    UPDATE daily_summary_delivery_runs
+                    SET status = 'sent',
+                        finished_at = COALESCE(
+                            (
+                                SELECT MAX(fragment.sent_at)
+                                FROM daily_summary_delivery_fragments AS fragment
+                                WHERE fragment.run_id = daily_summary_delivery_runs.run_id
+                            ),
+                            ?
+                        ),
+                        last_error = NULL
+                    WHERE status = 'sending'
+                      AND total_fragments = (
+                          SELECT COUNT(*)
+                          FROM daily_summary_delivery_fragments AS fragment
+                          WHERE fragment.run_id = daily_summary_delivery_runs.run_id
+                            AND fragment.status = 'sent'
+                      )
+                    """,
+                    (recovered_at_text,),
+                )
+                interrupted_runs = connection.execute(
+                    """
+                    SELECT run_id, business_date, channel
+                    FROM daily_summary_delivery_runs
+                    WHERE status = 'sending'
+                    """
+                ).fetchall()
+                if interrupted_runs:
+                    run_ids = tuple(row["run_id"] for row in interrupted_runs)
+                    placeholders = ", ".join("?" for _ in run_ids)
+                    connection.execute(
+                        f"""
+                        UPDATE daily_summary_delivery_fragments
+                        SET status = 'ambiguous', last_error = ?
+                        WHERE status = 'sending'
+                          AND run_id IN ({placeholders})
+                        """,
+                        (detail, *run_ids),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE daily_summary_delivery_runs
+                        SET status = 'ambiguous', finished_at = ?, last_error = ?
+                        WHERE status = 'sending'
+                        """,
+                        (recovered_at_text, detail),
+                    )
+                    interrupted_counts: dict[tuple[str, str], int] = {}
+                    for row in interrupted_runs:
+                        key = (row["business_date"], row["channel"])
+                        interrupted_counts[key] = interrupted_counts.get(key, 0) + 1
+                    for (business_date, channel), count in interrupted_counts.items():
+                        connection.execute(
+                            """
+                            INSERT INTO delivery_log (
+                                business_date, channel, status, delivered_at, message_id, detail
+                            ) VALUES (?, ?, 'ambiguous', ?, NULL, ?)
+                            """,
+                            (
+                                business_date,
+                                channel,
+                                recovered_at_text,
+                                f"source=recovery; interrupted_runs={count}; ambiguous_send=true; {detail}",
+                            ),
+                        )
+
+                completed_runs = connection.execute(
+                    """
+                    SELECT run_id, business_date, channel, finished_at
+                    FROM daily_summary_delivery_runs AS run
+                    WHERE status = 'sent'
+                      AND finished_at IS NOT NULL
+                      AND total_fragments = (
+                          SELECT COUNT(*)
+                          FROM daily_summary_delivery_fragments AS fragment
+                          WHERE fragment.run_id = run.run_id
+                            AND fragment.status = 'sent'
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM delivery_log AS delivery
+                          WHERE delivery.business_date = run.business_date
+                            AND delivery.channel = run.channel
+                            AND delivery.status = 'ambiguous'
+                            AND delivery.delivered_at > run.finished_at
+                      )
+                    ORDER BY finished_at ASC, run_id ASC
+                    """
+                ).fetchall()
+                for run in completed_runs:
+                    fragment_rows = connection.execute(
+                        """
+                        SELECT message_id FROM daily_summary_delivery_fragments
+                        WHERE run_id = ? ORDER BY fragment_index
+                        """,
+                        (run["run_id"],),
+                    ).fetchall()
+                    message_id = ",".join(str(row["message_id"]) for row in fragment_rows if row["message_id"])
+                    if not message_id:
+                        continue
+                    existing_log = connection.execute(
+                        """
+                        SELECT 1 FROM delivery_log
+                        WHERE business_date = ?
+                          AND channel = ?
+                          AND message_id = ?
+                          AND status IN ('sent', 'sent_repeat')
+                        LIMIT 1
+                        """,
+                        (run["business_date"], run["channel"], message_id),
+                    ).fetchone()
+                    if existing_log:
+                        continue
+                    previous_success = connection.execute(
+                        """
+                        SELECT 1 FROM delivery_log
+                        WHERE business_date = ?
+                          AND channel = ?
+                          AND status IN ('sent', 'sent_repeat')
+                        LIMIT 1
+                        """,
+                        (run["business_date"], run["channel"]),
+                    ).fetchone()
+                    connection.execute(
+                        """
+                        INSERT INTO delivery_log (
+                            business_date, channel, status, delivered_at, message_id, detail
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            run["business_date"],
+                            run["channel"],
+                            "sent_repeat" if previous_success else "sent",
+                            run["finished_at"],
+                            message_id or None,
+                            f"source=recovery; completed daily summary run={run['run_id']}; success log restored",
+                        ),
+                    )
 
     def mark_daily_summary_fragment_sent(
         self,
@@ -3630,6 +3907,69 @@ class StockMonitorRepository:
                 (1 if include_ambiguous else 0,),
             ).fetchall()
         return [self._row_to_intraday_batch(row) for row in rows]
+
+    def mark_intraday_alert_batches_sending(
+        self,
+        batch_ids: tuple[str, ...],
+        *,
+        attempted_at: datetime,
+        retry_ambiguous: bool = False,
+    ) -> bool:
+        if not batch_ids:
+            return False
+        placeholders = ", ".join("?" for _ in batch_ids)
+        with self.connect() as connection:
+            with connection:
+                cursor = connection.execute(
+                    f"""
+                    UPDATE intraday_alert_batches
+                    SET status = 'sending', last_attempt_at = ?, error_detail = NULL
+                    WHERE batch_id IN ({placeholders})
+                      AND (status IN ('pending', 'failed') OR (? = 1 AND status = 'ambiguous'))
+                    """,
+                    (attempted_at.isoformat(), *batch_ids, 1 if retry_ambiguous else 0),
+                )
+                if cursor.rowcount != len(batch_ids):
+                    connection.rollback()
+                    return False
+        return True
+
+    def recover_interrupted_intraday_alert_batches(self, *, recovered_at: datetime) -> None:
+        detail = "interrupted during Telegram send; outcome unknown"
+        recovered_at_text = recovered_at.isoformat()
+        with self.connect() as connection:
+            with connection:
+                interrupted_dates = connection.execute(
+                    """
+                    SELECT business_date, COUNT(*) AS batch_count
+                    FROM intraday_alert_batches
+                    WHERE status = 'sending'
+                    GROUP BY business_date
+                    """
+                ).fetchall()
+                if not interrupted_dates:
+                    return
+                connection.execute(
+                    """
+                    UPDATE intraday_alert_batches
+                    SET status = 'ambiguous', error_detail = ?
+                    WHERE status = 'sending'
+                    """,
+                    (detail,),
+                )
+                for row in interrupted_dates:
+                    connection.execute(
+                        """
+                        INSERT INTO delivery_log (
+                            business_date, channel, status, delivered_at, message_id, detail
+                        ) VALUES (?, 'telegram_intraday', 'ambiguous', ?, NULL, ?)
+                        """,
+                        (
+                            row["business_date"],
+                            recovered_at_text,
+                            f"source=recovery; interrupted_batches={row['batch_count']}; ambiguous_send=true; {detail}",
+                        ),
+                    )
 
     def list_reports_for_intraday_batch(self, batch_id: str) -> list[Report]:
         with self.connect() as connection:

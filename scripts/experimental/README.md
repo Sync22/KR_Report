@@ -82,6 +82,8 @@ Notes:
 
 ## Kronos research-only environment
 
+This lab remains inactive unless explicitly re-enabled. Backtest commands require an explicit `--db-path` pointing to a separate, existing SQLite snapshot. The connection is read-only and never creates a missing database. Do not point the lab at the operating database; no model or lab runtime is activated by this boundary change.
+
 This lane is for offline experiments on stored KRX OHLCV only.
 
 Hard boundary:
@@ -107,14 +109,14 @@ scripts\experimental\.venv-kronos\Scripts\python.exe scripts\experimental\probe_
 Run a bounded stored-data backtest with:
 
 ```powershell
-scripts\experimental\.venv-kronos\Scripts\python.exe scripts\experimental\kronos_backtest_experiment.py --from-date 2026-04-01 --to-date 2026-04-30 --horizon-days 10 --max-candidates 40 --lookback 120 --sample-count 1
+scripts\experimental\.venv-kronos\Scripts\python.exe scripts\experimental\kronos_backtest_experiment.py --db-path "C:\path\to\snapshot.db" --from-date 2026-04-01 --to-date 2026-04-30 --horizon-days 10 --max-candidates 40 --lookback 120 --sample-count 1
 ```
 
 Run the full stored 2026 report-candidate sweep in summary mode by changing
 `--horizon-days` across `1`, `5`, `10`, and `20`:
 
 ```powershell
-scripts\experimental\.venv-kronos\Scripts\python.exe scripts\experimental\kronos_backtest_experiment.py --from-date 2026-01-02 --to-date 2026-05-15 --horizon-days 10 --max-candidates 10000 --lookback 120 --sample-count 1 --summary-only
+scripts\experimental\.venv-kronos\Scripts\python.exe scripts\experimental\kronos_backtest_experiment.py --db-path "C:\path\to\snapshot.db" --from-date 2026-01-02 --to-date 2026-05-15 --horizon-days 10 --max-candidates 10000 --lookback 120 --sample-count 1 --summary-only
 ```
 
 Notes:

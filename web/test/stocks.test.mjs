@@ -70,6 +70,10 @@ test("stock search uses a read-only SQLite fixture and matches Python source pre
       ["2026-10-07", "000001", "삼성전자 이전 리포트"],
       ["2026-10-07", "000005", "삼성전기 이전 리포트"],
     ]);
+    addRows("toss_stock_universe_cache", ["business_date", "stock_code", "stock_name", "market"], [
+      ["2026-10-08", "ABCDEF", "테스트 A", "KOSPI"],
+      ["2026-10-08", "000010", "테스트 B", "KOSPI"],
+    ]);
     addRows("report_linked_news_evidence", ["target_date", "stock_code"], [
       ["2026-10-08", "000001"],
       ["2026-10-07", "000002"],
@@ -95,6 +99,7 @@ test("stock search uses a read-only SQLite fixture and matches Python source pre
       ["2026-10-09", "삼성", 20],
       ["2026-10-08", "삼성", 1],
       ["2026-10-08", "' OR 1=1 --", 20],
+      ["2026-10-08", "테스트", 1],
     ];
     const beforeRead = statSync(databasePath);
     const nextSnapshots = cases.map(([date, query, limit]) => getStockSearchSnapshot(date, query, limit));
@@ -127,7 +132,7 @@ print(json.dumps(snapshots, ensure_ascii=False, separators=(",", ":")))
     const withoutNow = ({ now: _now, ...snapshot }) => snapshot;
     assert.deepEqual(nextSnapshots.map(withoutNow), pythonSnapshots.map(withoutNow));
 
-    const [korean, exactCode, english, wildcard, noResults, empty, selectedLater, limited, injection] = nextSnapshots;
+    const [korean, exactCode, english, wildcard, noResults, empty, selectedLater, limited, injection, validSearch] = nextSnapshots;
     assert.equal(isStockSearchSnapshot(korean, "2026-10-08", "  삼성  "), true);
     assert.equal(korean.query, "삼성");
     assert.equal(korean.stock_universe_reference_date, "2026-10-08");
@@ -143,7 +148,7 @@ print(json.dumps(snapshots, ensure_ascii=False, separators=(",", ":")))
     assert.equal(korean.items.find((item) => item.stock_code === "000004").market_source, null);
     assert.equal(exactCode.items[0].stock_code, "000001");
     assert.equal(english.items[0].stock_code, "000006");
-    assert.deepEqual(wildcard.items.map((item) => item.stock_code).sort(), ["000001", "000002", "000003", "000004", "000005", "000006", "000008", "000009"]);
+    assert.deepEqual(wildcard.items.map((item) => item.stock_code).sort(), ["000001", "000002", "000003", "000004", "000005", "000006", "000008", "000009", "000010"]);
     assert.equal(wildcard.items.find((item) => item.stock_code === "000009").stock_name, "000009");
     assert.equal(noResults.available, false);
     assert.equal(noResults.empty_state, "조회된 저장 종목이 없습니다.");
@@ -157,6 +162,8 @@ print(json.dumps(snapshots, ensure_ascii=False, separators=(",", ":")))
     assert.equal(parseStockSearchLimit("invalid"), 8);
     assert.equal(parseStockSearchLimit("0"), 1);
     assert.equal(parseStockSearchLimit("999"), 20);
+    assert.deepEqual(validSearch.items.map((item) => item.stock_code), ["000010"]);
+    assert.equal(isStockSearchSnapshot(validSearch, "2026-10-08", "테스트"), true);
   } finally {
     if (previousDatabasePath === undefined) delete process.env.STOCK_MONITOR_DB_PATH;
     else process.env.STOCK_MONITOR_DB_PATH = previousDatabasePath;
