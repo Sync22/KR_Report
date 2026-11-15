@@ -10,7 +10,7 @@ import { acquireChartAlertLock } from "../src/server/chart-alert-store.ts";
 test("concurrent stale-lock recovery does not remove a new owner", async () => {
   const folder = await fs.mkdtemp(path.join(os.tmpdir(), "chart-alert-stale-race-"));
   const lockPath = path.join(folder, "monitor.lock");
-  await fs.writeFile(lockPath, JSON.stringify({ pid: 2_147_483_647, token: "stale" }));
+  await fs.writeFile(lockPath, JSON.stringify({ protocol: 2, pid: 2_147_483_647, token: "stale" }));
   const originalReadFile = fs.readFile;
   const originalUnlink = fs.unlink;
   let staleReads = 0;
@@ -87,7 +87,7 @@ test("orphan recovery guards fail closed without deleting either lock file", asy
   const folder = await fs.mkdtemp(path.join(os.tmpdir(), "chart-alert-recovery-guard-"));
   const lockPath = path.join(folder, "monitor.lock");
   const recoveryPath = `${lockPath}.recovery`;
-  const stale = JSON.stringify({ pid: 2_147_483_647, token: "stale" });
+  const stale = JSON.stringify({ protocol: 2, pid: 2_147_483_647, token: "stale" });
   const orphan = JSON.stringify({ pid: 2_147_483_647, token: "orphan-recovery" });
   try {
     await fs.writeFile(lockPath, stale);

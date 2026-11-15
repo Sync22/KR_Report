@@ -727,6 +727,7 @@ def test_inspect_page_required_parsed_fixture_check_fails_on_empty_snapshot(tmp_
         api_pages_fetched = 1
         api_items = ()
         candidate_rows = ()
+        api_item_parse_error_count = 0
 
     monkeypatch.setattr(cli_module, "inspect_company_page", lambda *args, **kwargs: _EmptyInspection())
 
@@ -756,6 +757,7 @@ def test_inspect_page_required_parsed_fixture_check_requires_saved_fixture(tmp_p
         api_pages_fetched = 1
         api_items = ()
         candidate_rows = ()
+        api_item_parse_error_count = 0
 
     monkeypatch.setattr(cli_module, "inspect_company_page", lambda *args, **kwargs: _EmptyInspection())
 

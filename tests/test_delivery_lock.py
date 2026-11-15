@@ -324,10 +324,12 @@ def test_scheduled_daily_completes_all_sent_fragments_before_restoring_log(tmp_p
         messages=["already delivered"],
         started_at=datetime.now(cli_module.ZoneInfo(config.timezone)),
     )
-    assert repository.mark_daily_summary_fragment_sending(run.run_id, 0)
+    attempted_at = datetime.now(cli_module.ZoneInfo(config.timezone))
+    assert repository.claim_daily_summary_fragment(run.run_id, 0, attempted_at=attempted_at)
     repository.mark_daily_summary_fragment_sent(
         run.run_id,
         0,
+        attempted_at=attempted_at,
         message_id="old-message",
         sent_at=datetime.now(cli_module.ZoneInfo(config.timezone)),
     )

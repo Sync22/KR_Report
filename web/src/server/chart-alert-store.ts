@@ -127,7 +127,7 @@ export async function acquireChartAlertLock(filePath: string): Promise<(() => Pr
   await mkdir(path.dirname(filePath), { recursive: true });
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const token = randomUUID();
-    const contents = JSON.stringify({ pid: process.pid, token, started_at: new Date().toISOString() });
+    const contents = JSON.stringify({ protocol: 2, pid: process.pid, token, started_at: new Date().toISOString() });
     try {
       const handle = await open(filePath, "wx", 0o600);
       try { await handle.writeFile(contents, "utf8"); await handle.sync(); }
@@ -250,7 +250,7 @@ function validateState(input: unknown): ChartAlertState {
 async function staleLock(filePath: string): Promise<boolean> {
   try {
     const owner = record(JSON.parse(await readFile(filePath, "utf8")));
-    if (!Number.isInteger(owner.pid) || Number(owner.pid) <= 0 || typeof owner.token !== "string") return false;
+    if (owner.protocol !== 2 || !Number.isInteger(owner.pid) || Number(owner.pid) <= 0 || typeof owner.token !== "string") return false;
     try { process.kill(Number(owner.pid), 0); return false; }
     catch (error) { return record(error).code === "ESRCH"; }
   } catch { return false; }

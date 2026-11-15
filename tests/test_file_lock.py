@@ -72,3 +72,11 @@ def test_empty_existing_file_lock_is_initialized_after_locking(tmp_path: Path) -
         handle.seek(0)
         assert handle.read() == FILE_LOCK_MARKER
     assert lock_path.read_bytes() == FILE_LOCK_MARKER
+
+
+def test_existing_empty_legacy_lock_is_not_initialized(tmp_path: Path) -> None:
+    lock_path = tmp_path / "legacy.lock"
+    lock_path.write_bytes(b"")
+    with exclusive_file_lock(lock_path, initialize_existing=False) as handle:
+        assert handle.read() == b""
+    assert lock_path.read_bytes() == b""

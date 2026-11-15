@@ -13,16 +13,20 @@ _BUSY_LOCK_ERRNOS = _RETRY_LOCK_ERRNOS | {errno.EAGAIN, errno.EWOULDBLOCK}
 
 
 @contextmanager
-def exclusive_file_lock(file_path: Path, *, blocking: bool = True) -> Iterator[BinaryIO]:
+def exclusive_file_lock(
+    file_path: Path, *, blocking: bool = True, initialize_existing: bool = True
+) -> Iterator[BinaryIO]:
     file_path.parent.mkdir(parents=True, exist_ok=True)
     while True:
         try:
             handle = file_path.open("x+b")
+            created = True
         except FileExistsError:
             try:
                 handle = file_path.open("r+b")
             except FileNotFoundError:
                 continue
+            created = False
         break
 
     locked = False
@@ -56,7 +60,7 @@ def exclusive_file_lock(file_path: Path, *, blocking: bool = True) -> Iterator[B
                 raise
 
         handle.seek(0, os.SEEK_END)
-        if handle.tell() == 0:
+        if handle.tell() == 0 and (created or initialize_existing):
             handle.write(FILE_LOCK_MARKER)
             handle.flush()
             os.fsync(handle.fileno())

@@ -172,6 +172,21 @@ def test_chart_alert_transport_error_is_ambiguous_and_not_resent(tmp_path: Path)
     assert tuple(row) == ("ambiguous", 1)
 
 
+def test_chart_alert_dispatch_preserves_stale_looking_lock_for_manual_verification(tmp_path: Path) -> None:
+    repository = repository_with_focus_reports(tmp_path)
+    repository.migrate_schema()
+    spool = tmp_path / "spool"
+    spool.mkdir()
+    lock_path = tmp_path / "alert-dispatch.lock"
+    contents = json.dumps({"pid": 2_000_000_000, "token": "old-owner", "started_at": "2026-10-22T00:00:00+00:00"})
+    lock_path.write_text(contents, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="chart-alert-dispatch-owned-elsewhere"):
+        process_chart_alert_spool(repository, spool, send=True, bot_token="test-token", chat_id="test-chat")
+
+    assert lock_path.read_text(encoding="utf-8") == contents
+
+
 def test_chart_alert_cli_defaults_to_preview_and_requires_send_for_watch_mode() -> None:
     parser = build_parser()
     preview = parser.parse_args(["chart-alerts-dispatch"])
@@ -187,7 +202,6 @@ def test_concurrent_chart_alert_recovery_does_not_remove_a_new_lock_owner(tmp_pa
     spool = tmp_path / "ChartLab" / "alert-spool"
     spool.mkdir(parents=True)
     lock_path = spool.parent / "alert-dispatch.lock"
-    lock_path.write_text(json.dumps({"pid": 2_147_483_647, "token": "dead"}), encoding="utf-8")
     child_code = "\n".join((
         "import sys, time",
         "sys.path.insert(0, sys.argv[1])",
@@ -219,7 +233,7 @@ def test_concurrent_chart_alert_recovery_does_not_remove_a_new_lock_owner(tmp_pa
         assert process.wait(timeout=5) != 0
         with exclusive_file_lock(lock_path, blocking=False) as handle:
             native_lock = handle.read()
-        assert native_lock.endswith(b"\n" + FILE_LOCK_MARKER)
+        assert native_lock == FILE_LOCK_MARKER
 
         with chart_alerts._chart_alert_dispatch_lock(spool):
             pass
@@ -236,29 +250,24 @@ def test_chart_alert_dispatch_fails_closed_for_a_live_legacy_owner(tmp_path: Pat
     lock_path = spool.parent / "alert-dispatch.lock"
     legacy_lock = json.dumps({"pid": os.getpid(), "token": "legacy-owner"})
     lock_path.write_text(legacy_lock, encoding="utf-8")
-    monkeypatch.setattr(chart_alerts, "_windows_dispatch_lock_stale", lambda _pid: False)
     with pytest.raises(ValueError, match="chart-alert-dispatch-owned-elsewhere"):
         with chart_alerts._chart_alert_dispatch_lock(spool):
             raise AssertionError("a live legacy owner must remain exclusive")
     assert lock_path.read_text(encoding="utf-8") == legacy_lock
 
 
-def test_windows_legacy_lock_probe_uses_waitable_process_handles(monkeypatch) -> None:
-    if os.name != "nt":
-        pytest.skip("Windows process handles are platform-specific")
-    process = subprocess.Popen([sys._base_executable, "-c", "import time; time.sleep(30)"])
+@pytest.mark.parametrize("contents", [b"", b'{"pid":2147483647,"token":"legacy"}'])
+def test_legacy_lock_is_preserved_without_pid_probing(tmp_path: Path, monkeypatch, contents: bytes) -> None:
+    spool = tmp_path / "ChartLab" / "alert-spool"
+    spool.mkdir(parents=True)
+    lock_path = spool.parent / "alert-dispatch.lock"
+    lock_path.write_bytes(contents)
 
     def forbidden_kill(*_args) -> None:
-        raise AssertionError("Windows liveness checks must not call os.kill")
+        raise AssertionError("Legacy lock recovery must not probe or signal a PID")
 
-    try:
-        monkeypatch.setattr(chart_alerts.os, "kill", forbidden_kill)
-        legacy_lock = json.dumps({"pid": process.pid, "token": "legacy-owner"}).encode("utf-8")
-        assert chart_alerts._stale_dispatch_lock(legacy_lock) is False
-        process.kill()
-        process.wait(timeout=5)
-        assert chart_alerts._stale_dispatch_lock(legacy_lock) is True
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=5)
+    monkeypatch.setattr(chart_alerts.os, "kill", forbidden_kill)
+    with pytest.raises(ValueError, match="chart-alert-dispatch-owned-elsewhere"):
+        with chart_alerts._chart_alert_dispatch_lock(spool):
+            raise AssertionError("A legacy lock requires manual verification")
+    assert lock_path.read_bytes() == contents

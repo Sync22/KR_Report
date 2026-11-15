@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import errno
 import json
 import os
 import re
@@ -18,7 +17,6 @@ from stock_monitor.notify.telegram import send_telegram_message
 
 MAX_SPOOL_FILES = 500
 MAX_EVENT_BYTES = 32 * 1024
-_DISPATCH_LOCK_UPGRADE = b"\n" + FILE_LOCK_MARKER
 SUPPORTED_RULES = {"flag-m1-v1", "triangle-m1-v1", "horizontal-m1-v1"}
 SUPPORTED_KINDS = {
     "bull-flag", "bear-flag", "ascending-triangle", "descending-triangle", "symmetrical-triangle",
@@ -290,64 +288,12 @@ def _process_chart_alert_spool(
 def _chart_alert_dispatch_lock(spool_dir: Path):
     lock_path = spool_dir.parent / "alert-dispatch.lock"
     try:
-        with exclusive_file_lock(lock_path, blocking=False) as handle:
-            contents = handle.read()
-            if contents.startswith(FILE_LOCK_MARKER) or contents.endswith(_DISPATCH_LOCK_UPGRADE):
-                pass
-            elif _stale_dispatch_lock(contents):
-                handle.seek(0, os.SEEK_END)
-                handle.write(_DISPATCH_LOCK_UPGRADE)
-                handle.flush()
-                os.fsync(handle.fileno())
-            else:
+        with exclusive_file_lock(lock_path, blocking=False, initialize_existing=False) as handle:
+            if not handle.read().startswith(FILE_LOCK_MARKER):
                 raise ValueError("chart-alert-dispatch-owned-elsewhere")
             yield
     except BlockingIOError as error:
         raise ValueError("chart-alert-dispatch-owned-elsewhere") from error
-
-
-def _stale_dispatch_lock(contents: bytes) -> bool:
-    try:
-        text = contents.decode("utf-8")
-        owner, end = json.JSONDecoder().raw_decode(text)
-        pid = owner.get("pid") if isinstance(owner, dict) else None
-        suffix = text[end:]
-        upgrade = _DISPATCH_LOCK_UPGRADE.decode("utf-8")
-        if suffix and not suffix.isspace() and not (upgrade.startswith(suffix) or suffix.endswith(upgrade)):
-            return False
-        if type(pid) is not int or pid <= 0 or not isinstance(owner.get("token"), str):
-            return False
-        if os.name == "nt":
-            return _windows_dispatch_lock_stale(pid)
-        try:
-            os.kill(pid, 0)
-            return False
-        except OSError as error:
-            return isinstance(error, ProcessLookupError) or error.errno == errno.ESRCH
-    except (AttributeError, OSError, UnicodeError, json.JSONDecodeError):
-        return False
-
-
-def _windows_dispatch_lock_stale(pid: int) -> bool:
-    import ctypes
-    from ctypes import wintypes
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
-    kernel32.WaitForSingleObject.restype = wintypes.DWORD
-    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-    kernel32.CloseHandle.restype = wintypes.BOOL
-
-    # SYNCHRONIZE only: Windows os.kill(pid, 0) can send CTRL_C_EVENT.
-    handle = kernel32.OpenProcess(0x00100000, False, pid)
-    if not handle:
-        return ctypes.get_last_error() in {87, 1168}
-    try:
-        return kernel32.WaitForSingleObject(handle, 0) == 0
-    finally:
-        kernel32.CloseHandle(handle)
 
 
 def _require_chart_alert_table(repository: StockMonitorRepository) -> None:

@@ -6,7 +6,8 @@ import stock_monitor.cli as cli_module
 from stock_monitor.config import RuntimeConfig
 from stock_monitor.db.repository import StockMonitorRepository
 from stock_monitor.notify.control import TelegramControlState, load_control_state, save_control_state
-from stock_monitor.models import MarketIndexDailySnapshot, Report
+from stock_monitor.notify.telegram import TelegramRequestError
+from stock_monitor.models import DailyStockSummary, MarketIndexDailySnapshot, Report
 
 
 def test_process_telegram_commands_persists_progress_after_each_successful_update(tmp_path, monkeypatch) -> None:
@@ -47,6 +48,95 @@ def test_process_telegram_commands_persists_progress_after_each_successful_updat
     state = load_control_state(config.telegram_control_state_path)
     assert state.last_update_id == 1
     assert send_count == 2
+
+
+def test_process_telegram_commands_suppresses_ambiguous_next_update_without_advancing_delivery(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_CHAT_ID", "chat-1")
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 4, 24)
+    summary = DailyStockSummary(
+        business_date=business_date,
+        stock_name="Samsung Electronics",
+        stock_code="005930",
+        mention_count=2,
+        broker_display="NH(2)",
+        target_price_min=92_000,
+        target_price_max=93_000,
+        dominant_opinion="buy",
+        generated_at=datetime(2026, 4, 24, 16, 0, 0),
+    )
+    state = TelegramControlState()
+    state.set_delivered_for(business_date, 0)
+    save_control_state(config.telegram_control_state_path, state)
+    monkeypatch.setattr(repository, "list_daily_summaries", lambda _business_date: [summary])
+    offsets: list[int | None] = []
+
+    def get_updates(*_args, offset=None, **_kwargs):
+        offsets.append(offset)
+        return {
+            "ok": True,
+            "result": [] if offset is not None else [{"update_id": 1, "message": {"chat": {"id": "chat-1"}, "text": "/next"}}],
+        }
+
+    monkeypatch.setattr(cli_module, "get_telegram_updates", get_updates)
+    monkeypatch.setattr(cli_module, "_fetch_daily_summary_quotes_by_stock_code", lambda *_args, **_kwargs: {})
+    sends = 0
+
+    def ambiguous_send(*_args, **_kwargs):
+        nonlocal sends
+        sends += 1
+        raise TelegramRequestError("Telegram sendMessage", 1, error_kind="TimeoutError", ambiguous=True)
+
+    monkeypatch.setattr(cli_module, "send_telegram_message", ambiguous_send)
+    with pytest.raises(TelegramRequestError):
+        cli_module._run_process_telegram_commands(config, repository)
+
+    state_after_ambiguous_send = load_control_state(config.telegram_control_state_path)
+    assert state_after_ambiguous_send.last_update_id == 1
+    assert state_after_ambiguous_send.delivered_for(business_date) == 0
+    assert cli_module._run_process_telegram_commands(config, repository) == 0
+    assert offsets == [None, 2]
+    assert sends == 1
+    assert load_control_state(config.telegram_control_state_path).delivered_for(business_date) == 0
+
+
+def test_process_telegram_commands_keeps_cursor_on_definite_next_rejection(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_CHAT_ID", "chat-1")
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    business_date = date(2026, 4, 24)
+    state = TelegramControlState()
+    state.set_delivered_for(business_date, 0)
+    save_control_state(config.telegram_control_state_path, state)
+    monkeypatch.setattr(
+        cli_module,
+        "get_telegram_updates",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "result": [{"update_id": 1, "message": {"chat": {"id": "chat-1"}, "text": "/next"}}],
+        },
+    )
+    monkeypatch.setattr(repository, "list_daily_summaries", lambda _business_date: [])
+    monkeypatch.setattr(cli_module, "send_telegram_message", lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        TelegramRequestError("Telegram sendMessage", 1, error_kind="api_rejected")
+    ))
+
+    with pytest.raises(TelegramRequestError) as captured:
+        cli_module._run_process_telegram_commands(config, repository)
+
+    saved_state = load_control_state(config.telegram_control_state_path)
+    assert captured.value.ambiguous is False
+    assert saved_state.last_update_id == 0
+    assert saved_state.delivered_for(business_date) == 0
 
 
 def test_process_telegram_commands_does_not_duplicate_memo_when_ack_fails(tmp_path, monkeypatch) -> None:

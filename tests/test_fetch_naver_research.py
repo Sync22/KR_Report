@@ -2,11 +2,17 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import stock_monitor.cli as cli_module
+import stock_monitor.fetch.naver_research as naver_research_module
+from stock_monitor.config import RuntimeConfig
+from stock_monitor.db.repository import StockMonitorRepository
 from stock_monitor.fetch.naver_research import (
     CandidateRow,
+    PageInspection,
     _extract_api_items,
     _parse_api_item,
     _parse_candidate_row,
+    fetch_reports,
     parse_reports_from_inspection_fixture_payload,
 )
 
@@ -204,6 +210,18 @@ def test_parse_candidate_row_returns_none_when_required_fields_are_missing() -> 
     assert _parse_candidate_row(row, collected_at, "Asia/Seoul") is None
 
 
+def test_parse_candidate_row_skips_impossible_calendar_date() -> None:
+    collected_at = datetime(2026, 4, 25, 8, 0, 0)
+    row = CandidateRow(
+        selector="tr",
+        text="2026-02-30 삼성전자 업황 회복 NH투자증권",
+        href=None,
+        cells=("2026-02-30", "삼성전자", "업황 회복", "NH투자증권"),
+    )
+
+    assert _parse_candidate_row(row, collected_at, "Asia/Seoul") is None
+
+
 def test_parse_reports_from_inspection_fixture_payload_prefers_api_items_over_dom_rows() -> None:
     payload = {
         "collected_at": "2026-04-25T08:00:00+09:00",
@@ -258,3 +276,55 @@ def test_saved_2026_05_15_live_fixture_parses_api_reports() -> None:
     assert len(reports) == 20
     assert reports[0].source_id == "93018"
     assert reports[0].stock_code == "138040"
+
+
+def test_poll_skips_malformed_write_dates_and_records_parse_error_count(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    inspection = PageInspection(
+        url="https://stock.naver.com",
+        title="",
+        tab_clicked=False,
+        network_urls=(),
+        api_pages_fetched=1,
+        api_items=(
+            {"itemName": "bad type", "writeDate": {"year": 2026}},
+            {"itemName": "bad date", "writeDate": "2026-02-30"},
+            {"itemName": "missing date", "writeDate": None},
+            {"itemName": "numeric date", "writeDate": 20260713},
+            {"itemName": "list date", "writeDate": [2026, 7, 13]},
+            {"itemName": "empty date", "writeDate": ""},
+            {
+                "nid": "94123",
+                "itemName": "CJ ENM",
+                "itemCode": "035760",
+                "title": "Earnings outlook",
+                "brokerName": "Hanwha Investment",
+                "writeDate": "2026-07-13",
+            },
+        ),
+        candidate_rows=(),
+    )
+    monkeypatch.setattr(naver_research_module, "inspect_company_page", lambda *_args, **_kwargs: inspection)
+    reports, parsed_inspection = fetch_reports(config, limit=10, headless=True)
+
+    assert len(reports) == 1
+    assert parsed_inspection.api_item_parse_error_count == 6
+
+    assert cli_module._run_manual_poll(
+        config,
+        repository,
+        limit=10,
+        dry_run=False,
+        inspect_only=False,
+        headless=True,
+        send_intraday_alert=False,
+    ) == 0
+
+    reports = repository.list_reports_for_business_date(datetime(2026, 7, 13).date())
+    events = repository.list_recent_operation_events(limit=1)
+    assert len(reports) == 1
+    assert reports[0].source_id == "94123"
+    assert "api_item_parse_errors=6" in events[0].detail

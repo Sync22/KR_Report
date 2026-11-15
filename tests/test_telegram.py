@@ -20,29 +20,23 @@ class _FakeResponse:
         return None
 
 
-def test_send_telegram_message_retries_then_succeeds(monkeypatch) -> None:
+def test_send_telegram_message_attempts_once_after_uncertain_transport_failure(monkeypatch) -> None:
     calls = {"count": 0}
 
     def fake_urlopen(_request, timeout):  # noqa: ARG001
         calls["count"] += 1
-        if calls["count"] < 3:
-            raise error.URLError(OSError("timed out"))
-        return _FakeResponse({"ok": True, "result": {"message_id": 42}})
+        raise error.URLError(OSError("timed out"))
 
     monkeypatch.setattr(telegram.request, "urlopen", fake_urlopen)
-    monkeypatch.setattr(telegram.time, "sleep", lambda _seconds: None)
 
-    message_id = telegram.send_telegram_message(
-        "token",
-        "chat",
-        "hello",
-        timeout_seconds=1,
-        max_retries=3,
-        retry_delay_seconds=0,
-    )
+    try:
+        telegram.send_telegram_message("token", "chat", "hello", timeout_seconds=1, max_retries=3)
+    except telegram.TelegramRequestError as exc:
+        assert exc.ambiguous is True
+    else:
+        raise AssertionError("Expected TelegramRequestError")
 
-    assert message_id == "42"
-    assert calls["count"] == 3
+    assert calls["count"] == 1
 
 
 def test_get_telegram_updates_raises_readable_error_after_retries(monkeypatch) -> None:
@@ -114,5 +108,20 @@ def test_send_telegram_api_rejection_is_not_ambiguous(monkeypatch) -> None:
     except telegram.TelegramRequestError as exc:
         assert exc.ambiguous is False
         assert "invalid request" not in str(exc)
+    else:
+        raise AssertionError("Expected TelegramRequestError")
+
+
+def test_send_telegram_http_4xx_is_definite_rejection(monkeypatch) -> None:
+    def fake_urlopen(_request, timeout):  # noqa: ARG001
+        raise error.HTTPError("https://api.telegram.org/botsecret/sendMessage", 400, "Bad Request", {}, None)
+
+    monkeypatch.setattr(telegram.request, "urlopen", fake_urlopen)
+
+    try:
+        telegram.send_telegram_message("secret", "chat", "hello", max_retries=3)
+    except telegram.TelegramRequestError as exc:
+        assert exc.ambiguous is False
+        assert "400" in str(exc)
     else:
         raise AssertionError("Expected TelegramRequestError")
