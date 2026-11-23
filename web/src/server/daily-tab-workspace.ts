@@ -51,6 +51,7 @@ export function buildDailyTabWorkspaceFromDatabase(
       business_date: businessDate,
       stocks: (daily.stocks as DailyStock[]).map((stock) => ({
         ...stock,
+        stock_code: stock.stock_code ?? null,
         market_reference: stock.market_reference ? {
           ...stock.market_reference,
           close_price: stock.market_reference.close_price ?? null,
@@ -58,7 +59,7 @@ export function buildDailyTabWorkspaceFromDatabase(
           volume: stock.market_reference.volume ?? null,
           turnover: stock.market_reference.turnover ?? null,
         } : null,
-      })) as DailyStockSummarySnapshot["stocks"],
+      })),
     }
     : null;
   if (!stocks) stocks = read(() => buildDailyStockSummarySnapshotFromDatabase(database, businessDate));

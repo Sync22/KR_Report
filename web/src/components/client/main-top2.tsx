@@ -218,6 +218,8 @@ export default function MainTop2Client({ businessDate, briefingHeadline, reportC
       const payload = record(result.payload);
       if (result.response.status === 409) throw new Error(`시장 조회는 최신 영업일 ${text(payload.latest_business_date)}만 가능합니다.`);
       if (!result.response.ok || !isTossMarketContextSnapshot(result.payload, businessDate)) throw new Error("Toss 시장 참고 응답을 확인할 수 없습니다.");
+      if (payload.reason === "not_configured") throw new Error("Toss 시장 참고 연결 설정이 없습니다.");
+      if (payload.reason === "upstream_unavailable") throw new Error("Toss 시장 참고값을 불러오지 못했습니다. 다시 확인해 주세요.");
       setMarketView(payload);
     } catch (error) { setMarketError(useNoDataMessage(error)); }
     finally { setMarketLoading(false); }
@@ -301,7 +303,7 @@ export default function MainTop2Client({ businessDate, briefingHeadline, reportC
         {candidates.map((candidate) => {
           const marketReference = marketReferences.find((item) => item.stock_code === candidate.stock_code)?.market_reference;
           return <details className="top-two-evidence-details" key={candidate.stock_code}>
-              <summary><span>{candidateDetailLabel(candidate)}</span><span>기준 {businessDate}</span></summary>
+              <summary><span>{candidate.stock_name} · {candidateDetailLabel(candidate)}</span><span>기준 {businessDate}</span></summary>
               <div className="candidate-evidence-grid">
                 <p><b>출처</b> · Naver 저장 리포트 · 기준일 {businessDate}</p>
                 {marketReference ? <p><b>시장 기준</b> · Toss 저장 {amount(marketReference.close_price)} · {percent(marketReference.change_percent)} · 기준 {marketReference.business_date} · 저장 {dailyStoredTimeLabel(marketReference.fetched_at)}</p> : null}

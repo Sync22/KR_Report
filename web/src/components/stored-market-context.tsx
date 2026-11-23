@@ -13,7 +13,7 @@ function storedPercent(value: number | null | undefined): string {
   return value === null || value === undefined ? "자료 없음" : `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
-function recentMarketName(item: DailyStoredMarketItem | null): string {
+function recentMarketName(item: DailyStoredMarketItem | null | undefined): string {
   if (!item) return "저장 자료 없음";
   const name = item.stock_name || "종목명 자료 없음";
   const code = item.stock_code ? ` (${item.stock_code})` : "";
@@ -109,7 +109,7 @@ export default function StoredMarketContext({ snapshot, flowTrend, openByDefault
         <h3 id="stored-recent-flow-heading">최근 Toss 저장 흐름</h3>
         <p className="data-note">
           {recent.notice} · 선택일 {recent.business_date} · 기준일 {recent.reference_date ?? "자료 없음"}
-          {recent.exact_date_available ? " · 선택일 자료" : " · 선택일 이전 저장값"}
+          {recent.reference_date && (recent.exact_date_available ? " · 선택일 자료" : " · 선택일 이전 저장값")}
         </p>
         {recent.available ? <div className="table-wrap"><table>
           <thead><tr><th scope="col">기준일</th><th scope="col">KOSPI 거래대금 상위</th><th scope="col">KOSDAQ 거래대금 상위</th></tr></thead>

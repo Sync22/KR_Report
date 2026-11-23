@@ -1,7 +1,7 @@
 export type DailyStock = {
   business_date: string;
   stock_name: string;
-  stock_code: string | null;
+  stock_code?: string | null;
   mention_count: number;
   broker_display: string;
   target_price_min?: number | null;
@@ -66,9 +66,9 @@ export type DailyTossMarketFlow = {
 
 export type DailyTossContext = {
   available: boolean;
-  source: string | null;
-  snapshot_date: string | null;
-  capture_status: string | null;
+  source?: string | null;
+  snapshot_date?: string | null;
+  capture_status?: string | null;
   missing_domains: string[];
   notice: string;
   indices: DailyStoredMarketItem[];
@@ -79,26 +79,26 @@ export type DailyTossContext = {
 
 export type DailyTossRecentFlow = {
   available: boolean;
-  source: string | null;
+  source?: string | null;
   business_date: string;
-  reference_date: string | null;
+  reference_date?: string | null;
   exact_date_available: boolean;
   notice: string;
   items: {
     business_date: string;
-    kospi_top_by_turnover: DailyStoredMarketItem | null;
-    kosdaq_top_by_turnover: DailyStoredMarketItem | null;
+    kospi_top_by_turnover?: DailyStoredMarketItem | null;
+    kosdaq_top_by_turnover?: DailyStoredMarketItem | null;
     etf_top_by_turnover?: DailyStoredMarketItem | null;
   }[];
 };
 
 export type DailyTossInvestorFlow = {
   available: boolean;
-  source: string | null;
+  source?: string | null;
   data_scope: "stored_toss_close_market_flow";
   live_fetch: false;
   scoring: false;
-  snapshot_date: string | null;
+  snapshot_date?: string | null;
   notice: string;
   market_flows: DailyTossMarketFlow[];
 };
@@ -129,7 +129,7 @@ export type DailyNewsObservation = {
   reason: string;
   connection_note?: string;
   candidate_overlap_names?: string[];
-  observed_at: string | null;
+  observed_at?: string | null;
   missing_context: string[];
   top_titles?: string[];
   candidate_overlap_count?: number | null;
@@ -146,7 +146,7 @@ export type DailyNewsObservation = {
 export type DailyNewsObservationItem = {
   available: boolean;
   stock_name: string;
-  stock_code: string | null;
+  stock_code?: string | null;
   display_label: string;
   reason: string;
   direct_count: number;
@@ -158,7 +158,7 @@ export type DailyNewsObservationItem = {
   connection_label: string;
   connection_reason: string;
   collection_run_count: number;
-  latest_collection_at: string | null;
+  latest_collection_at?: string | null;
   latest_collection_status: string;
   daily_evidence_retained: boolean;
 };
@@ -209,7 +209,7 @@ export type DailyStockSummarySnapshot = {
   read_only: true;
   live_fetch: false;
   business_date: string;
-  stocks: DailyStock[];
+  stocks: (DailyStock & { stock_code: string | null })[];
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -247,10 +247,10 @@ function isDailyStoredMarketItem(value: unknown, throughDate: string): value is 
 
 function isDailyTossContext(value: unknown, expectedDate: string): value is DailyTossContext {
   if (!isRecord(value) || typeof value.available !== "boolean" ||
-    !(value.source === null || typeof value.source === "string") ||
-    !(value.snapshot_date === null || (isBusinessDate(value.snapshot_date) && value.snapshot_date <= expectedDate)) ||
+    !isOptionalString(value, "source") ||
+    !(value.snapshot_date == null || (isBusinessDate(value.snapshot_date) && value.snapshot_date <= expectedDate)) ||
     (value.available && value.snapshot_date !== expectedDate) ||
-    !(value.capture_status === null || typeof value.capture_status === "string") ||
+    !isOptionalString(value, "capture_status") ||
     typeof value.notice !== "string" || !Array.isArray(value.missing_domains) ||
     !value.missing_domains.every((item: unknown) => typeof item === "string")) return false;
   const keys = ["indices", "top_kospi_by_turnover", "top_kosdaq_by_turnover", "top_etfs_by_turnover"];
@@ -261,27 +261,26 @@ function isDailyTossContext(value: unknown, expectedDate: string): value is Dail
 
 function isDailyTossRecentFlow(value: unknown, expectedDate: string): value is DailyTossRecentFlow {
   if (!isRecord(value) || typeof value.available !== "boolean" ||
-    !(value.source === null || typeof value.source === "string") ||
+    !isOptionalString(value, "source") ||
     value.business_date !== expectedDate ||
-    !(value.reference_date === null || (isBusinessDate(value.reference_date) && value.reference_date <= expectedDate)) ||
+    !(value.reference_date == null || (isBusinessDate(value.reference_date) && value.reference_date <= expectedDate)) ||
     value.exact_date_available !== (value.reference_date === expectedDate) ||
     typeof value.notice !== "string" || !Array.isArray(value.items)) return false;
   const validItems = value.items.every((item: unknown) => {
     if (!isRecord(item) || !isBusinessDate(item.business_date) || item.business_date > expectedDate) return false;
-    return ["kospi_top_by_turnover", "kosdaq_top_by_turnover"].every((key) => {
+    return ["kospi_top_by_turnover", "kosdaq_top_by_turnover", "etf_top_by_turnover"].every((key) => {
       const marketItem = item[key];
-      return marketItem === null || (isDailyStoredMarketItem(marketItem, expectedDate) && marketItem.business_date === item.business_date);
-    }) && (item.etf_top_by_turnover === undefined || item.etf_top_by_turnover === null ||
-      (isDailyStoredMarketItem(item.etf_top_by_turnover, expectedDate) && item.etf_top_by_turnover.business_date === item.business_date));
+      return marketItem == null || (isDailyStoredMarketItem(marketItem, expectedDate) && marketItem.business_date === item.business_date);
+    });
   });
   return validItems && value.available === (value.items.length > 0);
 }
 
 function isDailyTossInvestorFlow(value: unknown, expectedDate: string): value is DailyTossInvestorFlow {
   if (!isRecord(value) || typeof value.available !== "boolean" ||
-    !(value.source === null || typeof value.source === "string") ||
+    !isOptionalString(value, "source") ||
     value.data_scope !== "stored_toss_close_market_flow" || value.live_fetch !== false || value.scoring !== false ||
-    !(value.snapshot_date === null || value.snapshot_date === expectedDate) ||
+    !(value.snapshot_date == null || value.snapshot_date === expectedDate) ||
     (value.available && value.snapshot_date !== expectedDate) ||
     typeof value.notice !== "string" || !Array.isArray(value.market_flows)) return false;
   const validFlows = value.market_flows.every((item: unknown) =>
@@ -349,7 +348,8 @@ function isDailyStock(value: unknown, requireExactMarketReference = false): valu
     isRecord(value) &&
     isBusinessDate(value.business_date) &&
     typeof value.stock_name === "string" &&
-    (value.stock_code === null || typeof value.stock_code === "string") &&
+    isOptionalString(value, "stock_code") &&
+    (!requireExactMarketReference || value.stock_code !== undefined) &&
     isCount(value.mention_count) &&
     typeof value.broker_display === "string" &&
     (value.target_price_min === undefined || isNullableCount(value.target_price_min)) &&
@@ -368,14 +368,14 @@ export function isDailyStockSummarySnapshot(value: unknown, expectedDate: string
 
 function isDailyNewsObservationItem(value: unknown): value is DailyNewsObservationItem {
   return isRecord(value) && typeof value.available === "boolean" &&
-    typeof value.stock_name === "string" && (value.stock_code === null || typeof value.stock_code === "string") &&
+    typeof value.stock_name === "string" && isOptionalString(value, "stock_code") &&
     typeof value.display_label === "string" && typeof value.reason === "string" &&
     isCount(value.direct_count) && isCount(value.caution_count) && isCount(value.market_context_count) &&
     typeof value.krx_reference_status === "string" && typeof value.observed_at === "string" && Number.isFinite(Date.parse(value.observed_at)) &&
     (value.top_title === undefined || value.top_title === null || typeof value.top_title === "string") &&
     typeof value.connection_label === "string" && typeof value.connection_reason === "string" &&
     isCount(value.collection_run_count) &&
-    (value.latest_collection_at === null || (typeof value.latest_collection_at === "string" && Number.isFinite(Date.parse(value.latest_collection_at)))) &&
+    (value.latest_collection_at == null || (typeof value.latest_collection_at === "string" && Number.isFinite(Date.parse(value.latest_collection_at)))) &&
     typeof value.latest_collection_status === "string" && typeof value.daily_evidence_retained === "boolean";
 }
 
@@ -453,7 +453,7 @@ export function isDailySnapshot(value: unknown, expectedDate: string): value is 
     value.news_observation_summary.business_date === expectedDate &&
     typeof value.news_observation_summary.display_label === "string" &&
     typeof value.news_observation_summary.reason === "string" &&
-    (value.news_observation_summary.observed_at === null ||
+    (value.news_observation_summary.observed_at == null ||
       (typeof value.news_observation_summary.observed_at === "string" &&
         Number.isFinite(Date.parse(value.news_observation_summary.observed_at)))) &&
     Array.isArray(value.news_observation_summary.missing_context) &&

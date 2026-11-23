@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
+import { isDailySnapshot } from "../src/domain/daily.ts";
 
 const businessDate = "2020-01-02";
 const pythonFixture = String.raw`
@@ -90,6 +91,15 @@ test("daily snapshot composes the Python default DTO from one read-only SQLite c
       return { ...rest, priority_candidate_evidence: priorityCandidate };
     };
     assert.deepEqual(withoutDynamicClockFields(actual), withoutDynamicClockFields(expected));
+    assert.equal(Object.hasOwn(actual.toss_context, "snapshot_date"), false);
+    assert.equal(Object.hasOwn(actual.news_observation_summary, "observed_at"), false);
+    assert.equal(isDailySnapshot(actual, businessDate), true, "the UI accepts the compact DTO when optional sources have no data");
+    assert.equal(isDailySnapshot({
+      ...actual, toss_context: { ...actual.toss_context, available: true },
+    }, businessDate), false, "an available Toss snapshot still needs its selected date and rows");
+    assert.equal(isDailySnapshot({
+      ...actual, toss_recent_flow: { ...actual.toss_recent_flow, reference_date: "2020-01-03" },
+    }, businessDate), false, "future reference dates remain invalid");
     assert.equal(queryCounts.tossMarketDateLookups, 1);
     const after = await stat(databasePath);
     assert.equal(after.size, before.size);

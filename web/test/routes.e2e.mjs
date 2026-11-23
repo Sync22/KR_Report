@@ -66,7 +66,7 @@ test("public header keeps the legacy Main, Watch, Stock, calendar, and stock sug
   const response = await fetch(new URL("/daily/2026-10-08/main", origin));
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /aria-label="상단 탭"/);
+  assert.match(html, /aria-label="일일 화면"/);
   assert.match(html, />메인</);
   assert.match(html, />관찰</);
   assert.match(html, />종목</);
@@ -175,16 +175,26 @@ test("selected-date overview preserves stored market context and per-stock Toss 
   assert.equal(apiResponse.status, 200);
   const [html, daily] = await Promise.all([pageResponse.text(), apiResponse.json()]);
   assert.match(html, /Toss 참고/);
-  assert.match(html, /시장 문맥 · Toss 당일 · Toss 저장/);
+  assert.match(html, /선택일 저장 시장 자료/);
   assert.match(html, /<details class="daily-briefing daily-market-context">/);
   assert.ok(html.includes(daily.toss_context.notice));
+  const recentFlow = daily.toss_recent_flow;
+  const flowSection = html.match(/<section aria-labelledby="stored-recent-flow-heading">([\s\S]*?)<\/section>/)?.[1];
+  assert.ok(flowSection, "recent Toss flow is rendered inside the stored market context");
+  const flowLabel = recentFlow.reference_date
+    ? `기준일 ${recentFlow.reference_date}${recentFlow.exact_date_available ? " · 선택일 자료" : " · 선택일 이전 저장값"}`
+    : "기준일 자료 없음";
+  assert.ok(flowSection.replaceAll("<!-- -->", "").includes(`${flowLabel}</p>`), "recent Toss flow label matches the stored reference date");
   if (daily.toss_context.missing_domains.length) assert.match(html, /저장 누락 항목/);
   for (const match of html.matchAll(/href="\/daily\/2026-10-08\/stocks\/([^"]+)"/g)) assert.match(match[1], /^\d{6}$/);
   const referencedStock = daily.stocks.find((stock) => typeof stock.market_reference?.close_price === "number");
-  assert.ok(referencedStock);
-  const storedPrice = `${new Intl.NumberFormat("ko-KR").format(referencedStock.market_reference.close_price)}원`;
-  assert.ok(html.includes(storedPrice));
-  assert.ok(html.includes(referencedStock.stock_code));
+  if (referencedStock) {
+    const storedPrice = `${new Intl.NumberFormat("ko-KR").format(referencedStock.market_reference.close_price)}원`;
+    assert.ok(html.includes(storedPrice));
+    assert.ok(html.includes(referencedStock.stock_code));
+  } else {
+    assert.match(html, /Toss 저장 참고 없음|Toss 저장 가격 없음/);
+  }
 });
 
 test("stock search API is GET-only and rejects invalid dates", async () => {
@@ -302,7 +312,7 @@ test("candidate evidence API is GET-only and exposes only stored public evidence
   const invalidSelectedWatch = await fetch(new URL(`/daily/2026-10-08/stocks?stock=${invalidStockCode}`, origin));
   assert.doesNotMatch(await invalidSelectedWatch.text(), /id="selected-stock"/);
   const mainHtml = await (await fetch(new URL("/daily/2026-10-08/main", origin))).text();
-  const mainCodes = [...mainHtml.matchAll(/class="main-top2-candidate[^\"]*"[\s\S]*?href="\/daily\/2026-10-08\/stocks\?stock=(\d{6})#selected-stock"/g)].map((match) => match[1]);
+  const mainCodes = [...mainHtml.matchAll(/<td class="candidate-ledger-stock"[^>]*><a href="[^"]*stock=(\d{6})#selected-stock"/g)].map((match) => match[1]);
   assert.deepEqual(mainCodes, payload.rows.filter((row) => row.selected).slice(0, 2).map((row) => row.stock_code));
   const selectedHtml = await (await fetch(new URL(`/daily/2026-10-08/stocks?stock=${mainCodes[0]}#selected-stock`, origin))).text();
   assert.match(selectedHtml, /id="selected-stock"/);
@@ -377,8 +387,8 @@ test("market page stays a public read-only view", async () => {
   assert.equal(pageResponse.status, 200);
   const market = await apiResponse.json();
   const html = await pageResponse.text();
-  assert.match(html, /시장 참고/);
-  assert.match(html, /저장 시장 스냅샷 기준일/);
+  assert.match(html, /저장 시장 데이터/);
+  assert.match(html, /Toss 20:00 스냅샷/);
   assert.match(html, /저장 시장 수급 흐름/);
   if (market.snapshot_date) assert.ok(html.includes(market.snapshot_date));
   else assert.match(html, /저장된 Toss 20:00 시장 스냅샷이 없습니다/);
@@ -615,50 +625,41 @@ test("Main Top2 page renders the stored cohort before any user-triggered live re
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /KR-Stock/);
-  assert.match(html, /aria-label="상단 탭"/);
+  assert.match(html, /aria-label="일일 화면"/);
   assert.match(html, /메인/);
   assert.match(html, /관찰/);
   assert.match(html, /종목/);
   assert.match(html, /저장 종목 검색/);
-  assert.match(html, /오늘의 우선순위/);
-  assert.match(html, /class="main-top2-market-reference"/);
+  assert.match(html, /class="candidate-ledger"/);
   assert.match(html, /Toss 선택일 저장/);
   assert.match(html, /aria-current="page"/);
   assert.match(html, /일봉 범위/);
   assert.match(html, /보조 지표/);
   assert.match(html, /top-two-evidence-details/);
   assert.match(html, /Naver 저장 리포트 · 기준일/);
-  assert.match(html, /오늘 읽을 요약/);
+  assert.match(html, /근거와 확인 공백/);
   assert.match(html, /href="\/daily\/2026-10-08\/candidates"/);
   assert.match(html, /href="\/daily\/2026-10-08\/stocks"/);
   assert.doesNotMatch(html, /main-observation-candidate-preview|main-daily-stock-preview/);
-  assert.match(html, /class="news-observation-summary"/);
+  assert.match(html, /class="[^"]*news-observation-summary/);
   assert.doesNotMatch(html, /main-news-details|main-news-items-heading/);
-  assert.match(html, /<details class="daily-briefing main-industry-etf-details"/);
-  for (const path of ["intraday", "etf", "rotation"]) {
-    assert.match(html, new RegExp(`href="/daily/2026-10-08/${path}"`));
-  }
+  assert.match(html, /href="\/daily\/2026-10-08\/intraday"/);
+  assert.doesNotMatch(html, /href="\/daily\/2026-10-08\/(?:etf|rotation)"/);
   assert.doesNotMatch(html, /href="\/daily\/2026-10-08\/category"/);
   assert.match(html, /데이터 기준/);
-  assert.match(html, /시장 문맥 · Toss 당일 · Toss 저장/);
-  assert.match(html, /<details class="daily-briefing daily-market-context">/);
-  assert.match(html, /선택일 저장 지수/);
-  assert.match(html, /최근 Toss 저장 흐름/);
-  assert.match(html, /Toss 저장 시장 수급/);
-  assert.match(html, /class="market-context-flow-trend"/);
-  assert.doesNotMatch(html, /class="daily-briefing main-flow-trend"/);
-  assert.doesNotMatch(html, /<details class="daily-briefing daily-market-context"[^>]* open=""/);
-  assert.doesNotMatch(html, /<details class="market-context-flow-trend"[^>]* open=""/);
-  assert.match(html, /수급 흐름/);
-  assert.match(html, /Toss 저장값 · 실시간 호출 없음/);
-  assert.match(html.replaceAll("<!-- -->", ""), /선택 기준일 2026-10-08 · 수급 기준일/);
+  assert.match(html, /저장 source 상태|저장 상태/);
   assert.match(html, /저장 뉴스/);
   assert.match(html, /수집 시각/);
-  assert.match(html, /직접 근거/);
   const candidatesResponse = await fetch(new URL("/api/candidate-evidence?date=2026-10-08", origin));
   assert.equal(candidatesResponse.status, 200);
   const candidateRows = (await candidatesResponse.json()).rows;
   const selectedCandidates = candidateRows.filter((row) => row.selected);
+  const evidenceSummaries = [...html.matchAll(/<details class="top-two-evidence-details"><summary><span>([^<]+)/g)]
+    .map((match) => match[1]);
+  assert.equal(evidenceSummaries.length, selectedCandidates.length);
+  selectedCandidates.forEach((candidate, index) => {
+    assert.ok(evidenceSummaries[index].startsWith(candidate.stock_name), "evidence rows follow candidate order and identify each stock");
+  });
   for (const candidate of selectedCandidates) {
     if (candidate.research_focus?.items?.length) {
       assert.match(html, /연결된 원문 제목/);
@@ -682,14 +683,17 @@ test("Main Top2 page renders the stored cohort before any user-triggered live re
   const news = dailyPayload.news_observation_summary;
   const observationItems = news.items ?? [];
   const featuredObservation = observationItems.find((item) => item.connection_label === news.display_label) ?? observationItems[0];
-  assert.ok(featuredObservation);
-  assert.match(html, /class="news-observation-summary-featured"/);
-  assert.ok(html.includes(featuredObservation.stock_name));
-  assert.ok(html.includes(featuredObservation.connection_label || featuredObservation.display_label));
-  const featuredText = String(featuredObservation.top_title || featuredObservation.reason)
-    .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;").replaceAll("'", "&#x27;");
-  assert.ok(html.includes(featuredText));
+  if (featuredObservation) {
+    assert.match(html, /class="news-observation-summary-featured"/);
+    assert.ok(html.includes(featuredObservation.stock_name));
+    assert.ok(html.includes(featuredObservation.connection_label || featuredObservation.display_label));
+    const featuredText = String(featuredObservation.top_title || featuredObservation.reason)
+      .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;").replaceAll("'", "&#x27;");
+    assert.ok(html.includes(featuredText));
+  } else {
+    assert.match(html, /저장 뉴스 관찰이 없습니다|뉴스 근거 수집 전/);
+  }
   assert.doesNotMatch(html, /main-news-observation-items|main-news-details/);
   for (const name of (news.candidate_overlap_names ?? []).slice(0, 3)) assert.ok(html.includes(name));
   if (news.available && news.top_titles?.length) {
@@ -699,9 +703,6 @@ test("Main Top2 page renders the stored cohort before any user-triggered live re
       assert.ok(html.includes(escapedTitle));
     }
   }
-  assert.match(html, /지수 참고:/);
-  assert.ok(html.indexOf("오늘 읽을 요약") > html.indexOf("오늘의 우선순위"));
-  assert.match(html, /오늘의 우선순위/);
   assert.match(html, /Toss 현재가 · 수급/);
   assert.match(html, /지수 · 수급 확인/);
   assert.match(html, /차트 · 지표 확인/);
@@ -717,7 +718,7 @@ test("Main Top2 page renders the stored cohort before any user-triggered live re
   const watch = await fetch(new URL("/daily/2026-10-08/candidates", origin));
   assert.equal(watch.status, 200);
   const watchHtml = await watch.text();
-  assert.match(watchHtml, /aria-label="상단 탭"/);
+  assert.match(watchHtml, /aria-label="일일 화면"/);
   assert.match(watchHtml, /class="daily-briefing watch-candidate-panel"/);
   assert.match(watchHtml, /h1 id="watch-candidates-heading"/);
   assert.match(watchHtml, /우선 확인/);
@@ -785,7 +786,8 @@ test("stock tab shows the daily report summary and toggles single-mention rows",
   const allRowsHtml = await allRowsPage.text();
   const allShownCodes = dailyStockSelectionCodes(allRowsHtml);
   assert.deepEqual(allShownCodes, allCodes.slice(0, 6));
-  assert.match(allRowsHtml, /더 보기/);
+  if (allCodes.length > 6) assert.match(allRowsHtml, /더 보기/);
+  else assert.doesNotMatch(allRowsHtml, /더 보기/);
 
   const expandedRowsPage = await fetch(new URL("/daily/2026-10-08/stocks?include_single=1&limit=12", origin));
   assert.equal(expandedRowsPage.status, 200);

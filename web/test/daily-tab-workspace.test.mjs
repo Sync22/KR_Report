@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { isDailyStockSummarySnapshot } from "../src/domain/daily.ts";
+import { isDailySnapshot, isDailyStockSummarySnapshot } from "../src/domain/daily.ts";
 
 const businessDate = "2026-10-08";
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -99,8 +99,11 @@ test("daily tab workspace builds its panels from one candidate read and one SQLi
       INSERT INTO daily_stock_summaries (
         business_date, stock_name, stock_code, mention_count, broker_display,
         target_price_min, target_price_max, dominant_opinion, generated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(businessDate, "삼성전자", "005930", 2, "증권사 A (1)", 70000, 80000, "buy", `${businessDate}T20:00:00+09:00`);
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      businessDate, "삼성전자", "005930", 2, "증권사 A (1)", 70000, 80000, "buy", `${businessDate}T20:00:00+09:00`,
+      businessDate, "종목 코드 없는 예전 리포트", null, 2, "증권사 B (2)", null, null, "N/A", `${businessDate}T20:00:00+09:00`,
+    );
     writeDb.prepare(`
       INSERT INTO stock_market_daily (
         business_date, stock_code, stock_name, market, section_name,
@@ -152,6 +155,9 @@ test("daily tab workspace builds its panels from one candidate read and one SQLi
     );
     assert.equal(workspace.daily.stocks[0].stock_code, "005930");
     assert.equal(workspace.stocks.stocks[0].stock_code, "005930");
+    assert.equal(Object.hasOwn(workspace.daily.stocks[1], "stock_code"), false);
+    assert.equal(workspace.stocks.stocks[1].stock_code, null);
+    assert.equal(isDailySnapshot(workspace.daily, businessDate), true);
     assert.equal(isDailyStockSummarySnapshot(workspace.stocks, businessDate), true);
     assert.deepEqual(withoutDynamicClockFields(workspace.daily), withoutDynamicClockFields(expectedDaily));
     assert.equal("flow" in workspace, false);
