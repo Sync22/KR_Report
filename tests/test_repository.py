@@ -5,11 +5,14 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
+from threading import Event
 
 import pytest
 
+from stock_monitor.db import repository as repository_module
 from stock_monitor.db import schema as schema_module
 from stock_monitor.db.repository import StockMonitorRepository
 from stock_monitor.db.schema import SCHEMA_STATEMENTS, SCHEMA_VERSION, SchemaMigration
@@ -81,6 +84,57 @@ def test_insert_reports_skips_existing_source_id_even_if_identity_scheme_changed
     assert first.inserted == 1
     assert second.inserted == 0
     assert len(repository.list_reports_for_business_date(date(2026, 4, 24))) == 1
+
+
+def test_rebuild_daily_summaries_holds_a_write_lock_while_reading_reports(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "stock_monitor.db"
+    repository = StockMonitorRepository(database_path)
+    repository.initialize()
+    business_date = date(2026, 4, 24)
+    repository.insert_reports([_report(business_date=business_date)])
+
+    build_started = Event()
+    release_build = Event()
+    build_summaries = repository_module.build_daily_summaries
+    original_connect = repository.connect
+    transaction_states_at_report_read: list[bool] = []
+
+    @contextmanager
+    def track_connection():
+        with original_connect() as connection:
+            connection.set_trace_callback(
+                lambda statement: transaction_states_at_report_read.append(connection.in_transaction)
+                if "FROM reports" in statement
+                else None
+            )
+            yield connection
+
+    def pause_build(reports, *, timezone):
+        build_started.set()
+        assert release_build.wait(timeout=5)
+        return build_summaries(reports, timezone=timezone)
+
+    monkeypatch.setattr(repository_module, "build_daily_summaries", pause_build)
+    monkeypatch.setattr(repository, "connect", track_connection)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(repository.rebuild_daily_summaries, business_date)
+        try:
+            assert build_started.wait(timeout=3)
+            probe = sqlite3.connect(database_path, timeout=0)
+            probe.execute("PRAGMA busy_timeout = 0")
+            try:
+                with pytest.raises(sqlite3.OperationalError, match="locked"):
+                    probe.execute("BEGIN IMMEDIATE")
+            finally:
+                probe.rollback()
+                probe.close()
+        finally:
+            release_build.set()
+
+        assert len(future.result(timeout=3)) == 1
+
+    assert transaction_states_at_report_read == [True]
 
 
 def test_repository_initializes_fk_and_schema_version(tmp_path) -> None:

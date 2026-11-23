@@ -703,29 +703,32 @@ class StockMonitorRepository:
 
     def list_reports_for_business_date(self, business_date: date) -> list[Report]:
         with self.connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT
-                    stock_name,
-                    stock_code,
-                    title,
-                    broker_name,
-                    published_at,
-                    business_date,
-                    target_price_raw,
-                    target_price_value,
-                    opinion_raw,
-                    opinion_normalized,
-                    collected_at,
-                    source_url,
-                    source_id,
-                    identity_key
-                FROM reports
-                WHERE business_date = ?
-                ORDER BY stock_name, published_at, broker_name, title
-                """,
-                (business_date.isoformat(),),
-            ).fetchall()
+            return self._list_reports_for_business_date(connection, business_date)
+
+    def _list_reports_for_business_date(self, connection: sqlite3.Connection, business_date: date) -> list[Report]:
+        rows = connection.execute(
+            """
+            SELECT
+                stock_name,
+                stock_code,
+                title,
+                broker_name,
+                published_at,
+                business_date,
+                target_price_raw,
+                target_price_value,
+                opinion_raw,
+                opinion_normalized,
+                collected_at,
+                source_url,
+                source_id,
+                identity_key
+            FROM reports
+            WHERE business_date = ?
+            ORDER BY stock_name, published_at, broker_name, title
+            """,
+            (business_date.isoformat(),),
+        ).fetchall()
         return [self._row_to_report(row) for row in rows]
 
     def list_reports_for_stock_on_business_date(self, business_date: date, stock_code: str) -> list[Report]:
@@ -757,43 +760,43 @@ class StockMonitorRepository:
         return [self._row_to_report(row) for row in rows]
 
     def rebuild_daily_summaries(self, business_date: date) -> list[DailyStockSummary]:
-        reports = self.list_reports_for_business_date(business_date)
-        summaries = build_daily_summaries(reports, timezone=self.timezone)
-        with self.connect() as connection:
-            with connection:
-                connection.execute(
-                    "DELETE FROM daily_stock_summaries WHERE business_date = ?",
-                    (business_date.isoformat(),),
-                )
-                connection.executemany(
-                    """
-                    INSERT INTO daily_stock_summaries (
-                        business_date,
-                        stock_name,
-                        stock_code,
-                        mention_count,
-                        broker_display,
-                        target_price_min,
-                        target_price_max,
-                        dominant_opinion,
-                        generated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        (
-                            summary.business_date.isoformat(),
-                            summary.stock_name,
-                            summary.stock_code,
-                            summary.mention_count,
-                            summary.broker_display,
-                            summary.target_price_min,
-                            summary.target_price_max,
-                            summary.dominant_opinion,
-                            summary.generated_at.isoformat(),
-                        )
-                        for summary in summaries
-                    ],
-                )
+        with self.connect() as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            reports = self._list_reports_for_business_date(connection, business_date)
+            summaries = build_daily_summaries(reports, timezone=self.timezone)
+            connection.execute(
+                "DELETE FROM daily_stock_summaries WHERE business_date = ?",
+                (business_date.isoformat(),),
+            )
+            connection.executemany(
+                """
+                INSERT INTO daily_stock_summaries (
+                    business_date,
+                    stock_name,
+                    stock_code,
+                    mention_count,
+                    broker_display,
+                    target_price_min,
+                    target_price_max,
+                    dominant_opinion,
+                    generated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        summary.business_date.isoformat(),
+                        summary.stock_name,
+                        summary.stock_code,
+                        summary.mention_count,
+                        summary.broker_display,
+                        summary.target_price_min,
+                        summary.target_price_max,
+                        summary.dominant_opinion,
+                        summary.generated_at.isoformat(),
+                    )
+                    for summary in summaries
+                ],
+            )
         return summaries
 
     def list_daily_summaries(self, business_date: date) -> list[DailyStockSummary]:
