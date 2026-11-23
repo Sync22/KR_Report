@@ -222,3 +222,17 @@ It must not override:
 - the no-bulk-restore project-local agent policy
 
 Use Superpowers to improve task planning and execution discipline, not to reintroduce stale local-agent routing or bypass production safety gates.
+
+## Agent skills
+
+### Issue tracker
+
+이슈와 스펙의 조회·등록은 GitHub Issues를 사용한다. [이슈 트래커](docs/agents/issue-tracker.md)
+
+### Triage labels
+
+이슈의 분류 상태를 읽거나 변경할 때 기본 라벨 매핑을 따른다. [분류 라벨](docs/agents/triage-labels.md)
+
+### Domain docs
+
+도메인 용어와 설계 결정을 다룰 때 단일 컨텍스트 문서 구조를 따른다. [도메인 문서](docs/agents/domain.md)
