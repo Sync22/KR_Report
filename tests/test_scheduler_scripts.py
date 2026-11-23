@@ -8,6 +8,8 @@ import zipfile
 from contextlib import closing
 from pathlib import Path
 
+from stock_monitor.file_lock import exclusive_file_lock
+from stock_monitor.notify.control import TelegramControlState, control_state_lock, save_control_state
 from stock_monitor.notify.delivery_lock import delivery_lock
 
 
@@ -428,7 +430,7 @@ def test_create_migration_archive_include_backups_is_explicit_and_bounded(tmp_pa
         assert "data/backups/secret.env" not in names
 
 
-def test_create_migration_archive_omits_active_delivery_lock(tmp_path) -> None:
+def test_create_migration_archive_omits_active_notification_locks(tmp_path) -> None:
     project_root = tmp_path / "project"
     _write_required_project_files(project_root)
     _copy_migration_archive_scripts(project_root)
@@ -436,7 +438,17 @@ def test_create_migration_archive_omits_active_delivery_lock(tmp_path) -> None:
     temp_dir.mkdir()
     archive_path = tmp_path / "snapshot.zip"
     source_database = project_root / "data/stock_monitor.db"
-    with closing(_create_archive_wal_database(source_database)), delivery_lock(source_database):
+    state_path = source_database.with_name("telegram_control_state.json")
+    save_control_state(state_path, TelegramControlState(last_update_id=7))
+    poll_lock = state_path.with_name(f"{state_path.name}.lock")
+    abandoned_temp = state_path.with_name(f".{state_path.name}.123.tmp")
+    abandoned_temp.write_text('{"last_update_id":', encoding="utf-8")
+    with (
+        closing(_create_archive_wal_database(source_database)),
+        delivery_lock(source_database),
+        exclusive_file_lock(poll_lock),
+        control_state_lock(state_path),
+    ):
         result = subprocess.run(
             [
                 str(WINDOWS_POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
@@ -451,7 +463,12 @@ def test_create_migration_archive_omits_active_delivery_lock(tmp_path) -> None:
         )
     assert result.returncode == 0, result.stdout + result.stderr
     with zipfile.ZipFile(archive_path) as archive:
-        assert "data/stock_monitor.db.delivery.lock" not in archive.namelist()
+        names = set(archive.namelist())
+        assert "data/stock_monitor.db.delivery.lock" not in names
+        assert f"data/{poll_lock.name}" not in names
+        assert f"data/{state_path.name}.write.lock" not in names
+        assert f"data/{abandoned_temp.name}" not in names
+        assert archive.read(f"data/{state_path.name}") == state_path.read_bytes()
 
 
 def test_create_migration_archive_snapshots_wal_database_with_active_writer(tmp_path) -> None:
