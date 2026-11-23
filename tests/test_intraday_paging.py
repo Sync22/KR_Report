@@ -1,4 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
+from threading import Event
 
 import stock_monitor.cli as cli_module
 from stock_monitor.config import RuntimeConfig
@@ -73,6 +75,55 @@ def test_process_intraday_alerts_does_not_keep_state_for_single_page_batch(tmp_p
     assert state.active_intraday_created_at is None
     assert state.active_intraday_delivered_count == 0
     assert state.active_message_kind is None
+
+
+def test_intraday_send_preserves_concurrent_command_cursor_and_replay_markers(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_MAX_RETRIES", "3")
+    config = _runtime_config(tmp_path, monkeypatch)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    insert = repository.insert_reports([_unique_report(index) for index in range(1, 9)], queue_intraday_alerts=True)
+    monkeypatch.setattr(cli_module, "_fetch_intraday_quotes_by_stock_code", lambda *_args, **_kwargs: {})
+
+    sending_alert = Event()
+    resume_alert = Event()
+    sent_replies: list[str] = []
+    offsets: list[int | None] = []
+    update = {"update_id": 7, "message": {"chat": {"id": "chat-1"}, "text": "/메모 상태 경합 테스트"}}
+
+    def get_updates(*_args, offset=None, **_kwargs):
+        offsets.append(offset)
+        return {"ok": True, "result": [update]}
+
+    def send(_token, _chat_id, message, *, max_retries, **_kwargs):
+        if max_retries == 1:
+            sending_alert.set()
+            assert resume_alert.wait(5)
+        else:
+            sent_replies.append(message)
+        return "message-1"
+
+    monkeypatch.setattr(cli_module, "get_telegram_updates", get_updates)
+    monkeypatch.setattr(cli_module, "send_telegram_message", send)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        alert = executor.submit(cli_module._run_process_intraday_alerts, config, repository, dry_run=False)
+        try:
+            assert sending_alert.wait(5)
+            command = executor.submit(cli_module._run_process_telegram_commands, config, repository)
+            assert command.result(timeout=5) == 0
+            assert load_control_state(config.telegram_control_state_path).last_update_id == 7
+        finally:
+            resume_alert.set()
+        assert alert.result(timeout=5) == 1
+
+    saved = load_control_state(config.telegram_control_state_path)
+    assert saved.last_update_id == 7
+    assert saved.memo_applied_update_ids == (7,)
+    assert saved.active_intraday_batch_id == insert.intraday_batch_ids[0]
+    restarted = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    assert cli_module._run_process_telegram_commands(config, restarted) == 0
+    assert offsets == [None, 8]
+    assert len(sent_replies) == 1
 
 
 def test_process_telegram_commands_falls_back_to_daily_after_intraday_is_exhausted(tmp_path, monkeypatch) -> None:

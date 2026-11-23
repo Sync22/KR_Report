@@ -1,4 +1,9 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
+from pathlib import Path
+import subprocess
+import sys
+from threading import Event, Lock
 
 import pytest
 
@@ -8,6 +13,152 @@ from stock_monitor.db.repository import StockMonitorRepository
 from stock_monitor.notify.control import TelegramControlState, load_control_state, save_control_state
 from stock_monitor.notify.telegram import TelegramRequestError
 from stock_monitor.models import DailyStockSummary, MarketIndexDailySnapshot, Report
+
+
+def test_concurrent_process_telegram_commands_only_processes_update_once(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_CHAT_ID", "chat-1")
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+
+    first_poll_entered = Event()
+    release_first_poll = Event()
+    poll_lock = Lock()
+    poll_count = 0
+
+    def get_updates(*_args, **_kwargs):
+        nonlocal poll_count
+        with poll_lock:
+            poll_count += 1
+            current_poll = poll_count
+        if current_poll == 1:
+            first_poll_entered.set()
+            assert release_first_poll.wait(timeout=3)
+        return {
+            "ok": True,
+            "result": [{"update_id": 1, "message": {"chat": {"id": "chat-1"}, "text": "/help"}}],
+        }
+
+    monkeypatch.setattr(cli_module, "get_telegram_updates", get_updates)
+    sent_messages: list[str] = []
+    monkeypatch.setattr(cli_module, "send_telegram_message", lambda _token, _chat, text, **_kwargs: sent_messages.append(text) or "message-1")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(cli_module._run_process_telegram_commands, config, repository)
+        assert first_poll_entered.wait(timeout=3)
+        second = executor.submit(cli_module._run_process_telegram_commands, config, repository)
+        assert second.result(timeout=3) == 0
+        release_first_poll.set()
+        assert first.result(timeout=3) == 0
+
+    assert len(sent_messages) == 1
+
+
+def test_process_telegram_commands_propagates_blocking_io_error_from_poll(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_CHAT_ID", "chat-1")
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    config.ensure_runtime_dirs()
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+
+    def raise_during_poll(*_args, **_kwargs):
+        raise BlockingIOError("poll failed")
+
+    monkeypatch.setattr(cli_module, "get_telegram_updates", raise_during_poll)
+
+    with pytest.raises(BlockingIOError, match="poll failed"):
+        cli_module._run_process_telegram_commands(config, repository)
+
+
+def test_command_processor_skips_committed_and_duplicate_updates_in_id_order(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_CHAT_ID", "chat-1")
+    config = RuntimeConfig.from_env(root_dir=tmp_path, db_path=tmp_path / "test.db")
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    save_control_state(config.telegram_control_state_path, TelegramControlState(last_update_id=7))
+    handled: list[int] = []
+
+    def get_updates(*_args, offset, **_kwargs):
+        assert offset == 8
+        return {"ok": True, "result": [
+            {"update_id": update_id, "message": {"chat": {"id": "chat-1"}, "text": str(update_id)}}
+            for update_id in (9, 7, 8, 8)
+        ]}
+
+    def build_response(_config, _state, *, selection_text, **_kwargs):
+        handled.append(int(selection_text))
+        return "test reply"
+
+    monkeypatch.setattr(cli_module, "get_telegram_updates", get_updates)
+    monkeypatch.setattr(cli_module, "_build_stock_selection_followup_response", build_response)
+    monkeypatch.setattr(cli_module, "send_telegram_message", lambda *_args, **_kwargs: "message-1")
+
+    assert cli_module._run_process_telegram_commands(config, repository) == 0
+    assert handled == [8, 9]
+    assert load_control_state(config.telegram_control_state_path).last_update_id == 9
+
+
+@pytest.mark.parametrize("replace_completed", [False, True])
+def test_command_processor_restarts_from_last_committed_cursor(tmp_path, monkeypatch, replace_completed) -> None:
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("STOCK_MONITOR_TELEGRAM_CHAT_ID", "chat-1")
+    config = RuntimeConfig.from_env(root_dir=tmp_path, db_path=tmp_path / "test.db")
+    save_control_state(config.telegram_control_state_path, TelegramControlState(last_update_id=6))
+    child_code = """
+import os
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path.cwd() / "src"))
+from stock_monitor import cli
+from stock_monitor.config import RuntimeConfig
+from stock_monitor.db.repository import StockMonitorRepository
+
+root = Path(sys.argv[1])
+config = RuntimeConfig.from_env(root_dir=root, db_path=root / "test.db")
+cli.get_telegram_updates = lambda *args, **kwargs: {
+    "ok": True, "result": [{"update_id": 7, "message": {"chat": {"id": "chat-1"}, "text": "/help"}}]
+}
+cli.send_telegram_message = lambda *args, **kwargs: "accepted"
+replace_file = Path.replace
+
+def crash_during_replace(path, destination):
+    assert destination == config.telegram_control_state_path
+    if sys.argv[2] == "True":
+        replace_file(path, destination)
+    os._exit(73)
+
+Path.replace = crash_during_replace
+cli._run_process_telegram_commands(config, StockMonitorRepository(config.db_path))
+"""
+    child = subprocess.run(
+        [sys.executable, "-c", child_code, str(tmp_path), str(replace_completed)],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert child.returncode == 73, child.stdout + child.stderr
+    committed_cursor = 7 if replace_completed else 6
+    assert load_control_state(config.telegram_control_state_path).last_update_id == committed_cursor
+
+    sent: list[str] = []
+
+    def get_updates(*_args, offset, **_kwargs):
+        assert offset == committed_cursor + 1
+        return {"ok": True, "result": [
+            {"update_id": update_id, "message": {"chat": {"id": "chat-1"}, "text": "/help"}}
+            for update_id in (7, 8)
+        ]}
+
+    monkeypatch.setattr(cli_module, "get_telegram_updates", get_updates)
+    monkeypatch.setattr(cli_module, "send_telegram_message", lambda _token, _chat, text, **_kwargs: sent.append(text) or "ok")
+    assert cli_module._run_process_telegram_commands(config, StockMonitorRepository(config.db_path)) == 0
+    assert load_control_state(config.telegram_control_state_path).last_update_id == 8
+    assert len(sent) == (1 if replace_completed else 2)
 
 
 def test_process_telegram_commands_persists_progress_after_each_successful_update(tmp_path, monkeypatch) -> None:

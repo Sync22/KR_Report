@@ -14,6 +14,7 @@ import pytest
 from stock_monitor.config import RuntimeConfig
 from stock_monitor.db.repository import StockMonitorRepository
 from stock_monitor.models import Opinion, Report
+from stock_monitor.notify.control import load_control_state
 from stock_monitor.notify.delivery_lock import delivery_lock
 import stock_monitor.cli as cli_module
 
@@ -120,7 +121,7 @@ def _crash_after_sender_accept(root: Path, mode: str, marker: Path) -> None:
             "    cli._operation_profile_skip_reason = lambda *_args, **_kwargs: None",
             "    cli._fetch_daily_summary_quotes_by_stock_code = lambda *_args, **_kwargs: {}",
             "    cli.SCHEDULED_NOTIFY_EARLIEST_TIME = time(0)",
-            "    cli.SCHEDULED_NOTIFY_LATEST_TIME = time(23, 59)",
+            "    cli.SCHEDULED_NOTIFY_LATEST_TIME = time.max",
             "    cli._run_scheduled_notify(config, repository, dry_run=False, allow_repeat=False)",
             "elif sys.argv[4] == 'worker':",
             "    cli._run_process_intraday_alerts(config, repository, dry_run=False)",
@@ -129,7 +130,7 @@ def _crash_after_sender_accept(root: Path, mode: str, marker: Path) -> None:
             "    cli._operation_profile_skip_reason = lambda *_args, **_kwargs: None",
             "    cli._fetch_daily_summary_quotes_by_stock_code = lambda *_args, **_kwargs: {}",
             "    cli.SCHEDULED_NOTIFY_EARLIEST_TIME = time(0)",
-            "    cli.SCHEDULED_NOTIFY_LATEST_TIME = time(23, 59)",
+            "    cli.SCHEDULED_NOTIFY_LATEST_TIME = time.max",
             "    cli.send_telegram_message = lambda *_args, **_kwargs: 'second-message-id'",
             "    send_fragments = cli._send_production_daily_summary_fragments",
             "    def completed_then_crash(*args, **kwargs):",
@@ -166,8 +167,43 @@ def _prepare_scheduled_daily_notification(config: RuntimeConfig, repository: Sto
     monkeypatch.setattr(cli_module, "_operation_profile_skip_reason", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli_module, "_fetch_daily_summary_quotes_by_stock_code", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(cli_module, "SCHEDULED_NOTIFY_EARLIEST_TIME", time(0))
-    monkeypatch.setattr(cli_module, "SCHEDULED_NOTIFY_LATEST_TIME", time(23, 59))
+    monkeypatch.setattr(cli_module, "SCHEDULED_NOTIFY_LATEST_TIME", time.max)
     return business_date
+
+
+def test_command_reloads_paging_state_after_daily_delivery_during_poll(tmp_path, monkeypatch) -> None:
+    config, repository = _config_and_repository(tmp_path, monkeypatch)
+    business_date = _prepare_scheduled_daily_notification(config, repository, monkeypatch)
+    poll_started = Event()
+    resume_poll = Event()
+
+    def get_updates(*_args, **_kwargs):
+        poll_started.set()
+        assert resume_poll.wait(5)
+        return {"ok": True, "result": [
+            {"update_id": 7, "message": {"chat": {"id": "test-chat"}, "text": "/help"}}
+        ]}
+
+    monkeypatch.setattr(cli_module, "get_telegram_updates", get_updates)
+    monkeypatch.setattr(cli_module, "send_telegram_message", lambda *_args, **_kwargs: "message-1")
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        command = executor.submit(cli_module._run_process_telegram_commands, config, repository)
+        try:
+            assert poll_started.wait(5)
+            delivery = executor.submit(
+                cli_module._run_scheduled_notify, config, repository, dry_run=False, allow_repeat=False,
+                min_mentions=1,
+            )
+            assert delivery.result(timeout=5) == 0
+            assert load_control_state(config.telegram_control_state_path).delivered_for(business_date) == 1
+        finally:
+            resume_poll.set()
+        assert command.result(timeout=5) == 0
+
+    state = load_control_state(config.telegram_control_state_path)
+    assert state.last_update_id == 7
+    assert state.active_message_kind == "daily"
+    assert state.delivered_for(business_date) == 1
 
 
 def test_daily_fragment_is_claimed_before_telegram_call(tmp_path, monkeypatch) -> None:
@@ -544,7 +580,7 @@ def test_scheduled_daily_delivery_serializes_duplicate_entries(tmp_path, monkeyp
     monkeypatch.setattr(cli_module, "_operation_profile_skip_reason", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli_module, "_fetch_daily_summary_quotes_by_stock_code", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(cli_module, "SCHEDULED_NOTIFY_EARLIEST_TIME", time(0))
-    monkeypatch.setattr(cli_module, "SCHEDULED_NOTIFY_LATEST_TIME", time(23, 59))
+    monkeypatch.setattr(cli_module, "SCHEDULED_NOTIFY_LATEST_TIME", time.max)
     sender_gate = _sender_gate()
     monkeypatch.setattr(cli_module, "send_telegram_message", sender_gate[0])
 
@@ -616,7 +652,7 @@ def test_delivery_dry_runs_do_not_create_lock_or_send(tmp_path, monkeypatch) -> 
     monkeypatch.setattr(cli_module, "_fetch_daily_summary_quotes_by_stock_code", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(cli_module, "_fetch_intraday_quotes_by_stock_code", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(cli_module, "SCHEDULED_NOTIFY_EARLIEST_TIME", time(0))
-    monkeypatch.setattr(cli_module, "SCHEDULED_NOTIFY_LATEST_TIME", time(23, 59))
+    monkeypatch.setattr(cli_module, "SCHEDULED_NOTIFY_LATEST_TIME", time.max)
     sends: list[str] = []
     monkeypatch.setattr(cli_module, "send_telegram_message", lambda *_args, **_kwargs: sends.append("send"))
     scheduled_run_at = datetime.combine(business_date, time(10), tzinfo=cli_module.ZoneInfo(config.timezone))
@@ -631,3 +667,6 @@ def test_delivery_dry_runs_do_not_create_lock_or_send(tmp_path, monkeypatch) -> 
 
     assert sends == []
     assert not repository.db_path.with_name(f"{repository.db_path.name}.delivery.lock").exists()
+    state_path = config.telegram_control_state_path
+    assert not state_path.exists()
+    assert not state_path.with_name(f"{state_path.name}.write.lock").exists()

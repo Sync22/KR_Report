@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import base64
 import io
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from dataclasses import asdict, dataclass, replace
 from difflib import SequenceMatcher
 from functools import wraps
@@ -139,11 +139,13 @@ from stock_monitor.models import (
     TossStockUniverseEntry,
     WorkerState,
 )
+from stock_monitor.file_lock import exclusive_file_lock
 from stock_monitor.naver_reference_cache import NaverReferenceCache
 from stock_monitor.notify.control import (
     PendingStockSelection,
     PendingStockSelectionCandidate,
     TelegramControlState,
+    control_state_lock,
     load_control_state,
     parse_telegram_command,
     save_control_state,
@@ -24987,10 +24989,12 @@ def _run_send_test_notification(
         )
     )
     if custom_message is None and delivery_channel == PRODUCTION_DELIVERY_CHANNEL:
-        state = load_control_state(config.telegram_control_state_path)
+        state_path = config.telegram_control_state_path
         delivered_count = len(summaries) if effective_limit is None else min(len(summaries), effective_limit)
-        state.set_delivered_for(business_date, delivered_count)
-        save_control_state(config.telegram_control_state_path, state)
+        with control_state_lock(state_path):
+            state = load_control_state(state_path)
+            state.set_delivered_for(business_date, delivered_count)
+            save_control_state(state_path, state)
     repository.record_operation_event(
         _operation_event(
             config,
@@ -43324,17 +43328,31 @@ def _build_telegram_photo_command_response(
 
 
 def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonitorRepository) -> int:
+    state_path = config.telegram_control_state_path
+    lock_path = state_path.with_name(f"{state_path.name}.lock")
+    lock_stack = ExitStack()
+    try:
+        lock_stack.enter_context(exclusive_file_lock(lock_path, blocking=False))
+    except BlockingIOError:
+        print("Telegram command processor is already running.")
+        return 0
+    with lock_stack:
+        return _run_process_telegram_commands_locked(config, repository)
+
+
+def _run_process_telegram_commands_locked(config: RuntimeConfig, repository: StockMonitorRepository) -> int:
     if not config.telegram_bot_token or not config.telegram_chat_id:
         raise RuntimeError(
             "Telegram configuration is missing. Set STOCK_MONITOR_TELEGRAM_BOT_TOKEN and "
             "STOCK_MONITOR_TELEGRAM_CHAT_ID."
         )
 
-    state = load_control_state(config.telegram_control_state_path)
-    offset = state.last_update_id + 1 if state.last_update_id else None
+    state_path = config.telegram_control_state_path
+    with control_state_lock(state_path):
+        last_update_id = load_control_state(state_path).last_update_id
     data = get_telegram_updates(
         config.telegram_bot_token,
-        offset=offset,
+        offset=last_update_id + 1 if last_update_id else None,
         timeout_seconds=config.telegram_timeout_seconds,
         max_retries=config.telegram_max_retries,
         retry_delay_seconds=config.telegram_retry_delay_seconds,
@@ -43344,6 +43362,16 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
         print("No new Telegram commands.")
         return 0
 
+    with control_state_lock(state_path):
+        return _apply_telegram_updates_locked(config, repository, updates)
+
+
+def _apply_telegram_updates_locked(
+    config: RuntimeConfig,
+    repository: StockMonitorRepository,
+    updates: list[dict],
+) -> int:
+    state = load_control_state(config.telegram_control_state_path)
     processed = 0
 
     def send_update_reply(update_id: int, text: str) -> str:
@@ -43362,8 +43390,10 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
                 save_control_state(config.telegram_control_state_path, state)
             raise
 
-    for update in updates:
+    for update in sorted(updates, key=lambda item: int(item.get("update_id", 0))):
         update_id = int(update.get("update_id", 0))
+        if update_id <= state.last_update_id:
+            continue
         message = update.get("message") or {}
         chat = message.get("chat") or {}
         if str(chat.get("id")) != str(config.telegram_chat_id):
@@ -43595,7 +43625,6 @@ def _run_process_telegram_commands(config: RuntimeConfig, repository: StockMonit
         processed += 1
         save_control_state(config.telegram_control_state_path, state)
 
-    save_control_state(config.telegram_control_state_path, state)
     print(f"Processed {processed} queued Telegram command(s).")
     return 0
 
@@ -45025,7 +45054,6 @@ def _run_process_intraday_alerts_unlocked(
         print("No pending intraday alert batches.")
         return 0
 
-    state = load_control_state(config.telegram_control_state_path)
     default_limit = _effective_int_setting(config, repository, "notification_default_limit")
 
     if not config.telegram_bot_token or not config.telegram_chat_id:
@@ -45169,19 +45197,23 @@ def _run_process_intraday_alerts_unlocked(
         )
         total_stock_blocks = len(build_daily_summaries(reports, generated_at=batch.created_at))
         displayed_count = min(default_limit, total_stock_blocks)
-        if displayed_count < total_stock_blocks:
-            state.set_active_intraday_delivery(
-                batch_id=batch.batch_id,
-                created_at=batch.created_at,
-                delivered_count=displayed_count,
-            )
-            processed += 1
-            break
-        else:
-            state.clear_active_intraday_delivery()
+        has_next_page = displayed_count < total_stock_blocks
+        state_path = config.telegram_control_state_path
+        with control_state_lock(state_path):
+            state = load_control_state(state_path)
+            if has_next_page:
+                state.set_active_intraday_delivery(
+                    batch_id=batch.batch_id,
+                    created_at=batch.created_at,
+                    delivered_count=displayed_count,
+                )
+            else:
+                state.clear_active_intraday_delivery()
+            save_control_state(state_path, state)
         processed += 1
+        if has_next_page:
+            break
 
-    save_control_state(config.telegram_control_state_path, state)
     print(f"Processed {processed} intraday alert batch(es).")
     if send_error is not None:
         raise RuntimeError(f"Intraday alert delivery failed: {send_error}") from send_error

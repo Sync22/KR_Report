@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
+from typing import Iterator
+
+from stock_monitor.file_lock import exclusive_file_lock
 
 
 NEXT_COMMANDS = {"다음", "더", "더보기", "다음목록", "next", "more", "/다음", "/다음목록", "/next"}
@@ -151,6 +155,12 @@ class TelegramControlState:
         self.progress_applied_update_ids = tuple(existing[-keep_last:])
 
 
+@contextmanager
+def control_state_lock(path: Path) -> Iterator[None]:
+    with exclusive_file_lock(path.with_name(f"{path.name}.write.lock")):
+        yield
+
+
 def load_control_state(path: Path) -> TelegramControlState:
     if not path.exists():
         return TelegramControlState()
@@ -215,6 +225,7 @@ def load_control_state(path: Path) -> TelegramControlState:
 
 
 def save_control_state(path: Path, state: TelegramControlState) -> None:
+    """Replace the JSON atomically. Hold control_state_lock across a read-modify-write."""
     pending_payload = None
     if state.pending_stock_selection is not None:
         pending_payload = {
