@@ -2,14 +2,14 @@
 
 Approved Toss REST read-only boundaries, the official API inventory, and manual lab probes.
 
-## Current API And Documentation Status (2026-10-21)
+## Current API And Documentation Status (2026-11-24)
 
-- The official [latest REST OpenAPI document](https://openapi.tossinvest.com/openapi-docs/latest/openapi.json) was checked on 2026-10-21. It remains at `1.2.24`, with 38 paths, 41 operations, and 101 schemas; the automation run found every documented path and operationId. Its command did not explicitly compare HTTP methods, so the automation prompt was tightened the same day. A separate exact method/path/operationId comparison then found zero missing tuples. These values match the 2026-10-08 inventory snapshot.
+- The official [latest REST OpenAPI document](https://openapi.tossinvest.com/openapi-docs/latest/openapi.json) was checked on 2026-11-24. Version `1.2.28` has 40 paths, 43 operations, and 109 schemas. All 41 previously documented method/path/operationId tuples remain. The two additions are investor trading rankings and account transaction history.
 - There is no repository workflow, script, or Task Scheduler job for spec updates. The active Codex automation **Toss OpenAPI nightly spec check** runs daily at 22:00 KST. It compares the official version, path/operation/schema counts, and the exact method/path/operationId set; it never reads secrets or calls Toss runtime APIs. It updates this document only when those checked values change and commits/pushes `main` only when the worktree is clean and synchronized. It does not diff every request/response schema field or provider runtime behavior. This automation is separate from the `codex/toss-openapi` branch.
 - `StockMonitor-TossCloseSnapshot` collects market data; it does not monitor API-spec changes. Market-data reads use fixed REST GET operations; live token issuance uses the fixed OAuth endpoint. The separate WebSocket AsyncAPI is not connected.
 - The local Chart Lab report-focus monitor now has a separate, fixed `GET /api/v1/candles` profile using `interval=1m`, `count=200`, and `MARKET_DATA_CHART`; it calls only after the user starts the loopback monitor and only during the Toss KRX regular session. The existing cached Toss calendar determines session/holiday boundaries. This development implementation has not made a live provider request; the required calendar/chart permission and rate budget remain to be verified on the target host.
 - This inventory includes operations the project has not implemented or approved. Current runtime allowlists are defined in the promoted contracts below and in [Data governance](data-governance.md), not by the full inventory.
-- Python's gated 20:05 capture persists the approved market snapshot/listing cache. Next handles bounded server-side reads after explicit UI actions and does not write SQLite. Account/order APIs are not connected.
+- Python's gated 20:05 capture persists the approved market snapshot/listing cache. Next handles bounded server-side reads after explicit UI actions and does not write SQLite. Account, transaction history, and order APIs are not connected.
 - Before adding or changing a route, verify its operation and schema against the official spec, then update the allowlist and tests. The daily automation checks the documented REST inventory for spec drift.
 
 ## Current 20:00 Persistence Contract (2026-08-23)
@@ -122,15 +122,14 @@ Use official Toss Securities documents first:
 | <https://openapi.tossinvest.com/openapi-docs/latest/api-reference/README.md> | Markdown API reference index. |
 | <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json> | Canonical OpenAPI document for exact endpoints and schemas. |
 
-Observed official-doc facts as of `2026-10-08` (`1.2.24`, `38` paths, `41`
-operations, `101` schemas):
+Observed official-doc facts as of the [current snapshot](#snapshot):
 
 - Base server is `https://openapi.tossinvest.com`.
 - Authentication uses OAuth 2.0 Client Credentials Grant.
 - All API calls except `POST /oauth2/token` require
   `Authorization: Bearer {access_token}`.
-- Account, asset, order-history, order-info, order, and conditional-order APIs require
-  `X-Tossinvest-Account` when the endpoint is account-contextual.
+- Account-contextual endpoints, including transaction history, require
+  `X-Tossinvest-Account`.
 - Market data, stock info, market info, ranking, and market indicators are
   user-account-independent but still require an access token.
 - Conditional orders register automatic execution and are denied alongside
@@ -386,13 +385,13 @@ contract is the [Toss OpenAPI Read-Only Lab Contract](#toss-openapi-read-only-la
 
 | Item | Value |
 | --- | --- |
-| Snapshot date | `2026-10-08` |
-| Official spec version | `1.2.24` |
+| Snapshot date | `2026-11-24` |
+| Official spec version | `1.2.28` |
 | OpenAPI document version | `3.1.0` |
 | Base server | `https://openapi.tossinvest.com` |
-| Paths | 38 |
-| Operations | 41 |
-| Schema count | 101 |
+| Paths | 40 |
+| Operations | 43 |
+| Schema count | 109 |
 | Auth model | OAuth 2.0 Client Credentials |
 | Runtime calls made during inventory | None |
 | Keys/accounts/tokens used | None |
@@ -480,6 +479,7 @@ Default retry policy for any future lab client:
 | Market Info | `GET` | `/api/v1/market-calendar/KR` | `getKrMarketCalendar` | No | optional `date` | `MARKET_INFO` | Explicit operator date-check command only; read-only, no rule or scheduler mutation. |
 | Market Info | `GET` | `/api/v1/market-calendar/US` | `getUsMarketCalendar` | No | optional `date` | `MARKET_INFO` | Future only if US scope is approved. |
 | Ranking | `GET` | `/api/v1/rankings` | `getRankings` | No | `type`, `marketCountry`, `duration`, optional caution exclusion/count | `RANKING` | Promoted only as fixed `MARKET_TRADING_AMOUNT / KR / realtime / count=20` market context; never changes candidate priority. |
+| Ranking | `GET` | `/api/v1/rankings/investor-trading` | `getInvestorTradingRankings` | No | optional `count` (1–100, default 100), applied per investor and direction | `RANKING` | Document only. Possible owner-only market reference after separate approval. |
 | Sector | `GET` | `/api/v1/sectors` | `listSectors` | No | none | `SECTOR` | Document only. No runtime allowlist or surface expansion. |
 | Sector | `GET` | `/api/v1/sectors/rankings` | `getSectorRankings` | No | `type`, `marketCountry`, `duration` | `SECTOR_RANKING` | Document only. No runtime allowlist or surface expansion. |
 | Sector | `GET` | `/api/v1/sectors/{sectorId}` | `getSector` | No | path `sectorId`, `marketCountry` | `SECTOR` | Document only. No runtime allowlist or surface expansion. |
@@ -490,6 +490,7 @@ Default retry policy for any future lab client:
 | Market Indicators | `GET` | `/api/v1/market-indicators/{symbol}/investor-trading` | `getMarketIndicatorInvestorTrading` | No | path `symbol`, `interval`, `count`, optional `until` | `MARKET_INDICATOR` | Promoted only as fixed previous-business-day KOSPI/KOSDAQ aggregate context; never replaces stock-level KRX flow. |
 | Account | `GET` | `/api/v1/accounts` | `getAccounts` | No | none | `ACCOUNT` | Operator-only lab candidate; never public. |
 | Asset | `GET` | `/api/v1/holdings` | `getHoldings` | Yes | optional `symbol` | `ASSET` | Operator-only lab; never public. |
+| Transaction | `GET` | `/api/v1/transactions` | `getTransactions` | Yes | optional `transactionTypes`, KST settlement dates `from`/`to`, `cursor`, `limit` (1–100, default 20) | `TRANSACTION` | Document only. Private account history. Keep outside the runtime allowlist and shared surfaces. |
 | Order History | `GET` | `/api/v1/orders` | `getOrders` | Yes | required `status`, optional `symbol/from/to/cursor/limit` | `ORDER_HISTORY` | Execution-adjacent, operator-only lab at most. |
 | Order History | `GET` | `/api/v1/orders/{orderId}` | `getOrder` | Yes | path `orderId` | `ORDER_HISTORY` | Execution-adjacent, operator-only lab at most. |
 | Order Info | `GET` | `/api/v1/buying-power` | `getBuyingPower` | Yes | `currency=KRW|USD` | `ORDER_INFO` | Execution-adjacent, not public. |
@@ -573,8 +574,11 @@ Common HTTP statuses seen in the spec:
 | Model / endpoint | Project use candidate |
 | --- | --- |
 | `GET /api/v1/rankings` | Future market-attention comparison only. The official basis includes market-wide and Toss Securities execution-based rankings, so it must not directly alter existing report/candidate priority. |
+| `InvestorTradingRankingResponse` | Foreign, institutional, and individual investors each have `rankedAt`, `netBuyRankings`, and `netSellRankings`. The lists cover KR stocks and ETFs with KRX and NXT combined and use positive KRW net amounts. The endpoint serves only the latest available business day and carries no quote fields. |
 | `GET /api/v1/market-indicators/prices` and `.../{symbol}/candles` | Future market-index or government-bond context only. |
 | `GET /api/v1/market-indicators/{symbol}/investor-trading` | Future aggregate market context only. It covers KOSPI/KOSDAQ investor trading amount, not per-stock daily investor flow; KRX Data Marketplace remains the stock-level flow source. |
+
+For any future investor-ranking probe, check `rankedAt` separately for each investor group. Foreign and institutional intraday values are provisional, and individual data can still be from the previous business day before the regular session ends. NXT updates can change results until around 20:00 KST. A null timestamp means unavailable. Review the [Toss Open API terms](https://home.tossinvest.com/ko/terms/v2?id=752) and confirm usage rights before considering any shared display.
 
 ### Account And Asset
 
@@ -586,6 +590,7 @@ Common HTTP statuses seen in the spec:
 | `BuyingPowerResponse` | `currency`, `cashBuyingPower` | Execution-adjacent. Never public. |
 | `SellableQuantityResponse` | `sellableQuantity` | Execution-adjacent. Never public. |
 | `Commission` | market country, commission rate, start/end dates | Operator-only reference at most. |
+| `PaginatedTransactionResponse` | `transactions`, `nextCursor`, `hasNext` | Private account data. Includes trades, cash and securities movements, FX, dividends, interest, and fees. Unsettled entries can change when settlement completes. |
 
 ### Order
 
@@ -701,6 +706,10 @@ This inventory was built from official documentation endpoints only:
   `getSectorRankings`, `getSector`, `getSectorStocks`, and `getSectorEtfs`.
   They remain documentation-only; no runtime allowlist or surface decision
   changed.
+- The `2026-11-24` `1.2.28` recheck expanded the spec to `40` paths, `43`
+  operations, and `109` schemas. It added `getInvestorTradingRankings` and
+  `getTransactions`, with no removed method/path/operationId tuple. The
+  previous schema bodies were not compared field by field.
 
 
 <!-- Merged from: docs/codex/toss-openapi-lab.md -->
@@ -735,20 +744,8 @@ invalidates the client's previously issued token.
 
 ## Official Basis
 
-Verified on `2026-10-08` against:
-
-- <https://developers.tossinvest.com/docs>
-- <https://openapi.tossinvest.com/openapi-docs/latest/openapi.json>
-
-Current official spec snapshot:
-
-| Item | Value |
-| --- | --- |
-| OpenAPI document version | `3.1.0` |
-| Official spec version | `1.2.24` |
-| Paths | `38` |
-| Operations | `41` |
-| Schemas | `101` |
+See the [current official snapshot](#snapshot) for the REST version, counts,
+and source links. The live probe uses only its documented endpoint allowlist.
 
 ## Local Key Input
 
