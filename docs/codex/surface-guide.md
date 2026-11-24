@@ -86,10 +86,20 @@ Phase 1 contract:
 - Candidate evidence shows its source, reference date, same-date/missing freshness, why-notable labels, evidence layers, and gaps. Toss same-day investor flow is labeled provisional.
 - News is summarized with collection state and evidence counts. Raw news bodies, headlines, HTML, secrets, scores, and recommendation fields are not exposed.
 - The response excludes post-date reaction/progress rows. Missing selected-date values stay missing instead of falling back to another source or date.
-- SQLite opens through a read-only URI with query-only mode. The command does not initialize or migrate the database, fetch live sources, write rows, contact Telegram, or change scheduler state.
+- SQLite opens through a read-only URI with query-only mode. The command does not initialize or migrate the database, write rows, contact Telegram, or change scheduler state. The page and the existing stored-data route make no external requests.
 - Each candidate may link to the operator-configured local Stock-Newbby page at `{LOCAL_NEWBBY_BASE_URL}/chart-first.html?symbol=<six-digit-code>&asOf=<business-date>`.
 
-The panel remains separate from both control and public surfaces: its route is absent from `admin-gui` HTML and public `web-view` HTML/routes. Its chart links remain operator-clicked. The public Main has the separate, user-triggered indicator exception below.
+The panel remains separate from both control and public surfaces. Its routes are absent from `admin-gui`, public `web-view`, and Cloudflare. Its chart links remain operator-clicked. The public Main has the separate, user-triggered indicator exception below.
+
+### Report and investor rankings
+
+The panel **리포트 × 투자자 수급 교차 확인** shows the selected report date, source timestamp and state for each investor, and up to ten matched candidates in stored order. It distinguishes no candidates, no intersection, date mismatch, missing data, and provider errors. See [the comparison contract](data-governance.md#operator-review-investor-rankings).
+
+The lookup is disabled by default. On a development PC, use `python -m stock_monitor operator-review --live --confirm-token-reissue` with a live-enabled local `.env.toss-openapi` and a Toss client whose token can be reissued without affecting the operating PC. Reusing a client that is active on another host can revoke that host's token. Server startup, opening the page, changing dates, and refreshing the page make no Toss call.
+
+The button sends a same-origin GET to `/api/operator-review/investor-rankings?date=YYYY-MM-DD`. The handler requires a direct local client, the bound `127.0.0.1` host and port, same-origin browser metadata, and the action header. It rejects forwarded requests and direct navigation without that header. Keep the listener off public reverse proxies. This boundary trusts local programs on the development PC.
+
+The first eligible click can issue one token per process and read the fixed ranking endpoint. The token is held only in memory. Expiry and HTTP 401 stop use of that token. A 429 pauses further calls for the provider's `Retry-After` or a 30-second fallback. An explicit click after that delay can retry an issuance rejected with 429. An ambiguous issuance failure requires a new session. One lookup may be in flight per process. The panel makes no automatic retry or background refresh.
 
 ## Main Top2 Technical Indicator Block
 

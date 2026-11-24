@@ -13,6 +13,12 @@ from typing import Iterator, NoReturn
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 from stock_monitor.db.repository import StockMonitorRepository
+from stock_monitor.operator_investor_rankings import (
+    INVESTOR_RANKING_CANDIDATE_LIMIT,
+    InvestorRankingsUnavailable,
+    TossInvestorRankingsLookup,
+    build_investor_rankings_projection,
+)
 
 
 DEFAULT_OPERATOR_REVIEW_HOST = "127.0.0.1"
@@ -20,6 +26,7 @@ DEFAULT_OPERATOR_REVIEW_PORT = 8767
 DEFAULT_NEWBBY_BASE_URL = "http://127.0.0.1:8734"
 OPERATOR_REVIEW_PAGE_PATH = "/"
 OPERATOR_REVIEW_API_PATH = "/api/operator-review"
+OPERATOR_INVESTOR_RANKINGS_API_PATH = f"{OPERATOR_REVIEW_API_PATH}/investor-rankings"
 _STOCK_CODE_PATTERN = re.compile(r"^[0-9]{6}$")
 _DATE_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 
@@ -317,7 +324,50 @@ def build_operator_review_snapshot(
     )
 
 
-def render_operator_review_html(default_date: str | None = None) -> str:
+def _build_investor_rankings_candidates(config, business_date: date) -> list[dict[str, object]]:
+    from stock_monitor.cli import build_web_view_candidate_evidence_snapshot
+
+    repository = _ReadOnlyStockMonitorRepository(config.db_path, timezone=config.timezone)
+    with repository.read_session():
+        summaries = {item.stock_code: item for item in repository.list_daily_summaries(business_date)}
+        if not summaries:
+            return []
+        snapshot = build_web_view_candidate_evidence_snapshot(
+            config, repository, business_date=business_date, limit=INVESTOR_RANKING_CANDIDATE_LIMIT,
+        )
+
+    candidates = []
+    seen = set()
+    for row in snapshot["rows"][:INVESTOR_RANKING_CANDIDATE_LIMIT]:
+        code = row["stock_code"]
+        summary = summaries.get(code)
+        if summary is None or code in seen:
+            continue
+        seen.add(code)
+        flow = row["stock_flow_reference"]
+        stored_flow = None
+        if flow["available"] and flow["snapshot_date"] == business_date.isoformat() and flow["amount_unit"] == "KRW":
+            amounts = {
+                key: str(flow[key])
+                for key in ("foreign_net_buy_amount", "institution_net_buy_amount", "individual_net_buy_amount")
+                if flow.get(key) is not None
+            }
+            if amounts:
+                stored_flow = {"reference_date": flow["snapshot_date"], **amounts}
+        candidates.append({
+            "stock_code": code,
+            "stock_name": row["stock_name"],
+            "report_count": summary.mention_count,
+            "brokers": summary.broker_display,
+            "why_notable": row["why_notable"],
+            "stored_flow": stored_flow,
+        })
+    return candidates
+
+
+def render_operator_review_html(
+    default_date: str | None = None, *, investor_rankings_enabled: bool = False,
+) -> str:
     safe_default_date = escape(default_date or "", quote=True)
     return """<!doctype html>
 <html lang="ko">
@@ -347,12 +397,17 @@ def render_operator_review_html(default_date: str | None = None) -> str:
     li { margin: 4px 0; }
     a { color: #9fd5ec; }
     .empty { border: 1px dashed #526277; border-radius: 10px; padding: 16px; color: #c1cbd8; }
+    #investor-review { border-block: 1px solid #34445a; padding-block: 12px; margin-block: 16px; }
+    #investor-review h2 { margin: 0 0 8px; font-size: 1.15rem; }
+    #investor-review button:disabled { cursor: default; opacity: .65; }
+    #investor-matches { padding-left: 24px; }
+    #investor-matches > li { padding-block: 8px; border-top: 1px solid #34445a; }
   </style>
 </head>
 <body>
   <header>
     <h1>종목 근거 검토</h1>
-    <p>저장된 Main 후보와 선택일 기준 근거만 표시합니다. 실시간 조회나 저장은 하지 않습니다.</p>
+    <p>저장된 Main 후보와 선택일 기준 근거를 표시합니다.</p>
   </header>
   <form id="date-form" method="get" action="/">
     <label for="business-date">기준일</label>
@@ -361,6 +416,14 @@ def render_operator_review_html(default_date: str | None = None) -> str:
   </form>
   <p id="status" role="status">기준일을 선택하세요.</p>
   <main id="cards" class="cards" aria-live="polite"></main>
+  <section id="investor-review" aria-labelledby="investor-heading">
+    <h2 id="investor-heading">리포트 × 투자자 수급 교차 확인</h2>
+    <p id="investor-date"></p>
+    <button id="investor-lookup" type="button" disabled>투자자 수급 조회</button>
+    <p id="investor-status" role="status"></p>
+    <ul id="investor-sources" aria-label="투자자별 기준 시각"></ul>
+    <ul id="investor-matches" aria-label="교차 일치 종목"></ul>
+  </section>
   <script>
     const input = document.getElementById('business-date');
     const statusNode = document.getElementById('status');
@@ -456,9 +519,107 @@ def render_operator_review_html(default_date: str | None = None) -> str:
     }
     if (selectedDate) loadReview();
     else statusNode.textContent = '저장된 기준일이 없습니다. 데이터를 수집하거나 기준일을 선택하세요.';
+
+    const investorButton = document.getElementById('investor-lookup');
+    const investorStatus = document.getElementById('investor-status');
+    const investorSources = document.getElementById('investor-sources');
+    const investorMatches = document.getElementById('investor-matches');
+    const investorEnabled = __INVESTOR_ENABLED__;
+    const investorLabels = {foreigner: '외국인', institution: '기관', individual: '개인'};
+    const numberFormat = new Intl.NumberFormat('ko-KR');
+    const won = amount => numberFormat.format(BigInt(amount)) + '원';
+    let loadingInvestors = false;
+    document.getElementById('investor-date').textContent = '선택 리포트 영업일 · ' + (selectedDate || '없음');
+
+    function updateInvestorButton() {
+      investorButton.disabled = !investorEnabled || !selectedDate || input.value !== selectedDate || loadingInvestors;
+    }
+    updateInvestorButton();
+    input.addEventListener('input', updateInvestorButton);
+    investorStatus.textContent = !investorEnabled ? '이 세션에서는 Toss 조회가 꺼져 있습니다.'
+      : selectedDate ? '조회하면 최신 KRX·NXT 통합 랭킹을 선택일과 비교합니다.' : '저장된 리포트 영업일을 선택하세요.';
+
+    function showInvestorResults(payload) {
+      const states = {
+        matched: '교차 일치 ' + payload.matches.length + '개 / 리포트 후보 ' + payload.candidate_count + '개',
+        no_match: '같은 기준일의 수급 랭킹과 겹치는 리포트 후보가 없습니다.',
+        date_mismatch: '수급 랭킹 기준일과 선택한 리포트 영업일이 다릅니다.',
+        no_data: '기준 시각 또는 수급 자료가 없습니다.',
+        no_candidates: '선택한 영업일에 저장된 리포트 후보가 없습니다.'
+      };
+      investorStatus.textContent = states[payload.state];
+      for (const [key, source] of Object.entries(payload.investors)) {
+        const state = source.state === 'no_data' ? '자료 없음'
+          : source.state === 'date_mismatch' ? '기준일 불일치'
+          : source.freshness === 'provisional' ? '장중 잠정' : '갱신 가능 · 확정 여부 미제공';
+        const rankedAt = source.ranked_at ? source.ranked_at.replace('T', ' ') : '기준 시각 없음';
+        appendText(investorSources, 'li', investorLabels[key] + ' · ' + rankedAt + ' · ' + state);
+      }
+      for (const match of payload.matches) {
+        const row = document.createElement('li');
+        investorMatches.appendChild(row);
+        appendText(row, 'strong', match.stock_name + ' · ' + match.stock_code);
+        appendText(row, 'p', '리포트 ' + match.report_count + '건 · ' + (match.brokers || '증권사 자료 없음'), 'meta');
+        appendList(row, '저장 선정 근거', match.why_notable);
+        const rankings = document.createElement('ul');
+        for (const rank of match.rankings) {
+          const direction = rank.direction === 'net_buy' ? '순매수' : '순매도';
+          appendText(rankings, 'li', investorLabels[rank.investor] + ' ' + direction + ' ' + rank.rank + '위 · ' + won(rank.amount_krw));
+        }
+        row.appendChild(rankings);
+        for (const note of match.observations) appendText(row, 'p', note);
+        if (match.stored_flow) {
+          const sources = [
+            ['외국인', match.stored_flow.foreign_net_buy_amount],
+            ['기관', match.stored_flow.institution_net_buy_amount],
+            ['개인', match.stored_flow.individual_net_buy_amount]
+          ].filter(([, amount]) => amount != null);
+          appendText(row, 'p', '저장 수급 (순매수 기준, 잠정) · ' + match.stored_flow.reference_date + ' · '
+            + sources.map(([name, amount]) => name + ' ' + won(amount)).join(' · '), 'meta');
+        } else {
+          appendText(row, 'p', '저장 수급 금액 자료 없음', 'meta');
+        }
+      }
+    }
+
+    investorButton.addEventListener('click', async () => {
+      if (investorButton.disabled) return;
+      loadingInvestors = true;
+      updateInvestorButton();
+      investorStatus.textContent = '투자자별 수급을 조회하는 중…';
+      investorSources.replaceChildren();
+      investorMatches.replaceChildren();
+      try {
+        const params = new URLSearchParams({date: selectedDate});
+        const response = await fetch('/api/operator-review/investor-rankings?' + params, {
+          headers: {Accept: 'application/json', 'X-Operator-Review-Action': 'investor-rankings'}
+        });
+        const payload = await response.json();
+        if (response.ok) {
+          showInvestorResults(payload);
+        } else {
+          const errors = {
+            toss_authentication_failed: 'Toss 인증 오류. 세션의 토큰을 확인하세요.',
+            toss_permission_denied: 'Toss API 접근 권한을 확인하세요.',
+            toss_rate_limited: 'Toss 조회 제한 · ' + (payload.retry_after_seconds || 1) + '초 후 다시 조회하세요.',
+            toss_lookup_busy: '다른 수급 조회가 진행 중입니다.',
+            investor_rankings_disabled: '이 세션에서는 Toss 조회가 꺼져 있습니다.',
+            stored_review_data_unavailable: '선택한 날짜의 저장 자료를 읽을 수 없습니다.'
+          };
+          investorStatus.textContent = errors[payload.error] || 'Toss API 오류로 조회할 수 없습니다.';
+        }
+      } catch {
+        investorStatus.textContent = '수급 자료를 조회할 수 없습니다.';
+      } finally {
+        loadingInvestors = false;
+        updateInvestorButton();
+      }
+    });
   </script>
 </body>
-</html>""".replace("__DEFAULT_DATE__", safe_default_date)
+</html>""".replace("__DEFAULT_DATE__", safe_default_date).replace(
+        "__INVESTOR_ENABLED__", "true" if investor_rankings_enabled else "false",
+    )
 
 
 def _json_response(status: HTTPStatus, payload: dict[str, object]) -> tuple[HTTPStatus, str, bytes]:
@@ -471,10 +632,42 @@ def _route_operator_review_request(
     config,
     *,
     newbby_base_url: str = DEFAULT_NEWBBY_BASE_URL,
+    investor_rankings: TossInvestorRankingsLookup | None = None,
+    investor_action: bool = False,
 ) -> tuple[HTTPStatus, str, bytes]:
     if method != "GET":
         return _json_response(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "method_not_allowed"})
     parsed = urlsplit(target)
+    if parsed.path == OPERATOR_INVESTOR_RANKINGS_API_PATH:
+        if not investor_action or parsed.scheme or parsed.netloc or parsed.fragment:
+            return _json_response(HTTPStatus.FORBIDDEN, {"error": "explicit_loopback_action_required"})
+        try:
+            dates = parse_qs(parsed.query, keep_blank_values=True, max_num_fields=1)
+        except ValueError:
+            dates = {}
+        date_values = dates.get("date", [])
+        if set(dates) != {"date"} or len(date_values) != 1 or not _valid_iso_date(date_values[0]):
+            return _json_response(HTTPStatus.BAD_REQUEST, {"error": "expected_date_yyyy_mm_dd"})
+        if investor_rankings is None:
+            return _json_response(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "investor_rankings_disabled"})
+        business_date = date.fromisoformat(date_values[0])
+        try:
+            candidates = _build_investor_rankings_candidates(config, business_date)
+        except (OSError, sqlite3.Error, RuntimeError):
+            return _json_response(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "stored_review_data_unavailable"})
+        if not candidates:
+            return _json_response(HTTPStatus.OK, {
+                "business_date": business_date.isoformat(), "state": "no_candidates",
+                "candidate_count": 0, "investors": {}, "matches": [],
+            })
+        try:
+            rankings = investor_rankings()
+        except InvestorRankingsUnavailable as exc:
+            payload = {"error": str(exc)}
+            if exc.retry_after is not None:
+                payload["retry_after_seconds"] = exc.retry_after
+            return _json_response(exc.status, payload)
+        return _json_response(HTTPStatus.OK, build_investor_rankings_projection(business_date, candidates, rankings))
     if parsed.path == OPERATOR_REVIEW_PAGE_PATH:
         requested_dates = parse_qs(parsed.query, keep_blank_values=True).get("date", [])
         selected_date = requested_dates[0] if len(requested_dates) == 1 else None
@@ -488,7 +681,9 @@ def _route_operator_review_request(
         return (
             HTTPStatus.OK,
             "text/html; charset=utf-8",
-            render_operator_review_html(selected_date).encode("utf-8"),
+            render_operator_review_html(
+                selected_date, investor_rankings_enabled=investor_rankings is not None,
+            ).encode("utf-8"),
         )
     if parsed.path != OPERATOR_REVIEW_API_PATH:
         return _json_response(HTTPStatus.NOT_FOUND, {"error": "not_found"})
@@ -526,7 +721,12 @@ def _latest_stored_business_date(config) -> str | None:
     return str(latest_date) if latest_date and _valid_iso_date(str(latest_date)) else None
 
 
-def _make_operator_review_handler(config, *, newbby_base_url: str = DEFAULT_NEWBBY_BASE_URL):
+def _make_operator_review_handler(
+    config,
+    *,
+    newbby_base_url: str = DEFAULT_NEWBBY_BASE_URL,
+    investor_rankings: TossInvestorRankingsLookup | None = None,
+):
     _validated_newbby_base_url(newbby_base_url)
 
     class OperatorReviewHandler(BaseHTTPRequestHandler):
@@ -549,12 +749,27 @@ def _make_operator_review_handler(config, *, newbby_base_url: str = DEFAULT_NEWB
             self.end_headers()
             self.wfile.write(body)
 
+        def _is_investor_action(self) -> bool:
+            authority = f"{DEFAULT_OPERATOR_REVIEW_HOST}:{self.server.server_address[1]}"
+            return (
+                self.client_address[0] == DEFAULT_OPERATOR_REVIEW_HOST
+                and self.headers.get_all("Host") == [authority]
+                and self.headers.get_all("Sec-Fetch-Site") == ["same-origin"]
+                and self.headers.get_all("X-Operator-Review-Action") == ["investor-rankings"]
+                and self.headers.get_all("Origin") in (None, [f"http://{authority}"])
+                and not any(name in self.headers for name in (
+                    "Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "CF-Connecting-IP",
+                ))
+            )
+
         def do_GET(self) -> None:
             status, content_type, body = _route_operator_review_request(
                 "GET",
                 self.path,
                 config,
                 newbby_base_url=newbby_base_url,
+                investor_rankings=investor_rankings,
+                investor_action=self._is_investor_action(),
             )
             self._respond(status, content_type, body)
 
@@ -573,8 +788,11 @@ def create_operator_review_server(
     *,
     port: int = DEFAULT_OPERATOR_REVIEW_PORT,
     newbby_base_url: str = DEFAULT_NEWBBY_BASE_URL,
+    investor_rankings: TossInvestorRankingsLookup | None = None,
 ) -> ThreadingHTTPServer:
     if not 1 <= int(port) <= 65535:
         raise ValueError("operator-review port must be between 1 and 65535")
-    handler = _make_operator_review_handler(config, newbby_base_url=newbby_base_url)
+    handler = _make_operator_review_handler(
+        config, newbby_base_url=newbby_base_url, investor_rankings=investor_rankings,
+    )
     return ThreadingHTTPServer((DEFAULT_OPERATOR_REVIEW_HOST, int(port)), handler)

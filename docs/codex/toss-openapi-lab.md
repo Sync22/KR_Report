@@ -429,7 +429,7 @@ limits are visible in response headers and may change without prior notice.
 | `MARKET_INFO` | 3 | - | Calendar/exchange-rate reference only. |
 | `MARKET_DATA` | 10 | - | Future top-2 quote probe candidate. |
 | `MARKET_DATA_CHART` | 5 | - | Candles can be heavier; no broad polling. |
-| `RANKING` | 5 | - | Ranking semantics differ from the project's candidate evidence; document-only until compared. |
+| `RANKING` | 5 | - | Fixed market Top20 and explicit loopback investor rankings. Candidate evidence keeps its own order. |
 | `MARKET_INDICATOR` | 10 | - | Current endpoint descriptions assign both market-indicator prices and investor trading here; investor trading is aggregate KOSPI/KOSDAQ context, not stock-level flow. |
 | `MARKET_INDICATOR_CHART` | 5 | - | Market-index candles; no broad polling. |
 | `ORDER` | 6 | 3 from 09:00 to 09:10 KST | Denylisted until execution-lab contract. |
@@ -479,7 +479,7 @@ Default retry policy for any future lab client:
 | Market Info | `GET` | `/api/v1/market-calendar/KR` | `getKrMarketCalendar` | No | optional `date` | `MARKET_INFO` | Explicit operator date-check command only; read-only, no rule or scheduler mutation. |
 | Market Info | `GET` | `/api/v1/market-calendar/US` | `getUsMarketCalendar` | No | optional `date` | `MARKET_INFO` | Future only if US scope is approved. |
 | Ranking | `GET` | `/api/v1/rankings` | `getRankings` | No | `type`, `marketCountry`, `duration`, optional caution exclusion/count | `RANKING` | Promoted only as fixed `MARKET_TRADING_AMOUNT / KR / realtime / count=20` market context; never changes candidate priority. |
-| Ranking | `GET` | `/api/v1/rankings/investor-trading` | `getInvestorTradingRankings` | No | optional `count` (1–100, default 100), applied per investor and direction | `RANKING` | Document only. Possible owner-only market reference after separate approval. |
+| Ranking | `GET` | `/api/v1/rankings/investor-trading` | `getInvestorTradingRankings` | No | optional `count` (1–100, default 100), applied per investor and direction | `RANKING` | Fixed `count=10` for the [explicit loopback operator lookup](surface-guide.md#report-and-investor-rankings). |
 | Sector | `GET` | `/api/v1/sectors` | `listSectors` | No | none | `SECTOR` | Document only. No runtime allowlist or surface expansion. |
 | Sector | `GET` | `/api/v1/sectors/rankings` | `getSectorRankings` | No | `type`, `marketCountry`, `duration` | `SECTOR_RANKING` | Document only. No runtime allowlist or surface expansion. |
 | Sector | `GET` | `/api/v1/sectors/{sectorId}` | `getSector` | No | path `sectorId`, `marketCountry` | `SECTOR` | Document only. No runtime allowlist or surface expansion. |
@@ -578,7 +578,7 @@ Common HTTP statuses seen in the spec:
 | `GET /api/v1/market-indicators/prices` and `.../{symbol}/candles` | Future market-index or government-bond context only. |
 | `GET /api/v1/market-indicators/{symbol}/investor-trading` | Future aggregate market context only. It covers KOSPI/KOSDAQ investor trading amount, not per-stock daily investor flow; KRX Data Marketplace remains the stock-level flow source. |
 
-For any future investor-ranking probe, check `rankedAt` separately for each investor group. Foreign and institutional intraday values are provisional, and individual data can still be from the previous business day before the regular session ends. NXT updates can change results until around 20:00 KST. A null timestamp means unavailable. Review the [Toss Open API terms](https://home.tossinvest.com/ko/terms/v2?id=752) and confirm usage rights before considering any shared display.
+The local operator comparison checks `rankedAt` separately for each investor group. See [the date and amount rules](data-governance.md#operator-review-investor-rankings). Review the [Toss Open API terms](https://home.tossinvest.com/ko/terms/v2?id=752) before considering a shared display.
 
 ### Account And Asset
 
