@@ -419,6 +419,7 @@ def render_operator_review_html(
   <section id="investor-review" aria-labelledby="investor-heading">
     <h2 id="investor-heading">리포트 × 투자자 수급 교차 확인</h2>
     <p id="investor-date"></p>
+    <p>투자자별 순매수·순매도 각 상위 10개를 비교합니다. 목록 밖 종목의 수급 방향과 금액은 이 조회로 확인할 수 없습니다.</p>
     <button id="investor-lookup" type="button" disabled>투자자 수급 조회</button>
     <p id="investor-status" role="status"></p>
     <ul id="investor-sources" aria-label="투자자별 기준 시각"></ul>
