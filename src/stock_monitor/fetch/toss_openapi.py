@@ -17,6 +17,7 @@ TOSS_OPENAPI_BASE_URL = "https://openapi.tossinvest.com"
 TOSS_OPENAPI_MAX_RESPONSE_BYTES = 1_048_576
 _SYMBOL_PATTERN = re.compile(r"^\d{6}$")
 _MARKET_RANKING_SYMBOL_PATTERN = re.compile(r"^[0-9A-Z]{6}$")
+_INVESTOR_RANKING_AMOUNT_PATTERN = re.compile(r"^[1-9][0-9]{0,29}$")
 _FORBIDDEN_GROUPS = ("account", "asset", "order-info", "order-history", "order", "conditional-order")
 _PRICE_FIELDS = frozenset({"symbol", "timestamp", "lastPrice", "currency"})
 _STOCK_FIELDS = frozenset(
@@ -127,6 +128,20 @@ class TossReadonlyResponse:
     result: object
     row_count: int
     rate_limit: dict[str, str]
+
+
+@dataclass(frozen=True)
+class TossInvestorRankingItem:
+    rank: int
+    symbol: str
+    amount_krw: str
+
+
+@dataclass(frozen=True)
+class TossInvestorRanking:
+    ranked_at: datetime | None
+    net_buy: tuple[TossInvestorRankingItem, ...]
+    net_sell: tuple[TossInvestorRankingItem, ...]
 
 
 @dataclass(frozen=True)
@@ -247,11 +262,19 @@ _STOCK_UNIVERSE_ENDPOINTS = tuple(
     )
     for market in TOSS_KR_STOCK_UNIVERSE_MARKETS
 )
+_INVESTOR_TRADING_RANKINGS_ENDPOINT = TossReadonlyEndpoint(
+    "investor-trading-rankings",
+    "getInvestorTradingRankings",
+    "/api/v1/rankings/investor-trading",
+    "RANKING",
+    fixed_params=(("count", "10"),),
+)
 _FIXED_READONLY_ENDPOINTS = (
     _PROBE_READONLY_ENDPOINTS
     + _MARKET_CONTEXT_ENDPOINTS
     + (_PRIORITY_STOCK_DAILY_CANDLES_ENDPOINT, _PRIORITY_STOCK_DAILY_HISTORY_ENDPOINT)
     + _STOCK_UNIVERSE_ENDPOINTS
+    + (_INVESTOR_TRADING_RANKINGS_ENDPOINT,)
 )
 TOSS_READONLY_ENDPOINTS: Mapping[str, TossReadonlyEndpoint] = MappingProxyType(
     {endpoint.key: endpoint for endpoint in _PROBE_READONLY_ENDPOINTS}
@@ -448,6 +471,7 @@ def fetch_toss_readonly_endpoint(
         "priority-stock-daily-candles",
         "priority-stock-daily-history",
         "priority-investor-trading",
+        "investor-trading-rankings",
     } else list
     if not isinstance(result, expected_type):
         raise RuntimeError(f"Toss OpenAPI {endpoint.key} response had an unexpected shape.")
@@ -459,6 +483,36 @@ def fetch_toss_readonly_endpoint(
         row_count=row_count,
         rate_limit=rate_limit,
     )
+
+
+def fetch_toss_investor_rankings(
+    *,
+    base_url: str,
+    access_token: str,
+    timeout_seconds: float,
+    live_enabled: bool = False,
+    urlopen: Callable[..., object] = _urlopen_no_redirect,
+) -> dict[str, TossInvestorRanking]:
+    response = fetch_toss_readonly_endpoint(
+        base_url=base_url,
+        access_token=access_token,
+        endpoint=_INVESTOR_TRADING_RANKINGS_ENDPOINT,
+        params={"count": "10"},
+        timeout_seconds=timeout_seconds,
+        live_enabled=live_enabled,
+        urlopen=urlopen,
+    )
+    raw_result = response.result
+    if not isinstance(raw_result, dict):
+        raise RuntimeError("Toss investor ranking result had an unexpected shape.")
+    if not raw_result:
+        return {
+            investor: TossInvestorRanking(ranked_at=None, net_buy=(), net_sell=())
+            for investor in ("foreigner", "institution", "individual")
+        }
+    if set(raw_result) != {"foreigner", "institution", "individual"}:
+        raise RuntimeError("Toss investor ranking result had an unexpected shape.")
+    return {investor: _parse_investor_ranking(raw_result[investor]) for investor in raw_result}
 
 
 def run_toss_readonly_probe(
@@ -622,6 +676,8 @@ def _validate_readonly_result(
     *,
     params: dict[str, str],
 ) -> None:
+    if endpoint.key == "investor-trading-rankings":
+        return
     if endpoint.key == "prices":
         rows = _validate_object_list(result, allowed=_PRICE_FIELDS, label="prices")
         for row in rows:
@@ -834,6 +890,56 @@ def _validate_object_list(
     if not isinstance(value, list):
         raise RuntimeError(f"Toss OpenAPI {label} result had an unexpected shape.")
     return [_validate_object(item, allowed=allowed, label=f"{label} item") for item in value]
+
+
+def _parse_investor_ranking(value: object) -> TossInvestorRanking:
+    required = {"rankedAt", "netBuyRankings", "netSellRankings"}
+    if not isinstance(value, dict) or set(value) != required:
+        raise RuntimeError("Toss investor ranking bucket had an unexpected shape.")
+    raw_ranked_at = value["rankedAt"]
+    if raw_ranked_at is None:
+        ranked_at = None
+    elif isinstance(raw_ranked_at, str):
+        try:
+            ranked_at = datetime.fromisoformat(raw_ranked_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise RuntimeError("Toss investor ranking bucket had an unexpected rankedAt value.") from None
+        if ranked_at.tzinfo is None or ranked_at.utcoffset() is None:
+            raise RuntimeError("Toss investor ranking bucket had an unexpected rankedAt value.")
+    else:
+        raise RuntimeError("Toss investor ranking bucket had an unexpected rankedAt value.")
+    return TossInvestorRanking(
+        ranked_at=ranked_at,
+        net_buy=_parse_investor_ranking_items(value["netBuyRankings"], amount_field="netBuyAmount"),
+        net_sell=_parse_investor_ranking_items(value["netSellRankings"], amount_field="netSellAmount"),
+    )
+
+
+def _parse_investor_ranking_items(value: object, *, amount_field: str) -> tuple[TossInvestorRankingItem, ...]:
+    if not isinstance(value, list) or len(value) > 10:
+        raise RuntimeError("Toss investor ranking rows had an unexpected shape.")
+    rows_by_symbol: dict[str, TossInvestorRankingItem] = {}
+    for row in value:
+        if not isinstance(row, dict) or set(row) != {"rank", "symbol", "currency", amount_field}:
+            raise RuntimeError("Toss investor ranking item had an unexpected shape.")
+        rank = row["rank"]
+        symbol = row["symbol"]
+        amount = row[amount_field]
+        if (
+            isinstance(rank, bool)
+            or not isinstance(rank, int)
+            or rank < 1
+            or not isinstance(symbol, str)
+            or not _MARKET_RANKING_SYMBOL_PATTERN.fullmatch(symbol)
+            or row["currency"] != "KRW"
+            or not isinstance(amount, str)
+            or not _INVESTOR_RANKING_AMOUNT_PATTERN.fullmatch(amount)
+        ):
+            raise RuntimeError("Toss investor ranking item had an unexpected shape.")
+        previous = rows_by_symbol.get(symbol)
+        if previous is None or rank < previous.rank:
+            rows_by_symbol[symbol] = TossInvestorRankingItem(rank=rank, symbol=symbol, amount_krw=amount)
+    return tuple(sorted(rows_by_symbol.values(), key=lambda item: item.rank))
 
 
 def _validate_object(

@@ -110,6 +110,16 @@ The Codex `chart-assistant` is a conversation skill that reads the same local ch
 
 Code adapted from [Stock-Newbby](https://github.com/gmparkingplace/Stock-Newbby) is licensed under Apache-2.0. Retain the upstream license/notice and mark modified files. Existing Main Top2 price-condition DTO, formulas, and rule labels remain separate and unchanged.
 
+## Operator Review Investor Rankings
+
+The local [Operator Review surface](surface-guide.md#operator-review-surface) can explicitly read the latest Toss investor rankings for comparison with its selected report date.
+
+- The only market-data request is `GET /api/v1/rankings/investor-trading?count=10`. The provider combines KRX and NXT and covers Korean stocks and ETFs. The request has no date parameter.
+- Read up to ten rows in the existing stored candidate-evidence order. Preserve source order and remove duplicate stock codes. Compare by six-character symbol. Report count, brokers, and why-notable text come from the selected-date stored report evidence. Same-date stored Toss KRW flow remains a separately labeled reference.
+- Interpret each investor timestamp in Asia/Seoul and compare it with the selected report date. Only matching-date rows can enter the intersection or a direction observation. Retain each investor's timestamp and availability independently. Unknown timestamps and empty lists are missing data. Earlier individual data can appear before the regular close and remains outside a later date's matches.
+- Keep buy and sell ranks separate and deduplicate each list by symbol at its best rank. Amounts are exact positive KRW integer strings for the indicated direction. Display absence as missing. Foreign and institutional timestamps before 15:30 KST are shown as provisional. Other same-date timestamps carry a possible-update label because the API does not assert finality and NXT can change the result.
+- This is a transient operator reference. It supplies no data to Main Top2, public DTOs, scoring, SQLite writes, scheduled collection, or Telegram.
+
 ## Main Top2 Technical Indicator Projection
 
 This is the canonical data and behavior contract for the public Main Top2 indicator projection. The Surface Guide owns the visible controls and layout; the Toss OpenAPI Lab owns credentials, endpoint inventory, and probe notes. Those documents should link here instead of copying the formulas or schema rules.

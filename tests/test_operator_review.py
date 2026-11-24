@@ -219,10 +219,11 @@ def test_operator_review_cli_defaults_to_fixed_loopback_port_without_host_overri
     monkeypatch.setattr(
         cli,
         "_run_operator_review",
-        lambda passed_config, *, port, newbby_base_url: captured.update(
+        lambda passed_config, *, port, newbby_base_url, investor_rankings: captured.update(
             config=passed_config,
             port=port,
             newbby_base_url=newbby_base_url,
+            investor_rankings=investor_rankings,
         ) or 0,
     )
 
@@ -230,6 +231,7 @@ def test_operator_review_cli_defaults_to_fixed_loopback_port_without_host_overri
     assert captured["config"] is config
     assert captured["port"] == 8767
     assert captured["newbby_base_url"] == DEFAULT_NEWBBY_BASE_URL
+    assert captured["investor_rankings"] is None
 
 
 def test_chart_handoff_default_is_the_documented_local_ui():

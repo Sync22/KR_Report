@@ -1686,6 +1686,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     operator_review_parser.add_argument("--port", type=int, default=8767)
     operator_review_parser.add_argument(
+        "--live", action="store_true", help="Enable the explicit operator Toss investor rankings lookup.",
+    )
+    operator_review_parser.add_argument(
+        "--confirm-token-reissue", action="store_true",
+        help="Allow one Toss token issue after a lookup click. It invalidates the client's previous token.",
+    )
+    operator_review_parser.add_argument(
         "--newbby-base-url",
         default="http://127.0.0.1:8734",
         help="Loopback Stock-Newbby UI origin used for chart handoff links.",
@@ -2258,11 +2265,28 @@ def main(argv: list[str] | None = None) -> int:
             as_json=args.json,
         )
     if args.command == "operator-review":
+        if args.live != args.confirm_token_reissue:
+            parser.error("operator-review requires --live and --confirm-token-reissue together.")
         config = RuntimeConfig.from_env(headless=True)
+        investor_rankings = None
+        if args.live:
+            from stock_monitor.operator_investor_rankings import TossInvestorRankingsLookup
+
+            try:
+                toss_config = TossOpenApiLabConfig.from_env(config.root_dir)
+            except (OSError, ValueError):
+                parser.error("Could not read the local Toss OpenAPI settings.")
+            try:
+                investor_rankings = TossInvestorRankingsLookup(
+                    toss_config, confirm_token_reissue=args.confirm_token_reissue,
+                )
+            except ValueError as exc:
+                parser.error(str(exc))
         return _run_operator_review(
             config,
             port=args.port,
             newbby_base_url=args.newbby_base_url,
+            investor_rankings=investor_rankings,
         )
     config = RuntimeConfig.from_env(headless=not getattr(args, "headed", False))
     config.ensure_runtime_dirs()
@@ -25537,6 +25561,7 @@ def _run_operator_review(
     *,
     port: int,
     newbby_base_url: str,
+    investor_rankings=None,
 ) -> int:
     from stock_monitor.operator_review_server import create_operator_review_server
 
@@ -25544,6 +25569,7 @@ def _run_operator_review(
         config,
         port=port,
         newbby_base_url=newbby_base_url,
+        investor_rankings=investor_rankings,
     )
     print(f"Operator review: http://127.0.0.1:{port}/")
     try:
