@@ -9,7 +9,10 @@ from stock_monitor.fetch.toss_openapi import (
     TossAccessToken,
     TossOpenApiHttpError,
     TossOpenApiLabConfig,
+    TossOpenApiNetworkError,
+    TossOpenApiParseError,
     TossOpenApiSafetyError,
+    TossOpenApiValidationError,
     TossReadonlyEndpoint,
     TossReadonlyResponse,
     TOSS_PRIORITY_DAILY_CANDLE_COUNTS,
@@ -23,6 +26,25 @@ from stock_monitor.fetch.toss_openapi import (
     resolve_toss_stock_universe_endpoint,
     TOSS_KR_STOCK_UNIVERSE_MARKETS,
 )
+
+
+def _stock_universe_failure_status(error: Exception) -> str:
+    if isinstance(error, TossOpenApiHttpError):
+        if type(error.status_code) is int and error.status_code in {401, 403}:
+            status = "AUTH_ERROR"
+        elif type(error.status_code) is int and error.status_code == 429:
+            status = "RATE_LIMITED"
+        else:
+            status = "HTTP_ERROR"
+    elif isinstance(error, TossOpenApiNetworkError):
+        status = "NETWORK_ERROR"
+    elif isinstance(error, TossOpenApiValidationError):
+        status = "VALIDATION_ERROR"
+    elif isinstance(error, TossOpenApiParseError):
+        status = "PARSE_ERROR"
+    else:
+        status = "UNKNOWN_ERROR"
+    return status
 
 
 def _project_market_investor_flow_record(record: object) -> dict[str, object] | None:
@@ -249,21 +271,82 @@ class TossPriorityQuoteProvider:
                 "available": False,
                 "items": [],
                 "market_counts": {},
+                "market_diagnostics": {
+                    market: {
+                        "status": "NOT_ATTEMPTED",
+                        "row_count": None,
+                        "http_status": None,
+                    }
+                    for market in TOSS_KR_STOCK_UNIVERSE_MARKETS
+                },
                 "rate_limit": {},
                 "reason": "not_configured",
             }
 
         items: list[dict[str, object]] = []
         market_counts: dict[str, int] = {}
+        market_diagnostics = {
+            market: {
+                "status": "NOT_ATTEMPTED",
+                "row_count": None,
+                "http_status": None,
+            }
+            for market in TOSS_KR_STOCK_UNIVERSE_MARKETS
+        }
         rate_limit: dict[str, dict[str, str]] = {}
+        available = True
+        interrupted = False
         for market in TOSS_KR_STOCK_UNIVERSE_MARKETS:
             endpoint = resolve_toss_stock_universe_endpoint(market)
-            response = self._fetch_endpoint_with_token_recovery(
-                endpoint=endpoint,
-                params=dict(endpoint.fixed_params),
-            )
-            rows = response.result if isinstance(response.result, list) else []
+            try:
+                response = self._fetch_endpoint_with_token_recovery(
+                    endpoint=endpoint,
+                    params=dict(endpoint.fixed_params),
+                )
+            except Exception as exc:
+                http_status = (
+                    exc.status_code
+                    if isinstance(exc, TossOpenApiHttpError) and type(exc.status_code) is int
+                    else None
+                )
+                market_diagnostics[market] = {
+                    "status": _stock_universe_failure_status(exc),
+                    "row_count": None,
+                    "http_status": http_status,
+                }
+                available = False
+                interrupted = True
+                break
+            if not isinstance(response.result, list):
+                market_diagnostics[market] = {
+                    "status": "VALIDATION_ERROR",
+                    "row_count": None,
+                    "http_status": None,
+                }
+                rate_limit[endpoint.key] = response.rate_limit
+                continue
+            rows = response.result
             market_counts[market] = len(rows)
+            valid_rows = all(
+                isinstance(row, dict)
+                and all(
+                    str(row.get(key) or "").strip()
+                    for key in ("symbol", "name", "securityType", "isinCode")
+                )
+                and isinstance(row.get("isCommonShare"), bool)
+                for row in rows
+            )
+            market_diagnostics[market] = {
+                "status": (
+                    "EMPTY"
+                    if not rows
+                    else "SUCCESS"
+                    if valid_rows
+                    else "VALIDATION_ERROR"
+                ),
+                "row_count": len(rows),
+                "http_status": None,
+            }
             rate_limit[endpoint.key] = response.rate_limit
             items.extend({**row, "market": market} for row in rows if isinstance(row, dict))
         return {
@@ -271,11 +354,12 @@ class TossPriorityQuoteProvider:
             "read_only": True,
             "configured": True,
             "live_fetch": True,
-            "available": True,
+            "available": available,
             "checked_at": datetime.now().astimezone().isoformat(),
             "markets": list(TOSS_KR_STOCK_UNIVERSE_MARKETS),
             "market_counts": market_counts,
-            "items": items,
+            "market_diagnostics": market_diagnostics,
+            "items": [] if interrupted else items,
             "rate_limit": rate_limit,
         }
 

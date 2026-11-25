@@ -13,6 +13,14 @@ The capture event is `completed` only when all required domains are present: exa
 
 The GET-only market view carries the capture status and missing domains into its stored context/freshness fields. A same-date partial capture is labeled `partial`, not `exact`; a failed attempt with no saved rows is exposed separately from the last stored snapshot date. An absent event after the scheduled window warns in operator health when the Toss task is registered and healthy and the Korean business date is not suppressed.
 
+### Read scheduler and capture status separately
+
+Use the Windows task result to check process execution and the latest `toss-market-context` / `capture` operation event to check data coverage. A scheduler result of `0` can accompany a guarded skip, `completed`, `partial`, or `empty`. A scheduled exception records `failed` when the event write is possible. Operator status flags `partial` and `empty` for attention even when the task ran successfully. The stock search shows the retained listing date; a fresh market snapshot can still use an earlier complete listing cache.
+
+The event detail includes `stock_universe_diagnostics` for KOSPI, KOSDAQ, and KR_ETC with a status, response row count when known, and numeric HTTP status when known. Statuses are `SUCCESS`, `EMPTY`, `HTTP_ERROR`, `AUTH_ERROR`, `RATE_LIMITED`, `NETWORK_ERROR`, `VALIDATION_ERROR`, `PARSE_ERROR`, and `UNKNOWN_ERROR`. `NOT_ATTEMPTED` identifies markets after a request failure halted the existing sequence. Counts observed before that failure are retained. An empty KR_ETC response is allowed when KOSPI and KOSDAQ are complete. A partial listing does not replace the earlier cache.
+
+The diagnostic stores no response bodies or credential values and uses the existing event detail field. It applies to future captures after deployment. The provider cause of the recorded November 9–24 incidents remains unknown.
+
 ## KR Calendar Cross-Check
 
 Use the operator command when checking a proposed observation schedule or test window. It reads the Toss KR calendar, compares explicit dates with local weekday/holiday rules, and never changes either source of scheduling authority:

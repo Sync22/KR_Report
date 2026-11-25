@@ -2195,6 +2195,68 @@ def test_toss_market_context_capture_is_completed_only_with_all_required_coverag
     assert repository.latest_toss_stock_universe_snapshot_date() == business_date
     assert [row.stock_code for row in repository.search_toss_stock_universe("삼성전자")] == ["005930"]
 
+    class PartiallyFailingUniverseProvider(FakeProvider):
+        def get_stock_universe(self) -> dict[str, object]:
+            listing = {**_fake_toss_stock_universe_payload()["items"][0], "name": "캐시를 바꾸면 안 됨"}
+            return {
+                "available": False,
+                "items": [listing],
+                "market_counts": {"KOSPI": 1},
+                "market_diagnostics": {
+                    "KOSPI": {"status": "SUCCESS", "row_count": 1, "http_status": None},
+                    "KOSDAQ": {
+                        "status": "RATE_LIMITED", "row_count": None, "http_status": 429,
+                        "message": "secret-Authorization-body",
+                    },
+                    "KR_ETC": {"status": "NOT_ATTEMPTED", "row_count": None, "http_status": None},
+                    "secret-market": {"status": "secret-status"},
+                },
+            }
+
+    assert cli_module._run_toss_market_context_capture(
+        config,
+        repository,
+        business_date=business_date,
+        live=True,
+        confirm_token_reissue=True,
+        confirm_save=True,
+        scheduled=True,
+        as_json=True,
+        toss_provider=PartiallyFailingUniverseProvider(),
+    ) == 0
+    output = capsys.readouterr().out
+    partial = json.loads(output)
+    assert partial["capture_status"] == "partial"
+    assert partial["coverage"]["missing_domains"] == ["stock_universe"]
+    universe = partial["coverage"]["stock_universe"]
+    assert universe["snapshot_date"] == business_date.isoformat()
+    assert universe["saved"] == 0
+    assert universe["market_counts"] == {"KOSPI": 1}
+    assert universe["market_diagnostics"] == {
+        "KOSPI": {"status": "SUCCESS", "row_count": 1, "http_status": None},
+        "KOSDAQ": {"status": "RATE_LIMITED", "row_count": None, "http_status": 429},
+        "KR_ETC": {"status": "NOT_ATTEMPTED", "row_count": None, "http_status": None},
+    }
+    events = repository.list_operation_events(component="toss-market-context", event_type="capture")
+    event = next(item for item in events if item.status == "partial")
+    detail = cli_module._extract_detail_field(event.detail, "stock_universe_diagnostics")
+    assert json.loads(detail) == universe["market_diagnostics"]
+    assert "secret-" not in output
+    assert "secret-" not in event.detail
+    assert [row.stock_code for row in repository.search_toss_stock_universe("삼성전자")] == ["005930"]
+    assert [row.stock_code for row in repository.search_toss_stock_universe("테스트코스닥")] == ["111111"]
+
+    operator_status = cli_module._build_live_observation_snapshot(
+        config,
+        repository,
+        datetime(2026, 7, 10, 21, 0),
+        [{"task_name": "StockMonitor-TossCloseSnapshot", "status_class": "healthy", "last_task_result": 0}],
+        {},
+        [event],
+    )
+    assert operator_status["components"]["toss_market_context"]["evidence_status"] == "attention"
+    assert operator_status["components"]["toss_market_context"]["attention_reason"] == "partial"
+
     rankings[-1]["symbol"] = codes[0]
     assert cli_module._run_toss_market_context_capture(
         config,

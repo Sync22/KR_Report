@@ -66,13 +66,16 @@ repository.record_operation_event(OperationEvent(
 ))
 repository.record_operation_event(OperationEvent(
     datetime(2026, 5, 8, 20, 2), "toss-market-context", "capture", "partial", business_date,
-    "snapshot_date=2026-05-08;missing_domains=top20,unknown,market_flow",
+    "snapshot_date=2026-05-08;missing_domains=top20,unknown,market_flow,stock_universe",
 ))
 repository.record_operation_event(OperationEvent(
     datetime(2026, 5, 6, 20), "toss-market-context", "capture", "empty", date(2026, 5, 6), None
 ))
 repository.record_operation_event(OperationEvent(
     datetime(2026, 5, 5, 20), "toss-market-context", "capture", "failed", date(2026, 5, 5), None
+))
+repository.record_operation_event(OperationEvent(
+    datetime(2026, 5, 4, 20), "toss-market-context", "capture", "partial", date(2026, 5, 4), None
 ))
 
 def projection(selected_date):
@@ -125,6 +128,16 @@ test("Toss daily projections match Python source/date/order rules on a read-only
         const actual = projectionModule.buildDailyTossContextFromDatabase(database, businessDate);
         database.exec("COMMIT");
         assert.deepEqual(actual, expected);
+        if (businessDate === "2026-05-08") {
+          assert.deepEqual(actual.toss_context.missing_domains, [
+            "top20", "market_flow", "stock_universe",
+          ]);
+        }
+        if (businessDate === "2026-05-04") {
+          assert.deepEqual(actual.toss_context.missing_domains, []);
+          assert.equal(actual.toss_context.notice,
+            "선택 날짜의 Toss 저장 스냅샷 일부가 누락되었습니다: 세부 누락 사유 확인 불가.");
+        }
       } catch (error) {
         database.exec("ROLLBACK");
         throw error;

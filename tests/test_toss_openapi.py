@@ -13,9 +13,13 @@ import stock_monitor.fetch.toss_openapi as toss_openapi_module
 from stock_monitor.fetch.toss_openapi import (
     TOSS_OPENAPI_BASE_URL,
     TOSS_READONLY_ENDPOINTS,
+    TOSS_STOCK_UNIVERSE_DIAGNOSTIC_STATUSES,
     TossOpenApiHttpError,
     TossOpenApiLabConfig,
+    TossOpenApiNetworkError,
+    TossOpenApiParseError,
     TossOpenApiSafetyError,
+    TossOpenApiValidationError,
     TossReadonlyEndpoint,
     _NoRedirectHandler,
     build_toss_readonly_probe_plan,
@@ -147,7 +151,7 @@ def test_toss_stock_universe_endpoint_validates_required_listing_fields() -> Non
 
     missing_isin = b'{"result":[{"symbol":"005930","name":"Samsung",' \
         b'"securityType":"STOCK","isCommonShare":true}]}'
-    with pytest.raises(RuntimeError, match="required"):
+    with pytest.raises(TossOpenApiValidationError, match="required"):
         fetch_toss_readonly_endpoint(
             base_url=TOSS_OPENAPI_BASE_URL,
             access_token="token-value",
@@ -157,6 +161,45 @@ def test_toss_stock_universe_endpoint_validates_required_listing_fields() -> Non
             live_enabled=True,
             urlopen=lambda *_args, **_kwargs: FakeResponse(missing_isin),
         )
+
+
+def test_toss_stock_universe_failure_classes_are_safe_for_diagnostics() -> None:
+    endpoint = toss_openapi_module.resolve_toss_stock_universe_endpoint("KOSPI")
+    base_request = {
+        "base_url": TOSS_OPENAPI_BASE_URL,
+        "access_token": "token-value",
+        "endpoint": endpoint,
+        "params": dict(endpoint.fixed_params),
+        "timeout_seconds": 1,
+        "live_enabled": True,
+    }
+
+    with pytest.raises(TossOpenApiNetworkError):
+        fetch_toss_readonly_endpoint(
+            **base_request,
+            urlopen=lambda *_args, **_kwargs: (_ for _ in ()).throw(error.URLError("secret-value")),
+        )
+
+    with pytest.raises(TossOpenApiParseError):
+        fetch_toss_readonly_endpoint(
+            **base_request,
+            urlopen=lambda *_args, **_kwargs: FakeResponse(b"not json"),
+        )
+
+    assert TOSS_STOCK_UNIVERSE_DIAGNOSTIC_STATUSES == frozenset(
+        {
+            "SUCCESS",
+            "EMPTY",
+            "HTTP_ERROR",
+            "AUTH_ERROR",
+            "RATE_LIMITED",
+            "NETWORK_ERROR",
+            "VALIDATION_ERROR",
+            "PARSE_ERROR",
+            "UNKNOWN_ERROR",
+            "NOT_ATTEMPTED",
+        }
+    )
 
 
 def test_toss_priority_provider_reads_fixed_kr_universes_and_tags_market() -> None:
@@ -198,6 +241,182 @@ def test_toss_priority_provider_reads_fixed_kr_universes_and_tags_market() -> No
     assert result["market_counts"] == {"KOSPI": 1, "KOSDAQ": 1, "KR_ETC": 0}
     assert [item["market"] for item in result["items"]] == ["KOSPI", "KOSDAQ"]
     assert result["items"][1]["securityType"] == "ETF"
+    assert result["market_diagnostics"] == {
+        "KOSPI": {"status": "SUCCESS", "row_count": 1, "http_status": None},
+        "KOSDAQ": {"status": "SUCCESS", "row_count": 1, "http_status": None},
+        "KR_ETC": {"status": "EMPTY", "row_count": 0, "http_status": None},
+    }
+
+
+def test_toss_priority_provider_reports_semantically_invalid_rows_and_keeps_request_order() -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    calls: list[str] = []
+    rows_by_market = {
+        "KOSPI": [{"symbol": "005930", "name": "", "securityType": "STOCK",
+                   "isCommonShare": True, "isinCode": "KR7005930003"}],
+        "KOSDAQ": [{"symbol": "123456", "name": "테스트", "securityType": "STOCK",
+                    "isCommonShare": True, "isinCode": "KR7005930004"}],
+        "KR_ETC": [],
+    }
+
+    def fetch(**kwargs):
+        market = kwargs["params"]["market"]
+        calls.append(market)
+        return SimpleNamespace(result=rows_by_market[market], rate_limit={})
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch,
+    )
+
+    result = provider.get_stock_universe()
+
+    assert calls == ["KOSPI", "KOSDAQ", "KR_ETC"]
+    assert result["available"] is True
+    assert result["market_counts"] == {"KOSPI": 1, "KOSDAQ": 1, "KR_ETC": 0}
+    assert result["market_diagnostics"]["KOSPI"] == {
+        "status": "VALIDATION_ERROR",
+        "row_count": 1,
+        "http_status": None,
+    }
+    assert result["items"][0]["name"] == ""
+
+
+def test_toss_priority_provider_preserves_success_count_and_stops_after_http_failure() -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    calls: list[str] = []
+
+    def fetch(**kwargs):
+        market = kwargs["params"]["market"]
+        calls.append(market)
+        if market == "KOSDAQ":
+            raise TossOpenApiHttpError(
+                "safe provider message that contains no source details",
+                status_code=429,
+                provider_code="rate limited secret-value",
+            )
+        return SimpleNamespace(
+            result=[{"symbol": "005930", "name": "Samsung", "securityType": "STOCK",
+                     "isCommonShare": True, "isinCode": "KR7005930003"}],
+            rate_limit={},
+        )
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch,
+    )
+    provider._fetch_quotes = fetch
+
+    result = provider.get_stock_universe()
+
+    assert calls == ["KOSPI", "KOSDAQ"]
+    assert result["available"] is False
+    assert result["market_counts"] == {"KOSPI": 1}
+    assert result["items"] == []
+    assert result["market_diagnostics"] == {
+        "KOSPI": {"status": "SUCCESS", "row_count": 1, "http_status": None},
+        "KOSDAQ": {"status": "RATE_LIMITED", "row_count": None, "http_status": 429},
+        "KR_ETC": {"status": "NOT_ATTEMPTED", "row_count": None, "http_status": None},
+    }
+    assert "secret-value" not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected", "expected_market_calls", "expected_token_issues"),
+    [
+        (TossOpenApiHttpError("safe", status_code=401), "AUTH_ERROR", 2, 2),
+        (TossOpenApiHttpError("safe", status_code=403), "AUTH_ERROR", 1, 1),
+        (TossOpenApiHttpError("safe", status_code=500), "HTTP_ERROR", 1, 1),
+        (TossOpenApiNetworkError("safe"), "NETWORK_ERROR", 1, 1),
+        (TossOpenApiValidationError("safe"), "VALIDATION_ERROR", 1, 1),
+        (TossOpenApiParseError("safe"), "PARSE_ERROR", 1, 1),
+        (RuntimeError("secret-value source body"), "UNKNOWN_ERROR", 1, 1),
+    ],
+)
+def test_toss_priority_provider_classifies_stock_universe_errors(
+    failure, expected, expected_market_calls, expected_token_issues
+) -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    calls: list[str] = []
+    token_issues: list[int] = []
+
+    def fetch(**kwargs):
+        calls.append(kwargs["params"]["market"])
+        raise failure
+
+    def issue_token(**_kwargs):
+        token_issues.append(1)
+        return SimpleNamespace(access_token="token-value")
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        issue_token=issue_token,
+        fetch_quotes=fetch,
+    )
+
+    result = provider.get_stock_universe()
+
+    assert calls == ["KOSPI"] * expected_market_calls
+    assert len(token_issues) == expected_token_issues
+    assert result["available"] is False
+    assert result["market_counts"] == {}
+    assert result["market_diagnostics"]["KOSPI"] == {
+        "status": expected,
+        "row_count": None,
+        "http_status": getattr(failure, "status_code", None),
+    }
+    assert result["market_diagnostics"]["KOSDAQ"]["status"] == "NOT_ATTEMPTED"
+    assert result["market_diagnostics"]["KR_ETC"]["status"] == "NOT_ATTEMPTED"
+    assert "secret-value" not in json.dumps(result)
+
+
+def test_toss_priority_provider_keeps_all_empty_market_responses_distinct() -> None:
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=1,
+    )
+    calls: list[str] = []
+
+    def fetch(**kwargs):
+        market = kwargs["params"]["market"]
+        calls.append(market)
+        return SimpleNamespace(result=[], rate_limit={})
+
+    provider = TossPriorityQuoteProvider(
+        config=config,
+        issue_token=lambda **_kwargs: SimpleNamespace(access_token="token-value"),
+        fetch_quotes=fetch,
+    )
+
+    result = provider.get_stock_universe()
+
+    assert calls == ["KOSPI", "KOSDAQ", "KR_ETC"]
+    assert result["available"] is True
+    assert result["market_counts"] == {"KOSPI": 0, "KOSDAQ": 0, "KR_ETC": 0}
+    assert all(item["status"] == "EMPTY" for item in result["market_diagnostics"].values())
 
 
 def test_toss_priority_provider_gets_market_calendar_for_explicit_date() -> None:

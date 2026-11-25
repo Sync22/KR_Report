@@ -3,6 +3,7 @@ import "server-only";
 import type { DatabaseSync } from "node:sqlite";
 
 import { isBusinessDate } from "../domain/daily.ts";
+import { captureMissingSummary } from "../domain/market.ts";
 
 const SOURCE = "toss_openapi";
 const ALLOWED_MISSING_DOMAINS = new Set([
@@ -11,6 +12,7 @@ const ALLOWED_MISSING_DOMAINS = new Set([
   "market_indices",
   "market_flow",
   "candidate_close_reassessment",
+  "stock_universe",
 ]);
 
 type CaptureState = {
@@ -231,7 +233,7 @@ function tossContext(database: DatabaseSync, businessDate: string, capture: Capt
   const status = capture?.status ?? null;
   const missing = capture?.missing_domains ?? [];
   const notice = status === "partial"
-    ? `선택 날짜의 Toss 저장 스냅샷 일부가 누락되었습니다: ${missing.join(", ") || "필수 데이터"}.`
+    ? `선택 날짜의 Toss 저장 스냅샷 일부가 누락되었습니다: ${captureMissingSummary(status, missing)}.`
     : status === "failed"
       ? "선택 날짜의 Toss 저장 캡처가 실패했습니다. 표시된 값은 불완전할 수 있습니다."
       : status === "empty"

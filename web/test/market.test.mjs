@@ -50,6 +50,14 @@ test("market DTOs preserve stored source dates and missing-data states", () => {
   assert.equal(marketDomain.isFlowTrendSnapshot({ ...flow, live_fetch: true }, "2026-10-08"), false);
 });
 
+test("capture summary distinguishes complete and unknown partial details", () => {
+  assert.equal(marketDomain.captureMissingSummary("complete", []), "누락 없음");
+  assert.equal(marketDomain.captureMissingSummary("completed", []), "누락 없음");
+  assert.equal(marketDomain.captureMissingSummary("partial", []), "세부 누락 사유 확인 불가");
+  assert.equal(marketDomain.captureMissingSummary("failed", []), "세부 누락 사유 확인 불가");
+  assert.equal(marketDomain.captureMissingSummary("partial", ["stock_universe"]), "stock_universe");
+});
+
 test("market snapshot reads temporary SQLite read-only and matches the Python DTO", async () => {
   const { getMarketSnapshot } = await import("../src/server/market-snapshot.ts");
   const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -57,6 +65,8 @@ test("market snapshot reads temporary SQLite read-only and matches the Python DT
   const fullPath = join(tempRoot, "full.db");
   const emptyPath = join(tempRoot, "empty.db");
   const eventOnlyPath = join(tempRoot, "event-only.db");
+  const universeOnlyPath = join(tempRoot, "universe-only.db");
+  const completePath = join(tempRoot, "complete.db");
   const previousDatabasePath = process.env.STOCK_MONITOR_DB_PATH;
 
   const createSchema = (database) => database.exec(`
@@ -133,7 +143,7 @@ test("market snapshot reads temporary SQLite read-only and matches the Python DT
 
     const event = database.prepare("INSERT INTO operation_events VALUES (?,?,?,?,?,?,?)");
     event.run(1, "2026-10-08T19:00:00+09:00", "toss-market-context", "capture", "complete", "2026-10-08", "missing_domains=");
-    event.run(2, "2026-10-08T20:00:00+09:00", "toss-market-context", "capture", "partial", "2026-10-08", "missing_domains=top20,private_domain,market_flow");
+    event.run(2, "2026-10-08T20:00:00+09:00", "toss-market-context", "capture", "partial", "2026-10-08", "missing_domains=top20,private_domain,market_flow,stock_universe");
     event.run(3, "2026-10-09T20:00:00+09:00", "toss-market-context", "capture", "failed", "2026-10-09", "missing_domains=security_metadata");
   };
 
@@ -148,11 +158,26 @@ test("market snapshot reads temporary SQLite read-only and matches the Python DT
     const eventDatabase = new DatabaseSync(eventOnlyPath);
     createSchema(eventDatabase);
     eventDatabase.prepare("INSERT INTO operation_events VALUES (?,?,?,?,?,?,?)").run(
-      1, "2026-10-08T20:00:00+09:00", "toss-market-context", "capture", "failed", "2026-10-08", "missing_domains=market_flow",
+      1, "2026-10-08T20:00:00+09:00", "toss-market-context", "capture", "partial", "2026-10-08", null,
     );
     eventDatabase.close();
+    for (const [path, businessDate, status, detail] of [
+      [universeOnlyPath, "2026-10-10", "partial", "missing_domains=stock_universe"],
+      [completePath, "2026-10-11", "completed", "missing_domains="],
+    ]) {
+      const database = new DatabaseSync(path);
+      createSchema(database);
+      database.prepare(
+        "INSERT INTO stock_market_daily (business_date, stock_code, stock_name, market, close_price, change_percent, volume, turnover, fetched_at, source) " +
+        "VALUES (?, '005930', '삼성전자', 'KOSPI', 100, 1, 10, 1000, ?, 'toss_openapi')",
+      ).run(businessDate, `${businessDate}T20:05:00+09:00`);
+      database.prepare("INSERT INTO operation_events VALUES (?,?,?,?,?,?,?)").run(
+        1, `${businessDate}T20:06:00+09:00`, "toss-market-context", "capture", status, businessDate, detail,
+      );
+      database.close();
+    }
 
-    const paths = [fullPath, emptyPath, eventOnlyPath];
+    const paths = [fullPath, emptyPath, eventOnlyPath, universeOnlyPath, completePath];
     const nextSnapshots = [];
     const fileStats = paths.map((path) => {
       const { size, mtimeMs } = statSync(path);
@@ -190,11 +215,11 @@ print(json.dumps(snapshots, ensure_ascii=False, separators=(",", ":")))
     const withoutNow = ({ now: _now, ...snapshot }) => snapshot;
     assert.deepEqual(nextSnapshots.map(withoutNow), pythonSnapshots.map(withoutNow));
 
-    const [full, empty, eventOnly] = nextSnapshots;
+    const [full, empty, eventOnly, universeOnly, complete] = nextSnapshots;
     assert.equal(marketDomain.isMarketSnapshot(full), true);
     assert.equal(full.snapshot_date, "2026-10-08");
     assert.equal(full.capture_status, "partial");
-    assert.deepEqual(full.missing_domains, ["top20", "market_flow"]);
+    assert.deepEqual(full.missing_domains, ["top20", "market_flow", "stock_universe"]);
     assert.deepEqual(full.latest_capture_attempt, {
       status: "failed",
       business_date: "2026-10-09",
@@ -213,8 +238,17 @@ print(json.dumps(snapshots, ensure_ascii=False, separators=(",", ":")))
     assert.equal(empty.latest_capture_attempt, null);
     assert.equal(marketDomain.isMarketSnapshot(eventOnly), true);
     assert.equal(eventOnly.snapshot_date, null);
-    assert.equal(eventOnly.capture_status, "failed");
-    assert.deepEqual(eventOnly.missing_domains, ["market_flow"]);
+    assert.equal(eventOnly.capture_status, "partial");
+    assert.deepEqual(eventOnly.missing_domains, []);
+    assert.equal(marketDomain.captureMissingSummary(eventOnly.capture_status, eventOnly.missing_domains),
+      "세부 누락 사유 확인 불가");
+    assert.equal(universeOnly.snapshot_date, "2026-10-10");
+    assert.equal(universeOnly.capture_status, "partial");
+    assert.deepEqual(universeOnly.missing_domains, ["stock_universe"]);
+    assert.deepEqual(universeOnly.top_kospi_stocks.map((row) => row.stock_code), ["005930"]);
+    assert.equal(complete.snapshot_date, "2026-10-11");
+    assert.equal(complete.capture_status, "completed");
+    assert.deepEqual(complete.missing_domains, []);
   } finally {
     if (previousDatabasePath === undefined) delete process.env.STOCK_MONITOR_DB_PATH;
     else process.env.STOCK_MONITOR_DB_PATH = previousDatabasePath;

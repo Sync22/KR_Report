@@ -40,6 +40,20 @@ _STOCK_FIELDS = frozenset(
 )
 _LISTED_STOCK_FIELDS = frozenset({"symbol", "name", "securityType", "isCommonShare", "isinCode"})
 TOSS_KR_STOCK_UNIVERSE_MARKETS = ("KOSPI", "KOSDAQ", "KR_ETC")
+TOSS_STOCK_UNIVERSE_DIAGNOSTIC_STATUSES = frozenset(
+    {
+        "SUCCESS",
+        "EMPTY",
+        "HTTP_ERROR",
+        "AUTH_ERROR",
+        "RATE_LIMITED",
+        "NETWORK_ERROR",
+        "VALIDATION_ERROR",
+        "PARSE_ERROR",
+        "UNKNOWN_ERROR",
+        "NOT_ATTEMPTED",
+    }
+)
 _KR_MARKET_DETAIL_FIELDS = frozenset(
     {"liquidationTrading", "nxtSupported", "krxTradingSuspended", "nxtTradingSuspended"}
 )
@@ -85,6 +99,18 @@ _STOCK_INSTITUTION_TRADING_VOLUME_FIELDS = _INVESTOR_TRADING_VOLUME_FIELDS | fro
 
 class TossOpenApiSafetyError(RuntimeError):
     """Raised when a Toss request crosses the read-only lab boundary."""
+
+
+class TossOpenApiNetworkError(RuntimeError):
+    """A Toss request failed before an HTTP response was received."""
+
+
+class TossOpenApiParseError(RuntimeError):
+    """A Toss response body could not be decoded as the expected JSON shape."""
+
+
+class TossOpenApiValidationError(RuntimeError):
+    """A decoded Toss response did not satisfy its endpoint contract."""
 
 
 class TossOpenApiHttpError(RuntimeError):
@@ -412,7 +438,7 @@ def issue_toss_access_token(
         or not isinstance(expires_in, int)
         or expires_in <= 0
     ):
-        raise RuntimeError("Toss OpenAPI token response had an unexpected shape.")
+        raise TossOpenApiParseError("Toss OpenAPI token response had an unexpected shape.")
     return TossAccessToken(access_token=access_token, expires_in=expires_in)
 
 
@@ -459,7 +485,9 @@ def fetch_toss_readonly_endpoint(
     except error.HTTPError as exc:
         raise _safe_http_error(exc, action=f"{endpoint.key} request") from None
     except (error.URLError, TimeoutError, OSError):
-        raise RuntimeError(f"Toss OpenAPI {endpoint.key} request failed (transport error).") from None
+        raise TossOpenApiNetworkError(
+            f"Toss OpenAPI {endpoint.key} request failed (transport error)."
+        ) from None
     result = payload.get("result")
     expected_type = dict if endpoint.key in {
         "market-calendar-kr",
@@ -474,8 +502,13 @@ def fetch_toss_readonly_endpoint(
         "investor-trading-rankings",
     } else list
     if not isinstance(result, expected_type):
-        raise RuntimeError(f"Toss OpenAPI {endpoint.key} response had an unexpected shape.")
-    _validate_readonly_result(endpoint, result, params=params)
+        raise TossOpenApiParseError(f"Toss OpenAPI {endpoint.key} response had an unexpected shape.")
+    try:
+        _validate_readonly_result(endpoint, result, params=params)
+    except TossOpenApiParseError:
+        raise
+    except RuntimeError as exc:
+        raise TossOpenApiValidationError(str(exc)) from None
     row_count = len(result) if isinstance(result, list) else 1
     return TossReadonlyResponse(
         endpoint=endpoint,
@@ -990,19 +1023,21 @@ def _open_json(
     except error.HTTPError as exc:
         raise _safe_http_error(exc, action=action) from None
     except (error.URLError, TimeoutError, OSError):
-        raise RuntimeError(f"Toss OpenAPI {action} failed (transport error).") from None
+        raise TossOpenApiNetworkError(f"Toss OpenAPI {action} failed (transport error).") from None
 
 
 def _decode_json_response(response: object, *, action: str) -> dict[str, object]:
     try:
         body = response.read(TOSS_OPENAPI_MAX_RESPONSE_BYTES + 1)
         if len(body) > TOSS_OPENAPI_MAX_RESPONSE_BYTES:
-            raise RuntimeError(f"Toss OpenAPI {action} response exceeded the lab size limit.")
+            raise TossOpenApiParseError(
+                f"Toss OpenAPI {action} response exceeded the lab size limit."
+            )
         payload = json.loads(body.decode("utf-8"))
     except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
-        raise RuntimeError(f"Toss OpenAPI {action} returned invalid JSON.") from None
+        raise TossOpenApiParseError(f"Toss OpenAPI {action} returned invalid JSON.") from None
     if not isinstance(payload, dict):
-        raise RuntimeError(f"Toss OpenAPI {action} returned an unexpected JSON shape.")
+        raise TossOpenApiParseError(f"Toss OpenAPI {action} returned an unexpected JSON shape.")
     return payload
 
 

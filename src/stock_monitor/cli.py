@@ -91,6 +91,7 @@ from stock_monitor.fetch.naver_stock_theme import (
 )
 from stock_monitor.fetch.toss_openapi import (
     TOSS_KR_STOCK_UNIVERSE_MARKETS,
+    TOSS_STOCK_UNIVERSE_DIAGNOSTIC_STATUSES,
     TossOpenApiLabConfig,
     TossOpenApiSafetyError,
     build_toss_readonly_probe_plan,
@@ -8293,6 +8294,26 @@ def _normalize_toss_priority_baseline_time(value: str) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
+def _safe_toss_universe_diagnostics(raw: object) -> dict[str, dict[str, object]]:
+    diagnostics = raw if isinstance(raw, dict) else {}
+    result = {}
+    for market in TOSS_KR_STOCK_UNIVERSE_MARKETS:
+        item = diagnostics.get(market)
+        if not isinstance(item, dict):
+            item = {}
+        status = item.get("status")
+        row_count = item.get("row_count")
+        http_status = item.get("http_status")
+        result[market] = {
+            "status": status
+            if isinstance(status, str) and status in TOSS_STOCK_UNIVERSE_DIAGNOSTIC_STATUSES
+            else "UNKNOWN_ERROR",
+            "row_count": row_count if type(row_count) is int and row_count >= 0 else None,
+            "http_status": http_status if type(http_status) is int and 100 <= http_status <= 599 else None,
+        }
+    return result
+
+
 def _run_toss_market_context_capture(
     config: RuntimeConfig,
     repository: StockMonitorRepository,
@@ -8409,9 +8430,10 @@ def _run_toss_market_context_capture(
     stock_universe_error: str | None = None
     try:
         stock_universe_payload = provider.get_stock_universe()
-    except RuntimeError as exc:
+    except RuntimeError:
         stock_universe_payload = {"available": False, "items": [], "market_counts": {}}
-        stock_universe_error = type(exc).__name__
+        stock_universe_error = "UNKNOWN_ERROR"
+    universe_diagnostics = _safe_toss_universe_diagnostics(stock_universe_payload.get("market_diagnostics"))
     universe_items = stock_universe_payload.get("items") if isinstance(stock_universe_payload.get("items"), list) else []
     universe_market_counts = (
         stock_universe_payload.get("market_counts")
@@ -8820,6 +8842,7 @@ def _run_toss_market_context_capture(
         "stock_universe": {
             "expected_markets": list(TOSS_KR_STOCK_UNIVERSE_MARKETS),
             "market_counts": universe_market_counts,
+            "market_diagnostics": universe_diagnostics,
             "saved": stock_universe_saved_count,
             "snapshot_date": (
                 business_date.isoformat()
@@ -8882,7 +8905,8 @@ def _run_toss_market_context_capture(
                     f"candidate_targets={len(candidate_symbols)}; candidate_missing={len(candidate_missing_codes)}; "
                     f"stock_universe_saved={stock_universe_saved_count}; "
                     f"stock_universe_markets={','.join(f'{market}:{universe_market_counts.get(market, 0)}' for market in TOSS_KR_STOCK_UNIVERSE_MARKETS)}; "
-                    f"missing_domains={','.join(missing_domains) or '-'}"
+                    f"missing_domains={','.join(missing_domains) or '-'}; "
+                    f"stock_universe_diagnostics={json.dumps(universe_diagnostics, separators=(',', ':'))}"
                 ),
             )
         )
@@ -8952,6 +8976,8 @@ def _print_toss_market_context_capture_payload(payload: dict[str, object], *, as
     if "capture_status" in payload:
         print(f"- capture_status: {payload['capture_status']}")
         print(f"- missing_domains: {','.join(payload['coverage']['missing_domains']) or '-'}")
+        market_diagnostics = payload["coverage"]["stock_universe"]["market_diagnostics"]
+        print(f"- stock_universe_diagnostics: {json.dumps(market_diagnostics, separators=(',', ':'))}")
     if "saved_count" in payload:
         print(f"- saved_count: {payload['saved_count']}")
 
@@ -41238,6 +41264,7 @@ def _web_view_toss_capture_state(
         "market_indices",
         "market_flow",
         "candidate_close_reassessment",
+        "stock_universe",
     }
     missing_domains = [
         value
@@ -41283,7 +41310,7 @@ def _build_web_view_toss_context(
     capture_status = str(capture_state.get("status") or "") if capture_state else None
     missing_domains = list(capture_state.get("missing_domains") or []) if capture_state else []
     if capture_status == "partial":
-        missing_label = ", ".join(str(value) for value in missing_domains) or "필수 데이터"
+        missing_label = ", ".join(str(value) for value in missing_domains) or "세부 누락 사유 확인 불가"
         notice = f"선택 날짜의 Toss 저장 스냅샷 일부가 누락되었습니다: {missing_label}."
     elif capture_status == "failed":
         notice = "선택 날짜의 Toss 저장 캡처가 실패했습니다. 표시된 값은 불완전할 수 있습니다."
