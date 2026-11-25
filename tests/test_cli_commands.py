@@ -2481,13 +2481,15 @@ def test_toss_market_context_capture_keeps_last_complete_universe_on_fetch_failu
 
 
 @pytest.mark.parametrize(
-    "invalid_listing",
-    [None, {"name": " "}, {"isCommonShare": "true"}],
-    ids=["valid", "blank-name", "nonboolean-common-share"],
+    ("invalid_listing", "rate_limited"),
+    [(None, False), ({"name": " "}, False), ({"isCommonShare": "true"}, False), (None, True)],
+    ids=["valid", "blank-name", "nonboolean-common-share", "rate-limited"],
 )
 def test_toss_market_context_capture_only_replaces_universe_with_valid_listings(
-    tmp_path, capsys, monkeypatch, invalid_listing
+    tmp_path, capsys, monkeypatch, invalid_listing, rate_limited
 ) -> None:
+    from stock_monitor.fetch.toss_openapi import TossOpenApiHttpError
+
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
     repository.initialize()
@@ -2516,10 +2518,17 @@ def test_toss_market_context_capture_only_replaces_universe_with_valid_listings(
     rows = {"KOSPI": [kospi], "KOSDAQ": [{**kosdaq, **(invalid_listing or {})}], "KR_ETC": []}
     calls = []
     issues = []
+    now = 0.0
+
+    def advance(seconds):
+        nonlocal now
+        now += seconds
 
     def fetch(**kwargs):
         market = kwargs["params"]["market"]
-        calls.append(market)
+        calls.append((market, now))
+        if rate_limited and market == "KOSDAQ":
+            raise TossOpenApiHttpError("mock limit", status_code=429, retry_after="3")
         return SimpleNamespace(result=rows[market], rate_limit={})
 
     def issue(**_kwargs):
@@ -2544,6 +2553,8 @@ def test_toss_market_context_capture_only_replaces_universe_with_valid_listings(
         ),
         issue_token=issue,
         fetch_quotes=fetch,
+        clock=lambda: now,
+        sleep=advance,
     )
     assert cli_module._run_toss_market_context_capture(
         config,
@@ -2557,17 +2568,28 @@ def test_toss_market_context_capture_only_replaces_universe_with_valid_listings(
         toss_provider=provider,
     ) == 0
 
-    assert calls == ["KOSPI", "KOSDAQ", "KR_ETC"]
+    assert calls == (
+        [("KOSPI", 0.0), ("KOSDAQ", 1.1)]
+        if rate_limited
+        else [("KOSPI", 0.0), ("KOSDAQ", 1.1), ("KR_ETC", 2.2)]
+    )
     assert issues == ["token"]
-    assert provider.universe_response["available"] is True
+    assert provider.universe_response["available"] is (not rate_limited)
     coverage = json.loads(capsys.readouterr().out)["coverage"]
     universe = coverage["stock_universe"]
-    assert universe["market_counts"] == {"KOSPI": 1, "KOSDAQ": 1, "KR_ETC": 0}
-    assert universe["market_diagnostics"]["KOSDAQ"]["status"] == (
-        "SUCCESS" if invalid_listing is None else "VALIDATION_ERROR"
-    )
-    assert universe["complete"] is (invalid_listing is None)
-    if invalid_listing is not None:
+    if rate_limited:
+        assert universe["market_counts"] == {"KOSPI": 1}
+        assert universe["market_diagnostics"]["KOSDAQ"] == {
+            "status": "RATE_LIMITED", "row_count": None, "http_status": 429,
+        }
+        assert universe["market_diagnostics"]["KR_ETC"]["status"] == "NOT_ATTEMPTED"
+    else:
+        assert universe["market_counts"] == {"KOSPI": 1, "KOSDAQ": 1, "KR_ETC": 0}
+        assert universe["market_diagnostics"]["KOSDAQ"]["status"] == (
+            "SUCCESS" if invalid_listing is None else "VALIDATION_ERROR"
+        )
+    assert universe["complete"] is (invalid_listing is None and not rate_limited)
+    if invalid_listing is not None or rate_limited:
         assert write_dates == []
         assert universe["saved"] == 0
         assert universe["snapshot_date"] == prior_date.isoformat()

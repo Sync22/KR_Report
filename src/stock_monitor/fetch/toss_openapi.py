@@ -123,11 +123,13 @@ class TossOpenApiHttpError(RuntimeError):
         status_code: int,
         provider_code: str | None = None,
         retry_after: str | None = None,
+        rate_limit: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.provider_code = provider_code
         self.retry_after = retry_after
+        self.rate_limit = rate_limit or {}
 
 
 @dataclass(frozen=True)
@@ -1074,10 +1076,11 @@ def _safe_http_error(exc: error.HTTPError, *, action: str) -> TossOpenApiHttpErr
                 provider_code = raw_code
     except (AttributeError, OSError, UnicodeDecodeError, json.JSONDecodeError):
         pass
-    retry_after = _read_rate_limit_headers(getattr(exc, "headers", {})).get("retry_after")
+    rate_limit = _read_rate_limit_headers(getattr(exc, "headers", {}))
     return TossOpenApiHttpError(
         f"Toss OpenAPI {action} failed (HTTP {exc.code}).",
         status_code=exc.code,
         provider_code=provider_code,
-        retry_after=retry_after,
+        retry_after=rate_limit.get("retry_after"),
+        rate_limit=rate_limit,
     )

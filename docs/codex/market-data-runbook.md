@@ -23,6 +23,14 @@ The event detail includes `stock_universe_diagnostics` for KOSPI, KOSDAQ, and KR
 
 The diagnostic stores no response bodies or credential values and uses the existing event detail field. It applies to future captures after deployment. The provider cause of the recorded November 9–24 incidents remains unknown.
 
+### Pace Toss listing requests
+
+KOSPI, KOSDAQ, and KR_ETC use the same `STOCK_ALL` group. Toss documents a maximum of one request per second per client and API group. The November 25 capture recorded KOSPI success with 2,494 rows, KOSDAQ HTTP 429, and KR_ETC not attempted. The previous code sent the next request as soon as the prior response returned. This supports the missing interval as a cause of that 429. The logs do not identify other callers sharing the client's quota. [Toss rate-limit overview](https://openapi.tossinvest.com/openapi-docs/overview.md)
+
+One provider instance now waits at least 1.1 seconds from completion of each `STOCK_ALL` attempt to the next send, measured with a monotonic clock. The existing one-time 401 recovery follows the same interval. The wait can increase based on an advertised TPS (`X-RateLimit-Limit`) or, with zero tokens remaining, the refill estimate (`X-RateLimit-Reset` in seconds), each with a 0.1-second margin. Missing or invalid headers leave the fixed floor in place. If a server hint extends the cooldown beyond the configured request timeout, the next send stops safely. On HTTP 429, the current capture retains its partial diagnostics and stops without a retry or token reissue. A valid `Retry-After` or refill estimate from the 429 can only delay a later call on that same provider instance. [Toss header semantics](https://openapi.tossinvest.com/openapi-docs/overview.md)
+
+Three successful requests typically add 2.2 seconds of waiting to the capture. This pacing is confined to one provider instance. A separate process using the same Toss client can still consume the server-side quota. Cache completeness and replacement rules are unchanged.
+
 ## KR Calendar Cross-Check
 
 Use the operator command when checking a proposed observation schedule or test window. It reads the Toss KR calendar, compares explicit dates with local weekday/holiday rules, and never changes either source of scheduling authority:
