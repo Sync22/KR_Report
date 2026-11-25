@@ -19,6 +19,8 @@ Use the Windows task result to check process execution and the latest `toss-mark
 
 The event detail includes `stock_universe_diagnostics` for KOSPI, KOSDAQ, and KR_ETC with a status, response row count when known, and numeric HTTP status when known. Statuses are `SUCCESS`, `EMPTY`, `HTTP_ERROR`, `AUTH_ERROR`, `RATE_LIMITED`, `NETWORK_ERROR`, `VALIDATION_ERROR`, `PARSE_ERROR`, and `UNKNOWN_ERROR`. `NOT_ATTEMPTED` identifies markets after a request failure halted the existing sequence. Counts observed before that failure are retained. An empty KR_ETC response is allowed when KOSPI and KOSDAQ are complete. A partial listing does not replace the earlier cache.
 
+`get_stock_universe().available` describes the request sequence. It may be `true` when a returned listing has `VALIDATION_ERROR`. Before writing the cache, the capture CLI requires a returned count for all three markets, nonempty KOSPI and KOSDAQ results, a nonempty combined listing, and valid fields on every row. It reports `coverage.stock_universe.complete` only when those checks pass and the write count matches.
+
 The diagnostic stores no response bodies or credential values and uses the existing event detail field. It applies to future captures after deployment. The provider cause of the recorded November 9–24 incidents remains unknown.
 
 ## KR Calendar Cross-Check

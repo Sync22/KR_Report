@@ -262,6 +262,12 @@ class TossPriorityQuoteProvider:
         return response.result if isinstance(response.result, dict) else {}
 
     def get_stock_universe(self) -> dict[str, object]:
+        """Collect the fixed-market listing responses and their diagnostics.
+
+        `available` means the request sequence finished without an exception.
+        Empty responses and semantically invalid rows can still be available.
+        The capture CLI checks completeness before saving the listing cache.
+        """
         if not self.configured:
             return {
                 "surface": "toss-stock-universe",
