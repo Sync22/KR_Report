@@ -1,4 +1,9 @@
-import { isMarketSnapshot, isFlowTrendSnapshot, type FlowTrendSnapshot } from "@/domain/market";
+import {
+  captureMissingSummary,
+  isMarketSnapshot,
+  isFlowTrendSnapshot,
+  type FlowTrendSnapshot,
+} from "@/domain/market";
 import { getFlowTrendSnapshot } from "@/server/flow-trend";
 import { getMarketSnapshot } from "@/server/market-snapshot";
 import PublicPageHeader from "@/components/server/public-page-header";
@@ -61,11 +66,11 @@ export default async function MarketPage() {
           <span>Toss 20:00 스냅샷</span><strong>{market.snapshot_date ?? "자료 없음"}</strong><span>저장값 참고</span>
         </div>
       </header>
-      {market.capture_status && market.capture_status !== "complete" ? (
-        <p className="market-capture-note" role="status">저장 상태: {market.capture_status} · 누락 항목: {market.missing_domains.join(", ") || "확인된 누락 없음"}</p>
+      {market.capture_status && !["complete", "completed"].includes(market.capture_status) ? (
+        <p className="market-capture-note" role="status">저장 상태: {market.capture_status} · 누락 항목: {captureMissingSummary(market.capture_status, market.missing_domains)}</p>
       ) : null}
       {market.latest_capture_attempt ? (
-        <p className="data-note market-capture-detail">최근 저장 시도: {market.latest_capture_attempt.business_date ?? "기준일 없음"} · {market.latest_capture_attempt.status} · 누락 항목: {market.latest_capture_attempt.missing_domains.join(", ") || "없음"}</p>
+        <p className="data-note market-capture-detail">최근 저장 시도: {market.latest_capture_attempt.business_date ?? "기준일 없음"} · {market.latest_capture_attempt.status} · 누락 항목: {captureMissingSummary(market.latest_capture_attempt.status, market.latest_capture_attempt.missing_domains)}</p>
       ) : null}
       {market.snapshot_date === null ? <Message>저장된 Toss 20:00 시장 스냅샷이 없습니다.</Message> : null}
 

@@ -9112,7 +9112,24 @@ def test_web_view_news_connection_does_not_present_stale_krx_as_news_evidence() 
     assert "KRX" not in reason
 
 
-def test_web_view_marks_partial_toss_capture_instead_of_exact_market_snapshot(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("status", "detail", "expected_missing", "expected_freshness", "notice_fragment"),
+    [
+        ("partial", "missing_domains=stock_universe", ["stock_universe"], "partial", "stock_universe"),
+        (
+            "partial",
+            "missing_domains=stock_universe,candidate_close_reassessment",
+            ["stock_universe", "candidate_close_reassessment"],
+            "partial",
+            "candidate_close_reassessment",
+        ),
+        ("partial", "missing_domains=internal_only", [], "partial", "세부 누락 사유 확인 불가"),
+        ("completed", "missing_domains=-", [], "exact", "저장 스냅샷 기준"),
+    ],
+)
+def test_web_view_projects_toss_capture_status_and_missing_domains(
+    tmp_path, monkeypatch, status, detail, expected_missing, expected_freshness, notice_fragment
+) -> None:
     monkeypatch.delenv("STOCK_MONITOR_DB_PATH", raising=False)
     config = RuntimeConfig.from_env(root_dir=tmp_path)
     repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
@@ -9154,9 +9171,9 @@ def test_web_view_marks_partial_toss_capture_instead_of_exact_market_snapshot(tm
             event_time=captured_at,
             component="toss-market-context",
             event_type="capture",
-            status="partial",
+            status=status,
             business_date=business_date,
-            detail="missing_domains=market_indices,market_flow",
+            detail=detail,
         )
     )
 
@@ -9173,12 +9190,16 @@ def test_web_view_marks_partial_toss_capture_instead_of_exact_market_snapshot(tm
     )
 
     freshness = {item["key"]: item for item in daily_snapshot["source_freshness_summary"]["items"]}
-    assert daily_snapshot["toss_context"]["capture_status"] == "partial"
-    assert daily_snapshot["toss_context"]["missing_domains"] == ["market_indices", "market_flow"]
-    assert freshness["toss_market"]["status"] == "partial"
-    assert freshness["toss_market"]["exact_date_available"] is False
-    assert market_snapshot["capture_status"] == "partial"
-    assert market_snapshot["missing_domains"] == ["market_indices", "market_flow"]
+    assert daily_snapshot["toss_context"]["capture_status"] == status
+    assert daily_snapshot["toss_context"]["missing_domains"] == expected_missing
+    assert notice_fragment in daily_snapshot["toss_context"]["notice"]
+    assert freshness["toss_market"]["status"] == expected_freshness
+    assert freshness["toss_market"]["exact_date_available"] is (status == "completed")
+    assert freshness["toss_market"]["missing_domains"] == expected_missing
+    assert market_snapshot["capture_status"] == status
+    assert market_snapshot["missing_domains"] == expected_missing
+    assert market_snapshot["latest_capture_attempt"]["missing_domains"] == expected_missing
+    assert market_snapshot["top_kospi_stocks"][0]["close_price"] == 70_000
 
 
 def test_web_view_exposes_failed_toss_capture_without_new_snapshot_rows(tmp_path, monkeypatch) -> None:

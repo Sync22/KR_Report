@@ -138,7 +138,7 @@ with repository.connect() as connection, connection:
         """,
         [
             ("2026-05-08T20:01:00+09:00", "complete", "2026-05-08", "missing_domains=unknown"),
-            ("2026-05-08T20:02:00+09:00", "partial", "2026-05-08", "snapshot_date=2026-05-08;missing_domains=top20,unknown,market_flow,candidate_close_reassessment"),
+            ("2026-05-08T20:02:00+09:00", "partial", "2026-05-08", "snapshot_date=2026-05-08;missing_domains=top20,unknown,market_flow,candidate_close_reassessment,stock_universe"),
             ("2026-05-07T20:02:00+09:00", "complete", "2026-05-07", "missing_domains=security_metadata,unknown"),
             ("2026-05-09T20:02:00+09:00", "failed", "2026-05-09", None),
             ("2026-05-06T20:02:00+09:00", "empty", "2026-05-06", None),
@@ -224,8 +224,10 @@ test("daily source freshness matches Python while reading the caller's read-only
       assert.equal(priorityFlow.coverage_count, 2);
       assert.equal(priorityFlow.candidate_count, 2);
       assert.deepEqual(actualById.priority_partial.items[1].missing_domains, [
-        "top20", "market_flow", "candidate_close_reassessment",
+        "top20", "market_flow", "candidate_close_reassessment", "stock_universe",
       ]);
+      assert.equal(actualById.priority_partial.items[1].status, "partial");
+      assert.equal(actualById.priority_partial.items[1].exact_date_available, false);
       assert.equal(actualById.priority_exact_without_reports.items[0].status, "missing");
       assert.equal(actualById.priority_exact_without_reports.items[3].status, "exact");
       assert.equal(actualById.exact_fallback_and_complete_capture.items[3].data_scope, "stored_toss_close_market_flow");

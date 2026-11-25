@@ -3,7 +3,7 @@ import "server-only";
 import type { DatabaseSync } from "node:sqlite";
 
 import { isBusinessDate } from "../domain/daily.ts";
-import type { MarketSnapshot } from "../domain/market.ts";
+import { captureMissingSummary, type MarketSnapshot } from "../domain/market.ts";
 import { withReadOnlyDatabase } from "./sqlite.ts";
 
 const SOURCE = "toss_openapi";
@@ -17,6 +17,7 @@ const ALLOWED_MISSING_DOMAINS = new Set([
   "market_indices",
   "market_flow",
   "candidate_close_reassessment",
+  "stock_universe",
 ]);
 
 type StockRow = {

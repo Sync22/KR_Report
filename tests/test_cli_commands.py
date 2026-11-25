@@ -4,6 +4,7 @@ import sqlite3
 from argparse import Namespace
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -2195,6 +2196,68 @@ def test_toss_market_context_capture_is_completed_only_with_all_required_coverag
     assert repository.latest_toss_stock_universe_snapshot_date() == business_date
     assert [row.stock_code for row in repository.search_toss_stock_universe("삼성전자")] == ["005930"]
 
+    class PartiallyFailingUniverseProvider(FakeProvider):
+        def get_stock_universe(self) -> dict[str, object]:
+            listing = {**_fake_toss_stock_universe_payload()["items"][0], "name": "캐시를 바꾸면 안 됨"}
+            return {
+                "available": False,
+                "items": [listing],
+                "market_counts": {"KOSPI": 1},
+                "market_diagnostics": {
+                    "KOSPI": {"status": "SUCCESS", "row_count": 1, "http_status": None},
+                    "KOSDAQ": {
+                        "status": "RATE_LIMITED", "row_count": None, "http_status": 429,
+                        "message": "secret-Authorization-body",
+                    },
+                    "KR_ETC": {"status": "NOT_ATTEMPTED", "row_count": None, "http_status": None},
+                    "secret-market": {"status": "secret-status"},
+                },
+            }
+
+    assert cli_module._run_toss_market_context_capture(
+        config,
+        repository,
+        business_date=business_date,
+        live=True,
+        confirm_token_reissue=True,
+        confirm_save=True,
+        scheduled=True,
+        as_json=True,
+        toss_provider=PartiallyFailingUniverseProvider(),
+    ) == 0
+    output = capsys.readouterr().out
+    partial = json.loads(output)
+    assert partial["capture_status"] == "partial"
+    assert partial["coverage"]["missing_domains"] == ["stock_universe"]
+    universe = partial["coverage"]["stock_universe"]
+    assert universe["snapshot_date"] == business_date.isoformat()
+    assert universe["saved"] == 0
+    assert universe["market_counts"] == {"KOSPI": 1}
+    assert universe["market_diagnostics"] == {
+        "KOSPI": {"status": "SUCCESS", "row_count": 1, "http_status": None},
+        "KOSDAQ": {"status": "RATE_LIMITED", "row_count": None, "http_status": 429},
+        "KR_ETC": {"status": "NOT_ATTEMPTED", "row_count": None, "http_status": None},
+    }
+    events = repository.list_operation_events(component="toss-market-context", event_type="capture")
+    event = next(item for item in events if item.status == "partial")
+    detail = cli_module._extract_detail_field(event.detail, "stock_universe_diagnostics")
+    assert json.loads(detail) == universe["market_diagnostics"]
+    assert "secret-" not in output
+    assert "secret-" not in event.detail
+    assert [row.stock_code for row in repository.search_toss_stock_universe("삼성전자")] == ["005930"]
+    assert [row.stock_code for row in repository.search_toss_stock_universe("테스트코스닥")] == ["111111"]
+
+    operator_status = cli_module._build_live_observation_snapshot(
+        config,
+        repository,
+        datetime(2026, 7, 10, 21, 0),
+        [{"task_name": "StockMonitor-TossCloseSnapshot", "status_class": "healthy", "last_task_result": 0}],
+        {},
+        [event],
+    )
+    assert operator_status["components"]["toss_market_context"]["evidence_status"] == "attention"
+    assert operator_status["components"]["toss_market_context"]["attention_reason"] == "partial"
+
     rankings[-1]["symbol"] = codes[0]
     assert cli_module._run_toss_market_context_capture(
         config,
@@ -2415,6 +2478,107 @@ def test_toss_market_context_capture_keeps_last_complete_universe_on_fetch_failu
     assert stale_payload["coverage"]["stock_universe"]["snapshot_date"] == prior_date.isoformat()
     assert "stock_universe" in stale_payload["coverage"]["missing_domains"]
     assert repository.latest_toss_stock_universe_snapshot_date() == prior_date
+
+
+@pytest.mark.parametrize(
+    "invalid_listing",
+    [None, {"name": " "}, {"isCommonShare": "true"}],
+    ids=["valid", "blank-name", "nonboolean-common-share"],
+)
+def test_toss_market_context_capture_only_replaces_universe_with_valid_listings(
+    tmp_path, capsys, monkeypatch, invalid_listing
+) -> None:
+    config = RuntimeConfig.from_env(root_dir=tmp_path)
+    repository = StockMonitorRepository(config.db_path, timezone=config.timezone)
+    repository.initialize()
+    prior_date = date(2026, 7, 9)
+    business_date = date(2026, 7, 10)
+    previous = TossStockUniverseEntry(
+        business_date=prior_date,
+        market="KOSPI",
+        stock_code="005930",
+        stock_name="기존 종목명",
+        security_type="STOCK",
+        is_common_share=True,
+        isin_code="KR7005930003",
+        fetched_at=datetime.fromisoformat("2026-07-09T20:05:00+09:00"),
+    )
+    assert repository.upsert_toss_stock_universe_cache([previous]) == 1
+    write_dates = []
+    save = repository.upsert_toss_stock_universe_cache
+
+    def record_write(rows):
+        write_dates.append([row.business_date for row in rows])
+        return save(rows)
+
+    monkeypatch.setattr(repository, "upsert_toss_stock_universe_cache", record_write)
+    kospi, kosdaq = _fake_toss_stock_universe_payload()["items"]
+    rows = {"KOSPI": [kospi], "KOSDAQ": [{**kosdaq, **(invalid_listing or {})}], "KR_ETC": []}
+    calls = []
+    issues = []
+
+    def fetch(**kwargs):
+        market = kwargs["params"]["market"]
+        calls.append(market)
+        return SimpleNamespace(result=rows[market], rate_limit={})
+
+    def issue(**_kwargs):
+        issues.append("token")
+        return SimpleNamespace(access_token="mock-token", expires_in=3600)
+
+    class Provider(cli_module.TossPriorityQuoteProvider):
+        def get_market_context(self, **_kwargs):
+            return {}
+
+        def get_stock_universe(self):
+            self.universe_response = super().get_stock_universe()
+            return self.universe_response
+
+    provider = Provider(
+        config=cli_module.TossOpenApiLabConfig(
+            client_id="mock-client",
+            client_secret="mock-secret",
+            live_enabled=True,
+            base_url="https://openapi.tossinvest.com",
+            timeout_seconds=1,
+        ),
+        issue_token=issue,
+        fetch_quotes=fetch,
+    )
+    assert cli_module._run_toss_market_context_capture(
+        config,
+        repository,
+        business_date=business_date,
+        live=True,
+        confirm_token_reissue=True,
+        confirm_save=True,
+        scheduled=False,
+        as_json=True,
+        toss_provider=provider,
+    ) == 0
+
+    assert calls == ["KOSPI", "KOSDAQ", "KR_ETC"]
+    assert issues == ["token"]
+    assert provider.universe_response["available"] is True
+    coverage = json.loads(capsys.readouterr().out)["coverage"]
+    universe = coverage["stock_universe"]
+    assert universe["market_counts"] == {"KOSPI": 1, "KOSDAQ": 1, "KR_ETC": 0}
+    assert universe["market_diagnostics"]["KOSDAQ"]["status"] == (
+        "SUCCESS" if invalid_listing is None else "VALIDATION_ERROR"
+    )
+    assert universe["complete"] is (invalid_listing is None)
+    if invalid_listing is not None:
+        assert write_dates == []
+        assert universe["saved"] == 0
+        assert universe["snapshot_date"] == prior_date.isoformat()
+        assert "stock_universe" in coverage["missing_domains"]
+        assert repository.latest_toss_stock_universe_snapshot_date() == prior_date
+        assert repository.get_toss_stock_universe_entry_as_of("005930", as_of_date=business_date) == previous
+        assert repository.get_toss_stock_universe_entry_as_of("111111", as_of_date=business_date) is None
+    else:
+        assert write_dates == [[business_date, business_date]]
+        assert universe["saved"] == 2
+        assert repository.latest_toss_stock_universe_snapshot_date() == business_date
 
 
 def test_toss_market_context_capture_saves_every_daily_candidate_in_two_symbol_batches(tmp_path, capsys) -> None:

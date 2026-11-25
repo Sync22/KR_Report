@@ -11,6 +11,7 @@ const ALLOWED_MISSING_DOMAINS = new Set([
   "market_indices",
   "market_flow",
   "candidate_close_reassessment",
+  "stock_universe",
 ]);
 
 type SummaryRow = {

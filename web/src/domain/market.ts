@@ -18,6 +18,13 @@ export type MarketSnapshot = {
   market_indices: RecordValue[];
 };
 
+export function captureMissingSummary(status: string, missingDomains: readonly string[]): string {
+  if (missingDomains.length) return missingDomains.join(", ");
+  return status === "complete" || status === "completed"
+    ? "누락 없음"
+    : "세부 누락 사유 확인 불가";
+}
+
 export type FlowTrendSnapshot = {
   now: string;
   timezone: string;
