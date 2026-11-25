@@ -248,6 +248,177 @@ def test_toss_priority_provider_reads_fixed_kr_universes_and_tags_market() -> No
     }
 
 
+class FakeMonotonicClock:
+    def __init__(self) -> None:
+        self.value = 0.0
+        self.sleeps: list[float] = []
+
+    def now(self) -> float:
+        return self.value
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.value += seconds
+
+
+def _stock_universe_pacing_provider(fetch, clock: FakeMonotonicClock, *, issue_token=None):
+    config = TossOpenApiLabConfig(
+        client_id="client-value",
+        client_secret="secret-value",
+        live_enabled=True,
+        base_url=TOSS_OPENAPI_BASE_URL,
+        timeout_seconds=10,
+    )
+    return TossPriorityQuoteProvider(
+        config=config,
+        issue_token=issue_token or (lambda **_kwargs: SimpleNamespace(access_token="token-value")),
+        fetch_quotes=fetch,
+        clock=clock.now,
+        sleep=clock.sleep,
+    )
+
+
+def test_toss_priority_provider_spaces_stock_all_requests_without_headers() -> None:
+    clock = FakeMonotonicClock()
+    requests: list[tuple[str, float]] = []
+
+    def fetch(**kwargs):
+        market = kwargs["params"]["market"]
+        requests.append((market, clock.now()))
+        return SimpleNamespace(result=[], rate_limit={})
+
+    result = _stock_universe_pacing_provider(fetch, clock).get_stock_universe()
+
+    assert [market for market, _ in requests] == ["KOSPI", "KOSDAQ", "KR_ETC"]
+    assert [sent_at for _, sent_at in requests] == pytest.approx([0.0, 1.1, 2.2])
+    assert clock.sleeps == pytest.approx([1.1, 1.1])
+    assert result["available"] is True
+
+
+@pytest.mark.parametrize(
+    ("second_limit", "second_gap"), [("20", 1.1), ("0.25", 4.1), ("inf", 1.1)],
+)
+def test_toss_priority_provider_uses_stock_all_headers_without_shortening_floor(second_limit, second_gap) -> None:
+    clock = FakeMonotonicClock()
+    requests: list[tuple[str, float]] = []
+    rate_limits = [
+        {"limit": "10", "remaining": "0", "reset": "2"},
+        {"limit": second_limit, "remaining": "1", "reset": "0"},
+        {},
+    ]
+
+    def fetch(**kwargs):
+        market = kwargs["params"]["market"]
+        requests.append((market, clock.now()))
+        return SimpleNamespace(result=[], rate_limit=rate_limits[len(requests) - 1])
+
+    provider = _stock_universe_pacing_provider(fetch, clock)
+    assert provider.get_stock_universe()["available"] is True
+
+    assert [sent_at for _, sent_at in requests] == pytest.approx([0.0, 2.1, 2.1 + second_gap])
+    assert clock.sleeps == pytest.approx([2.1, second_gap])
+
+
+@pytest.mark.parametrize(
+    ("retry_after", "reset", "expected_later_request"),
+    [("4", "2", 5.1), ("1", "3", 4.2), (None, None, 2.2)],
+)
+def test_toss_priority_provider_keeps_429_cooldown_for_later_call_only(
+    retry_after, reset, expected_later_request
+) -> None:
+    clock = FakeMonotonicClock()
+    requests: list[tuple[str, float]] = []
+    token_issues: list[int] = []
+
+    def fetch(**kwargs):
+        market = kwargs["params"]["market"]
+        requests.append((market, clock.now()))
+        if market == "KOSDAQ" and len(requests) == 2:
+            raise TossOpenApiHttpError(
+                "HTTP 429", status_code=429, retry_after=retry_after,
+                rate_limit={"reset": reset} if reset is not None else {},
+            )
+        return SimpleNamespace(result=[], rate_limit={})
+
+    def issue_token(**_kwargs):
+        token_issues.append(1)
+        return SimpleNamespace(access_token="token-value")
+
+    provider = _stock_universe_pacing_provider(fetch, clock, issue_token=issue_token)
+    first = provider.get_stock_universe()
+
+    assert first["available"] is False
+    assert first["market_diagnostics"]["KOSDAQ"]["status"] == "RATE_LIMITED"
+    assert first["market_diagnostics"]["KR_ETC"]["status"] == "NOT_ATTEMPTED"
+    assert [market for market, _ in requests] == ["KOSPI", "KOSDAQ"]
+    assert clock.sleeps == pytest.approx([1.1])
+    assert token_issues == [1]
+
+    provider.get_stock_universe()
+
+    assert requests[2][0] == "KOSPI"
+    assert requests[2][1] == pytest.approx(expected_later_request)
+    assert token_issues == [1]
+
+
+def test_toss_priority_provider_rejects_overlong_retry_after_before_next_request() -> None:
+    clock = FakeMonotonicClock()
+    requests: list[tuple[str, float]] = []
+
+    def fetch(**kwargs):
+        market = kwargs["params"]["market"]
+        requests.append((market, clock.now()))
+        if market == "KOSDAQ":
+            raise TossOpenApiHttpError("HTTP 429", status_code=429, retry_after="30")
+        return SimpleNamespace(result=[], rate_limit={})
+
+    provider = _stock_universe_pacing_provider(fetch, clock)
+    first = provider.get_stock_universe()
+    assert first["available"] is False
+    assert len(requests) == 2
+
+    second = provider.get_stock_universe()
+
+    assert second["available"] is False
+    assert len(requests) == 2
+    assert clock.sleeps == pytest.approx([1.1])
+
+
+def test_toss_priority_provider_paces_existing_401_retry_and_only_stock_all_group() -> None:
+    clock = FakeMonotonicClock()
+    requests: list[tuple[str, str, float]] = []
+    token_issues: list[str] = []
+
+    def issue_token(**_kwargs):
+        token = f"token-{len(token_issues) + 1}"
+        token_issues.append(token)
+        return SimpleNamespace(access_token=token)
+
+    def fetch(**kwargs):
+        endpoint = kwargs["endpoint"]
+        params = kwargs["params"]
+        requests.append((endpoint.rate_group, endpoint.key, clock.now()))
+        if endpoint.rate_group == "STOCK_ALL" and params["market"] == "KOSPI" and kwargs["access_token"] == "token-1":
+            raise TossOpenApiHttpError("HTTP 401", status_code=401)
+        if endpoint.rate_group == "MARKET_INFO":
+            return SimpleNamespace(result={}, rate_limit={})
+        return SimpleNamespace(result=[], rate_limit={})
+
+    provider = _stock_universe_pacing_provider(fetch, clock, issue_token=issue_token)
+    assert provider.get_stock_universe()["available"] is True
+    stock_requests = [sent_at for group, _, sent_at in requests if group == "STOCK_ALL"]
+
+    assert stock_requests == pytest.approx([0.0, 1.1, 2.2, 3.3])
+    assert token_issues == ["token-1", "token-2"]
+    assert clock.sleeps == pytest.approx([1.1, 1.1, 1.1])
+
+    provider.get_market_calendar(query_date=date(2026, 11, 25))
+
+    calendar_request = [item for item in requests if item[0] == "MARKET_INFO"]
+    assert calendar_request[-1][2] == pytest.approx(clock.now())
+    assert clock.sleeps == pytest.approx([1.1, 1.1, 1.1])
+
+
 def test_toss_priority_provider_reports_semantically_invalid_rows_and_keeps_request_order() -> None:
     config = TossOpenApiLabConfig(
         client_id="client-value",
@@ -1553,7 +1724,7 @@ def test_fetch_toss_readonly_endpoint_preserves_safe_http_error_metadata() -> No
             f"{TOSS_OPENAPI_BASE_URL}/api/v1/prices?symbols=005930",
             429,
             "secret-value token-value",
-            {"Retry-After": "3"},
+            {"Retry-After": "3", "X-RateLimit-Reset": "4", "Authorization": "ignored-mock-token"},
             io.BytesIO(b'{"error":"rate_limited","error_description":"slow down"}'),
         )
 
@@ -1571,6 +1742,7 @@ def test_fetch_toss_readonly_endpoint_preserves_safe_http_error_metadata() -> No
     assert getattr(exc_info.value, "status_code", None) == 429
     assert getattr(exc_info.value, "provider_code", None) == "rate_limited"
     assert getattr(exc_info.value, "retry_after", None) == "3"
+    assert exc_info.value.rate_limit == {"retry_after": "3", "reset": "4"}
     assert "secret-value" not in str(exc_info.value)
     assert "token-value" not in str(exc_info.value)
 

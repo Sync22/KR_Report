@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import threading
 import time
 from collections.abc import Callable
@@ -26,6 +27,28 @@ from stock_monitor.fetch.toss_openapi import (
     resolve_toss_stock_universe_endpoint,
     TOSS_KR_STOCK_UNIVERSE_MARKETS,
 )
+
+_STOCK_ALL_MIN_INTERVAL_SECONDS = 1.1
+_STOCK_ALL_MARGIN_SECONDS = 0.1
+
+
+def _nonnegative_rate_value(value: str | None) -> float:
+    try:
+        seconds = float(value) if value is not None else 0.0
+    except ValueError:
+        return 0.0
+    return seconds if math.isfinite(seconds) and seconds >= 0 else 0.0
+
+
+def _stock_all_cooldown(rate_limit: dict[str, str], *, exhausted: bool = False) -> float:
+    cooldown = _STOCK_ALL_MIN_INTERVAL_SECONDS
+    limit = _nonnegative_rate_value(rate_limit.get("limit"))
+    if limit > 0:
+        cooldown = max(cooldown, 1 / limit + _STOCK_ALL_MARGIN_SECONDS)
+    if exhausted or rate_limit.get("remaining", "").strip() == "0":
+        refill = _nonnegative_rate_value(rate_limit.get("reset"))
+        cooldown = max(cooldown, refill + _STOCK_ALL_MARGIN_SECONDS)
+    return cooldown
 
 
 def _stock_universe_failure_status(error: Exception) -> str:
@@ -122,6 +145,7 @@ class TossPriorityQuoteProvider:
         cache_ttl_seconds: float = 30.0,
         stale_ttl_seconds: float = 300.0,
         clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._config = config
         self._endpoint = endpoint or resolve_toss_readonly_endpoint("prices")
@@ -130,6 +154,9 @@ class TossPriorityQuoteProvider:
         self._cache_ttl_seconds = cache_ttl_seconds
         self._stale_ttl_seconds = stale_ttl_seconds
         self._clock = clock
+        self._sleep = sleep
+        self._stock_all_lock = threading.Lock()
+        self._stock_all_ready_at = -math.inf
         self._token: TossAccessToken | None = None
         self._automatic_reissue_used = False
         self._token_lock = threading.Lock()
@@ -917,13 +944,43 @@ class TossPriorityQuoteProvider:
         endpoint: TossReadonlyEndpoint,
         params: dict[str, str],
     ) -> TossReadonlyResponse:
+        fetch = self._fetch_stock_all if endpoint.rate_group == "STOCK_ALL" else self._fetch_endpoint
         token = self._get_token()
         try:
-            return self._fetch_endpoint(token, endpoint=endpoint, params=params)
+            return fetch(token, endpoint=endpoint, params=params)
         except RuntimeError as exc:
             if getattr(exc, "status_code", None) != 401:
                 raise
-        return self._fetch_endpoint(self._reissue_token_once(failed_token=token), endpoint=endpoint, params=params)
+        return fetch(self._reissue_token_once(failed_token=token), endpoint=endpoint, params=params)
+
+    def _fetch_stock_all(
+        self,
+        token: TossAccessToken,
+        *,
+        endpoint: TossReadonlyEndpoint,
+        params: dict[str, str],
+    ) -> TossReadonlyResponse:
+        with self._stock_all_lock:
+            now = self._clock()
+            max_wait = max(_STOCK_ALL_MIN_INTERVAL_SECONDS, self._config.timeout_seconds)
+            if self._stock_all_ready_at > now + max_wait:
+                raise TossOpenApiSafetyError("Toss STOCK_ALL cooldown exceeds the request timeout.")
+            if self._stock_all_ready_at > now:
+                self._sleep(self._stock_all_ready_at - now)
+            cooldown = _STOCK_ALL_MIN_INTERVAL_SECONDS
+            try:
+                response = self._fetch_endpoint(token, endpoint=endpoint, params=params)
+                cooldown = _stock_all_cooldown(response.rate_limit)
+                return response
+            except TossOpenApiHttpError as exc:
+                if exc.status_code == 429:
+                    cooldown = max(
+                        _stock_all_cooldown(exc.rate_limit, exhausted=True),
+                        _nonnegative_rate_value(exc.retry_after),
+                    )
+                raise
+            finally:
+                self._stock_all_ready_at = self._clock() + cooldown
 
     def _get_token(self) -> TossAccessToken:
         with self._token_lock:
